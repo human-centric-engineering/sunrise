@@ -48,6 +48,7 @@ vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
 vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgentsIfStale: vi.fn(),
 }));
+vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
 
 import { logger } from '@/lib/logging';
 import {
@@ -64,6 +65,7 @@ import {
 } from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
+import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOBS,
@@ -89,7 +91,7 @@ const PER_ORG_TASKS = [
   reconcilePlatformAgentsIfStale,
 ];
 
-const ALL_TASKS = [...PER_ORG_TASKS, enforceSystemRetentionPolicies];
+const ALL_TASKS = [...PER_ORG_TASKS, enforceSystemRetentionPolicies, processPendingErasures];
 
 const RETENTION_IDLE = {
   deleted: 0,
@@ -103,6 +105,8 @@ const RETENTION_IDLE = {
 };
 
 const SYSTEM_RETENTION_IDLE = { auditLogsDeleted: 0, mcpAuditLogsDeleted: 0 };
+
+const ERASURES_IDLE = { claimed: 0, erased: 0, failed: 0, pending: 0 };
 
 const ORG_A = 'org_a';
 const ORG_B = 'org_b';
@@ -148,6 +152,7 @@ function mockIdleTasks(): void {
   });
   vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue(SYSTEM_RETENTION_IDLE);
   vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({ reconciled: false });
+  vi.mocked(processPendingErasures).mockResolvedValue(ERASURES_IDLE);
 }
 
 beforeEach(() => {
@@ -173,14 +178,17 @@ describe('PLATFORM_JOB_NAMES', () => {
       'evaluationRuns',
       'auditLogRetention',
       'platformAgents',
+      'pendingErasures',
     ]);
   });
 
-  it('declares a scope on every task, and only the audit-table prune runs as system (§108)', () => {
+  it('declares a scope on every task, and only the audit-table prune and the pending-erasure retrier run as system (§108)', () => {
     // Every task that touches a tenant-owned table is per-org: under the
     // system scope nothing is stamped, and the reaper, recovery, the scheduler
-    // and the evaluation worker all CREATE rows. The one system task prunes
-    // two tables that have no org column at all.
+    // and the evaluation worker all CREATE rows. The system tasks are the
+    // prune of two tables that have no org column at all, and the erasure
+    // retrier, because a person (`User`) has no org and an erasure spans all
+    // of theirs.
     const scopes = PLATFORM_JOBS.map((job) => [job.name, job.scope] as const);
 
     expect(scopes).toEqual([
@@ -194,6 +202,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['evaluationRuns', 'per-org'],
       ['auditLogRetention', { system: expect.stringContaining('audit') }],
       ['platformAgents', 'per-org'],
+      ['pendingErasures', { system: expect.stringContaining('pendingErasures') }],
     ]);
   });
 
@@ -428,6 +437,20 @@ describe('runDuePlatformJobs — foundWork', () => {
         }),
     ],
     [
+      'pendingErasures — an erasure was claimed',
+      () =>
+        vi
+          .mocked(processPendingErasures)
+          .mockResolvedValue({ claimed: 1, erased: 1, failed: 0, pending: 0 }),
+    ],
+    [
+      'pendingErasures — one is still waiting out its backoff',
+      () =>
+        vi
+          .mocked(processPendingErasures)
+          .mockResolvedValue({ claimed: 0, erased: 0, failed: 0, pending: 2 }),
+    ],
+    [
       'evaluationRuns — a claimed run needs the next time-slice',
       () =>
         vi.mocked(processPendingEvaluationRuns).mockResolvedValue({
@@ -525,6 +548,31 @@ describe('runDuePlatformJobs — tenant scope (§108)', () => {
       'Entering system tenant scope',
       expect.objectContaining({ reason: expect.stringContaining('auditLogRetention') })
     );
+  });
+
+  it('runs the pending-erasure retrier once under the system scope, never per org, even at multi', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    const seen = contextsSeenBy(processPendingErasures);
+
+    await runDuePlatformJobs(T0);
+
+    expect(seen).toEqual([null]);
+    expect(logger.info).toHaveBeenCalledWith(
+      'Entering system tenant scope',
+      expect.objectContaining({ reason: expect.stringContaining('pendingErasures') })
+    );
+  });
+
+  it('retries pending erasures every minute, not on a sub-minute tick', async () => {
+    await runDuePlatformJobs(T0);
+    expect(processPendingErasures).toHaveBeenCalledTimes(1);
+
+    await runDuePlatformJobs(T0 + 30 * 1000);
+    expect(processPendingErasures).toHaveBeenCalledTimes(1);
+
+    await runDuePlatformJobs(T0 + MINUTE);
+    expect(processPendingErasures).toHaveBeenCalledTimes(2);
   });
 
   it('at multi runs each per-org task once per active org, in that org, and folds the summary', async () => {

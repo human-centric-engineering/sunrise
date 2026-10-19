@@ -12,7 +12,11 @@
  *   wrong org;
  * - otherwise the membership read decides, and a self-heal is logged at
  *   `error` (the operator's signal that the signup path failed);
- * - a fault never refuses the sign-in: the session is minted with a null org.
+ * - a fault in choosing the org never refuses the sign-in: the session is
+ *   minted with a null org;
+ * - the one refusal is an account whose deletion has been requested (t-842).
+ *   It is checked FIRST and outside the fail-open path, so a fault reading
+ *   the account refuses too (fails closed), and the org is never chosen.
  *
  * Per gotcha #13 — importing @/lib/auth/config triggers betterAuth({...}) +
  * validateEmailConfig() at module load, so every side-effect surface is mocked
@@ -44,9 +48,18 @@ vi.mock('better-auth/adapters/prisma', () => ({ prismaAdapter: vi.fn(() => ({}))
 vi.mock('better-auth/api', () => ({
   getOAuthState: vi.fn(),
   createAuthMiddleware: vi.fn((fn: unknown) => fn),
-  APIError: class APIError extends Error {},
+  APIError: class APIError extends Error {
+    status: string;
+    body?: { message?: string };
+    constructor(status: string, body?: { message?: string }) {
+      super(body?.message ?? status);
+      this.status = status;
+      this.body = body;
+    }
+  },
 }));
-vi.mock('@/lib/db/client', () => ({ prisma: {} }));
+const mockUserFindUnique = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/db/client', () => ({ prisma: { user: { findUnique: mockUserFindUnique } } }));
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
 vi.mock('@/lib/email/client', () => ({ validateEmailConfig: vi.fn() }));
 
@@ -88,10 +101,55 @@ function sessionRow(): SessionCreateData {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetPendingSignup.mockResolvedValue(null);
+  mockUserFindUnique.mockResolvedValue({ erasureRequestedAt: null });
   mockActiveOrgForSession.mockResolvedValue({ orgId: INSTALL_ORG_ID, healed: false });
 });
 
 describe('sessionCreateBeforeHook', () => {
+  it('reads only the erasure flag of the signing-in account, then lets a normal account through', async () => {
+    const result = await sessionCreateBeforeHook(sessionRow(), null);
+
+    expect(mockUserFindUnique).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      select: { erasureRequestedAt: true },
+    });
+    expect(result).toEqual({ data: { activeOrgId: INSTALL_ORG_ID } });
+  });
+
+  it('refuses the sign-in with FORBIDDEN when the account has a deletion pending, and never reads the memberships', async () => {
+    mockUserFindUnique.mockResolvedValue({ erasureRequestedAt: new Date('2026-10-19T10:00:00Z') });
+
+    const refused = sessionCreateBeforeHook(sessionRow(), null);
+
+    await expect(refused).rejects.toMatchObject({
+      status: 'FORBIDDEN',
+      body: { message: 'This account is being deleted.' },
+    });
+    expect(mockGetPendingSignup).not.toHaveBeenCalled();
+    expect(mockActiveOrgForSession).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith('Sign-in refused: the account is being deleted', {
+      userId: USER_ID,
+    });
+  });
+
+  it('fails closed: a fault reading the account refuses the sign-in instead of minting a session', async () => {
+    mockUserFindUnique.mockRejectedValue(new Error('db down'));
+
+    await expect(sessionCreateBeforeHook(sessionRow(), null)).rejects.toThrow('db down');
+    // The fail-open arm is not reached: no org is chosen, nothing is logged
+    // as a skipped org choice.
+    expect(mockActiveOrgForSession).not.toHaveBeenCalled();
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
+  it('lets a sign-in through when the account row is not there yet (an auto-signed-in signup)', async () => {
+    mockUserFindUnique.mockResolvedValue(null);
+
+    const result = await sessionCreateBeforeHook(sessionRow(), null);
+
+    expect(result).toEqual({ data: { activeOrgId: INSTALL_ORG_ID } });
+  });
+
   it('a signup in flight decides the org, and the memberships are not read', async () => {
     mockGetPendingSignup.mockResolvedValue({
       membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },

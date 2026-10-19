@@ -70,7 +70,12 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       delete: vi.fn(),
       findUniqueOrThrow: vi.fn(),
+      // requestUserErasure's claim transaction.
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
     },
+    session: { deleteMany: vi.fn() },
+    aiApiKey: { updateMany: vi.fn() },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
       createMany: vi.fn(),
@@ -156,6 +161,20 @@ const RECEIPT_FIXTURE = {
 };
 
 /**
+ * `user.findUniqueOrThrow` is read twice on the real chain: the claim reads the
+ * intent columns it just wrote, and eraseUser reads the stored address. Answer
+ * each with its own shape, keyed on what the caller selects.
+ */
+function mockStoredUser(stored: { email: string; emailVerified: boolean }) {
+  vi.mocked(prisma.user.findUniqueOrThrow).mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    args.select?.erasureAttempts
+      ? { erasureRequestedBy: SESSION_USER_ID, erasureReason: 'self_service', erasureAttempts: 1 }
+      : stored) as never);
+}
+
+/**
  * Build a DELETE NextRequest with the given JSON body.
  */
 function makeDeleteRequest(body: Record<string, unknown>): NextRequest {
@@ -223,10 +242,19 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // eraseUser reads the stored address for the contact delete. Deliberately
     // NOT the address the route passes in, so the assertion below can tell the
     // two apart: a stale session address must never be the one matched.
-    vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
-      email: 'stored-self@example.com',
-      emailVerified: true,
+    mockStoredUser({ email: 'stored-self@example.com', emailVerified: true });
+
+    // requestUserErasure's claim: a live account with no erasure pending yet,
+    // which the conditional update claims (count 1).
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      erasureRequestedAt: null,
+      erasureRequestedBy: null,
+      erasureReason: null,
+      erasureNextAttemptAt: null,
     } as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiApiKey.updateMany).mockResolvedValue({ count: 0 });
 
     // Default: user.delete resolves
     vi.mocked(prisma.user.delete).mockResolvedValue({ id: SESSION_USER_ID } as never);
@@ -292,7 +320,9 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Count gate was consulted (handler performed the DB check). Only real
       // human admins are counted (`humanAdminWhere`); the seeded non-login
       // SERVICE config-owner is excluded (issue #278 / security review).
-      expect(prisma.user.count).toHaveBeenCalledWith({ where: humanAdminWhere });
+      expect(prisma.user.count).toHaveBeenCalledWith({
+        where: { ...humanAdminWhere, erasureRequestedAt: null },
+      });
 
       // erase must NOT have run — $transaction not called
       expect(prisma.$transaction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
@@ -319,8 +349,31 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(body.success).toBe(true);
       expect(body.data.deleted).toBe(true);
 
-      // The real eraseUser opened a transaction — proves the erase chain ran
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // Two transactions: requestUserErasure's claim, then the real eraseUser's
+      // erase chain.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+
+      // The claim recorded the intent (conditional on the values it read) and
+      // disabled the account BEFORE the erasure deleted the user row.
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: SESSION_USER_ID, erasureRequestedAt: null, erasureNextAttemptAt: null },
+        data: expect.objectContaining({
+          erasureRequestedBy: SESSION_USER_ID,
+          erasureReason: 'self_service',
+          erasureAttempts: { increment: 1 },
+        }),
+      });
+      expect(prisma.session.deleteMany).toHaveBeenCalledWith({
+        where: { userId: SESSION_USER_ID },
+      });
+      expect(prisma.aiApiKey.updateMany).toHaveBeenCalledWith({
+        where: { userId: SESSION_USER_ID, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      const deleteCallOrder = vi.mocked(prisma.user.delete).mock.invocationCallOrder[0];
+      expect(vi.mocked(prisma.session.deleteMany).mock.invocationCallOrder[0]).toBeLessThan(
+        deleteCallOrder
+      );
 
       // Inside $transaction: eraseUser scrubs residual PII on retained audit rows
       // before the userId FK is nulled by the cascade. Asserting the exact where/data
@@ -472,13 +525,35 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       }
     });
 
+    it('returns 409 CONFLICT and disables nothing when the real claim finds another attempt holding the lease', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+      // A deletion already requested; its lease runs for another ten minutes.
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        erasureRequestedAt: new Date(Date.now() - 60_000),
+        erasureRequestedBy: SESSION_USER_ID,
+        erasureReason: 'self_service',
+        erasureNextAttemptAt: new Date(Date.now() + 10 * 60_000),
+      } as never);
+
+      const response = await DELETE(makeDeleteRequest({ confirmation: 'DELETE' }));
+
+      expect(response.status).toBe(409);
+      const body = await parseJSON<ApiBody>(response);
+      expect(body.success).toBe(false);
+      expect((body as ErrorBody).error.code).toBe('CONFLICT');
+      // Population: the claim transaction did open, and then declined.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+      // The account still exists, so its cookies are not torn down.
+      expect(mockCookieStore.delete).not.toHaveBeenCalled();
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
     it('touches no deliveries when the stored address is unverified', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.user.count).mockResolvedValue(2);
-      vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
-        email: 'stored-self@example.com',
-        emailVerified: false,
-      } as never);
+      mockStoredUser({ email: 'stored-self@example.com', emailVerified: false });
       // An unverified address skips the delete and only counts what it left behind.
       vi.mocked(prisma.contactSubmission.count).mockResolvedValue(0);
 
@@ -586,8 +661,8 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Admin gate skipped — count not consulted for non-admins
       expect(prisma.user.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
 
-      // eraseUser still ran: $transaction was called
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // The claim and the real eraseUser each ran a transaction
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
 
       // eraseUser called user.delete with the session's user ID
       expect(prisma.user.delete).toHaveBeenCalledWith({

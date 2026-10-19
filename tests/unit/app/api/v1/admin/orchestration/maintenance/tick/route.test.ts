@@ -102,6 +102,9 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgentsIfStale: vi.fn().mockResolvedValue({ reconciled: false }),
 }));
 
+// The pending-erasure retrier (t-842): its own module, mocked idle by default.
+vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
+
 // The fork seam (#469). Left unmocked, the real empty registry always resolves
 // `undefined`, so neither the "a fork registered jobs" nor the rejection arm of
 // the summary ever ran. Mocked with the same default so existing tests see no
@@ -131,6 +134,7 @@ import {
   enforceSystemRetentionPolicies,
 } from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
+import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 import { runDueAppJobs } from '@/lib/orchestration/maintenance/app-jobs';
 import { __resetPlatformJobsForTests } from '@/lib/orchestration/maintenance/platform-jobs';
 import { __resetIdleGateForTests } from '@/lib/orchestration/maintenance/idle-gate';
@@ -246,6 +250,12 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
     vi.mocked(processOrphanedExecutions).mockResolvedValue(DEFAULT_ORPHAN_RESULT);
     vi.mocked(processPendingEvaluationRuns).mockResolvedValue(DEFAULT_EVAL_RUN_RESULT);
+    vi.mocked(processPendingErasures).mockResolvedValue({
+      claimed: 0,
+      erased: 0,
+      failed: 0,
+      pending: 0,
+    });
     // Vanilla default: no fork jobs registered.
     vi.mocked(runDueAppJobs).mockResolvedValue(undefined);
     // No schedule on the horizon unless a test says otherwise.
@@ -286,6 +296,12 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       errors: [],
     });
     vi.mocked(processPendingEvaluationRuns).mockResolvedValue(DEFAULT_EVAL_RUN_RESULT);
+    vi.mocked(processPendingErasures).mockResolvedValue({
+      claimed: 0,
+      erased: 0,
+      failed: 0,
+      pending: 0,
+    });
   }
 
   /** Run one tick and let its background chain settle. */
@@ -453,6 +469,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'evaluationRuns',
       'auditLogRetention',
       'platformAgents',
+      'pendingErasures',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -472,6 +489,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('evaluationRuns');
     expect(body.data).not.toHaveProperty('auditLogRetention');
     expect(body.data).not.toHaveProperty('platformAgents');
+    expect(body.data).not.toHaveProperty('pendingErasures');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -489,6 +507,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
     expect(processPendingExecutions).toHaveBeenCalledTimes(1);
+    expect(processPendingErasures).toHaveBeenCalledTimes(1);
   });
 
   it('logs background task summary when the chain settles', async () => {
@@ -570,9 +589,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
     // Background tasks still kick off even when schedules fail
-    // (10 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
-    // §108, platformAgents added in §116).
-    expect(body.data.backgroundTasks).toHaveLength(10);
+    // (11 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
+    // §108, platformAgents added in §116, pendingErasures in t-842).
+    expect(body.data.backgroundTasks).toHaveLength(11);
   });
 
   it('returns a readable schedules.error when processDueSchedules rejects a non-Error', async () => {
@@ -684,6 +703,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       enforceRetentionPolicies,
       processPendingExecutions,
       processPendingEvaluationRuns,
+      processPendingErasures,
     ];
 
     it('after a sweep that found nothing, the next tick does zero database work', async () => {
@@ -717,6 +737,31 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       // this is the active-deployment path: every tick keeps sweeping.
       await tick();
       vi.clearAllMocks();
+
+      const response = await tick();
+
+      expect(response.status).toBe(202);
+      expect(processDueSchedules).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not arm while an erasure is still waiting out its backoff', async () => {
+      // Everything else found nothing, but a pending erasure is due again
+      // within the hour: the gate must keep ticking so it is retried on time.
+      mockIdleSweep();
+      vi.mocked(processPendingErasures).mockResolvedValue({
+        claimed: 0,
+        erased: 0,
+        failed: 0,
+        pending: 1,
+      });
+      await tick();
+      vi.clearAllMocks();
+      vi.mocked(processPendingErasures).mockResolvedValue({
+        claimed: 0,
+        erased: 0,
+        failed: 0,
+        pending: 1,
+      });
 
       const response = await tick();
 
