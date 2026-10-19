@@ -833,6 +833,15 @@ release process.
 
 ### Fixed
 
+- **Correction to v0.11.2's coverage note: the widening covers `.js`, `.jsx`,
+  `.cjs` and `.mjs`, not only `.mjs`** (t-870, #698). Item 3 of the v0.11.2
+  notes and its `### Fixed` bullet said `.mjs` files had joined the per-file 80%
+  coverage floor. The scoped runner's `coverageTargets` actually admits every
+  `[cm]?[jt]sx?` file, so a changed `.js`, `.jsx` or `.cjs` file under a path
+  coverage does not exclude is held to the floor too. **Forks:** if you checked
+  only your `.mjs` files after taking v0.11.2, check those as well — a design
+  prototype's `.jsx` is the case that has already failed a fork's unrelated PR.
+  Nothing changed in the runner; the wording was wrong.
 - **An experiment can no longer pin a variant to a saved agent version, which
   it could not honour** (t-864, #857). The run path loads only the live agent,
   so pinned variants were scored against the live config and a version A/B
