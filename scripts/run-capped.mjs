@@ -97,23 +97,27 @@ export function hasHeapCap(nodeOptions) {
  * this process was itself started under a cap, because then it is unknowable.
  *
  * `heap_size_limit` only means "Node's own default" when nothing set it. Under
- * an inherited `--max-old-space-size=N` it reads N plus V8's other spaces, so
- * flooring at it handed the child more than was asked for (6144 -> 6336), and
- * on a small box with a large parent cap more than the machine could back
- * (#711). Returning 0 drops the floor rather than guessing at a number.
+ * an inherited `--max-old-space-size=N` in `NODE_OPTIONS` it reads N plus V8's
+ * other spaces, so flooring at it handed the child more than was asked for
+ * (6144 -> 6336), and on a small box with a large parent cap more than the
+ * machine could back (#711). Returning 0 drops the floor rather than guessing.
+ *
+ * Only `NODE_OPTIONS` counts. A cap passed on this process's own command line
+ * (`node --max-old-space-size=12288 scripts/run-capped.mjs ...`) is not
+ * inherited by the child, so there V8's limit is the best record of what the
+ * caller asked for, and keeping it as the floor stops the child being cut
+ * back to the default.
  *
  * @param {object} [opts]
  * @param {string | undefined} [opts.nodeOptions] This process's `NODE_OPTIONS`.
- * @param {readonly string[]} [opts.execArgv] This process's Node flags.
  * @param {number} [opts.heapLimitBytes] V8's reported heap limit.
  * @returns {number}
  */
 export function unaidedLimitMb({
   nodeOptions = process.env.NODE_OPTIONS,
-  execArgv = process.execArgv,
   heapLimitBytes = v8.getHeapStatistics().heap_size_limit,
 } = {}) {
-  if (hasHeapCap(nodeOptions) || hasHeapCap(execArgv.join(' '))) return 0;
+  if (hasHeapCap(nodeOptions)) return 0;
   return heapLimitBytes / MB;
 }
 

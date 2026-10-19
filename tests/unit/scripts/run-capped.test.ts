@@ -119,7 +119,6 @@ describe('resolveHeapMb', () => {
     // the child 6336. Read through `unaidedLimitMb`, the floor drops out.
     const defaultLimitMb = unaidedLimitMb({
       nodeOptions: '--max-old-space-size=6144',
-      execArgv: [],
       heapLimitBytes: 6336 * 1024 ** 2,
     });
     expect(resolveHeapMb({ requestedMb: 6144, totalMemBytes: 16 * GB, defaultLimitMb })).toBe(6144);
@@ -148,9 +147,7 @@ describe('unaidedLimitMb', () => {
   const limit = 6336 * 1024 ** 2;
 
   it("reports V8's limit when nothing capped this process", () => {
-    expect(
-      unaidedLimitMb({ nodeOptions: '--trace-warnings', execArgv: [], heapLimitBytes: limit })
-    ).toBe(6336);
+    expect(unaidedLimitMb({ nodeOptions: '--trace-warnings', heapLimitBytes: limit })).toBe(6336);
   });
 
   it('reports no floor when NODE_OPTIONS carries a cap (#711)', () => {
@@ -158,20 +155,22 @@ describe('unaidedLimitMb', () => {
     expect(
       unaidedLimitMb({
         nodeOptions: '--max-old-space-size=6144',
-        execArgv: [],
         heapLimitBytes: limit,
       })
     ).toBe(0);
   });
 
-  it('reports no floor when the cap came in on the command line', () => {
-    expect(
-      unaidedLimitMb({
-        nodeOptions: undefined,
-        execArgv: ['--max-old-space-size=6144'],
-        heapLimitBytes: limit,
-      })
-    ).toBe(0);
+  it('keeps a command-line cap as the floor, since the child does not inherit it', () => {
+    // `node --max-old-space-size=12288 scripts/run-capped.mjs ...`: NODE_OPTIONS
+    // is clean, so the wrapper appends a cap. Dropping the floor here cut the
+    // child back to 6144, half of what the caller asked for.
+    const defaultLimitMb = unaidedLimitMb({
+      nodeOptions: '',
+      heapLimitBytes: 12480 * 1024 ** 2,
+    });
+    expect(resolveHeapMb({ requestedMb: 6144, totalMemBytes: 32 * GB, defaultLimitMb })).toBe(
+      12480
+    );
   });
 });
 

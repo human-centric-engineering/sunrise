@@ -401,6 +401,15 @@ release process.
 
 ### Changed
 
+- **`npm run type-check` runs under the same heap cap as `npm run lint`**
+  (t-855, #693). It goes through `scripts/run-capped.mjs`, so `NODE_HEAP_MB`
+  now applies to it. It was left out on a 1.64-1.75 GiB peak, but that was a
+  warm run; cold, base Sunrise peaks at 2.74 GiB and a ~1.9x fork aborted at
+  4.40 GB, taking `validate` down before lint ran. CI is unchanged: the
+  workflow's `NODE_OPTIONS` still wins. The wrapper also no longer hands out
+  more than was asked for under an inherited cap (t-856, #711). **Forks:** if
+  your own scripts call `tsc` directly, they do not get the cap.
+
 - **An `initApp*` registration seam that returns a promise is refused, as if
   it had thrown** (t-851, #739). `createAppInitGate` used to log and report
   `'ok'`, so an async `initAppAuthorizationPolicy` that rejected left the

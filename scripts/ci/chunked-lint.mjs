@@ -382,11 +382,12 @@ export function resolveEslintCommand() {
  * to `NODE_OPTIONS` rather than passing `--max-old-space-size` on the command
  * line, and only when no cap is already present, so an explicit value wins.
  *
- * THE CLAMP IS THE PART THAT WAS MISSING. `resolveHeapMb` reduces the request
- * to 75% of physical memory, floored at whatever Node would have picked
- * unaided. Without it this handed every machine a flat 6144 — and the very user
- * this function exists for, a developer reproducing a CI lint failure on an 8GB
- * laptop or in a 4GB container, got a ceiling the box cannot back. That turns
+ * THE CLAMP IS THE PART THAT WAS MISSING. `resolveHeapMb` floors the request
+ * at whatever Node would have picked unaided, then never lets the result go
+ * above 75% of physical memory. Without the clamp this handed every machine a
+ * flat 6144 — and the very user this function exists for, a developer
+ * reproducing a CI lint failure on an 8GB laptop or in a 4GB container, got a
+ * ceiling the box cannot back. That turns
  * the readable `JavaScript heap out of memory` abort into an opaque OS OOM
  * kill, which is the trade `run-capped.mjs` documents and refuses.
  *
