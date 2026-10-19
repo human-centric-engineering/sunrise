@@ -630,15 +630,18 @@ let a fork believe it had fixed its OOM and then meet the identical failure.
 
 ### Knob 5: `CI_TEST_TIMEOUT_MINUTES`
 
-The ceiling on `test-full` (per shard) and `test-changed`, in minutes. Defaults
-to **30**: a Sunrise shard takes 2–4 minutes and `test-changed` at most the
-unsharded suite, so 30 is room for a much larger fork's suite while still
-turning a deadlocked worker into a cancelled job inside the half hour rather
-than six hours (#843). Raise it if a slow suite is cancelled while still
+The ceiling on `test-full` (per shard) and `test-changed`, in minutes. Unset,
+`test-full` gets **30** and `test-changed` **60**: a Sunrise shard takes 2–4
+minutes, and `test-changed` runs the whole suite unsharded when a lockfile or
+vitest-config change makes `--changed` select everything (~14 minutes on
+Sunrise). Both leave room for a much larger fork's suite while turning a
+deadlocked worker into a cancelled job within the hour rather than six hours
+(#843). Setting the variable sets both jobs to the same value, so size it for
+`test-changed`'s worst case. Raise it if a slow suite is cancelled while still
 passing:
 
 ```bash
-gh variable set CI_TEST_TIMEOUT_MINUTES --body 45
+gh variable set CI_TEST_TIMEOUT_MINUTES --body 90
 ```
 
 The value goes through `fromJSON`, so it must be a bare number — anything else
@@ -843,14 +846,14 @@ read/write across the board.
 
 **`timeout-minutes` on jobs that can hang.** GitHub's default is six hours,
 which a hung health-wait or a deadlocked process will happily burn. Four jobs
-carry a cap: `ci.yml`'s `docker` job (30), `test-full` and `test-changed` (30,
-via Knob 5), and `fork-sync-integrity` (5). The rule is "cap anything that can
+carry a cap: `ci.yml`'s `docker` job (30), `test-full` (30) and
+`test-changed` (60), both via Knob 5, and `fork-sync-integrity` (5). The rule is "cap anything that can
 wait forever", not "cap everything": `docker` waits on containers it starts
 itself, and a vitest worker can deadlock during module evaluation — an import
 cycle closed through a `vi.mock` async factory hangs it before any test starts,
-where no vitest timeout can fire (#843). `smoke` and `smoke-multi` stay
-uncapped: their Postgres is a service container, which the runner health-checks
-with bounded retries before any step runs. Note the interaction with
+where no vitest timeout can fire (#843). `smoke` and `smoke-multi` are not
+capped yet: the runner bounds their Postgres service's start-up with its health
+check, but nothing bounds the scripts that run against it. Note the interaction with
 `ci-status`: a job killed by its own timeout reports `cancelled`, which the gate
 treats as a failure precisely so a timeout cannot pass as a skip.
 

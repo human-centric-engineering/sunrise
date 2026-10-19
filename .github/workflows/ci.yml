@@ -455,7 +455,8 @@ jobs:
             exit 0
           fi
           size_mb=$(du -sm .next/cache | cut -f1)
-          if (( size_mb > MAX_MB )); then
+          # 10# forces base 10: a leading zero (`08`) would otherwise read as octal.
+          if (( size_mb > 10#$MAX_MB )); then
             rm -rf .next/cache
             echo "::notice::Next.js build cache was ${size_mb}MB, over the ${MAX_MB}MB limit (CI_NEXT_CACHE_MAX_MB). Discarded it: this build starts cold and saves a fresh cache."
           else
@@ -545,8 +546,10 @@ jobs:
       needs.config.outputs.code == 'true' &&
       needs.config.outputs.test_scope == 'changed' &&
       github.event_name == 'pull_request'
-    # Same ceiling as `test-full`, for the same reason (#843).
-    timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '30') }}
+    # Capped for the same reason as `test-full` (#843), at twice the default:
+    # a lockfile or vitest-config change makes `--changed` select the whole
+    # suite, unsharded, in this one job.
+    timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '60') }}
     # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
     # for prisma generate (postinstall), which does not connect.
     env:

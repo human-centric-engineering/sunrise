@@ -415,13 +415,15 @@ release process.
   (`lib/email/send.ts`) takes an optional `signal` and `idempotencyKey`, passed
   to Resend.
 - **`CI_TEST_TIMEOUT_MINUTES` — a repo variable capping the CI test jobs**
-  (t-867, #843). `test-full` (each shard) and `test-changed` now stop after 30
-  minutes by default, instead of GitHub's six hours. A vitest worker can
+  (t-867, #843). `test-full` (each shard) now stops after 30 minutes and
+  `test-changed`, which can run the whole suite unsharded, after 60, instead of
+  GitHub's six hours. A vitest worker can
   deadlock before any test starts, for example on an import cycle closed
   through a `vi.mock` async factory, and no vitest timeout catches that. A
   timed-out job reports `cancelled`, which `ci-status` already fails.
   **Forks:** if your suite is slow enough to hit 30 minutes while passing,
-  raise it with `gh variable set CI_TEST_TIMEOUT_MINUTES --body 45`. See
+  raise it with `gh variable set CI_TEST_TIMEOUT_MINUTES --body 90`, which sets
+  both jobs. See
   `.context/architecture/ci.md` Knob 5.
 - **`CI_NEXT_CACHE_MAX_MB` — a repo variable bounding the CI Next.js build
   cache** (t-868, #856). The Build job's `.next/cache` grew with every build
