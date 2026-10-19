@@ -25,7 +25,7 @@ Fields: `name`, `slug`, `description`, `category`, `metadata` (optional JSON), `
 
 ### Category Select
 
-Populated from the `availableCategories` prop (derived server-side from the current list response). The last option is always **"+ New category…"**; picking it swaps the Select for a free-text `<Input>` (with a small "Use existing" button that reverts). The free-text value is validated client-side with the same `z.string().min(1).max(50).trim()` the backend enforces.
+Populated from the `availableCategories` prop (derived server-side from the current list response). The last option is always **"+ New category…"**; picking it swaps the Select for a free-text `<Input>` (with a small "Use existing" button that reverts). The free-text value is validated client-side with the same `z.string().trim().min(1).max(50)` the backend enforces.
 
 ### Help copy (exact strings — source of truth for later sessions)
 

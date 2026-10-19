@@ -364,6 +364,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       '#654), and a fourth would be in a file no import chain connects here.',
   },
   {
+    path: 'tests/unit/lib/validations/trim-order.test.ts',
+    reason:
+      'parses every `z.string()` chain under app/, lib/ and components/ and ' +
+      'fails on a length, pattern or refinement check written before ' +
+      '`.trim()`, which accepts whitespace and stores "" (#713). The change ' +
+      'it exists to catch is a NEW schema, in a file no import chain ' +
+      'connects to this test.',
+  },
+  {
     path: 'tests/unit/sunrise-version-disclosure.test.ts',
     reason:
       'walks `app/` and `lib/` for every route whose import graph reaches ' +

@@ -69,9 +69,9 @@ export const capabilityFunctionDefinitionSchema = z.object({
 export const createAgentObjectSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+    .max(100, 'Name must be less than 100 characters'),
 
   slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
 
@@ -84,9 +84,9 @@ export const createAgentObjectSchema = z.object({
 
   description: z
     .string()
+    .trim()
     .min(1, 'Description is required')
-    .max(5000, 'Description must be less than 5000 characters')
-    .trim(),
+    .max(5000, 'Description must be less than 5000 characters'),
 
   systemInstructions: z
     .string()
@@ -282,18 +282,18 @@ export const updateAgentObjectSchema = z.object({
 
   name: z
     .string()
+    .trim()
     .min(1, 'Name cannot be empty')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
 
   slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
 
   description: z
     .string()
+    .trim()
     .min(1, 'Description cannot be empty')
     .max(5000, 'Description must be less than 5000 characters')
-    .trim()
     .optional(),
 
   systemInstructions: z
@@ -537,7 +537,7 @@ export const instructionsRevertSchema = z.object({
  * "{source.slug}-copy".
  */
 export const cloneAgentBodySchema = z.object({
-  name: z.string().min(1).max(100).trim().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   slug: slugSchema.pipe(z.string().max(100)).optional(),
 });
 
@@ -590,23 +590,23 @@ export const createCapabilitySchema = z
   .object({
     name: z
       .string()
+      .trim()
       .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+      .max(100, 'Name must be less than 100 characters'),
 
     slug: capabilitySlugSchema,
 
     description: z
       .string()
+      .trim()
       .min(1, 'Description is required')
-      .max(5000, 'Description must be less than 5000 characters')
-      .trim(),
+      .max(5000, 'Description must be less than 5000 characters'),
 
     category: z
       .string()
+      .trim()
       .min(1, 'Category is required')
-      .max(50, 'Category must be less than 50 characters')
-      .trim(),
+      .max(50, 'Category must be less than 50 characters'),
 
     // `description` and `parameters` are REQUIRED, matching the read validator
     // (`capabilityFunctionDefinitionSchema`). A write replaces the whole JSON
@@ -690,25 +690,25 @@ export const updateCapabilitySchema = z
   .object({
     name: z
       .string()
+      .trim()
       .min(1, 'Name cannot be empty')
       .max(100, 'Name must be less than 100 characters')
-      .trim()
       .optional(),
 
     slug: capabilitySlugSchema.optional(),
 
     description: z
       .string()
+      .trim()
       .min(1, 'Description cannot be empty')
       .max(5000, 'Description must be less than 5000 characters')
-      .trim()
       .optional(),
 
     category: z
       .string()
+      .trim()
       .min(1, 'Category cannot be empty')
       .max(50, 'Category must be less than 50 characters')
-      .trim()
       .optional(),
 
     // Required within the object for the same reason as create: the column is
@@ -1428,8 +1428,8 @@ export const workflowVersionSnapshotSchema = workflowDefinitionSchema;
 export const publishWorkflowSchema = z.object({
   changeSummary: z
     .string()
-    .max(500, 'Change summary must be less than 500 characters')
     .trim()
+    .max(500, 'Change summary must be less than 500 characters')
     .optional(),
 });
 
@@ -1454,8 +1454,8 @@ export const rollbackWorkflowSchema = z.object({
   targetVersionId: workflowVersionIdSchema,
   changeSummary: z
     .string()
-    .max(500, 'Change summary must be less than 500 characters')
     .trim()
+    .max(500, 'Change summary must be less than 500 characters')
     .optional(),
 });
 
@@ -1483,17 +1483,17 @@ export const dryRunWorkflowBodySchema = z
 export const createWorkflowSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+    .max(100, 'Name must be less than 100 characters'),
 
   slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
 
   description: z
     .string()
+    .trim()
     .min(1, 'Description is required')
-    .max(5000, 'Description must be less than 5000 characters')
-    .trim(),
+    .max(5000, 'Description must be less than 5000 characters'),
 
   workflowDefinition: workflowDefinitionSchema,
 
@@ -1527,18 +1527,18 @@ export const createWorkflowSchema = z.object({
 export const updateWorkflowSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name cannot be empty')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
 
   slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
 
   description: z
     .string()
+    .trim()
     .min(1, 'Description cannot be empty')
     .max(5000, 'Description must be less than 5000 characters')
-    .trim()
     .optional(),
 
   draftDefinition: workflowDefinitionSchema.nullable().optional(),
@@ -1576,9 +1576,9 @@ export const chatMessageSchema = z.object({
 
   message: z
     .string()
+    .trim()
     .min(1, 'Message is required')
-    .max(50000, 'Message must be less than 50000 characters')
-    .trim(),
+    .max(50000, 'Message must be less than 50000 characters'),
 
   contextType: z.string().max(50).optional(),
 
@@ -1619,14 +1619,14 @@ export const evaluationSessionSchema = z.object({
 
   title: z
     .string()
+    .trim()
     .min(1, 'Title is required')
-    .max(200, 'Title must be less than 200 characters')
-    .trim(),
+    .max(200, 'Title must be less than 200 characters'),
 
   description: z
     .string()
-    .max(5000, 'Description must be less than 5000 characters')
     .trim()
+    .max(5000, 'Description must be less than 5000 characters')
     .optional(),
 
   status: evaluationStatusSchema.default('draft'),
@@ -1660,9 +1660,9 @@ const documentScopeSchema = z.enum(['system', 'app']);
 export const knowledgeSearchSchema = z.object({
   query: z
     .string()
+    .trim()
     .min(1, 'Search query is required')
-    .max(1000, 'Search query must be less than 1000 characters')
-    .trim(),
+    .max(1000, 'Search query must be less than 1000 characters'),
 
   chunkType: chunkTypeSchema.optional(),
 
@@ -1691,9 +1691,9 @@ export const knowledgeSearchSchema = z.object({
 export const documentUploadSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
-    .max(200, 'Name must be less than 200 characters')
-    .trim(),
+    .max(200, 'Name must be less than 200 characters'),
 
   fileName: z
     .string()
@@ -1784,9 +1784,9 @@ export const providerConfigSchema = z
   .object({
     name: z
       .string()
+      .trim()
       .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+      .max(100, 'Name must be less than 100 characters'),
 
     slug: slugSchema.pipe(z.string().max(50, 'Slug must be less than 50 characters')),
 
@@ -1839,9 +1839,9 @@ export const updateProviderConfigSchema = z
   .object({
     name: z
       .string()
+      .trim()
       .min(1, 'Name cannot be empty')
       .max(100, 'Name must be less than 100 characters')
-      .trim()
       .optional(),
 
     slug: slugSchema.pipe(z.string().max(50, 'Slug must be less than 50 characters')).optional(),
@@ -1911,16 +1911,16 @@ const PROFILE_TEXT_MAX = 10_000;
 export const agentProfileFormSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+    .max(100, 'Name must be less than 100 characters'),
 
   slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')),
 
   description: z
     .string()
-    .max(500, 'Description must be less than 500 characters')
     .trim()
+    .max(500, 'Description must be less than 500 characters')
     .nullable()
     .optional(),
 
@@ -1947,9 +1947,9 @@ export const agentProfileFormSchema = z.object({
 export const updateAgentProfileSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name cannot be empty')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
 
   // Slug intentionally not patchable — keeps URL identifiers stable; rename
@@ -1957,8 +1957,8 @@ export const updateAgentProfileSchema = z.object({
 
   description: z
     .string()
-    .max(500, 'Description must be less than 500 characters')
     .trim()
+    .max(500, 'Description must be less than 500 characters')
     .nullable()
     .optional(),
 
@@ -2046,33 +2046,33 @@ export const createProviderModelSchema = z
   .object({
     name: z
       .string()
+      .trim()
       .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+      .max(100, 'Name must be less than 100 characters'),
 
     slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')),
 
     providerSlug: z
       .string()
+      .trim()
       .min(1, 'Provider slug is required')
       .max(50, 'Provider slug must be less than 50 characters')
       .regex(
         /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
         'Provider slug must be lowercase alphanumeric with hyphens'
-      )
-      .trim(),
+      ),
 
     modelId: z
       .string()
+      .trim()
       .min(1, 'Model ID is required')
-      .max(100, 'Model ID must be less than 100 characters')
-      .trim(),
+      .max(100, 'Model ID must be less than 100 characters'),
 
     description: z
       .string()
+      .trim()
       .min(1, 'Description is required')
-      .max(2000, 'Description must be less than 2000 characters')
-      .trim(),
+      .max(2000, 'Description must be less than 2000 characters'),
 
     capabilities: z.array(capabilitySchema).min(1).default(['chat']),
     tierRole: tierRoleSchema,
@@ -2085,9 +2085,9 @@ export const createProviderModelSchema = z
     paramProfile: paramProfileSchema.nullable().optional(),
     bestRole: z
       .string()
+      .trim()
       .min(1, 'Best role is required')
-      .max(200, 'Best role must be less than 200 characters')
-      .trim(),
+      .max(200, 'Best role must be less than 200 characters'),
 
     // Embedding-specific (optional)
     dimensions: z.number().int().positive().optional(),
@@ -2098,8 +2098,8 @@ export const createProviderModelSchema = z
     hasFreeTier: z.boolean().optional(),
     local: z.boolean().default(false),
     quality: embeddingQualitySchema.optional(),
-    strengths: z.string().max(500).trim().optional(),
-    setup: z.string().max(500).trim().optional(),
+    strengths: z.string().trim().max(500).optional(),
+    setup: z.string().trim().max(500).optional(),
 
     isActive: z.boolean().default(true),
 
@@ -2111,32 +2111,32 @@ export const createProviderModelSchema = z
 export const updateProviderModelSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
 
   slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')).optional(),
 
   providerSlug: z
     .string()
+    .trim()
     .min(1, 'Provider slug is required')
     .max(50, 'Provider slug must be less than 50 characters')
-    .trim()
     .optional(),
 
   modelId: z
     .string()
+    .trim()
     .min(1, 'Model ID is required')
     .max(100, 'Model ID must be less than 100 characters')
-    .trim()
     .optional(),
 
   description: z
     .string()
+    .trim()
     .min(1, 'Description is required')
     .max(2000, 'Description must be less than 2000 characters')
-    .trim()
     .optional(),
 
   capabilities: z.array(capabilitySchema).min(1).optional(),
@@ -2150,9 +2150,9 @@ export const updateProviderModelSchema = z.object({
   paramProfile: paramProfileSchema.nullable().optional(),
   bestRole: z
     .string()
+    .trim()
     .min(1, 'Best role is required')
     .max(200, 'Best role must be less than 200 characters')
-    .trim()
     .optional(),
 
   // Embedding-specific (optional)
@@ -2164,8 +2164,8 @@ export const updateProviderModelSchema = z.object({
   hasFreeTier: z.boolean().nullable().optional(),
   local: z.boolean().optional(),
   quality: embeddingQualitySchema.nullable().optional(),
-  strengths: z.string().max(500).trim().nullable().optional(),
-  setup: z.string().max(500).trim().nullable().optional(),
+  strengths: z.string().trim().max(500).nullable().optional(),
+  setup: z.string().trim().max(500).nullable().optional(),
 
   isActive: z.boolean().optional(),
 
@@ -2182,18 +2182,18 @@ const bulkProviderModelRowSchema = z
   .object({
     modelId: z
       .string()
+      .trim()
       .min(1, 'Model ID is required')
-      .max(100, 'Model ID must be less than 100 characters')
-      .trim(),
+      .max(100, 'Model ID must be less than 100 characters'),
     name: z
       .string()
+      .trim()
       .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+      .max(100, 'Name must be less than 100 characters'),
     description: z
       .string()
-      .max(2000, 'Description must be less than 2000 characters')
       .trim()
+      .max(2000, 'Description must be less than 2000 characters')
       .default(''),
     capabilities: z.array(capabilitySchema).min(1).default(['chat']),
     tierRole: tierRoleSchema,
@@ -2206,9 +2206,9 @@ const bulkProviderModelRowSchema = z
     paramProfile: paramProfileSchema.nullable().optional(),
     bestRole: z
       .string()
+      .trim()
       .min(1, 'Best role is required')
-      .max(200, 'Best role must be less than 200 characters')
-      .trim(),
+      .max(200, 'Best role must be less than 200 characters'),
     dimensions: z.number().int().positive().optional(),
     schemaCompatible: z.boolean().optional(),
     costPerMillionTokens: z.number().nonnegative().optional(),
@@ -2217,21 +2217,21 @@ const bulkProviderModelRowSchema = z
     hasFreeTier: z.boolean().optional(),
     local: z.boolean().default(false),
     quality: embeddingQualitySchema.optional(),
-    strengths: z.string().max(500).trim().optional(),
-    setup: z.string().max(500).trim().optional(),
+    strengths: z.string().trim().max(500).optional(),
+    setup: z.string().trim().max(500).optional(),
   })
   .superRefine(requirePricePair);
 
 export const bulkCreateProviderModelsSchema = z.object({
   providerSlug: z
     .string()
+    .trim()
     .min(1, 'Provider slug is required')
     .max(50, 'Provider slug must be less than 50 characters')
     .regex(
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
       'Provider slug must be lowercase alphanumeric with hyphens'
-    )
-    .trim(),
+    ),
   models: z
     .array(bulkProviderModelRowSchema)
     .min(1, 'At least one model is required')
@@ -2552,7 +2552,7 @@ export const listConversationsQuerySchema = paginationQuerySchema.extend({
 
 /** Update conversation schema (PATCH /admin/orchestration/conversations/[id]). */
 export const updateConversationSchema = z.object({
-  title: z.string().min(1).max(200).trim().optional(),
+  title: z.string().trim().min(1).max(200).optional(),
   tags: z.array(z.string().trim().min(1).max(100)).max(20, 'At most 20 tags').optional(),
   isActive: z.boolean().optional(),
 });
@@ -2713,14 +2713,14 @@ export const createEvaluationSchema = z.object({
 
   title: z
     .string()
+    .trim()
     .min(1, 'Title is required')
-    .max(200, 'Title must be less than 200 characters')
-    .trim(),
+    .max(200, 'Title must be less than 200 characters'),
 
   description: z
     .string()
-    .max(5000, 'Description must be less than 5000 characters')
     .trim()
+    .max(5000, 'Description must be less than 5000 characters')
     .optional(),
 
   metadata: metadataSchema,
@@ -2737,14 +2737,14 @@ export const updateEvaluationSchema = z
   .object({
     title: z
       .string()
+      .trim()
       .min(1, 'Title is required')
       .max(200, 'Title must be less than 200 characters')
-      .trim()
       .optional(),
     description: z
       .string()
-      .max(5000, 'Description must be less than 5000 characters')
       .trim()
+      .max(5000, 'Description must be less than 5000 characters')
       .optional(),
     status: z.enum(['draft', 'in_progress', 'archived']).optional(),
     startedAt: z.string().datetime().optional(),

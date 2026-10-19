@@ -86,8 +86,8 @@ export const createFeatureFlagSchema = z.object({
   /** Description of what the flag controls */
   description: z
     .string()
-    .max(500, 'Description must be less than 500 characters')
     .trim()
+    .max(500, 'Description must be less than 500 characters')
     .optional(),
 
   /** Whether the flag is enabled (defaults to false) */
@@ -106,8 +106,8 @@ export const updateFeatureFlagSchema = z.object({
   /** Description of what the flag controls */
   description: z
     .string()
-    .max(500, 'Description must be less than 500 characters')
     .trim()
+    .max(500, 'Description must be less than 500 characters')
     .optional(),
 
   /** Whether the flag is enabled */
@@ -133,9 +133,9 @@ export const adminUserUpdateSchema = z.object({
   /** User's display name */
   name: z
     .string()
+    .trim()
     .min(1, 'Name cannot be empty')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
 
   /** User's role */

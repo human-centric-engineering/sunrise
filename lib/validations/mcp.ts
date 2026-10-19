@@ -76,8 +76,8 @@ export const mcpKeyScopeSchema = capabilityScopeSchema;
 export const updateMcpSettingsSchema = z
   .object({
     isEnabled: z.boolean().optional(),
-    serverName: z.string().min(1).max(100).trim().optional(),
-    serverVersion: z.string().min(1).max(20).trim().optional(),
+    serverName: z.string().trim().min(1).max(100).optional(),
+    serverVersion: z.string().trim().min(1).max(20).optional(),
     globalRateLimit: z.number().int().min(1).max(10000).optional(),
     auditRetentionDays: z.number().int().min(0).max(3650).optional(),
   })
@@ -94,7 +94,7 @@ export type UpdateMcpSettings = z.infer<typeof updateMcpSettingsSchema>;
 
 /** Annotation fields shared by create + update. All optional / nullable. */
 const toolAnnotationFields = {
-  customTitle: z.string().max(100).trim().nullable().optional(),
+  customTitle: z.string().trim().max(100).nullable().optional(),
   readOnlyHint: z.boolean().nullable().optional(),
   destructiveHint: z.boolean().nullable().optional(),
   idempotentHint: z.boolean().nullable().optional(),
@@ -108,7 +108,7 @@ export const createExposedToolSchema = z.object({
   capabilityId: cuidSchema,
   isEnabled: z.boolean().default(false),
   customName: mcpToolNameSchema.nullable().optional(),
-  customDescription: z.string().max(5000).trim().nullable().optional(),
+  customDescription: z.string().trim().max(5000).nullable().optional(),
   rateLimitPerKey: z.number().int().min(1).max(10000).nullable().optional(),
   requiresScope: z.string().max(100).nullable().optional(),
   ...toolAnnotationFields,
@@ -123,7 +123,7 @@ export const updateExposedToolSchema = z
   .object({
     isEnabled: z.boolean().optional(),
     customName: mcpToolNameSchema.nullable().optional(),
-    customDescription: z.string().max(5000).trim().nullable().optional(),
+    customDescription: z.string().trim().max(5000).nullable().optional(),
     rateLimitPerKey: z.number().int().min(1).max(10000).nullable().optional(),
     requiresScope: z.string().max(100).nullable().optional(),
     ...toolAnnotationFields,
@@ -184,8 +184,8 @@ export const createExposedResourceSchema = z.object({
     .min(1)
     .max(500)
     .regex(/^[a-z][a-z0-9+.-]*:\/\/.+/i, 'URI must be <scheme>://<path>'),
-  name: z.string().min(1).max(100).trim(),
-  description: z.string().min(1).max(5000).trim(),
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().min(1).max(5000),
   mimeType: z.string().min(1).max(100).default('application/json'),
   resourceType: resourceTypeSchema,
   isEnabled: z.boolean().default(false),
@@ -199,8 +199,8 @@ export type CreateExposedResource = z.infer<typeof createExposedResourceSchema>;
  */
 export const updateExposedResourceSchema = z
   .object({
-    name: z.string().min(1).max(100).trim().optional(),
-    description: z.string().min(1).max(5000).trim().optional(),
+    name: z.string().trim().min(1).max(100).optional(),
+    description: z.string().trim().min(1).max(5000).optional(),
     mimeType: z.string().min(1).max(100).optional(),
     isEnabled: z.boolean().optional(),
     handlerConfig: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -253,7 +253,7 @@ const mcpPromptArgumentSchema = z.object({
       /^[a-z][a-z0-9_]*$/,
       'Argument name must start with a lowercase letter and contain only lowercase letters, digits, and underscores'
     ),
-  description: z.string().min(1).max(500).trim(),
+  description: z.string().trim().min(1).max(500),
   required: z.boolean().default(false),
 });
 
@@ -268,7 +268,7 @@ export type McpPromptArgumentSpec = z.infer<typeof mcpPromptArgumentSchema>;
  */
 export const createPromptSchema = z.object({
   name: mcpPromptNameSchema,
-  description: z.string().min(1).max(5000).trim(),
+  description: z.string().trim().min(1).max(5000),
   template: z.string().min(1).max(10_000),
   argumentsSpec: z
     .array(mcpPromptArgumentSchema)
@@ -285,7 +285,7 @@ export type CreatePrompt = z.infer<typeof createPromptSchema>;
  */
 export const updatePromptSchema = z
   .object({
-    description: z.string().min(1).max(5000).trim().optional(),
+    description: z.string().trim().min(1).max(5000).optional(),
     template: z.string().min(1).max(10_000).optional(),
     argumentsSpec: z.array(mcpPromptArgumentSchema).max(20).optional(),
     isEnabled: z.boolean().optional(),
@@ -312,7 +312,7 @@ export type ListPromptsQuery = z.infer<typeof listPromptsQuerySchema>;
  * Create MCP API key (POST /api/v1/admin/orchestration/mcp/keys)
  */
 export const createApiKeySchema = z.object({
-  name: z.string().min(1).max(100).trim(),
+  name: z.string().trim().min(1).max(100),
   scopes: z
     .array(mcpScopeSchema)
     .min(1, 'At least one scope is required')
@@ -333,7 +333,7 @@ export type CreateApiKey = z.infer<typeof createApiKeySchema>;
  */
 export const updateApiKeySchema = z
   .object({
-    name: z.string().min(1).max(100).trim().optional(),
+    name: z.string().trim().min(1).max(100).optional(),
     isActive: z.boolean().optional(),
     expiresAt: z.coerce.date().nullable().optional(),
     rateLimitOverride: z.number().int().min(1).max(10000).nullable().optional(),

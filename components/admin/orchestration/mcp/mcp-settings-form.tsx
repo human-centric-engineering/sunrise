@@ -30,8 +30,8 @@ interface McpSettingsFormProps {
 }
 
 const mcpSettingsFormSchema = z.object({
-  serverName: z.string().min(1, 'Required').max(100).trim(),
-  serverVersion: z.string().min(1, 'Required').max(20).trim(),
+  serverName: z.string().trim().min(1, 'Required').max(100),
+  serverVersion: z.string().trim().min(1, 'Required').max(20),
   globalRateLimit: z.coerce.number().int().min(1, 'Min 1').max(10000, 'Max 10,000'),
   auditRetentionDays: z.coerce.number().int().min(0, 'Min 0').max(3650, 'Max 3,650'),
 });

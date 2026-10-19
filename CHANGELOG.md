@@ -784,6 +784,18 @@ release process.
 
 ### Fixed
 
+- **Required text fields reject whitespace-only input instead of saving it
+  blank** (t-860, #713). Zod runs a string chain's checks in the order written,
+  and 88 schemas called `.trim()` after `.min()`, `.max()` or `.regex()`. So
+  `"   "` passed `.min(1)` and was stored as `""`. Sign-up's `name`, the
+  contact form, profile and invitation fields, the MCP settings and most
+  orchestration admin forms were affected. Every chain now trims first, and
+  `tests/unit/lib/validations/trim-order.test.ts` fails on any new chain that
+  does not. **Forks:** a request whose required field is only spaces is now a
+  `400` with the field's "required" message. A padded value is measured after
+  trimming, so a value within `.max()` once trimmed now passes. If the guard
+  fails on your own schemas, move `.trim()` to straight after `z.string()`.
+
 - **Approval history shows decisions on scheduled and inbound runs** (t-849,
   #773). `GET /api/v1/admin/orchestration/approvals/history` read only runs the
   caller owned, so every decision on a run nobody owns was missing, including

@@ -60,14 +60,14 @@ function readPrices(
 }
 
 const newModelSchema = z.object({
-  name: z.string().min(1).max(100).trim(),
+  name: z.string().trim().min(1).max(100),
   slug: z
     .string()
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Slug must be lowercase alphanumeric with hyphens only')
     .max(80),
-  providerSlug: z.string().min(1).max(50).trim(),
-  modelId: z.string().min(1).max(100).trim(),
-  description: z.string().min(1).max(2000).trim(),
+  providerSlug: z.string().trim().min(1).max(50),
+  modelId: z.string().trim().min(1).max(100),
+  description: z.string().trim().min(1).max(2000),
   // Source the closed set from the canonical CAPABILITIES enum so this
   // capability stays in sync with the audit-proposals Zod schema and
   // the analyse_chat / discover_new_models prompts. The previous
@@ -90,7 +90,7 @@ const newModelSchema = z.object({
   costEfficiency: z.enum(['very_high', 'high', 'medium', 'none']).default('medium'),
   contextLength: z.enum(['very_high', 'high', 'medium', 'n_a']).default('medium'),
   toolUse: z.enum(['strong', 'moderate', 'none']).default('none'),
-  bestRole: z.string().min(1).max(200).trim(),
+  bestRole: z.string().trim().min(1).max(200),
   // Embedding-specific (optional)
   dimensions: z.number().int().positive().optional(),
   schemaCompatible: z.boolean().optional(),

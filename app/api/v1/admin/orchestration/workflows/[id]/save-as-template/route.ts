@@ -29,8 +29,8 @@ import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violati
 import { assertWorkflowProvidersApproved } from '@/lib/orchestration/workflows/semantic-validator';
 
 const saveAsTemplateSchema = z.object({
-  name: z.string().min(1).max(200).trim().optional(),
-  description: z.string().min(1).max(5000).trim().optional(),
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().min(1).max(5000).optional(),
 });
 
 export const POST = withAdminAuth<{ id: string }>(

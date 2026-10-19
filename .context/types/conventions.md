@@ -60,12 +60,20 @@ lib/validations/
 ```typescript
 // lib/validations/user.ts
 export const updateUserSchema = z.object({
-  name: z.string().min(1).max(100).trim(),
+  name: z.string().trim().min(1).max(100),
   email: emailSchema,
 });
 
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 ```
+
+**Trim first.** Zod runs a string chain's checks in the order written, and
+`.trim()` is one of them. `z.string().min(1).trim()` measures the raw input,
+accepts `"   "` and stores `""`. Put `.trim()` straight after `z.string()`, or
+use `nonEmptyStringSchema` from `common.ts`.
+`tests/unit/lib/validations/trim-order.test.ts` fails on any chain under
+`app/`, `lib/` or `components/` with a length, pattern or refinement check
+before `.trim()`.
 
 ### 3. API Utilities (`lib/api/`)
 

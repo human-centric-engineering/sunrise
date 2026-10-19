@@ -50,9 +50,9 @@ export const signUpSchema = z
     password: passwordSchema,
     name: z
       .string()
+      .trim()
       .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+      .max(100, 'Name must be less than 100 characters'),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {

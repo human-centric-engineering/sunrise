@@ -23,9 +23,9 @@ import { ORG_ROLES } from '@/lib/tenancy/roles';
 export const updateUserSchema = z.object({
   name: z
     .string()
+    .trim()
     .min(1, 'Name cannot be empty')
     .max(100, 'Name must be less than 100 characters')
-    .trim()
     .optional(),
   email: emailSchema.optional(),
 
@@ -44,7 +44,7 @@ export const updateUserSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required').optional(),
 
   // Extended profile fields (Phase 3.2)
-  bio: z.string().max(500, 'Bio must be less than 500 characters').trim().optional().nullable(),
+  bio: z.string().trim().max(500, 'Bio must be less than 500 characters').optional().nullable(),
   phone: z
     .string()
     .max(20, 'Phone number must be less than 20 characters')
@@ -54,8 +54,8 @@ export const updateUserSchema = z.object({
   timezone: z.string().max(50, 'Timezone must be less than 50 characters').optional(),
   location: z
     .string()
-    .max(100, 'Location must be less than 100 characters')
     .trim()
+    .max(100, 'Location must be less than 100 characters')
     .optional()
     .nullable(),
 });
@@ -193,9 +193,9 @@ export const inviteUserSchema = z.object({
   /** User's full name */
   name: z
     .string()
+    .trim()
     .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+    .max(100, 'Name must be less than 100 characters'),
 
   /** User's email address (must be unique) */
   email: emailSchema,

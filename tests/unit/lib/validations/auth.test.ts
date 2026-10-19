@@ -273,6 +273,27 @@ describe('signUpSchema', () => {
       }
     });
 
+    it('should reject a name made only of whitespace', () => {
+      // Trimming after the length check accepted this and stored "" (#713).
+      const result = signUpSchema.safeParse({
+        ...validSignUpData,
+        name: '   ',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['name']);
+        expect(result.error.issues[0].message).toContain('required');
+      }
+    });
+
+    it('should accept a padded name whose trimmed length fits', () => {
+      const result = signUpSchema.safeParse({
+        ...validSignUpData,
+        name: `  ${'a'.repeat(100)}  `,
+      });
+      expect(result.success).toBe(true);
+    });
+
     it('should reject name longer than 100 characters', () => {
       const result = signUpSchema.safeParse({
         ...validSignUpData,
