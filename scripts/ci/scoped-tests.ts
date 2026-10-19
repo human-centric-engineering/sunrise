@@ -276,10 +276,10 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
     path: 'tests/unit/versioning-seam-coverage.test.ts',
     reason:
       "reads `lib/app/*` off disk and checks it against VERSIONING.md's " +
-      'public-surface list. Both of its inputs — a scaffold file and a ' +
-      'markdown document — are outside every module graph, so adding a seam ' +
-      'and forgetting the contract entry is precisely the change no import ' +
-      'chain connects to a test (#732).',
+      "public-surface list and CUSTOMIZATION.md §4's seam table. Its inputs — " +
+      'a scaffold file and two markdown documents — are outside every module ' +
+      'graph, so adding a seam and forgetting the contract or guide entry is ' +
+      'precisely the change no import chain connects to a test (#732, #735).',
   },
   {
     path: 'tests/unit/lib/security/outbound-fetch-redirects.test.ts',
