@@ -380,6 +380,14 @@ async function eraseInTransaction(
     data: { clientIp: null },
   });
 
+  // Other people's pending erasures this person asked for as an admin (t-842)
+  // name them in a plain column with no FK, so no `SetNull` reaches it. Cleared
+  // here instead; the retrier then records those erasures as the person's own.
+  await tx.user.updateMany({
+    where: { erasureRequestedBy: userId, id: { not: userId } },
+    data: { erasureRequestedBy: null },
+  });
+
   // Contact-form messages are keyed by address alone (no FK), so the
   // cascade below never reaches them. The export hands these same rows to
   // the subject as their personal data, so they go — matched exactly, never

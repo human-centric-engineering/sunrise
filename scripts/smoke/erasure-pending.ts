@@ -232,6 +232,10 @@ async function main(): Promise<void> {
       'the first attempt failed, naming the admin who asked'
     );
     await eraseUser({ userId: asker.id, actorUserId: asker.id, reason: 'self_service' });
+    check(
+      (await prisma.user.findUnique({ where: { id: orphaned.id } }))?.erasureRequestedBy === null,
+      'erasing the admin takes their id off the erasure they asked for'
+    );
 
     const retried = await processPendingErasures(new Date(Date.now() + 5 * MINUTE));
     check(retried.erased === 1 && retried.failed === 0, 'the retry erases the person');

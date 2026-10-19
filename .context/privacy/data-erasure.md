@@ -100,6 +100,13 @@ finishes the job. t-845 adds a request budget and a `202 pending` answer.
   lets a disabled account's cached session create an `AiApiKey`.
   `resolveApiKey` refuses any key whose owner has a pending erasure, so the
   new key never works.
+- **The requester is not kept.** Erasing an admin clears their id from
+  `erasureRequestedBy` on any erasure they asked for that is still pending
+  (the column has no FK for a `SetNull` to reach). The retry then records the
+  person as the actor. The subject-access export leaves out
+  `erasureRequestedBy` and the retry state (`erasureAttempts`,
+  `erasureNextAttemptAt`); when the deletion was requested, and why, are
+  included.
 - **MCP keys are not revoked.** An `McpApiKey` is the org's service key, kept
   through erasure (`createdBy` is `SetNull`), not the person's credential.
 - **The tick must run.** On a host without the tick cron, nothing retries

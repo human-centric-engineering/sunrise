@@ -28,6 +28,7 @@ const {
   mockExecuteRaw,
   mockQueryRaw,
   mockUserDelete,
+  mockUserUpdateMany,
   mockUserFind,
   mockDeliveryUpdateMany,
   mockDeliveryFindMany,
@@ -61,6 +62,7 @@ const {
   const auditCreateMany = vi.fn().mockResolvedValue({ count: 0 });
   const eraseDeliveries = vi.fn().mockResolvedValue(0);
   const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
+  const userUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
 
   // Prisma mock — $transaction invokes its async callback with the same
   // prisma mock so tx.X === prisma.X; this is the pattern described in the
@@ -81,7 +83,14 @@ const {
       update: deliveryUpdate,
     },
     // `findUnique` is the run pre-pass's read (t-804), outside the transaction.
-    user: { delete: userDelete, findUniqueOrThrow: userFind, findUnique: userFind },
+    // `updateMany` clears this person as the requester of others' pending
+    // erasures (t-842).
+    user: {
+      delete: userDelete,
+      findUniqueOrThrow: userFind,
+      findUnique: userFind,
+      updateMany: userUpdateMany,
+    },
   };
   prismaObj.$transaction.mockImplementation(
     (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
@@ -97,6 +106,7 @@ const {
   };
 
   return {
+    mockUserUpdateMany: userUpdateMany,
     mockUpdateMany: updateMany,
     mockContactDeleteMany: contactDeleteMany,
     mockContactCount: contactCount,
@@ -288,6 +298,22 @@ describe('eraseUser', () => {
       where: { userId },
       data: { clientIp: null },
     });
+  });
+
+  it('clears this person as the requester of other people’s pending erasures, inside the transaction, before the delete (t-842)', async () => {
+    const { userId } = BASE_PARAMS;
+
+    await eraseUser(BASE_PARAMS);
+
+    // The column has no FK, so no SetNull reaches it: an erased admin's id
+    // would otherwise outlive them on every erasure they asked for.
+    expect(mockUserUpdateMany).toHaveBeenCalledWith({
+      where: { erasureRequestedBy: userId, id: { not: userId } },
+      data: { erasureRequestedBy: null },
+    });
+    expect(mockUserUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUserDelete.mock.invocationCallOrder[0]
+    );
   });
 
   // -------------------------------------------------------------------------
