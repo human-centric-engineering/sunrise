@@ -40,7 +40,7 @@ import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -77,6 +77,7 @@ const createSchema = z
       .array(
         z.object({
           label: z.string().min(1).max(100),
+          /** Refused for now (#857) — see the POST handler. */
           agentVersionId: z.string().optional(),
         })
       )
@@ -147,6 +148,17 @@ export const POST = withAdminAuth(
     const log = await getRouteLogger(request);
     const body = await validateRequestBody(request, createSchema);
 
+    // A variant pinned to a saved agent version cannot be honoured yet: the run
+    // path can only load the live agent, so a pinned variant would be scored
+    // against the live config and a version A/B would report noise as a winner
+    // (#857). Refused until a saved version can be run; `[id]/run` refuses rows
+    // that were stored with a pin before this check existed.
+    if (body.variants.some((v) => v.agentVersionId)) {
+      throw new ValidationError(
+        'Pinning a variant to a saved agent version is not supported yet: every variant runs the live agent. Remove agentVersionId from the variants.'
+      );
+    }
+
     // Dataset visibility when the caller opted in — theirs, or one nobody
     // owns where the policy allows. Matches `[id]/run`, which already permits
     // an ownerless dataset (t-678); binding and running must agree.
@@ -174,7 +186,6 @@ export const POST = withAdminAuth(
         variants: {
           create: body.variants.map((v) => ({
             label: v.label,
-            agentVersionId: v.agentVersionId ?? null,
           })),
         },
       },

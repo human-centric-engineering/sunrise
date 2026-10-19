@@ -824,6 +824,17 @@ release process.
 
 ### Fixed
 
+- **An experiment can no longer pin a variant to a saved agent version, which
+  it could not honour** (t-864, #857). The run path loads only the live agent,
+  so pinned variants were scored against the live config and a version A/B
+  named a winner between identical setups. `POST
+  /api/v1/admin/orchestration/experiments` now answers `400` for any variant
+  with `agentVersionId`, and `POST /experiments/:id/run` answers `400` for an
+  experiment already stored with one, before writing any run or session.
+  Unpinned experiments are unchanged; every variant runs the live agent, and
+  the create form and `.context/orchestration/experiments.md` now say so.
+  **Forks:** a client that sent `agentVersionId` must drop it.
+
 - **Admin pages say when their data failed to load, instead of showing an
   empty list** (t-861, #518). Every admin page that reads through
   `serverFetch` caught any failure and returned `[]` or `null`, so a 500, a

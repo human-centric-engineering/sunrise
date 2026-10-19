@@ -413,34 +413,25 @@ describe('POST /api/v1/admin/orchestration/experiments', () => {
       );
     });
 
-    it('stores agentVersionId on variants when provided', async () => {
-      // Catches a regression where agentVersionId is stripped from variant create data.
+    it('refuses a variant pinned to an agent version, before anything is written', async () => {
+      // A pin cannot be honoured yet: the run path loads only the live agent, so
+      // a pinned variant would be scored against the live config and a version
+      // A/B would name a winner between identical setups (#857).
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      const experimentWithVersions = makeExperiment({
-        variants: [
-          { id: 'v1', label: 'Control', agentVersionId: 'ver-1', evaluationSession: null },
-          { id: 'v2', label: 'Variant A', agentVersionId: null, evaluationSession: null },
-        ],
-      });
-      vi.mocked(prisma.aiExperiment.create).mockResolvedValue(experimentWithVersions as never);
 
       const bodyWithVersionId = {
         ...VALID_BODY,
         variants: [{ label: 'Control', agentVersionId: 'ver-1' }, { label: 'Variant A' }],
       };
-      await POST(makePostRequest(bodyWithVersionId));
+      const response = await POST(makePostRequest(bodyWithVersionId));
 
-      expect(vi.mocked(prisma.aiExperiment.create)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            variants: {
-              create: expect.arrayContaining([
-                expect.objectContaining({ label: 'Control', agentVersionId: 'ver-1' }),
-              ]),
-            },
-          }),
-        })
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
+        response
       );
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toMatch(/saved agent version is not supported yet/);
+      expect(vi.mocked(prisma.aiExperiment.create)).not.toHaveBeenCalled();
     });
   });
 

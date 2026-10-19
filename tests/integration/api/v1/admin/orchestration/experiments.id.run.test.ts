@@ -240,6 +240,59 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
     });
   });
 
+  describe('a variant pinned to an agent version (#857)', () => {
+    // Stored before create refused pins. The run path can only load the live
+    // agent, so running it would score both arms against the same config.
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      mockTxFindUnique.mockResolvedValue(
+        makeExperiment({
+          variants: [
+            { id: 'v1', label: 'Control', agentVersionId: 'ver-1' },
+            { id: 'v2', label: 'Variant A', agentVersionId: null },
+          ],
+        })
+      );
+    });
+
+    it('is refused with a 400 that names the pin', async () => {
+      const response = await POST(makePostRequest(), makeContext());
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string; message: string } }>(response);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toMatch(/pins a variant to a saved agent version/);
+    });
+
+    it('writes no evaluation session or run and leaves the experiment a draft', async () => {
+      await POST(makePostRequest(), makeContext());
+
+      expect(mockEvalSessionCreate).not.toHaveBeenCalled();
+      expect(mockEvalRunCreate).not.toHaveBeenCalled();
+      expect(mockVariantUpdate).not.toHaveBeenCalled();
+      expect(mockTxUpdate).not.toHaveBeenCalled();
+    });
+
+    it('is refused on the dataset-driven path too', async () => {
+      bindDataset({ id: 'ds-1', userId: ADMIN_ID, contentHash: 'h', caseCount: 3 });
+      mockTxFindUnique.mockResolvedValue(
+        makeExperiment({
+          datasetId: 'ds-1',
+          metricConfigs: [{ slug: 'judge_agent' }],
+          variants: [
+            { id: 'v1', label: 'Control', agentVersionId: 'ver-1' },
+            { id: 'v2', label: 'Variant A', agentVersionId: 'ver-2' },
+          ],
+        })
+      );
+
+      const response = await POST(makePostRequest(), makeContext());
+
+      expect(response.status).toBe(400);
+      expect(mockEvalRunCreate).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Successful run', () => {
     it('transitions status to "running" and returns 200', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

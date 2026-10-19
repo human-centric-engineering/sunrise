@@ -249,11 +249,14 @@ function CreateExperimentForm({
               Variants{' '}
               <FieldHelp title="Experiment variants" contentClassName="w-80">
                 <p>
-                  Each variant represents a different prompt or configuration you want to compare.
-                  Give each a descriptive label (e.g. &ldquo;Concise instructions&rdquo; vs
-                  &ldquo;Detailed instructions&rdquo;).
+                  Every variant currently runs the agent&rsquo;s live configuration, so all variants
+                  get the same setup. Use an experiment as an A/A check of how much scores vary
+                  between identical runs, not to compare two versions of the agent.
                 </p>
-                <p className="mt-1">You need at least 2 variants, up to 5.</p>
+                <p className="mt-1">
+                  Comparing saved agent versions is not supported yet. You need at least 2 variants,
+                  up to 5.
+                </p>
               </FieldHelp>
             </Label>
             <div className="space-y-2">
@@ -448,7 +451,7 @@ export function ExperimentsList(): React.ReactElement {
                 </Tip>
               </TableHead>
               <TableHead className="text-right">
-                <Tip label="Number of prompt variants being compared (2–5)">
+                <Tip label="Number of variants in this experiment (2–5)">
                   <span>Variants</span>
                 </Tip>
               </TableHead>

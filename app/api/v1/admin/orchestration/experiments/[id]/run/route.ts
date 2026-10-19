@@ -84,6 +84,17 @@ export const POST = withAdminAuth<Params>(
         throw new ValidationError('Experiment needs at least 2 variants to run');
       }
 
+      // A pinned variant would be scored against the live agent, because the
+      // run path cannot load a saved version, so a version A/B would compare one
+      // config with itself and still name a winner (#857). Create refuses pins
+      // now; this catches rows stored with one before it did, and refuses before
+      // any evaluation run or session is written.
+      if (experiment.variants.some((v) => v.agentVersionId)) {
+        throw new ValidationError(
+          'This experiment pins a variant to a saved agent version, which cannot be run yet: it would be scored against the live agent. Create a new experiment without version pins.'
+        );
+      }
+
       // The bound dataset, read through its visibility so the check below can
       // verify it is one the caller may use before its content is copied into
       // a run they own. The clause comes from the policy answer the guard

@@ -1,6 +1,8 @@
 # Orchestration Experiments (A/B Testing)
 
-The experiments system allows admins to compare multiple agent variants side-by-side. Each experiment runs against a single agent and defines 2–5 variants (different agent versions or configurations). Running an experiment transitions it from `draft` → `running` and (when stopped) to `completed`.
+The experiments system allows admins to compare multiple agent variants side-by-side. Each experiment runs against a single agent and defines 2–5 variants. Running an experiment transitions it from `draft` → `running` and (when stopped) to `completed`.
+
+> **Every variant runs the agent's live configuration (#857).** The run path can only load the live agent, so a variant pinned to a saved `AiAgentVersion` would be scored against the live config and a version A/B would compare one setup with itself, then name a winner from the noise. Until a saved version can be run, `POST /experiments` refuses any variant with `agentVersionId`, and `POST /:id/run` refuses an experiment that already has one stored. An experiment today is an A/A check — how far scores drift between identical runs — not a comparison of versions.
 
 ## Architecture
 
@@ -98,7 +100,7 @@ Body:
   description: string (max 2000, optional)
   agentId:     string (required)
   variants: [           // min 2, max 5
-    { label: string, agentVersionId?: string },
+    { label: string, agentVersionId?: string },  // agentVersionId → 400 for now (#857)
     ...
   ]
 }
@@ -185,6 +187,7 @@ Rate limit: adminLimiter
 Validation:
   - status must be "draft"       → 400 "Experiment is already {status}"
   - variants.length >= 2         → 400 "Experiment needs at least 2 variants to run"
+  - no variant has agentVersionId → 400, before anything is written (#857)
 
 Effect:
   1. Creates one AiEvaluationSession per variant (status: "in_progress",
@@ -218,7 +221,7 @@ interface ExperimentVariant {
   id: string;
   experimentId: string;
   label: string; // e.g. "Control", "Treatment A"
-  agentVersionId?: string | null; // pin to a snapshot; null = current live config
+  agentVersionId?: string | null; // pin to a snapshot — refused on create and run until one can be run (#857)
   evaluationSessionId?: string | null; // set when experiment runs via POST /run
   score?: number | null; // filled in after evaluation session completes
   evaluationSession?: {
@@ -300,3 +303,4 @@ Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md conte
 | Claim an already-owned row      | 409  | `CONFLICT`            |
 | < 2 variants on run             | 400  | `VALIDATION_ERROR`    |
 | Too few/many variants on create | 400  | `VALIDATION_ERROR`    |
+| Version-pinned variant          | 400  | `VALIDATION_ERROR`    |
