@@ -29,14 +29,18 @@ interface AppHeaderProps {
 export function AppHeader({ logoHref = '/', logoText, navigation }: AppHeaderProps) {
   return (
     <header className="border-b">
-      <div className="container mx-auto flex items-center justify-between px-4 py-4">
-        <div className="flex items-center gap-8">
-          <Link href={logoHref} className="text-xl font-bold hover:opacity-80">
+      <div className="container mx-auto flex items-center justify-between gap-4 px-4 py-4">
+        {/* `min-w-0` lets the brand truncate rather than push the actions off a
+            small screen; the nav folds into a menu below `md` (HeaderNav). */}
+        <div className="flex min-w-0 items-center gap-4 md:gap-8">
+          <Link href={logoHref} className="min-w-0 truncate text-xl font-bold hover:opacity-80">
             {logoText ?? <BrandMark />}
           </Link>
           {navigation}
         </div>
-        <HeaderActions />
+        <div className="shrink-0">
+          <HeaderActions />
+        </div>
       </div>
     </header>
   );
