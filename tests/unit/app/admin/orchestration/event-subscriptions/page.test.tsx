@@ -6,12 +6,14 @@
  * @see app/admin/orchestration/event-subscriptions/page.tsx
  *
  * Server component. Asserts the page renders its header, breadcrumb,
- * and the WebhooksTable, and that a failed load of either the subscriptions
- * or the dead-letter queue throws to the error boundary rather than rendering
- * an empty list (an empty DLQ is the all-clear) (#518).
+ * and the WebhooksTable, that a failed subscriptions load throws to the
+ * error boundary rather than rendering an empty list, and that a failed
+ * dead-letter queue shows a notice in its tab rather than an empty queue
+ * (the all-clear) while the subscriptions still render (#518).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useSearchParams } from 'next/navigation';
 import { render, screen } from '@testing-library/react';
 
 // Only the network is faked: the real parseApiResponse and server-load run.
@@ -72,6 +74,9 @@ function routeFetch(answers: { webhooks?: () => Response; dlq?: () => Response }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(useSearchParams).mockReturnValue(
+    new URLSearchParams() as ReturnType<typeof useSearchParams>
+  );
 });
 
 describe('EventSubscriptionsPage (list)', () => {
@@ -144,9 +149,29 @@ describe('EventSubscriptionsPage (list)', () => {
     );
   });
 
-  it('throws when only the dead-letter queue fails, rather than showing it empty', async () => {
-    routeFetch({ dlq: () => apiFailure(500) });
+  describe('when only the dead-letter queue fails', () => {
+    it.each([
+      ['answers 500', () => apiFailure(500)],
+      ['answers success:false', () => apiFailure(200)],
+    ])('still renders the subscriptions when it %s', async (_label, dlq) => {
+      routeFetch({ dlq });
 
-    await expect(EventSubscriptionsPage()).rejects.toBeInstanceOf(ServerLoadError);
+      render(await EventSubscriptionsPage());
+
+      expect(screen.getByTestId('webhooks-table')).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /dead letter queue/i })).toBeInTheDocument();
+    });
+
+    it('shows a notice in the DLQ tab rather than an empty queue', async () => {
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=dlq') as ReturnType<typeof useSearchParams>
+      );
+      routeFetch({ dlq: () => apiFailure(500) });
+
+      render(await EventSubscriptionsPage());
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load the dead-letter queue/i);
+      expect(screen.queryByText(/nothing in the dead-letter queue/i)).not.toBeInTheDocument();
+    });
   });
 });

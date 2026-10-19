@@ -11,7 +11,10 @@
  *   the category list and the quarantine attribution, with real Responses
  * - Asserts edit form is pre-filled with fixture capability name
  * - Asserts notFound() is called on a 404, and only on a 404: a 500 on the
- *   capability or its agent-usage list throws to the error boundary (#518)
+ *   capability throws to the error boundary (#518). Only the capability
+ *   decides not-found.
+ * - A failed agent-usage list renders the page with a notice in the "Used by"
+ *   card's place and in the quarantine card, never a count of zero
  * - A failed category list shows a "Couldn't load" notice; the form still renders
  * - A failed attribution load omits the attribution line
  *
@@ -20,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
@@ -260,18 +264,50 @@ describe('EditCapabilityPage (server component)', () => {
     expect(mockNotFound).not.toHaveBeenCalled();
   });
 
+  it('calls notFound() when the capability 404s even if its agent list fails differently', async () => {
+    await mockApi({ capability: fail(404), usedBy: fail(500) });
+
+    await expect(loadPage('nonexistent-id')).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+
+  // ── Agent-usage list: secondary, shown as failed (#518) ────────────────────
+
   // The usage list feeds "Used by" and the quarantine card's "Will affect N
   // agents": rendered from a failed load, both would state zero as fact.
-  it.each([
-    ['answers 500', fail(500)],
-    ['answers success:false', fail(200)],
-    ['rejects', reject()],
-  ])('throws to the error boundary when the agent-usage list %s', async (_label, usedBy) => {
-    const { ServerLoadError } = await import('@/lib/api/server-load');
-    await mockApi({ usedBy });
+  describe('when the agent-usage list fails to load', () => {
+    it.each([
+      ['answers 500', fail(500)],
+      ['answers success:false', fail(200)],
+      ['rejects', reject()],
+      // Only the capability fetch may decide not-found.
+      ['answers 404', fail(404)],
+    ])('renders the form, with a notice on the Safety tab, when it %s', async (_l, usedBy) => {
+      await mockApi({ usedBy });
+      const user = userEvent.setup();
 
-    await expect(loadPage()).rejects.toBeInstanceOf(ServerLoadError);
-    expect(mockNotFound).not.toHaveBeenCalled();
+      await renderPage();
+
+      expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
+      expect(mockNotFound).not.toHaveBeenCalled();
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load the agents using this capability/i
+      );
+      expect(screen.queryByText(/used by/i)).not.toBeInTheDocument();
+    });
+
+    it('shows a notice in the quarantine card instead of an agent count', async () => {
+      await mockApi({ capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINED), usedBy: fail(500) });
+
+      await renderPage();
+
+      expect(screen.getByRole('button', { name: /lift quarantine/i })).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load the agents using this capability/i
+      );
+      expect(screen.queryByText(/no agents currently use/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/agents? affected/i)).not.toBeInTheDocument();
+    });
   });
 
   // ── Category list: secondary, shown as failed (#518) ───────────────────────

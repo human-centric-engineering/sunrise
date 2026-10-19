@@ -39,7 +39,7 @@ The known-provider catalogue lives in `lib/orchestration/llm/known-providers.ts`
 | `/admin/orchestration/providers/new`  | `app/admin/orchestration/providers/new/page.tsx`  | Create shell                         |
 | `/admin/orchestration/providers/[id]` | `app/admin/orchestration/providers/[id]/page.tsx` | Edit shell, `notFound()` on missing  |
 
-The list and edit pages load through `requireServerData()` (`lib/api/server-load.ts`). A failed load of the provider list or the model matrix throws to the admin error boundary, which logs it and offers **Try again** — never an empty grid. On the edit page only a 404 renders `notFound()`; any other failure reaches the error boundary (#518).
+The list and edit pages load through `lib/api/server-load.ts`. A failed load of the provider list throws to the admin error boundary, which logs it and offers **Try again** — never an empty grid. A failed model-matrix load (`loadServerData()`) shows a "Couldn't load the model matrix" notice in the Model Matrix tab; the Configuration tab still works. On the edit page only a 404 renders `notFound()`; any other failure reaches the error boundary (#518).
 
 ## List page — cards, not a table
 

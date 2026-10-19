@@ -8,6 +8,7 @@
  * - rateLimit empty input → undefined in payload; "60" → 60
  * - Edit mode with usedBy renders "Used by N agents" chip card
  *   with every agent's name
+ * - Edit mode with usedBy={null} (failed load) shows a notice in its place
  *
  * @see components/admin/orchestration/capability-form.tsx
  */
@@ -404,6 +405,27 @@ describe('CapabilityForm — Safety tab', () => {
 
       expect(screen.getByText(/used by 1 agent$/i)).toBeInTheDocument();
       expect(screen.getByText(/1 agent in other organisations uses it/i)).toBeInTheDocument();
+    });
+
+    it('shows a notice, not an absent card, when the agent list failed to load (#518)', async () => {
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability()}
+          usedBy={null}
+          availableCategories={['api']}
+        />
+      );
+
+      await openSafetyTab(user);
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load the agents using this capability/i
+      );
+      expect(screen.queryByText(/used by/i)).not.toBeInTheDocument();
+      // The rest of the Safety tab still renders.
+      expect(screen.getByRole('spinbutton', { name: /rate limit/i })).toBeInTheDocument();
     });
 
     it('does NOT render chip card in create mode', async () => {

@@ -61,6 +61,7 @@ import { jsonEquals } from '@/lib/utils/json-equal';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { AiCapability } from '@/types/prisma';
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
 /**
  * Narrow an untrusted JSON blob (API response or Prisma JSON field) to a
@@ -168,7 +169,12 @@ export interface UsedByAgentSummary {
 export interface CapabilityFormProps {
   mode: 'create' | 'edit';
   capability?: AiCapability;
-  usedBy?: UsedByAgentSummary[];
+  /**
+   * Agents in the caller's org with it attached (edit mode). `null` means the
+   * list failed to load: the Safety tab shows a "Couldn't load" notice where
+   * the "Used by" card would be, rather than implying no agents use it.
+   */
+  usedBy?: UsedByAgentSummary[] | null;
   /** Agents in other orgs with it attached: counted, never named (§107 t-752). */
   otherOrgUsedByCount?: number;
   availableCategories?: string[];
@@ -1678,7 +1684,11 @@ export function CapabilityForm({
             )}
           </div>
 
-          {isEdit && usedBy.length + otherOrgUsedByCount > 0 && (
+          {isEdit && usedBy === null && (
+            <LoadFailedNotice what="the agents using this capability" />
+          )}
+
+          {isEdit && usedBy !== null && usedBy.length + otherOrgUsedByCount > 0 && (
             <div className="rounded-md border p-4">
               <p className="text-sm font-medium">
                 Used by {agentCount(usedBy.length + otherOrgUsedByCount)}

@@ -9,6 +9,8 @@
  *   POSTs to the quarantine endpoint with the expected body shape.
  * - QuarantinedView: renders the current mode, reason, lift button;
  *   POSTs unquarantine on click.
+ * - A failed agent-usage load (`affectedAgents={null}`): no number of
+ *   affected agents is stated, and the quarantined view shows a notice.
  *
  * @see components/admin/orchestration/capability-quarantine-card.tsx
  */
@@ -448,6 +450,67 @@ describe('CapabilityQuarantineCard — QuarantinedView', () => {
     expect(screen.getByText(/No agents currently use this capability/i)).toBeInTheDocument();
     // No popover trigger when there are no agents to list.
     expect(screen.queryByRole('button', { name: /agents affected/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('CapabilityQuarantineCard — agent list failed to load (#518)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiPost.mockResolvedValue({});
+  });
+
+  it('states no count of affected agents in the active form or the confirmation', async () => {
+    const user = userEvent.setup();
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{ quarantineState: 'active', quarantineReason: null, quarantineUntil: null }}
+        affectedAgents={null}
+        otherOrgAffectedCount={0}
+      />
+    );
+
+    await expandActiveCard(user);
+    expect(
+      screen.getByText(/will affect every agent with this capability attached/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ agents?/i)).not.toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText(/Stripe charges returning 500s/i), 'Outage');
+    await user.click(screen.getByRole('button', { name: /^Quarantine$/i }));
+
+    expect(
+      await screen.findByText(/list of agents using this capability couldn.t be loaded/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/agents? affected/i)).not.toBeInTheDocument();
+    // The quarantine itself still goes through.
+    await user.click(screen.getByRole('button', { name: /confirm quarantine/i }));
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/admin/orchestration/capabilities/cap-1/quarantine',
+      { body: { mode: 'quarantined-soft', reason: 'Outage', expiresAt: null } }
+    );
+  });
+
+  it('shows a notice in the quarantined view instead of "No agents currently use this"', () => {
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{
+          quarantineState: 'quarantined-soft',
+          quarantineReason: 'Vendor down',
+          quarantineUntil: null,
+        }}
+        affectedAgents={null}
+      />
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /couldn.t load the agents using this capability/i
+    );
+    expect(screen.queryByText(/no agents currently use/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /lift quarantine/i })).toBeInTheDocument();
   });
 });
 

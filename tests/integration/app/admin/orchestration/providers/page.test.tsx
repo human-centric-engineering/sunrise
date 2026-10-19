@@ -11,8 +11,10 @@
  * - Renders each provider card with correct names
  * - "+ Add provider" link present
  * - A real empty provider list renders the empty state
- * - A failed load of either tab's rows throws to the error boundary
- *   instead of rendering an empty list (#518)
+ * - A failed providers load throws to the error boundary instead of
+ *   rendering an empty list (#518)
+ * - A failed model-matrix load leaves the Configuration tab working and
+ *   shows a "Couldn't load" notice in the Model Matrix tab
  *
  * @see app/admin/orchestration/providers/page.tsx
  */
@@ -130,8 +132,12 @@ async function mockApi(answers: { providers: () => Response; models: () => Respo
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ProvidersListPage (server component)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { useSearchParams } = await import('next/navigation');
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams() as ReturnType<typeof useSearchParams>
+    );
   });
 
   afterEach(() => {
@@ -212,13 +218,35 @@ describe('ProvidersListPage (server component)', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it('throws to the error boundary when the model matrix API fails', async () => {
-    const { ServerLoadError } = await import('@/lib/api/server-load');
-    await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiFailure(200) });
+  describe('when the model matrix fails to load', () => {
+    it.each([
+      ['answers 500', () => apiFailure(500)],
+      ['answers success:false', () => apiFailure(200)],
+    ])('still renders the providers when it %s', async (_label, models) => {
+      await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models });
 
-    const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
+      const { default: ProvidersListPage } =
+        await import('@/app/admin/orchestration/providers/page');
+      render(await ProvidersListPage());
 
-    await expect(ProvidersListPage()).rejects.toBeInstanceOf(ServerLoadError);
+      expect(screen.getByText('Anthropic')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('shows a notice in the Model Matrix tab', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=models') as ReturnType<typeof useSearchParams>
+      );
+      await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiFailure(500) });
+
+      const { default: ProvidersListPage } =
+        await import('@/app/admin/orchestration/providers/page');
+      render(await ProvidersListPage());
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load the model matrix/i);
+      expect(screen.getByRole('tab', { name: /configuration/i })).toBeInTheDocument();
+    });
   });
 
   it('throws to the error boundary when serverFetch rejects', async () => {

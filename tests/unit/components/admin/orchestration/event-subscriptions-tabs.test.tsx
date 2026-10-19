@@ -10,6 +10,8 @@
  *   - reading `?tab=dlq` activates the DLQ tab
  *   - clicking a tab fires the URL setter
  *   - badge counts come from the *Meta.total props, and hide at 0
+ *   - a DLQ that failed to load (`null`) shows a notice in its tab, no badge,
+ *     and leaves the Subscriptions tab working
  *
  * @see components/admin/orchestration/event-subscriptions-tabs.tsx
  */
@@ -137,5 +139,40 @@ describe('EventSubscriptionsTabs', () => {
 
     const dlqTab = screen.getByRole('tab', { name: /dead letter queue/i });
     expect(dlqTab).toHaveTextContent('3');
+  });
+
+  describe('when the dead-letter queue failed to load (#518)', () => {
+    it('shows a notice in the DLQ tab instead of the table', () => {
+      activeTabState = 'dlq';
+
+      render(<EventSubscriptionsTabs {...baseProps} dlqDeliveries={null} />);
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load the dead-letter queue/i);
+      expect(screen.queryByTestId('webhook-dlq-table-mock')).not.toBeInTheDocument();
+    });
+
+    it('shows no DLQ count badge, whatever the meta says', () => {
+      activeTabState = 'subscriptions';
+
+      render(
+        <EventSubscriptionsTabs
+          {...baseProps}
+          dlqDeliveries={null}
+          dlqMeta={{ page: 1, limit: 25, total: 3, totalPages: 1 }}
+        />
+      );
+
+      const dlqTab = screen.getByRole('tab', { name: /dead letter queue/i });
+      expect(dlqTab.textContent?.trim()).toBe('Dead Letter Queue');
+    });
+
+    it('leaves the Subscriptions tab working', () => {
+      activeTabState = 'subscriptions';
+
+      render(<EventSubscriptionsTabs {...baseProps} dlqDeliveries={null} />);
+
+      expect(screen.getByTestId('webhooks-table-mock')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
   });
 });

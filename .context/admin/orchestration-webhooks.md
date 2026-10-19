@@ -39,6 +39,7 @@ which destination fields are used.
 
 - URL-synced tabs (`useUrlTabs`) at the top of the page: **Subscriptions** (default) and **Dead Letter Queue**.
 - Both tabs are server-seeded by the parent page so `?tab=dlq` deep links render without a client-side fetch flash.
+- A failed subscriptions load throws to the admin error boundary. A failed DLQ load shows a "Couldn't load the dead-letter queue" notice in that tab, with no count badge, and the Subscriptions tab still works: an empty queue is the all-clear, so a failure never renders as one (#518).
 - The DLQ tab also renders a Dead Letter Queue overview FieldHelp explaining what lands here and the available actions (retry, discard, bulk replay).
 
 ### `WebhooksTable`

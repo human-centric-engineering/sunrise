@@ -48,11 +48,12 @@ export const metadata: Metadata = {
  *
  * Fetches the capability, its agent-usage list, and the sibling
  * category list in parallel. A 404 on the capability → `notFound()`;
- * any other failure throws to the admin error boundary (#518). The
- * agent-usage list also throws when it can't be read: the form's
- * "Used by" card and the quarantine card's "Will affect N agents"
- * would otherwise state zero agents as fact. A failed category list
- * shows `<LoadFailedNotice>` and leaves the dropdown with only
+ * any other failure throws to the admin error boundary (#518). Only the
+ * capability decides not-found: the other loads never throw. A failed
+ * agent-usage list is passed on as `null`, so the form's "Used by" card
+ * shows `<LoadFailedNotice>` and the quarantine card names no number of
+ * affected agents, rather than stating zero as fact. A failed category
+ * list shows `<LoadFailedNotice>` and leaves the dropdown with only
  * "+ New category…".
  */
 async function getCapability(id: string): Promise<AiCapability> {
@@ -65,16 +66,18 @@ async function getCapability(id: string): Promise<AiCapability> {
 
 /**
  * The caller's org's agents using it, by name, and other orgs' as a count
- * (`meta.otherOrgAgentCount`, §107 t-752). The route 404s for a missing
- * capability too, so a 404 here is the same not-found as the main fetch.
+ * (`meta.otherOrgAgentCount`, §107 t-752). `null` when it can't be loaded
+ * (logged by `loadServerData`). The route 404s for a missing capability
+ * too; that case is left to the capability fetch's `notFound()`.
  */
 async function getUsedBy(
   id: string
-): Promise<{ agents: UsedByAgentSummary[]; otherOrgAgentCount: number }> {
-  const { data, meta } = await requireServerData<UsedByAgentSummary[]>(
-    API.ADMIN.ORCHESTRATION.capabilityAgents(id),
-    { notFound: true }
+): Promise<{ agents: UsedByAgentSummary[]; otherOrgAgentCount: number } | null> {
+  const result = await loadServerData<UsedByAgentSummary[]>(
+    API.ADMIN.ORCHESTRATION.capabilityAgents(id)
   );
+  if (!result.ok) return null;
+  const { data, meta } = result;
   const other =
     typeof meta === 'object' && meta !== null && 'otherOrgAgentCount' in meta
       ? meta.otherOrgAgentCount
@@ -130,8 +133,10 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
         quarantineUntil: quarantineUntilDate ? quarantineUntilDate.toISOString() : null,
       }}
       attribution={quarantineAttribution}
-      affectedAgents={usedBy.agents.map((a) => ({ id: a.id, name: a.name, slug: a.slug }))}
-      otherOrgAffectedCount={usedBy.otherOrgAgentCount}
+      affectedAgents={
+        usedBy ? usedBy.agents.map((a) => ({ id: a.id, name: a.name, slug: a.slug })) : null
+      }
+      otherOrgAffectedCount={usedBy?.otherOrgAgentCount ?? 0}
     />
   );
 
@@ -160,8 +165,8 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
       <CapabilityForm
         mode="edit"
         capability={capability}
-        usedBy={usedBy.agents}
-        otherOrgUsedByCount={usedBy.otherOrgAgentCount}
+        usedBy={usedBy ? usedBy.agents : null}
+        otherOrgUsedByCount={usedBy?.otherOrgAgentCount ?? 0}
         availableCategories={availableCategories ?? []}
       />
 

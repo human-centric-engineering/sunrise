@@ -23,10 +23,19 @@ import {
 } from '@/components/admin/orchestration/provider-models-matrix';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import { useIsInstallOrg } from '@/components/admin/shared-settings-access';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
 interface ProvidersTabsProps {
-  initialProviders: ProviderRow[];
-  initialModels: ModelRow[];
+  /**
+   * Rows for the Configuration tab. `null` means they failed to load: that tab
+   * shows a "Couldn't load" notice instead of an empty provider list.
+   */
+  initialProviders: ProviderRow[] | null;
+  /**
+   * Rows for the Model Matrix tab. `null` means they failed to load: that tab
+   * shows a "Couldn't load" notice; the Configuration tab is unaffected.
+   */
+  initialModels: ModelRow[] | null;
   /**
    * Server-detected presence of at least one hosted-provider env var.
    * When false, ProvidersList hides the "Add provider" buttons — the
@@ -62,11 +71,19 @@ export function ProvidersTabs({
       </TabsList>
 
       <TabsContent value="configuration">
-        <ProvidersList initialProviders={initialProviders} hasAnyEnvKey={hasAnyEnvKey} />
+        {initialProviders === null ? (
+          <LoadFailedNotice what="providers" />
+        ) : (
+          <ProvidersList initialProviders={initialProviders} hasAnyEnvKey={hasAnyEnvKey} />
+        )}
       </TabsContent>
 
       <TabsContent value="models">
-        <ProviderModelsMatrix initialModels={initialModels} canAuditModels={canAuditModels} />
+        {initialModels === null ? (
+          <LoadFailedNotice what="the model matrix" />
+        ) : (
+          <ProviderModelsMatrix initialModels={initialModels} canAuditModels={canAuditModels} />
+        )}
       </TabsContent>
     </Tabs>
   );

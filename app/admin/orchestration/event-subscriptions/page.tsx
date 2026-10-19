@@ -6,7 +6,7 @@ import { type WebhookListItem } from '@/components/admin/orchestration/webhooks-
 import type { DlqDelivery } from '@/components/admin/orchestration/webhook-dlq-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { requireServerData } from '@/lib/api/server-load';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
@@ -37,14 +37,17 @@ async function getWebhooks(): Promise<{ webhooks: WebhookListItem[]; meta: Pagin
 }
 
 /**
- * Also required, not a degradable panel: an empty dead-letter queue is the
- * all-clear, so a failed load must not render as one (#518).
+ * The Dead Letter Queue tab's rows. An empty queue is the all-clear, so a
+ * failed load must not render as one (#518): it comes back as `null`
+ * deliveries (logged by `loadServerData`) and that tab shows a "Couldn't
+ * load" notice, while the Subscriptions tab still works.
  */
-async function getDlq(): Promise<{ deliveries: DlqDelivery[]; meta: PaginationMeta }> {
-  const { data, meta } = await requireServerData<DlqDelivery[]>(
+async function getDlq(): Promise<{ deliveries: DlqDelivery[] | null; meta: PaginationMeta }> {
+  const result = await loadServerData<DlqDelivery[]>(
     `${API.ADMIN.ORCHESTRATION.WEBHOOK_DLQ}?page=1&pageSize=20`
   );
-  return { deliveries: data, meta: parsePaginationMeta(meta) ?? EMPTY_DLQ_META };
+  if (!result.ok) return { deliveries: null, meta: EMPTY_DLQ_META };
+  return { deliveries: result.data, meta: parsePaginationMeta(result.meta) ?? EMPTY_DLQ_META };
 }
 
 export default async function EventSubscriptionsPage() {

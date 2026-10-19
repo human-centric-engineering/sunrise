@@ -53,6 +53,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
 type QuarantineMode = 'quarantined-soft' | 'quarantined-hard';
 
@@ -77,11 +78,20 @@ export interface QuarantineCapabilityCardProps {
   state: QuarantineCapabilityState;
   /** Audit attribution for the current quarantine — `null` when active or unknown. */
   attribution?: QuarantineAttribution | null;
-  /** Agents currently binding this capability — drives the confirmation blast-radius copy. */
-  affectedAgents: Array<{ id: string; name: string; slug: string }>;
-  /** Agents in other orgs binding it: counted, never named (§107 t-752). A quarantine reaches them too. */
+  /**
+   * Agents currently binding this capability — drives the confirmation blast-radius copy.
+   * `null` means the list failed to load: the card then names no number of affected
+   * agents, and the quarantined view shows a "Couldn't load" notice in its place.
+   */
+  affectedAgents: AffectedAgent[] | null;
+  /**
+   * Agents in other orgs binding it: counted, never named (§107 t-752). A quarantine
+   * reaches them too. Ignored when `affectedAgents` is `null` (same load).
+   */
   otherOrgAffectedCount?: number;
 }
+
+type AffectedAgent = { id: string; name: string; slug: string };
 
 const MODE_LABELS: Record<QuarantineMode, string> = {
   'quarantined-soft': 'Soft — agent sees "unavailable", can try a different approach',
@@ -317,13 +327,20 @@ function ActiveView({
           </div>
 
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs">
-              Will affect{' '}
-              <strong>{agentCount(affectedAgents.length + otherOrgAffectedCount)}</strong> with this
-              capability attached
-              {otherOrgAffectedCount > 0 ? ', in every organisation' : ''}. Counts include
-              deactivated agents.
-            </p>
+            {affectedAgents === null ? (
+              <p className="text-muted-foreground text-xs">
+                Will affect every agent with this capability attached. The list of those agents
+                couldn&apos;t be loaded.
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-xs">
+                Will affect{' '}
+                <strong>{agentCount(affectedAgents.length + otherOrgAffectedCount)}</strong> with
+                this capability attached
+                {otherOrgAffectedCount > 0 ? ', in every organisation' : ''}. Counts include
+                deactivated agents.
+              </p>
+            )}
             <Button
               type="button"
               variant="destructive"
@@ -352,7 +369,13 @@ function ActiveView({
                 : 'Soft mode: every agent will see a tool-unavailable error and can route around it.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {affectedAgents.length + otherOrgAffectedCount > 0 && (
+          {affectedAgents === null && (
+            <p className="rounded-md border border-amber-500/50 bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
+              The list of agents using this capability couldn&apos;t be loaded. The quarantine
+              applies to every agent that has it attached.
+            </p>
+          )}
+          {affectedAgents !== null && affectedAgents.length + otherOrgAffectedCount > 0 && (
             <div className="rounded-md border border-amber-500/50 bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
               <p className="mb-2 font-medium">
                 {agentCount(affectedAgents.length + otherOrgAffectedCount)} affected
@@ -476,10 +499,14 @@ function QuarantinedView({
           </div>
         )}
 
-        <AffectedAgentsPopover
-          affectedAgents={affectedAgents}
-          otherOrgAffectedCount={otherOrgAffectedCount}
-        />
+        {affectedAgents === null ? (
+          <LoadFailedNotice what="the agents using this capability" />
+        ) : (
+          <AffectedAgentsPopover
+            affectedAgents={affectedAgents}
+            otherOrgAffectedCount={otherOrgAffectedCount}
+          />
+        )}
 
         {!readOnly && (
           <Button
@@ -511,7 +538,7 @@ function AffectedAgentsPopover({
   affectedAgents,
   otherOrgAffectedCount,
 }: {
-  affectedAgents: QuarantineCapabilityCardProps['affectedAgents'];
+  affectedAgents: AffectedAgent[];
   otherOrgAffectedCount: number;
 }): React.ReactElement {
   const count = affectedAgents.length + otherOrgAffectedCount;

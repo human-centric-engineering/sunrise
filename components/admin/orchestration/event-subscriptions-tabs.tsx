@@ -26,6 +26,7 @@ import {
   WebhookDlqTable,
   type DlqDelivery,
 } from '@/components/admin/orchestration/webhook-dlq-table';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import type { PaginationMeta } from '@/types/api';
 
@@ -38,7 +39,14 @@ interface DlqSubscriptionOption {
 export interface EventSubscriptionsTabsProps {
   webhooks: WebhookListItem[];
   webhooksMeta: PaginationMeta;
-  dlqDeliveries: DlqDelivery[];
+  /**
+   * Dead-letter rows. `null` means they failed to load: the Dead Letter Queue
+   * tab shows a "Couldn't load" notice instead of the table (an empty queue is
+   * the all-clear, so a failure must not look like one), and its tab carries
+   * no count badge. The Subscriptions tab is unaffected.
+   */
+  dlqDeliveries: DlqDelivery[] | null;
+  /** Pagination for `dlqDeliveries`; ignored when that is `null`. */
   dlqMeta: PaginationMeta;
   dlqSubscriptions: DlqSubscriptionOption[];
 }
@@ -75,7 +83,7 @@ export function EventSubscriptionsTabs({
         </TabsTrigger>
         <TabsTrigger value="dlq">
           Dead Letter Queue
-          {dlqMeta.total > 0 && (
+          {dlqDeliveries !== null && dlqMeta.total > 0 && (
             <Badge variant="destructive" className="ml-2 px-1.5 text-[10px]">
               {dlqMeta.total}
             </Badge>
@@ -119,11 +127,15 @@ export function EventSubscriptionsTabs({
             </ul>
           </FieldHelp>
         </p>
-        <WebhookDlqTable
-          initialDeliveries={dlqDeliveries}
-          initialMeta={dlqMeta}
-          subscriptions={dlqSubscriptions}
-        />
+        {dlqDeliveries === null ? (
+          <LoadFailedNotice what="the dead-letter queue" />
+        ) : (
+          <WebhookDlqTable
+            initialDeliveries={dlqDeliveries}
+            initialMeta={dlqMeta}
+            subscriptions={dlqSubscriptions}
+          />
+        )}
       </TabsContent>
     </Tabs>
   );
