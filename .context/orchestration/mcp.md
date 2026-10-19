@@ -1,11 +1,11 @@
 # MCP Server
 
-Model Context Protocol (MCP) server that lets external AI clients (Claude Desktop, Cursor, custom agents) connect to Sunrise and use its tools, data, and prompts.
+Model Context Protocol (MCP) server that lets external AI clients (Claude Code, Cursor, custom agents) connect to Sunrise and use its tools, data, and prompts.
 
 ## Architecture
 
 ```
-Client (Claude Desktop / Cursor / custom)
+Client (Claude Code / Cursor / custom)
   |
   | JSON-RPC 2.0 over HTTP
   v
@@ -442,7 +442,7 @@ Without this gate, completion would be a free side-channel around the scope chec
 
 ## Prompts
 
-Prompts are admin-editable slash-command templates surfaced by MCP clients to end users. They are **not** auto-invoked by the model — a human picks them from a menu (e.g. typing `/analyze-pattern` in Claude Desktop). The distinction matters for design:
+Prompts are admin-editable slash-command templates surfaced by MCP clients to end users. They are **not** auto-invoked by the model — a human picks them from the client's prompt menu (e.g. `analyze-pattern`). The distinction matters for design:
 
 | Primitive | Triggered by             | Used for                                               |
 | --------- | ------------------------ | ------------------------------------------------------ |

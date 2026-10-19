@@ -468,8 +468,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                 definitions.
               </p>
               <p className="text-muted-foreground mb-5 text-sm">
-                When a client like Claude Desktop connects to your MCP server, it can discover and
-                read any enabled resources to get context before making tool calls.
+                When a client like Cursor connects to your MCP server, it can discover and read any
+                enabled resources to get context before making tool calls.
               </p>
               <div className="mb-5 grid gap-2 text-left sm:grid-cols-2">
                 {RESOURCE_TYPES.map((t) => (

@@ -374,8 +374,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
               <h3 className="text-foreground mb-2 text-base font-medium">No prompts yet</h3>
               <p className="text-muted-foreground mb-4 text-sm">
                 Prompts are <strong className="text-foreground">slash-command templates</strong>{' '}
-                surfaced by MCP clients (e.g. <code>/analyze-pattern</code> in Claude Desktop). End
-                users pick them from a menu — they are <em>not</em> auto-invoked by the model.
+                surfaced by MCP clients (e.g. <code>/analyze-pattern</code>). End users pick them
+                from a menu — they are <em>not</em> auto-invoked by the model.
               </p>
               {!readOnly && (
                 <Button size="sm" onClick={() => setCreateOpen(true)}>

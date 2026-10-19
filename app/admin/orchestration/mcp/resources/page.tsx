@@ -64,10 +64,10 @@ export default async function McpResourcesPage() {
             </p>
             <p className="text-foreground mt-2 font-medium">How clients use them</p>
             <p>
-              An MCP client like Claude Desktop calls{' '}
-              <code className="text-xs">resources/list</code> to discover available resources, then{' '}
-              <code className="text-xs">resources/read</code> with a URI to fetch data. The client
-              needs a key with <code className="text-xs">resources:read</code> scope.
+              An MCP client like Cursor calls <code className="text-xs">resources/list</code> to
+              discover available resources, then <code className="text-xs">resources/read</code>{' '}
+              with a URI to fetch data. The client needs a key with{' '}
+              <code className="text-xs">resources:read</code> scope.
             </p>
           </McpInfoModal>
         </h1>

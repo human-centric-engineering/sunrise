@@ -101,7 +101,7 @@ export default async function McpDashboardPage() {
           <McpInfoModal title="What is MCP?">
             <p>
               <strong className="text-foreground">Model Context Protocol (MCP)</strong> lets
-              external AI assistants — Claude Desktop, Cursor, custom agents — connect to your
+              external AI assistants — Claude Code, Cursor, custom agents — connect to your
               application and use its tools, data, and prompts.
             </p>
             <p>
@@ -123,7 +123,7 @@ export default async function McpDashboardPage() {
           </McpInfoModal>
         </h1>
         <p className="text-muted-foreground text-sm">
-          MCP lets external AI clients (Claude Desktop, Cursor, custom agents) discover and use your
+          MCP lets external AI clients (Claude Code, Cursor, custom agents) discover and use your
           app&apos;s capabilities.{' '}
           {platform
             ? 'You control exactly what is exposed — nothing is shared until you enable it.'
