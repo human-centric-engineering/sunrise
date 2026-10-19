@@ -200,8 +200,8 @@ The companion **CI seam** is a `package.json` addition, not a config file: the
 
 ## Memory: why `lint` runs under an explicit heap cap
 
-`npm run lint` goes through `scripts/run-capped.mjs` rather than calling
-`eslint` directly. Type-aware linting is by a wide margin the most
+`npm run lint` and `npm run type-check` go through `scripts/run-capped.mjs`
+rather than calling `eslint` and `tsc` directly. Type-aware linting is by a wide margin the most
 memory-hungry job in the repo, and Node's default heap is not sized for it.
 
 **Node picks its default from machine RAM and then stops there** — 4288MB on a
@@ -239,16 +239,29 @@ applies when nothing capped the calling process: under an inherited cap V8
 reports that cap, not Node's default, and flooring at it handed out more than
 was asked for (#711).
 
+**`type-check` goes through the same wrapper.** It was left out on a measured
+1.64-1.75 GiB peak, but `tsconfig.json` sets `incremental`, so that was a warm
+run reading its build info. A cold one — a fresh clone, or after a large
+upstream merge — is a different job:
+
+| Repo                  | Warm `tsc --noEmit` | Cold `tsc --noEmit`                   |
+| --------------------- | ------------------- | ------------------------------------- |
+| Sunrise 0.14.0        | 1.64-1.75 GiB       | 2.74 GiB RSS (19 Oct 2026)            |
+| ConQuest (~1.9x base) | —                   | 4.40 GB, aborted; 2.38 GB once capped |
+
+`type-check` runs first in `validate`, so a cold abort stopped the whole gate
+before lint or formatting ran (#693). CI never met it: the workflow sets
+`NODE_OPTIONS` and the wrapper stands down.
+
 **What is deliberately _not_ capped**, because a cap without a measurement is
 the mistake this section exists to prevent:
 
-- `type-check` — `tsc --noEmit` peaks at 1.64-1.75 GiB across Sunrise, Hub and
-  Daybreak. A 2.4x margin.
 - `lint-staged` (the pre-commit hook) — one staged file measured 1.85 GiB. The
   project service builds only what the linted files reach transitively, so a
   commit-sized changeset stays far below a whole-repo run.
 
-Both are one line away in `BINS` if a fork ever measures otherwise. Re-derive by
+It is one line away in `BINS` if a fork ever measures otherwise. Measure cold
+(`--incremental false` for `tsc`, an emptied cache for ESLint), and re-derive by
 bisection rather than guessing: raise `--max-old-space-size` until the job stops
 aborting, then stop.
 

@@ -468,7 +468,8 @@ then stop. Measured on one ~2x-Sunrise fork, lint aborts at 5120 and passes at
 and 8192 was never needed.
 
 **The same wall exists locally, and this variable does not reach it.** `npm run
-lint` therefore runs through `scripts/run-capped.mjs`, which appends a
+lint` and `npm run type-check` therefore run through `scripts/run-capped.mjs`,
+which appends a
 `--max-old-space-size` to `NODE_OPTIONS` — but **only when nothing has set one
 already**, so in CI this variable still wins. A developer hitting exit 134 on a
 laptop is the usual first sighting of a fork outgrowing the default; see

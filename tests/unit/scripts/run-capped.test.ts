@@ -31,8 +31,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, it, expect, vi } from 'vitest';
+import { z } from 'zod';
 
 import {
   BINS,
@@ -204,11 +207,11 @@ describe('main', () => {
     const exit = vi.fn();
     const spawnFn = vi.fn();
 
-    await main(['tsc', '--noEmit'], { error, exit, spawnFn });
+    await main(['prettier', '--check', '.'], { error, exit, spawnFn });
 
     expect(spawnFn).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
-    expect(error.mock.calls[0][0]).toContain('Unknown command "tsc"');
+    expect(error.mock.calls[0][0]).toContain('Unknown command "prettier"');
   });
 
   it('names the allowed commands so the message is actionable', async () => {
@@ -425,6 +428,22 @@ describe('main', () => {
 
     expect(error.mock.calls[0][0]).toContain('Failed to start "eslint"');
     expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('the bins package.json routes through the wrapper', () => {
+  it.each([
+    ['lint', 'eslint'],
+    ['type-check', 'tsc'],
+  ])('`npm run %s` launches %s through run-capped.mjs, and it is allowed', (script, bin) => {
+    // A cold type-check outgrew Node's default heap on larger forks and took
+    // `validate` down before lint ran (#693). Routing it here only helps if the
+    // allowlist agrees, or the wrapper refuses it with exit 1.
+    const { scripts } = z
+      .object({ scripts: z.record(z.string(), z.string()) })
+      .parse(JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')));
+    expect(scripts[script]).toMatch(new RegExp(`^node scripts/run-capped\\.mjs ${bin}\\b`));
+    expect(BINS).toContain(bin);
   });
 });
 

@@ -47,10 +47,13 @@ const IS_WINDOWS = process.platform === 'win32';
  * that decides which jobs get a cap and a typo fails loudly instead of
  * spawning something unexpected.
  *
- * `tsc` is deliberately absent. Measured peak for `tsc --noEmit` is 1.64-1.75
- * GiB across Sunrise, Hub and Daybreak — a factor of 2.4 under the default, so
- * capping it would be speculation, not a fix. Adding it later is one entry
- * here plus the script in `package.json`.
+ * `tsc` is here because the measurement that once kept it out was of a warm
+ * run. `tsconfig.json` sets `incremental`, so 1.64-1.75 GiB was `tsc --noEmit`
+ * reading its build info. Cold — a fresh clone, or after a large upstream merge
+ * — base Sunrise peaks at 2.74 GiB RSS (measured 19 Oct 2026), and ConQuest
+ * (~1.9x base) aborted at 4.40 GB under the default and passed at 2.38 GB once
+ * capped. `type-check` runs first in `validate`, so an abort there stopped the
+ * whole gate before lint or formatting ran (#693).
  *
  * BEFORE ADDING ONE, know what the argv is. Everything this wrapper spawns
  * today takes a **static** argv from `package.json`. On Windows it runs under
@@ -63,7 +66,7 @@ const IS_WINDOWS = process.platform === 'win32';
  * other filename-passing caller) through this wrapper means quoting the
  * passthrough args first.
  */
-export const BINS = ['eslint'];
+export const BINS = ['eslint', 'tsc'];
 
 /** Cap applied when nothing else asks for one. Matches the worked example in
  * `.context/architecture/ci.md` and the value the largest fork measured. */

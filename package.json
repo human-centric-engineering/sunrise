@@ -16,7 +16,7 @@
     "lint:fix": "node scripts/run-capped.mjs eslint . --fix --cache --cache-strategy content",
     "lint:staged": "lint-staged",
     "clean:cache": "node -e \"for (const f of ['.eslintcache', '.prettiercache']) require('node:fs').rmSync(f, { force: true })\"",
-    "type-check": "tsc --noEmit",
+    "type-check": "node scripts/run-capped.mjs tsc --noEmit",
     "format": "prettier --write --cache --cache-strategy content --cache-location .prettiercache .",
     "format:check": "prettier --check --cache --cache-strategy content --cache-location .prettiercache .",
     "format:prisma": "prisma format --schema prisma/schema",
