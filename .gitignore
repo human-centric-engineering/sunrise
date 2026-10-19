@@ -183,6 +183,8 @@ temp/
 .reviews/
 .instructions/
 .mcp.json
+# Per-checkout agent instructions (e.g. the HCE Hub bootstrap; see CLAUDE.md)
+CLAUDE.local.md
 
 # Production
 /build
