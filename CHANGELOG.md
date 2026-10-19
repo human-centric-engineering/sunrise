@@ -423,6 +423,15 @@ release process.
   **Forks:** if your suite is slow enough to hit 30 minutes while passing,
   raise it with `gh variable set CI_TEST_TIMEOUT_MINUTES --body 45`. See
   `.context/architecture/ci.md` Knob 5.
+- **`CI_NEXT_CACHE_MAX_MB` — a repo variable bounding the CI Next.js build
+  cache** (t-868, #856). The Build job's `.next/cache` grew with every build
+  until the lockfile changed. A new step before `npm run build` discards the
+  restored cache when it is over the limit (default 2048MB on disk) and logs
+  the size either way, so the build starts cold and saves a fresh one.
+  **Forks:** a fresh Sunrise cache is 674MB on disk; if yours is already near
+  2048MB, raise the limit with `gh variable set CI_NEXT_CACHE_MAX_MB --body
+  4096`, or every build will start cold. See `.context/architecture/ci.md`
+  Knob 6.
 
 ### Changed
 

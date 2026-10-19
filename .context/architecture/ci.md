@@ -644,6 +644,30 @@ gh variable set CI_TEST_TIMEOUT_MINUTES --body 45
 The value goes through `fromJSON`, so it must be a bare number — anything else
 fails the workflow before any job starts, naming the expression.
 
+### Knob 6: `CI_NEXT_CACHE_MAX_MB`
+
+The Build job restores `.next/cache` through a `restore-keys` chain and saves
+it again under a per-commit key, so each saved cache is the previous one plus
+whatever this build wrote. Nothing trims it until `package-lock.json` changes.
+On Sunrise it grew from ~0.5GB to ~2GB compressed between two lockfile changes;
+a downstream fork's reached 5.5GB and a Build ran 37 minutes before being
+cancelled (#856). `pr-cache-cleanup.yml` deletes a closed PR's caches but does
+nothing about growth on `main`.
+
+Before `npm run build`, the **Bound the Next.js build cache** step measures the
+restored cache on disk. Over the limit, it deletes it and logs a notice with the
+size; the build then starts cold and saves a fresh cache. Under it, it logs the
+size. Defaults to **2048** MB on disk: a fresh Sunrise build writes 674MB (501MB
+compressed), so the cache can roughly triple before it is restarted.
+
+```bash
+gh variable set CI_NEXT_CACHE_MAX_MB --body 4096
+```
+
+Raise it if your fresh cache is already near the limit — the step's log line
+shows the size on every run, and a limit below a fresh cache's size makes every
+build cold. A value that is not a whole number logs a warning and uses 2048.
+
 ## Private-fork correctness (GHAS-dependent jobs)
 
 CodeQL and Dependency Review both upload to GitHub Advanced Security, which is

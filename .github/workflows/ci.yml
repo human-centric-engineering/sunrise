@@ -433,6 +433,32 @@ jobs:
           restore-keys: |
             next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
             next-${{ runner.os }}-
+      # Each saved cache is the one restored plus whatever this build wrote, and
+      # nothing trims it until package-lock.json changes. On Sunrise it grew from
+      # ~0.5GB to ~2GB (compressed) between two lockfile changes; a downstream
+      # fork's reached 5.5GB and a Build ran 37 minutes before being cancelled
+      # (#856). Past the limit, start cold: this build then saves a fresh cache.
+      # `CI_NEXT_CACHE_MAX_MB` changes the limit (.context/architecture/ci.md,
+      # Knob 6).
+      - name: Bound the Next.js build cache
+        env:
+          MAX_MB: ${{ vars.CI_NEXT_CACHE_MAX_MB || '2048' }}
+        run: |
+          if [[ ! "$MAX_MB" =~ ^[0-9]+$ ]]; then
+            echo "::warning::CI_NEXT_CACHE_MAX_MB='$MAX_MB' is not a whole number of MB; using 2048."
+            MAX_MB=2048
+          fi
+          if [[ ! -d .next/cache ]]; then
+            echo "No Next.js build cache was restored; this build starts cold."
+            exit 0
+          fi
+          size_mb=$(du -sm .next/cache | cut -f1)
+          if (( size_mb > MAX_MB )); then
+            rm -rf .next/cache
+            echo "::notice::Next.js build cache was ${size_mb}MB, over the ${MAX_MB}MB limit (CI_NEXT_CACHE_MAX_MB). Discarded it: this build starts cold and saves a fresh cache."
+          else
+            echo "Next.js build cache: ${size_mb}MB, within the ${MAX_MB}MB limit."
+          fi
       - run: npm ci
       - run: npm run build
 
