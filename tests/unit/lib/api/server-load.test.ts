@@ -39,6 +39,7 @@ class NotFoundSignal extends Error {}
 beforeEach(() => {
   vi.mocked(serverFetch).mockReset();
   vi.mocked(logger.error).mockClear();
+  vi.mocked(logger.warn).mockClear();
   // The real notFound() throws and never returns; the global mock does not.
   vi.mocked(notFound).mockImplementation(() => {
     throw new NotFoundSignal();
@@ -164,6 +165,34 @@ describe('requireServerData', () => {
     await expect(requireServerData(PATH, { notFound: true })).rejects.toBeInstanceOf(
       ServerLoadError
     );
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it('renders not-found on a 400 when asked to: a malformed id identifies nothing', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { code: 'VALIDATION_ERROR', message: 'bad id' } }, 400)
+    );
+
+    await expect(requireServerData(PATH, { notFound: true })).rejects.toBeInstanceOf(
+      NotFoundSignal
+    );
+    // A malformed id in a URL is not a server fault: warned, not an error.
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), {
+      path: PATH,
+      status: 400,
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('throws on a 400 when the caller did not ask for not-found', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { message: 'bad query' } }, 400)
+    );
+
+    await expect(requireServerData(PATH)).rejects.toMatchObject({
+      failure: { kind: 'failed', status: 400 },
+    });
     expect(notFound).not.toHaveBeenCalled();
   });
 

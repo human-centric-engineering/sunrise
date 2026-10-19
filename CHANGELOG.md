@@ -22,7 +22,8 @@ release process.
   for reading internal API routes from a server component** (t-861, #518).
   `requireServerData()` returns a page's main data or throws a
   `ServerLoadError` to the route's error boundary; with `{ notFound: true }` a
-  genuine 404 renders the not-found page, and no other failure does.
+  404, or a 400 for a malformed id, renders the not-found page, and no other
+  failure does.
   `loadServerData()` never throws and returns a typed failure, for a panel the
   page can live without; render `<LoadFailedNotice>` from
   `components/admin/load-failed-notice.tsx` in its place. Both log every

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { API } from '@/lib/api/endpoints';
-import { loadServerData, ServerLoadError } from '@/lib/api/server-load';
+import { requireServerData } from '@/lib/api/server-load';
 import { getServerSession } from '@/lib/auth/utils';
 import { UserEditForm } from '@/components/admin/user-edit-form';
 import type { AdminUser } from '@/types/admin';
@@ -24,14 +24,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
  * missing user (#518).
  */
 async function getUser(id: string): Promise<AdminUser> {
-  const path = API.USERS.byId(id);
-  const result = await loadServerData<AdminUser>(path);
-  if (!result.ok) {
-    // 400 is an id that cannot name a user (it fails the id schema).
-    if (result.failure.kind === 'not_found' || result.failure.status === 400) notFound();
-    throw new ServerLoadError(path, result.failure);
-  }
-  const data = result.data;
+  const { data } = await requireServerData<AdminUser>(API.USERS.byId(id), { notFound: true });
 
   return {
     id: data.id,

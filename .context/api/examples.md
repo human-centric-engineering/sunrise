@@ -152,11 +152,11 @@ To **read** data in a server component, use the loaders in `lib/api/server-load.
 
 Pick by what the page needs if the load fails:
 
-| The data is                                                                                                              | Use                                           | On failure                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| What the page exists to show or edit: a list page's rows, a detail page's record, the options a form cannot work without | `requireServerData(path)`                     | Throws to the route's error boundary, which logs it and offers **Try again** (a real re-fetch) |
-| A detail page's record, by id                                                                                            | `requireServerData(path, { notFound: true })` | A 404 renders the not-found page; any other failure throws as above                            |
-| One panel among several the page can live without: a dashboard tile, a summary strip                                     | `loadServerData(path)`                        | Returns `{ ok: false }`; render `<LoadFailedNotice what="…">` in that panel's place            |
+| The data is                                                                                                              | Use                                           | On failure                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| What the page exists to show or edit: a list page's rows, a detail page's record, the options a form cannot work without | `requireServerData(path)`                     | Throws to the route's error boundary, which logs it and offers **Try again** (a real re-fetch)    |
+| A detail page's record, by id                                                                                            | `requireServerData(path, { notFound: true })` | A 404, or a 400 for a malformed id, renders the not-found page; any other failure throws as above |
+| One panel among several the page can live without: a dashboard tile, a summary strip                                     | `loadServerData(path)`                        | Returns `{ ok: false }`; render `<LoadFailedNotice what="…">` in that panel's place               |
 
 ```typescript
 // A list page

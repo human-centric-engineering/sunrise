@@ -60,7 +60,8 @@ export class ServerLoadError extends Error {
  *
  * Every `failed` result is logged here, so a caller never needs its own
  * catch-and-log. A `not_found` is not logged: whether a 404 is expected is
- * the caller's to decide.
+ * the caller's to decide. A 400 is logged as a warning, not an error: on a
+ * detail page it is usually an id the API rejected as malformed.
  */
 export async function loadServerData<T>(path: string, init?: RequestInit): Promise<LoadResult<T>> {
   let res: Response;
@@ -86,7 +87,9 @@ export async function loadServerData<T>(path: string, init?: RequestInit): Promi
 
   if (!res.ok || !body.success) {
     const code = body.success ? null : (body.error.code ?? null);
-    logger.error('Server data load failed', undefined, { path, status: res.status, code });
+    const meta = { path, status: res.status, code };
+    if (res.status === 400) logger.warn('Server data load rejected as a bad request', meta);
+    else logger.error('Server data load failed', undefined, meta);
     return { ok: false, failure: { kind: 'failed', status: res.status, code } };
   }
 
@@ -97,8 +100,10 @@ export async function loadServerData<T>(path: string, init?: RequestInit): Promi
  * Load a page's main data, or stop rendering the page.
  *
  * @param options.notFound - Render the not-found page when the API answers
- *   404. For a detail page whose id may not exist. Without it a 404 is a
- *   failure like any other: a list endpoint that 404s is misconfigured.
+ *   404, or 400: the detail routes validate their id, so a malformed one is
+ *   answered 400 and identifies nothing. For a detail page whose id comes
+ *   from the URL. Without it either is a failure like any other: a list
+ *   endpoint that 404s is misconfigured.
  * @throws {ServerLoadError} when the data cannot be loaded.
  */
 export async function requireServerData<T>(
@@ -108,11 +113,14 @@ export async function requireServerData<T>(
   const result = await loadServerData<T>(path, options.init);
   if (result.ok) return { data: result.data, meta: result.meta };
 
-  if (result.failure.kind === 'not_found') {
-    if (options.notFound) notFound();
+  const { failure } = result;
+  const isBadRequest = failure.kind === 'failed' && failure.status === 400;
+  if (options.notFound && (failure.kind === 'not_found' || isBadRequest)) notFound();
+
+  if (failure.kind === 'not_found') {
     logger.error('Server data load failed: 404 from an endpoint expected to exist', undefined, {
       path,
     });
   }
-  throw new ServerLoadError(path, result.failure);
+  throw new ServerLoadError(path, failure);
 }

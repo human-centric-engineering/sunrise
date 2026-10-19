@@ -162,6 +162,18 @@ describe('EditProviderPage (server component)', () => {
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
+  it('calls notFound() for a malformed id, which the API answers 400', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(400, 'VALIDATION_ERROR'));
+
+    const { default: EditProviderPage } =
+      await import('@/app/admin/orchestration/providers/[id]/page');
+
+    await expect(
+      EditProviderPage({ params: Promise.resolve({ id: 'not-a-cuid' }) })
+    ).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+
   it('throws to the error boundary, not notFound(), when the load fails', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
     const { ServerLoadError } = await import('@/lib/api/server-load');

@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import {
   OrgProvidersForm,
@@ -11,7 +10,7 @@ import { OrgUsageSummary } from '@/components/admin/orgs/org-usage-summary';
 import { Badge } from '@/components/ui/badge';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { loadServerData, ServerLoadError } from '@/lib/api/server-load';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import type { OrgUsageReport } from '@/lib/orchestration/llm/cost-reports';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -41,12 +40,8 @@ async function loadOrNull<T>(path: string): Promise<T | null> {
  * not exist".
  */
 async function getOrg(id: string): Promise<OrgDetail> {
-  const path = API.ADMIN.orgById(id);
-  const result = await loadServerData<OrgDetail>(path);
-  if (result.ok) return result.data;
-  // 400 is an id that cannot name an org (it fails the id schema).
-  if (result.failure.kind === 'not_found' || result.failure.status === 400) notFound();
-  throw new ServerLoadError(path, result.failure);
+  const { data } = await requireServerData<OrgDetail>(API.ADMIN.orgById(id), { notFound: true });
+  return data;
 }
 
 /**
