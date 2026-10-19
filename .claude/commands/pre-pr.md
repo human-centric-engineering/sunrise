@@ -242,9 +242,9 @@ strictly better than one that passes quietly.
 CI, and they differ exactly where it hurts: `compgen` is a bash builtin, and a
 `compgen -G` loop under zsh printed nothing and was very nearly banked as a clean
 tree — that instance is what opened #641. `shopt`, arrays and `[[ ]]` vary too.
-This is why **4m is Python** and 4f is a Node script: neither is at the mercy of
+This is why **4f and 4m are Node scripts** under `scripts/ci/`: neither is at the mercy of
 which shell started. If you find yourself debugging shell quoting, stop and
-rewrite it in Python. And if the check is worth keeping, it belongs in
+rewrite it as a Node script. And if the check is worth keeping, it belongs in
 `scripts/ci/` with tests, not inlined here.
 
 Then, for each changed file, check for these project-specific anti-patterns:
@@ -321,79 +321,20 @@ Flag server components (files under `app/` without `'use client'`) and server-si
 Flag imports of `@/lib/prisma`, `@/lib/db`, or `@prisma/client` — and any usage of the `prisma` client (e.g., `prisma.`, `PrismaClient`) — in files outside of `app/api/`, `lib/`, `prisma/`, and `scripts/`. Pages, layouts, components, and other non-API app code must call the API (via `serverFetch()` or client fetch) rather than accessing the database directly. This enforces API-first separation of concerns so the API can be split out of the monolith in the future. Note: this check catches direct imports only, not transitive dependencies (e.g., a page importing a lib helper that internally uses Prisma). Full import-chain analysis is out of scope for this check.
 
 **4m. Hand-rolled `next/navigation` router mocks**
-Flag any router object written out by hand instead of built with `createMockRouter()` from `@/tests/types/mocks`. **Run these repo-wide, not over the diff** — both invariants are currently zero, so a whole-repo count is the check, and a diff-scoped one would be blind to every pre-existing violation until someone happened to re-touch those exact lines. That blindness is not hypothetical: the first version of this check was diff-scoped and could not see the 23 files it was written to catch.
 
 ```bash
-grep -rnE "as unknown as ReturnType<typeof useRouter>" tests/ \
-  --include='*.ts' --include='*.tsx' | grep -vE ':[[:space:]]*\*'
-
-python3 - <<'EOF'
-import pathlib, re, sys
-
-SIX = {'push', 'replace', 'refresh', 'back', 'forward', 'prefetch'}
-KEY = re.compile(r'([A-Za-z_$][\w$]*)\s*:')
-hits = []
-
-# Anchor on `prefetch:` — any complete router literal must contain it — then
-# brace-match outwards. Anchoring on a key rather than on a surrounding syntax
-# form is what makes this independent of how the literal happens to be written.
-for path in sorted(pathlib.Path('tests').rglob('*.ts*')):
-    if path.name.endswith('.d.ts') or str(path) == 'tests/types/mocks.ts':
-        continue  # the factory's own definition necessarily matches
-    src = path.read_text()
-    for anchor in re.finditer(r'\bprefetch\s*:', src):
-        depth, start = 0, None
-        for i in range(anchor.start(), -1, -1):
-            if src[i] == '}':
-                depth += 1
-            elif src[i] == '{':
-                if depth == 0:
-                    start = i
-                    break
-                depth -= 1
-        if start is None:
-            continue
-        depth, end = 0, None
-        for i in range(start, len(src)):
-            if src[i] == '{':
-                depth += 1
-            elif src[i] == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end is None:
-            continue
-        body = src[start + 1 : end]
-        keys, d = set(), 0
-        for j, ch in enumerate(body):
-            if ch in '{[(':
-                d += 1
-            elif ch in '}])':
-                d -= 1
-            elif d == 0:
-                m = KEY.match(body, j)
-                if m and (j == 0 or not (body[j - 1].isalnum() or body[j - 1] in '_$.')):
-                    keys.add(m.group(1))
-        if keys >= SIX and 'createMockRouter' not in body:
-            hits.append(f'{path}:{src.count(chr(10), 0, start) + 1}')
-
-print('\n'.join(sorted(set(hits))) or 'CLEAN')
-sys.exit(1 if hits else 0)
-EOF
+npm run check:router-mocks
 ```
 
-The grep must print **nothing**; the Python check must print **`CLEAN`** and exit 0. Any file path from either is a finding.
+Run by `npm run validate` (Step 1) and by CI, so this is normally already answered by the time you get here. Run it directly only when Step 1 was skipped. It must print `Router mocks OK (N files ... scanned)`; any `file:line` it prints is a finding.
 
-The **cast** is always wrong: `AppRouterInstance` gains required members between Next minors, and a double cast does not satisfy the new member — it hides that the mock is missing it, so the literal keeps compiling while the component receives an incomplete router. `tests/types/mocks.ts` is deliberately **not** excluded from this one: the comment filter already handles the JSDoc mentions, and a real cast added there (say, by a fork extending the factory) is exactly what needs catching.
+Flags a router built by hand instead of with `createMockRouter()` from `@/tests/types/mocks`. **Repo-wide, not over the diff**: both invariants are meant to hold at zero, so a whole-repo count _is_ the check, and a diff-scoped one is blind to every pre-existing violation until someone happens to re-touch those exact lines. That blindness is not hypothetical twice over: the first version of this check was diff-scoped and could not see the 23 files it was written to catch, and its replacement reported CLEAN over 16 complete literals and 17 casts it could not parse in a fork (#936).
+
+The **cast** is always wrong: `AppRouterInstance` gains required members between Next minors, and a double cast does not satisfy the new member; it hides that the mock is missing it, so the literal keeps compiling while the component receives an incomplete router. `tests/types/mocks.ts` is deliberately **not** exempt from this rule: a real cast added there (say, by a fork extending the factory) is exactly what needs catching.
 
 The **six-member literal** means the author intended a complete router, so it should use the factory. A minimal stub (`push`/`replace` only, for a component that reads nothing else) is fine and deliberately not flagged.
 
-**Why the scanner is shaped this way — every clause is a bug it already had.** It brace-matches outward from a key instead of matching a syntax form, because a form-matching regex saw `useRouter: vi.fn(() => ({…}))` and silently missed `useRouter: () => ({…})` — 23 files' worth. It parses keys without line anchors, because a line-anchored version reported CLEAN on a single-line six-member literal, which Prettier at `printWidth: 100` will never reflow into view. It globs `*.ts*` rather than `*.test.ts*`, because the narrower glob could not see `tests/setup.ts` — the single highest-risk file, and the one the docs name as such. And anchoring on a key rather than on `useRouter` is what lets it catch the hoisted `const mockRouter = {…}; useRouter: () => mockRouter` form.
-
-If you change this scanner, re-test it against those four shapes before trusting a CLEAN.
-
-Nothing type-checks a `vi.mock` factory, so neither form fails the build — this scan is the only thing that catches them. See `.context/testing/mocking.md`.
+Nothing type-checks a `vi.mock` factory, so neither form fails the build. This scan is the only thing that catches them. The rules, and every shape that has defeated a version of this check, live in `scripts/ci/router-mocks.ts` and are held there by `tests/unit/scripts/ci/router-mocks.test.ts`. See `.context/testing/mocking.md`.
 
 ### Step 5: Check .context/ documentation
 
@@ -514,7 +455,7 @@ Output a clear summary in this format:
 - [ ] Unvalidated request bodies: {count found or CLEAN}
 - [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
-- [ ] Hand-rolled router mocks: {count found or CLEAN}
+- [ ] Hand-rolled router mocks: {CLEAN or N violation(s): `npm run check:router-mocks`}
 
 ### Documentation Check
 - [ ] Stale content in changed docs: {CLEAN or issues found}

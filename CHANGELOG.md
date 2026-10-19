@@ -417,6 +417,22 @@ release process.
 
 ### Changed
 
+- **`npm run check:router-mocks`: `/pre-pr` step 4m is a tested script, and
+  `npm run validate` and CI now run it** (#936, t-863). The old 4m was a Python
+  block inside `pre-pr.md` that matched text. In a fork it reported CLEAN over
+  16 complete router literals and 17 casts: it could not count a shorthand member
+  (`{ push, refresh }`), could not find a literal whose `prefetch` was shorthand,
+  and only grepped for `as unknown as ReturnType<typeof useRouter>`, while every
+  real offender wrote `ReturnType<typeof vi.fn>`. The rules now live in
+  `scripts/ci/router-mocks.ts` (`scanRouterMocks`) and parse with the TypeScript
+  compiler. The cast rule fires when the thing cast is `useRouter`, when the
+  target type names the router (including `AppRouterInstance` and `MockRouter`),
+  and when a cast value is handed to a mocked `useRouter`. Sunrise's own suite
+  is clean. **A fork's `validate` may now fail** where the old check passed:
+  build those routers with `createMockRouter()`. A file that mocks only
+  `next/router` is skipped, and a genuine false positive takes
+  `// router-mocks-ignore: <why>` on the line above, reason required.
+
 - **`RouteErrorBoundary` takes `retry`, not `reset`** (t-861). Next's
   `reset()` re-renders the segment without re-fetching it, so "Try again"
   after a failed server-side load failed again the same way. Every Sunrise

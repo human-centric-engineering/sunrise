@@ -230,27 +230,35 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  * one factory makes the next such addition a one-line change here instead of
  * another sweep, and spares forks repeating it.
  *
- * Two things defeat that. An `as unknown as ReturnType<typeof useRouter>`
- * cast suppresses the error rather than fixing it, so the literal rots in
- * silence — there are none left in the suite, and none should be added. An
+ * Two things defeat that. A cast suppresses the error rather than fixing it,
+ * so the literal rots in silence, and the spelling varies: a fork's real
+ * offenders wrote `as unknown as ReturnType<typeof vi.fn>`, not the
+ * `ReturnType<typeof useRouter>` form the first check looked for (#936). An
  * incomplete literal inside a `vi.mock` factory has the same effect, because
  * nothing type-checks a mock factory; `tests/setup.ts` builds the suite-wide
  * default from this factory for that reason, and
  * `tests/unit/types/mocks.test.ts` asserts it still does.
  *
- * Scope is an enforced invariant, not a claim: `/pre-pr` check 4m scans every
- * `.ts`/`.tsx` under `tests/` — including `setup.ts`, `helpers/` and `mocks/`,
- * not just `*.test.ts` — for both shapes, and must come back clean. Minimal
- * stubs that supply two or three members for a component reading nothing else
- * are deliberately allowed and not counted; convert one the moment its
- * component might read more of the router than the stub provides.
+ * Scope is an enforced invariant, not a claim: `npm run check:router-mocks`
+ * (part of `npm run validate`) scans every `.ts`/`.tsx` under `tests/`
+ * (including `setup.ts`, `helpers/` and `mocks/`, not just `*.test.ts`) for
+ * both shapes, and must come back clean. This file is exempt from the literal
+ * rule and only that rule: it is the factory, so it necessarily writes the
+ * complete router out, but a cast added here by a fork extending it is exactly
+ * what needs catching. Minimal stubs that supply two or three members for a
+ * component reading nothing else are deliberately allowed and not counted;
+ * convert one the moment its component might read more of the router than the
+ * stub provides.
  *
- * It is worded as "run the check" because prose kept getting it wrong. Four
- * review rounds running, a comment here asserted a completeness the code had
- * not reached — the scanner behind the last number matched
- * `useRouter: vi.fn(() => ({…}))` and silently missed `useRouter: () => ({…})`,
- * then its replacement missed single-line literals and every file outside
- * `*.test.ts`. Run 4m; do not restate a count here.
+ * It is worded as "run the check" because prose kept getting it wrong, and
+ * this docblock was one of the places it did. Five review rounds running, a
+ * comment here asserted a completeness the code had not reached: the scanner
+ * behind the first number matched `useRouter: vi.fn(() => ({…}))` and silently
+ * missed `useRouter: () => ({…})`; its replacement missed single-line literals
+ * and every file outside `*.test.ts`; and the one after that could not see a
+ * shorthand member, so a fork carrying this comment read CLEAN over sixteen
+ * complete literals while it said there were none (#936). Run the check; do not
+ * restate a count here.
  *
  * `bfcacheId` is a fixed string, not a spy. Its real semantics are that it
  * *changes* on a fresh push/replace navigation, so a test asserting that a

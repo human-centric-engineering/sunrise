@@ -359,15 +359,32 @@ vi.mock('next/navigation', async () => {
 });
 ```
 
-**What is and isn't converted.** Two invariants, both enforced by `/pre-pr`
-check 4m across every `.ts`/`.tsx` under `tests/` — `setup.ts`, `helpers/` and
-`mocks/` included, not only `*.test.ts` — rather than asserted here: no
-`as unknown as ReturnType<typeof useRouter>` cast anywhere, and no object
-literal that supplies all six router methods. Minimal stubs supplying two or
-three members for a component that reads nothing else are deliberately allowed
-— convert one as soon as its component might read more of the router than the
-stub provides. Run 4m for the current state; do not trust a count written down
-here, including this one.
+**What is and isn't converted.** Two invariants, both enforced by
+`npm run check:router-mocks` (part of `npm run validate`, and its own CI step)
+across every `.ts`/`.tsx` under `tests/`, with `setup.ts`, `helpers/` and
+`mocks/` included, not only `*.test.ts`. No cast that switches off the type
+check on a router, and no object literal that supplies all six router methods.
+Minimal stubs supplying two or three members for a component that reads nothing
+else are deliberately allowed. Convert one as soon as its component might read
+more of the router than the stub provides. Run the check for the current state;
+do not trust a count written down here, including this one.
+
+A file about the **pages** router (`next/router` and not `next/navigation`) is
+skipped: its mock has the same method names but is a different type, which
+`createMockRouter()` does not build. For any other genuine false positive, such
+as an `it.each` row keyed by method name, put
+`// router-mocks-ignore: <why>` on the line above it. The reason is required;
+the directive does nothing without one.
+
+The cast rule is scoped to the router rather than to a spelling. It fires when
+the thing being cast **is** `useRouter`, whatever the target type, and when the
+target type names the router, whatever is being cast. That matters because the
+first version grepped for the literal string
+`as unknown as ReturnType<typeof useRouter>`, while every real offender in a
+fork's suite wrote `as unknown as ReturnType<typeof vi.fn>` instead and went
+unseen (#936).
+`as unknown as ReturnType<typeof vi.fn>` on anything else (`apiClient.post`,
+`useSearchParams`) is untouched by this rule.
 
 **`bfcacheId` is a fixed string, not a spy.** Its real behaviour is to _change_
 on a fresh push/replace navigation. A test asserting that a

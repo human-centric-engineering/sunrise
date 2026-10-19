@@ -382,6 +382,17 @@ jobs:
             echo "::error::Node major disagrees across .nvmrc, the Dockerfiles, engines.node or the resolved @types/node — see the step log."
             exit 1
           }
+      # Repo-wide, not diff-scoped: both invariants are meant to hold at zero,
+      # so the whole-tree count IS the check. A diff-scoped version cannot see a
+      # pre-existing violation until someone re-touches those exact lines, which
+      # is how 16 of them survived in a fork the previous check called clean (#936).
+      - name: Hand-rolled router mocks
+        if: needs.config.outputs.code == 'true'
+        run: |
+          npm run check:router-mocks || {
+            echo "::error::A test builds a next/navigation router by hand instead of with createMockRouter(). See the step log for file:line."
+            exit 1
+          }
       # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to
       # package.json (a boundary check, migration-hygiene lint, etc.); vanilla
       # Sunrise ships no such script, so `--if-present` makes this a no-op here
