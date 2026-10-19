@@ -102,7 +102,7 @@ PR is exactly the large-diff case (#591).
 
 **`ci-status` fails on anything that is not `success` or `skipped`.** It used to
 test for the literal string `failure`, which let `cancelled` through — a job
-killed by its own `timeout-minutes` (the docker job carries 30), or a run
+killed by its own `timeout-minutes` (docker and the test jobs carry one), or a run
 cancelled while `ci-status`'s `if: always()` still fires, reported "CI passed"
 for gates that never finished.
 
@@ -628,6 +628,22 @@ a malformed unrelated variable trades a small problem for a bigger one. The
 warning matters because the fallback here is the _unchunked_ case: silence would
 let a fork believe it had fixed its OOM and then meet the identical failure.
 
+### Knob 5: `CI_TEST_TIMEOUT_MINUTES`
+
+The ceiling on `test-full` (per shard) and `test-changed`, in minutes. Defaults
+to **30**: a Sunrise shard takes 2–4 minutes and `test-changed` at most the
+unsharded suite, so 30 is room for a much larger fork's suite while still
+turning a deadlocked worker into a cancelled job inside the half hour rather
+than six hours (#843). Raise it if a slow suite is cancelled while still
+passing:
+
+```bash
+gh variable set CI_TEST_TIMEOUT_MINUTES --body 45
+```
+
+The value goes through `fromJSON`, so it must be a bare number — anything else
+fails the workflow before any job starts, naming the expression.
+
 ## Private-fork correctness (GHAS-dependent jobs)
 
 CodeQL and Dependency Review both upload to GitHub Advanced Security, which is
@@ -792,14 +808,16 @@ pattern to copy. Without an explicit block the token defaults to
 whatever the repository setting says, which on an older fork can still be
 read/write across the board.
 
-**`timeout-minutes` on jobs that start containers.** GitHub's default is six
-hours, which a hung health-wait will happily burn. Two jobs carry a cap:
-`ci.yml`'s `docker` job (30) and `fork-sync-integrity` (5). The other jobs run
-processes that terminate on their own, so they are deliberately uncapped — the
-rule is "cap anything that waits on something else's readiness", not "cap
-everything". Note the interaction with `ci-status`: a job killed by its own
-timeout reports `cancelled`, which the gate treats as a failure precisely so a
-timeout cannot pass as a skip.
+**`timeout-minutes` on jobs that can hang.** GitHub's default is six hours,
+which a hung health-wait or a deadlocked process will happily burn. Four jobs
+carry a cap: `ci.yml`'s `docker` job (30), `test-full` and `test-changed` (30,
+via Knob 5), and `fork-sync-integrity` (5). The rule is "cap anything that can
+wait forever", not "cap everything": a container waits on something else's
+readiness, and a vitest worker can deadlock during module evaluation — an
+import cycle closed through a `vi.mock` async factory hangs it before any test
+starts, where no vitest timeout can fire (#843). Note the interaction with
+`ci-status`: a job killed by its own timeout reports `cancelled`, which the gate
+treats as a failure precisely so a timeout cannot pass as a skip.
 
 **Buildx GHA cache, written by exactly one build.** The runtime image build uses
 `cache-from: type=gha` **and** `cache-to: type=gha,mode=max`; the `migrator` and

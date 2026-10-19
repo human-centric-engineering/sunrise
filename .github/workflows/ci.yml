@@ -450,6 +450,13 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
+    # A test run is not guaranteed to end. A vi.mock async factory that closes
+    # an import cycle deadlocks its worker during module evaluation, before any
+    # test starts, so no vitest timeout fires and the job would sit for GitHub's
+    # six-hour default (#843). A shard takes 2-4 minutes on Sunrise; 30 leaves a
+    # larger fork's suite room. `CI_TEST_TIMEOUT_MINUTES` raises it without
+    # editing this file (.context/architecture/ci.md, Knob 5).
+    timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '30') }}
     # prisma generate (postinstall) needs DATABASE_URL defined; it does not
     # connect, so a placeholder is fine — no Postgres service on this job.
     #
@@ -510,6 +517,8 @@ jobs:
       needs.config.outputs.code == 'true' &&
       needs.config.outputs.test_scope == 'changed' &&
       github.event_name == 'pull_request'
+    # Same ceiling as `test-full`, for the same reason (#843).
+    timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '30') }}
     # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
     # for prisma generate (postinstall), which does not connect.
     env:
@@ -697,9 +706,9 @@ jobs:
     name: Docker Build + Stack Smoke
     runs-on: ubuntu-latest
     needs: config
-    # This job now starts containers, so a hung health-wait would otherwise burn
-    # the six-hour default. (First timeout-minutes in the repo — the other jobs
-    # only run processes that end on their own.)
+    # This job starts containers, so a hung health-wait would otherwise burn
+    # the six-hour default. The test jobs carry a cap too: a vitest worker can
+    # deadlock before any test starts (#843).
     timeout-minutes: 30
     # Decoupled from the checks so an image break surfaces in parallel rather
     # than after the long test run. On PRs it runs only when Docker-relevant
@@ -1060,7 +1069,7 @@ jobs:
             "${{ needs.lockfile.result }}"; do
             # Allow-list, not a deny-list. Testing for `failure` let
             # `cancelled` through — a job killed by its own `timeout-minutes`
-            # (the docker job carries 30), or a run cancelled while this job's
+            # (docker and the test jobs carry one), or a run cancelled while this job's
             # `if: always()` still fires, reported "CI passed" for gates that
             # never finished. Same shape as the `skipped` hole this file's
             # change-detection fix closes, so it gets the same treatment.
