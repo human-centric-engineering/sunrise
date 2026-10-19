@@ -233,8 +233,11 @@ setting the flag directly would replace whatever a fork measured and set as
 `CI_NODE_HEAP_MB` with Sunrise's number, in every CI job, silently. The wrapper
 appends to `NODE_OPTIONS` and only when no cap is present; in CI the workflow's
 value always wins. `NODE_HEAP_MB` overrides the local default (6144), which is
-itself clamped to 75% of physical memory and floored at Node's own default — a
-cap above available RAM trades a clean V8 abort for an OS OOM kill.
+floored at Node's own default and never above 75% of physical memory — a cap
+above available RAM trades a clean V8 abort for an OS OOM kill. The floor only
+applies when nothing capped the calling process: under an inherited cap V8
+reports that cap, not Node's default, and flooring at it handed out more than
+was asked for (#711).
 
 **What is deliberately _not_ capped**, because a cap without a measurement is
 the mistake this section exists to prevent:

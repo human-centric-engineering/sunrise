@@ -44,6 +44,7 @@ import {
   parseRequestedMb,
   resolveBin,
   resolveHeapMb,
+  unaidedLimitMb,
 } from '@/scripts/run-capped.mjs';
 
 const GB = 1024 ** 3;
@@ -108,6 +109,66 @@ describe('resolveHeapMb', () => {
     expect(resolveHeapMb({ requestedMb: 8192, totalMemBytes: 32 * GB, defaultLimitMb: 4288 })).toBe(
       8192
     );
+  });
+
+  it('hands out exactly what was asked for when there is no floor (#711)', () => {
+    // Under an inherited 6144 cap V8 reports 6336, and flooring at that handed
+    // the child 6336. Read through `unaidedLimitMb`, the floor drops out.
+    const defaultLimitMb = unaidedLimitMb({
+      nodeOptions: '--max-old-space-size=6144',
+      execArgv: [],
+      heapLimitBytes: 6336 * 1024 ** 2,
+    });
+    expect(resolveHeapMb({ requestedMb: 6144, totalMemBytes: 16 * GB, defaultLimitMb })).toBe(6144);
+  });
+
+  it('never returns more than the machine can back, whatever the floor (#711)', () => {
+    // The clamp is the rule the function exists to enforce, so it holds as a
+    // property: a floor or an ask above 75% of RAM still comes back at 75%.
+    for (const totalGb of [2, 4, 8, 16]) {
+      const affordable = Math.floor((totalGb * GB * MEMORY_FRACTION) / 1024 ** 2);
+      for (const defaultLimitMb of [0, 1024, 4288, 6336, 12288]) {
+        for (const requestedMb of [512, 6144, 9999]) {
+          const resolved = resolveHeapMb({
+            requestedMb,
+            totalMemBytes: totalGb * GB,
+            defaultLimitMb,
+          });
+          expect(resolved).toBeLessThanOrEqual(affordable);
+        }
+      }
+    }
+  });
+});
+
+describe('unaidedLimitMb', () => {
+  const limit = 6336 * 1024 ** 2;
+
+  it("reports V8's limit when nothing capped this process", () => {
+    expect(
+      unaidedLimitMb({ nodeOptions: '--trace-warnings', execArgv: [], heapLimitBytes: limit })
+    ).toBe(6336);
+  });
+
+  it('reports no floor when NODE_OPTIONS carries a cap (#711)', () => {
+    // The limit V8 reports is then the parent's cap, not Node's default.
+    expect(
+      unaidedLimitMb({
+        nodeOptions: '--max-old-space-size=6144',
+        execArgv: [],
+        heapLimitBytes: limit,
+      })
+    ).toBe(0);
+  });
+
+  it('reports no floor when the cap came in on the command line', () => {
+    expect(
+      unaidedLimitMb({
+        nodeOptions: undefined,
+        execArgv: ['--max-old-space-size=6144'],
+        heapLimitBytes: limit,
+      })
+    ).toBe(0);
   });
 });
 

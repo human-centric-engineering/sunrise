@@ -90,25 +90,51 @@ export function hasHeapCap(nodeOptions) {
 }
 
 /**
+ * The heap Node would have chosen for this machine unaided, in MB — or 0 when
+ * this process was itself started under a cap, because then it is unknowable.
+ *
+ * `heap_size_limit` only means "Node's own default" when nothing set it. Under
+ * an inherited `--max-old-space-size=N` it reads N plus V8's other spaces, so
+ * flooring at it handed the child more than was asked for (6144 -> 6336), and
+ * on a small box with a large parent cap more than the machine could back
+ * (#711). Returning 0 drops the floor rather than guessing at a number.
+ *
+ * @param {object} [opts]
+ * @param {string | undefined} [opts.nodeOptions] This process's `NODE_OPTIONS`.
+ * @param {readonly string[]} [opts.execArgv] This process's Node flags.
+ * @param {number} [opts.heapLimitBytes] V8's reported heap limit.
+ * @returns {number}
+ */
+export function unaidedLimitMb({
+  nodeOptions = process.env.NODE_OPTIONS,
+  execArgv = process.execArgv,
+  heapLimitBytes = v8.getHeapStatistics().heap_size_limit,
+} = {}) {
+  if (hasHeapCap(nodeOptions) || hasHeapCap(execArgv.join(' '))) return 0;
+  return heapLimitBytes / MB;
+}
+
+/**
  * The cap to apply, in MB.
  *
- * Clamped down to a fraction of physical memory, then floored at whatever Node
- * would have chosen unaided — so on a machine too small for the requested cap
- * the wrapper is a no-op rather than a downgrade.
+ * Floored at whatever Node would have chosen unaided — so a small explicit ask
+ * is a no-op rather than a downgrade — and never above a fraction of physical
+ * memory, whatever the floor says.
  *
  * @param {object} [opts]
  * @param {number} [opts.requestedMb] Explicit ask (`NODE_HEAP_MB`).
  * @param {number} [opts.totalMemBytes] Physical memory.
- * @param {number} [opts.defaultLimitMb] Node's own default for this machine.
+ * @param {number} [opts.defaultLimitMb] Node's unaided default for this
+ *   machine; 0 for none (see `unaidedLimitMb`).
  * @returns {number}
  */
 export function resolveHeapMb({
   requestedMb = DEFAULT_HEAP_MB,
   totalMemBytes = totalmem(),
-  defaultLimitMb = v8.getHeapStatistics().heap_size_limit / MB,
+  defaultLimitMb = unaidedLimitMb(),
 } = {}) {
   const affordable = Math.floor((totalMemBytes * MEMORY_FRACTION) / MB);
-  return Math.max(Math.round(defaultLimitMb), Math.min(requestedMb, affordable));
+  return Math.min(affordable, Math.max(Math.round(defaultLimitMb), requestedMb));
 }
 
 /**
