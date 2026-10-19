@@ -65,8 +65,8 @@ recorded before any of that work starts (t-842; design on f-gdpr-erasure,
    with the row, and the `DataErasureReceipt` is the record that it finished.
 3. **Finish what did not.** The `pendingErasures` platform job
    (`processPendingErasures()`, every maintenance tick, system scope, one
-   erasure per run) erases every person whose intent is still there once their next
-   attempt is due, with the actor and reason the request stored.
+   erasure per run) erases every person whose intent is still there once their
+   next attempt is due, with the actor and reason the request stored.
 
 `erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
 claims the row by moving it 20 minutes ahead (`ERASURE_LEASE_MS`, longer than an
@@ -76,11 +76,13 @@ erasure at once. A killed attempt is retried when its lease runs out. A failed
 one is retried after a backoff of 1, 2, 4… minutes, capped at an hour
 (`erasureBackoffMs`). Nothing gives up: an erasure that keeps failing logs an
 error on every attempt. While any erasure is pending, the job reports work, so
-the idle gate never skips past its next attempt.
+the idle gate never skips past its next attempt. The cost: one that keeps
+failing keeps the gate awake, and the tick sweeps every minute until it is
+fixed.
 
 What a caller sees today: `200` when the erasure finishes within the request,
-`409 CONFLICT` when another attempt holds it, and the original error when it
-fails. In that last case the account is already disabled and the tick
+`409 CONFLICT` when another attempt holds it or a failed one is waiting out
+its backoff, and the original error when it fails. In that last case the account is already disabled and the tick
 finishes the job. t-845 adds a request budget and a `202 pending` answer.
 
 **Limits:**
