@@ -153,7 +153,7 @@ export const POST = withAdminAuth(
     // against the live config and a version A/B would report noise as a winner
     // (#857). Refused until a saved version can be run; `[id]/run` refuses rows
     // that were stored with a pin before this check existed.
-    if (body.variants.some((v) => v.agentVersionId)) {
+    if (body.variants.some((v) => v.agentVersionId !== undefined)) {
       throw new ValidationError(
         'Pinning a variant to a saved agent version is not supported yet: every variant runs the live agent. Remove agentVersionId from the variants.'
       );

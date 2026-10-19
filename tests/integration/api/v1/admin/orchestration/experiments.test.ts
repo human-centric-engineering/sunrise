@@ -433,6 +433,20 @@ describe('POST /api/v1/admin/orchestration/experiments', () => {
       expect(data.error.message).toMatch(/saved agent version is not supported yet/);
       expect(vi.mocked(prisma.aiExperiment.create)).not.toHaveBeenCalled();
     });
+
+    it('refuses an empty-string pin too, rather than dropping it silently', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makePostRequest({
+          ...VALID_BODY,
+          variants: [{ label: 'Control', agentVersionId: '' }, { label: 'Variant A' }],
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(prisma.aiExperiment.create)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Dataset-driven creation', () => {

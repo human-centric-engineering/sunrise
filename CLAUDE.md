@@ -73,8 +73,23 @@ agents at the wrong project and the platform maintainers' process.
   anything.
 
 A Hub-coordinated fork may instead commit its own bootstrap to its copy of this
-file; Sunrise never ships the `hce-hub:bootstrap` markers, so that block merges
-cleanly. See [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#1-first-steps).
+file. Sunrise no longer ships the `hce-hub:bootstrap` markers, so once a fork
+has resolved the one sync that removed Sunrise's block (keep your own block
+when it conflicts), later syncs leave it alone. See
+[`CUSTOMIZATION.md`](./CUSTOMIZATION.md#1-first-steps).
+
+## Gates before a PR
+
+In this order. Read **exit codes**, not piped output — a pipeline that swallows
+a failure reports success.
+
+1. `/pre-pr` — the platform's own checklist (`npm run validate` plus a scoped
+   test run and the anti-pattern scans), including the public-surface checks.
+2. `/security-review`
+3. `/code-review`
+4. `npm run format`
+
+Fix review findings as new commits; never amend a reviewed commit.
 
 ## Essential Commands
 
