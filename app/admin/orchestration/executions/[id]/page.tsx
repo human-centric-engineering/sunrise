@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import {
   ExecutionDetailView,
@@ -13,8 +12,7 @@ import type { RunningStep } from '@/lib/hooks/use-execution-live-poll';
 export const dynamic = 'force-dynamic';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -53,23 +51,13 @@ interface ExecutionResponse {
   currentRunningSteps?: RunningStep[];
 }
 
-async function getExecution(id: string): Promise<ExecutionResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.executionById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<ExecutionResponse>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('execution detail page: fetch failed', err, { id });
-    return null;
-  }
-}
-
 export default async function ExecutionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await getExecution(id);
-
-  if (!data) notFound();
+  // A 404 is a missing execution; any other failure reaches the error boundary (#518).
+  const { data } = await requireServerData<ExecutionResponse>(
+    API.ADMIN.ORCHESTRATION.executionById(id),
+    { notFound: true }
+  );
 
   return (
     <div className="space-y-6">

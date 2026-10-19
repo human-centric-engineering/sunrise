@@ -6,11 +6,11 @@ import {
   type ConversationListItem,
   type AgentOption,
 } from '@/components/admin/orchestration/conversations-table';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
@@ -25,38 +25,24 @@ const EMPTY_META: PaginationMeta = {
   totalPages: 1,
 };
 
+/** The list is the page: a failed load throws to the error boundary (#518). */
 async function getConversations(): Promise<{
   conversations: ConversationListItem[];
   meta: PaginationMeta;
 }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=25`);
-    if (!res.ok) return { conversations: [], meta: EMPTY_META };
-    const body = await parseApiResponse<ConversationListItem[]>(res);
-    if (!body.success) return { conversations: [], meta: EMPTY_META };
-    return {
-      conversations: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('conversations list page: initial fetch failed', err);
-    return { conversations: [], meta: EMPTY_META };
-  }
-}
-
-async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
-  } catch {
-    return [];
-  }
+  const { data, meta } = await requireServerData<ConversationListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=25`
+  );
+  return { conversations: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function ConversationsListPage() {
-  const [{ conversations, meta }, agents] = await Promise.all([getConversations(), getAgents()]);
+  // The agent filter's options are secondary: without them the table still
+  // works, so a failed load shows a notice instead of an empty filter.
+  const [{ conversations, meta }, agents] = await Promise.all([
+    getConversations(),
+    loadServerData<AgentOption[]>(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -87,7 +73,13 @@ export default async function ConversationsListPage() {
         </p>
       </header>
 
-      <ConversationsTable initialConversations={conversations} initialMeta={meta} agents={agents} />
+      {!agents.ok && <LoadFailedNotice what="the agent filter options" />}
+
+      <ConversationsTable
+        initialConversations={conversations}
+        initialMeta={meta}
+        agents={agents.ok ? agents.data : []}
+      />
     </div>
   );
 }

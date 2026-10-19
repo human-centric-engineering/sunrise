@@ -8,7 +8,9 @@
  *
  * Test coverage:
  * - Happy path: renders truncated execution ID as heading, breadcrumb
- * - notFound() called when execution fetch returns non-ok
+ * - notFound() called on a 404, and only on a 404: a 500 or a success:false
+ *   envelope throws to the error boundary instead of reading as a missing
+ *   execution (#518)
  *
  * @see app/admin/orchestration/executions/[id]/page.tsx
  */
@@ -16,11 +18,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -102,12 +107,8 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('renders execution heading with truncated ID', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ execution: MOCK_EXECUTION, trace: [] }));
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -122,12 +123,8 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('shows "AI Orchestration" breadcrumb link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ execution: MOCK_EXECUTION, trace: [] }));
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -140,12 +137,8 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('renders the ExecutionDetailView', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ execution: MOCK_EXECUTION, trace: [] }));
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -155,9 +148,9 @@ describe('ExecutionDetailPage (server component)', () => {
     expect(screen.getByTestId('execution-detail-view')).toBeInTheDocument();
   });
 
-  it('calls notFound() when execution fetch returns non-ok', async () => {
+  it('calls notFound() when the execution does not exist', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 404 } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -169,21 +162,31 @@ describe('ExecutionDetailPage (server component)', () => {
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
-  it('calls notFound() when parseApiResponse returns success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Not found' },
-    });
+  it('throws to the error boundary, not notFound(), when the load fails', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
 
-    await expect(ExecutionDetailPage({ params: Promise.resolve({ id: EXEC_ID }) })).rejects.toThrow(
-      'NEXT_NOT_FOUND'
-    );
+    await expect(
+      ExecutionDetailPage({ params: Promise.resolve({ id: EXEC_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
 
-    expect(mockNotFound).toHaveBeenCalledOnce();
+  it('throws, not notFound(), when the API answers success:false', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
+
+    const { default: ExecutionDetailPage } =
+      await import('@/app/admin/orchestration/executions/[id]/page');
+
+    await expect(
+      ExecutionDetailPage({ params: Promise.resolve({ id: EXEC_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
   });
 });

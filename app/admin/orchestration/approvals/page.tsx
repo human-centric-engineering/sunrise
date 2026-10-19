@@ -4,9 +4,8 @@ import Link from 'next/link';
 import { ApprovalsTabs } from '@/components/admin/orchestration/approvals-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
 
@@ -22,28 +21,20 @@ const EMPTY_META: PaginationMeta = {
   totalPages: 1,
 };
 
+/** A failed load throws to the error boundary: an empty queue reads as "nothing to approve" (#518). */
 async function getPendingApprovals(): Promise<{
   approvals: ExecutionListItem[];
   meta: PaginationMeta;
 }> {
-  try {
-    const params = new URLSearchParams({
-      page: '1',
-      limit: '25',
-      status: 'paused_for_approval',
-    });
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?${params.toString()}`);
-    if (!res.ok) return { approvals: [], meta: EMPTY_META };
-    const body = await parseApiResponse<ExecutionListItem[]>(res);
-    if (!body.success) return { approvals: [], meta: EMPTY_META };
-    return {
-      approvals: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('approvals list page: initial fetch failed', err);
-    return { approvals: [], meta: EMPTY_META };
-  }
+  const params = new URLSearchParams({
+    page: '1',
+    limit: '25',
+    status: 'paused_for_approval',
+  });
+  const { data, meta } = await requireServerData<ExecutionListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?${params.toString()}`
+  );
+  return { approvals: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function ApprovalQueuePage() {

@@ -5,10 +5,9 @@ import { ExecutionsListView } from '@/components/admin/orchestration/executions-
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { logger } from '@/lib/logging';
 import type { LiveEngineSnapshotView } from '@/components/admin/orchestration/live-engine-dashboard';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
@@ -38,39 +37,30 @@ interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+/** The list is the page: a failed load throws to the error boundary (#518). */
 async function getExecutions(
   workflowId?: string,
   status?: string
 ): Promise<{ executions: ExecutionListItem[]; meta: PaginationMeta }> {
-  try {
-    const params = new URLSearchParams({ page: '1', limit: '25' });
-    if (workflowId) params.set('workflowId', workflowId);
-    if (status && status !== 'all') params.set('status', status);
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?${params.toString()}`);
-    if (!res.ok) return { executions: [], meta: EMPTY_META };
-    const body = await parseApiResponse<ExecutionListItem[]>(res);
-    if (!body.success) return { executions: [], meta: EMPTY_META };
-    return {
-      executions: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('executions list page: initial fetch failed', err);
-    return { executions: [], meta: EMPTY_META };
-  }
+  const params = new URLSearchParams({ page: '1', limit: '25' });
+  if (workflowId) params.set('workflowId', workflowId);
+  if (status && status !== 'all') params.set('status', status);
+  const { data, meta } = await requireServerData<ExecutionListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?${params.toString()}`
+  );
+  return { executions: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
+/**
+ * Also required, for a platform viewer: the live-engine cards render a
+ * snapshot as counts, so a failed load passed through as zeros would read
+ * as "nothing running, nothing orphaned" (#518).
+ */
 async function getInitialSnapshot(): Promise<LiveEngineSnapshotView> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.EXECUTIONS_LIVE_SNAPSHOT);
-    if (!res.ok) return EMPTY_SNAPSHOT;
-    const body = await parseApiResponse<LiveEngineSnapshotView>(res);
-    if (!body.success) return EMPTY_SNAPSHOT;
-    return body.data;
-  } catch (err) {
-    logger.error('executions list page: snapshot fetch failed', err);
-    return EMPTY_SNAPSHOT;
-  }
+  const { data } = await requireServerData<LiveEngineSnapshotView>(
+    API.ADMIN.ORCHESTRATION.EXECUTIONS_LIVE_SNAPSHOT
+  );
+  return data;
 }
 
 export default async function ExecutionsListPage({ searchParams }: PageProps) {

@@ -51,7 +51,7 @@ The page wraps two views in a tabbed shell (`ApprovalsTabs`):
 - **Pending** — the live `paused_for_approval` queue. Server component pre-fetches `GET /executions?status=paused_for_approval&limit=25` via `serverFetch` and seeds `ApprovalsTable`. Pending count appears as a badge on the tab header when `> 0`.
 - **History** — a self-fetching `ApprovalsHistoryTable` that calls `GET /approvals/history` on mount and on every filter change. It owns its own pagination, filter state, debounced search, Reset button, and CSV export (see below).
 
-`Tabs` use the shadcn `Tabs` primitive; switching tabs after the first paint does not refetch the Pending list. Failures in the initial Pending fetch degrade to an empty list with a logged error, not a thrown 500.
+`Tabs` use the shadcn `Tabs` primitive; switching tabs after the first paint does not refetch the Pending list. A failed initial Pending fetch throws to the admin error boundary (logged, with a **Try again** that re-fetches) rather than rendering an empty queue, which would read as "nothing to approve" (#518).
 
 Client-side state for Pending lives in `ApprovalsTable`. State for History lives in `ApprovalsHistoryTable` (`components/admin/orchestration/approvals-history-table.tsx`).
 

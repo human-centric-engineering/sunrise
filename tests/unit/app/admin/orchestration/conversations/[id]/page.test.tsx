@@ -6,8 +6,9 @@
  * @see app/admin/orchestration/conversations/[id]/page.tsx
  *
  * Server component. Fetches the conversation + messages in parallel,
- * calls notFound() if the conversation isn't returned, otherwise
- * renders the trace viewer with a download-provenance button group.
+ * calls notFound() only on a 404, throws to the error boundary on any
+ * other failure (#518), otherwise renders the trace viewer with a
+ * download-provenance button group.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,9 +21,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -75,9 +77,11 @@ import React from 'react';
 import ConversationDetailPage, {
   metadata,
 } from '@/app/admin/orchestration/conversations/[id]/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const CONV_ID = 'cmjbv4i3x00003wsloputgwu3';
 
@@ -98,6 +102,16 @@ const messagesFixture = [
   { id: 'm2', role: 'assistant', content: 'Sure', provenance: null },
 ];
 
+type Answer = Response | Error;
+
+/** Route the two parallel fetches; an `Error` makes serverFetch reject. */
+function route(conversation: Answer, messages: Answer = apiSuccess({ messages: [] })) {
+  vi.mocked(serverFetch).mockImplementation((url: string) => {
+    const answer = url.includes('messages') ? messages : conversation;
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -108,12 +122,7 @@ describe('ConversationDetailPage', () => {
   });
 
   it('renders the title, tag chip, and trace viewer with messages on success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    // Two parallel fetches happen — the mock returns the conversation
-    // then the messages.
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: conversationFixture })
-      .mockResolvedValueOnce({ success: true, data: { messages: messagesFixture } });
+    route(apiSuccess(conversationFixture), apiSuccess({ messages: messagesFixture }));
 
     const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
     render(ui);
@@ -130,13 +139,7 @@ describe('ConversationDetailPage', () => {
   });
 
   it('renders "Untitled" placeholder when the conversation has no title', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...conversationFixture, title: null },
-      })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    route(apiSuccess({ ...conversationFixture, title: null }));
 
     const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
     render(ui);
@@ -146,8 +149,8 @@ describe('ConversationDetailPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('calls notFound() when the conversation fetch returns not ok', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('calls notFound() when the conversation does not exist (404)', async () => {
+    route(apiFailure(404, 'NOT_FOUND'), apiFailure(404, 'NOT_FOUND'));
 
     await expect(
       ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
@@ -155,33 +158,35 @@ describe('ConversationDetailPage', () => {
     expect(vi.mocked(notFound)).toHaveBeenCalled();
   });
 
-  it('calls notFound() when the API response indicates failure', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'not_found', message: 'gone' },
-    });
+  it('throws to the error boundary, not notFound(), when the conversation load fails', async () => {
+    route(apiFailure(500));
 
     await expect(
       ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
+  });
+
+  it('throws when the API answers success:false', async () => {
+    route(apiFailure(200));
+
+    await expect(
+      ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
   });
 
   it('renders the Inbound channel card when the conversation has a channel set', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({
-        success: true,
-        data: {
-          ...conversationFixture,
-          channel: 'whatsapp',
-          provider: 'meta',
-          fromAddress: '+447400123456',
-          lastInboundAt: '2026-05-18T00:04:00Z',
-          smsOptedOut: false,
-        },
+    route(
+      apiSuccess({
+        ...conversationFixture,
+        channel: 'whatsapp',
+        provider: 'meta',
+        fromAddress: '+447400123456',
+        lastInboundAt: '2026-05-18T00:04:00Z',
+        smsOptedOut: false,
       })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    );
 
     const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
     render(ui);
@@ -197,20 +202,16 @@ describe('ConversationDetailPage', () => {
   });
 
   it('renders the "Opted out (STOP)" callout when smsOptedOut is true', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({
-        success: true,
-        data: {
-          ...conversationFixture,
-          channel: 'sms',
-          provider: 'twilio',
-          fromAddress: '+12025550100',
-          lastInboundAt: '2026-05-18T00:04:00Z',
-          smsOptedOut: true,
-        },
+    route(
+      apiSuccess({
+        ...conversationFixture,
+        channel: 'sms',
+        provider: 'twilio',
+        fromAddress: '+12025550100',
+        lastInboundAt: '2026-05-18T00:04:00Z',
+        smsOptedOut: true,
       })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    );
 
     const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
     render(ui);
@@ -221,10 +222,7 @@ describe('ConversationDetailPage', () => {
 
   it('does NOT render the Inbound channel card when channel is missing (web/admin chat)', async () => {
     // Existing fixture has no channel field — verify the conditional omits the card.
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: conversationFixture })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    route(apiSuccess(conversationFixture));
 
     const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
     render(ui);
@@ -232,65 +230,48 @@ describe('ConversationDetailPage', () => {
     expect(screen.queryByText(/Inbound channel/)).not.toBeInTheDocument();
   });
 
-  it('logs and treats the conversation as missing if its fetch throws', async () => {
-    vi.mocked(serverFetch).mockImplementation((url: string) => {
-      // First call (conversation): throw. Second call (messages): succeed.
-      if (url.includes('messages')) {
-        return Promise.resolve({ ok: true } as Response);
-      }
-      return Promise.reject(new Error('network down'));
-    });
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: { messages: [] },
-    });
+  it('logs and throws, not notFound(), if the conversation fetch rejects', async () => {
+    const err = new Error('network down');
+    route(err);
 
     await expect(
       ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(vi.mocked(logger.error)).toHaveBeenCalled();
-  });
-
-  it('falls back to an empty messages array when the messages fetch fails', async () => {
-    vi.mocked(serverFetch).mockImplementation((url: string) => {
-      // Conversation: ok. Messages: not ok.
-      if (url.includes('messages')) {
-        return Promise.resolve({ ok: false } as Response);
-      }
-      return Promise.resolve({ ok: true } as Response);
-    });
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: conversationFixture,
-    });
-
-    const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
-    render(ui);
-
-    const viewer = screen.getByTestId('trace-viewer');
-    expect(viewer.getAttribute('data-message-count')).toBe('0');
-  });
-
-  it('logs and falls back to an empty messages array when the messages fetch throws', async () => {
-    vi.mocked(serverFetch).mockImplementation((url: string) => {
-      if (url.includes('messages')) {
-        return Promise.reject(new Error('messages went sideways'));
-      }
-      return Promise.resolve({ ok: true } as Response);
-    });
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: conversationFixture,
-    });
-
-    const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
-    render(ui);
-
+    ).rejects.toBeInstanceOf(ServerLoadError);
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
-      'conversation detail page: messages fetch failed',
-      expect.any(Error),
-      expect.objectContaining({ id: CONV_ID })
+      expect.any(String),
+      err,
+      expect.any(Object)
     );
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
+  });
+
+  it('throws rather than showing an empty trace when the messages load fails', async () => {
+    route(apiSuccess(conversationFixture), apiFailure(500));
+
+    await expect(
+      ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('logs and throws when the messages fetch rejects', async () => {
+    const err = new Error('messages went sideways');
+    route(apiSuccess(conversationFixture), err);
+
+    await expect(
+      ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.any(String),
+      err,
+      expect.objectContaining({ path: expect.stringContaining(CONV_ID) })
+    );
+  });
+
+  it('renders a real empty message list as an empty trace', async () => {
+    route(apiSuccess(conversationFixture), apiSuccess({ messages: [] }));
+
+    render(await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) }));
+
     expect(screen.getByTestId('trace-viewer').getAttribute('data-message-count')).toBe('0');
   });
 });

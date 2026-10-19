@@ -3,9 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -29,9 +30,11 @@ vi.mock('next/link', () => ({
 }));
 
 import AnalyticsPage, { metadata } from '@/app/admin/orchestration/analytics/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -47,30 +50,36 @@ const mockAgents = [
   { id: 'agent-2', name: 'Sales Bot' },
 ];
 
-/** Build a fake Response with ok=true for the parseApiResponse mock chain. */
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
-
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
+/** Happy-path bodies by endpoint (the page fetches in parallel). */
+const HAPPY_BODIES: Record<string, unknown> = {
+  [API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT]: { metrics: mockEngagement },
+  [API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS]: { topics: mockTopics },
+  [API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED]: { questions: mockUnanswered },
+  [API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK]: { feedback: mockFeedback },
+  [API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS]: { gaps: mockContentGaps },
+  // Agents endpoint returns paginatedResponse, where `data` is the array itself
+  // (not wrapped in an `{ agents: [...] }` envelope).
+  [API.ADMIN.ORCHESTRATION.AGENTS]: mockAgents,
+};
 
 /**
- * Set up serverFetch to return ok responses in Promise.all order:
- * engagement, topics, unanswered, feedback, content-gaps, agents.
+ * Route each fetch by its endpoint (query string stripped). Endpoints named in
+ * `failing` answer with the given failure; every other one succeeds.
  */
+function setupFetch(failing: Record<string, () => Response | Promise<Response>> = {}) {
+  vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+    const endpoint = path.split('?')[0];
+    if (failing[endpoint]) return failing[endpoint]();
+    return apiSuccess(HAPPY_BODIES[endpoint]);
+  });
+}
+
 function setupHappyPath() {
-  vi.mocked(serverFetch).mockResolvedValue(okResponse());
-  vi.mocked(parseApiResponse)
-    .mockResolvedValueOnce({ success: true, data: { metrics: mockEngagement } } as never)
-    .mockResolvedValueOnce({ success: true, data: { topics: mockTopics } } as never)
-    .mockResolvedValueOnce({ success: true, data: { questions: mockUnanswered } } as never)
-    .mockResolvedValueOnce({ success: true, data: { feedback: mockFeedback } } as never)
-    .mockResolvedValueOnce({ success: true, data: { gaps: mockContentGaps } } as never)
-    // Agents endpoint returns paginatedResponse, where `data` is the array itself
-    // (not wrapped in an `{ agents: [...] }` envelope).
-    .mockResolvedValueOnce({ success: true, data: mockAgents } as never);
+  setupFetch();
+}
+
+function fetchedPaths(): string[] {
+  return vi.mocked(serverFetch).mock.calls.map((call) => call[0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,20 +123,14 @@ describe('AnalyticsPage', () => {
     await AnalyticsPage({ searchParams });
 
     const expectedQuery = '?from=2026-01-01&to=2026-01-31&agentId=agent-123';
-    expect(serverFetch).toHaveBeenCalledWith(
-      `${API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT}${expectedQuery}`
-    );
-    expect(serverFetch).toHaveBeenCalledWith(
-      `${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${expectedQuery}`
-    );
-    expect(serverFetch).toHaveBeenCalledWith(
-      `${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${expectedQuery}`
-    );
-    expect(serverFetch).toHaveBeenCalledWith(
-      `${API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK}${expectedQuery}`
-    );
-    expect(serverFetch).toHaveBeenCalledWith(
-      `${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${expectedQuery}`
+    expect(fetchedPaths()).toEqual(
+      expect.arrayContaining([
+        `${API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT}${expectedQuery}`,
+        `${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${expectedQuery}`,
+        `${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${expectedQuery}`,
+        `${API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK}${expectedQuery}`,
+        `${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${expectedQuery}`,
+      ])
     );
   });
 
@@ -141,7 +144,7 @@ describe('AnalyticsPage', () => {
 
     await AnalyticsPage({ searchParams });
 
-    expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.AGENTS);
+    expect(fetchedPaths()).toContain(API.ADMIN.ORCHESTRATION.AGENTS);
   });
 
   // 3. Happy path — all fetchers succeed
@@ -164,76 +167,85 @@ describe('AnalyticsPage', () => {
     expect(props.agents).toEqual(mockAgents);
   });
 
-  // 4. res.ok === false path
-  it('passes null for analytics props and [] for agents when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+  // 4. A failed load is a failure, not an empty panel (#518)
+  it.each([
+    ['topics', API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS],
+    ['unanswered questions', API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED],
+    ['content gaps', API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS],
+  ])(
+    'throws to the error boundary when %s fail (their empty state reads as "none")',
+    async (_label, endpoint) => {
+      setupFetch({ [endpoint]: () => apiFailure(500) });
 
-    const searchParams = Promise.resolve({});
-    render(await AnalyticsPage({ searchParams }));
+      await expect(AnalyticsPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+        ServerLoadError
+      );
+      expect(logger.error).toHaveBeenCalled();
+    }
+  );
 
-    const props = getRenderedProps();
-    expect(props.engagement).toBeNull();
-    expect(props.topics).toBeNull();
-    expect(props.unanswered).toBeNull();
-    expect(props.feedback).toBeNull();
-    expect(props.contentGaps).toBeNull();
-    expect(props.agents).toEqual([]);
-  });
-
-  // 5. body.success === false path
-  it('passes null for analytics props and [] for agents when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'fail' },
-    } as never);
-
-    const searchParams = Promise.resolve({});
-    render(await AnalyticsPage({ searchParams }));
-
-    const props = getRenderedProps();
-    expect(props.engagement).toBeNull();
-    expect(props.topics).toBeNull();
-    expect(props.unanswered).toBeNull();
-    expect(props.feedback).toBeNull();
-    expect(props.contentGaps).toBeNull();
-    expect(props.agents).toEqual([]);
-  });
-
-  // 6. serverFetch throws — each fetcher logs and falls back
-  it('logs the correct error message for each fetcher when serverFetch throws', async () => {
+  it('throws when serverFetch rejects for a required panel', async () => {
     const err = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(err);
 
-    const searchParams = Promise.resolve({});
-    render(await AnalyticsPage({ searchParams }));
-
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load engagement', err);
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load topics', err);
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load unanswered', err);
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load feedback', err);
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load content gaps', err);
-    expect(logger.error).toHaveBeenCalledWith('analytics page: failed to load agents', err);
+    await expect(AnalyticsPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), err, expect.any(Object));
   });
 
-  it('falls back to null/[] for all props when serverFetch throws', async () => {
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network failure'));
+  it('shows a notice in place of the feedback summary when it fails, and passes no feedback', async () => {
+    setupFetch({ [API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK]: () => apiFailure(500) });
 
-    const searchParams = Promise.resolve({});
-    render(await AnalyticsPage({ searchParams }));
+    render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the feedback summary");
+    expect(getRenderedProps().feedback).toBeNull();
+    // The rest of the page still renders its data.
+    expect(getRenderedProps().topics).toEqual(mockTopics);
+  });
+
+  it('shows a notice when the agent filter options fail, and passes no options', async () => {
+    setupFetch({ [API.ADMIN.ORCHESTRATION.AGENTS]: () => apiFailure(500) });
+
+    render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the agent filter options");
+    expect(getRenderedProps().agents).toEqual([]);
+  });
+
+  it('passes null engagement (shown as "—") without a notice when engagement fails', async () => {
+    setupFetch({ [API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT]: () => apiFailure(500) });
+
+    render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(getRenderedProps().engagement).toBeNull();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('passes real empty lists through as empty, with no notice', async () => {
+    vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+      const endpoint = path.split('?')[0];
+      const empty: Record<string, unknown> = {
+        [API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS]: { topics: [] },
+        [API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED]: { questions: [] },
+        [API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS]: { gaps: [] },
+      };
+      return apiSuccess(empty[endpoint] ?? HAPPY_BODIES[endpoint]);
+    });
+
+    render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
 
     const props = getRenderedProps();
-    expect(props.engagement).toBeNull();
-    expect(props.topics).toBeNull();
-    expect(props.unanswered).toBeNull();
-    expect(props.feedback).toBeNull();
-    expect(props.contentGaps).toBeNull();
-    expect(props.agents).toEqual([]);
+    expect(props.topics).toEqual([]);
+    expect(props.unanswered).toEqual([]);
+    expect(props.contentGaps).toEqual([]);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   // 7. filters fallback — omitted searchParams use getAnalyticsDefaultDateInputs()
   it('passes default date inputs to filters when searchParams omits from/to/agentId', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    setupHappyPath();
 
     const searchParams = Promise.resolve({});
     render(await AnalyticsPage({ searchParams }));
@@ -248,7 +260,7 @@ describe('AnalyticsPage', () => {
 
   // 8. filters forwarding — supplied searchParams are passed verbatim
   it('forwards supplied from/to/agentId values verbatim to filters', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    setupHappyPath();
 
     const searchParams = Promise.resolve({
       from: '2026-01-01',
@@ -267,7 +279,7 @@ describe('AnalyticsPage', () => {
 
   // 9. Heading and subtitle
   it('renders the <h1>Analytics</h1> heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    setupHappyPath();
 
     const searchParams = Promise.resolve({});
     render(await AnalyticsPage({ searchParams }));
@@ -276,7 +288,7 @@ describe('AnalyticsPage', () => {
   });
 
   it('renders the subtitle text', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    setupHappyPath();
 
     const searchParams = Promise.resolve({});
     render(await AnalyticsPage({ searchParams }));

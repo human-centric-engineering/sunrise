@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import { ConversationTags } from '@/components/admin/orchestration/conversation-tags';
 import {
@@ -9,8 +8,7 @@ import {
 } from '@/components/admin/orchestration/conversation-trace-viewer';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Conversation · AI Orchestration',
@@ -38,28 +36,25 @@ interface ConversationDetail {
   smsOptedOut: boolean;
 }
 
-async function getConversation(id: string): Promise<ConversationDetail | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.conversationById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<ConversationDetail>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('conversation detail page: fetch failed', err, { id });
-    return null;
-  }
+/**
+ * The conversation and its messages are both what this page exists to show.
+ * A 404 from either means the conversation does not exist; any other failure
+ * throws to the error boundary rather than reading as missing or empty (#518).
+ */
+async function getConversation(id: string): Promise<ConversationDetail> {
+  const { data } = await requireServerData<ConversationDetail>(
+    API.ADMIN.ORCHESTRATION.conversationById(id),
+    { notFound: true }
+  );
+  return data;
 }
 
 async function getMessages(id: string): Promise<ConversationMessage[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.conversationMessages(id));
-    if (!res.ok) return [];
-    const body = await parseApiResponse<{ messages: ConversationMessage[] }>(res);
-    return body.success ? body.data.messages : [];
-  } catch (err) {
-    logger.error('conversation detail page: messages fetch failed', err, { id });
-    return [];
-  }
+  const { data } = await requireServerData<{ messages: ConversationMessage[] }>(
+    API.ADMIN.ORCHESTRATION.conversationMessages(id),
+    { notFound: true }
+  );
+  return data.messages;
 }
 
 export default async function ConversationDetailPage({
@@ -69,8 +64,6 @@ export default async function ConversationDetailPage({
 }) {
   const { id } = await params;
   const [conversation, messages] = await Promise.all([getConversation(id), getMessages(id)]);
-
-  if (!conversation) notFound();
 
   return (
     <div className="space-y-6">

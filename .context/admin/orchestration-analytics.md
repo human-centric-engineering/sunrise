@@ -43,7 +43,7 @@ The view is a **single vertical scroll** (not tabbed). Each section reads from e
 | Content Gaps             | `GET /analytics/content-gaps` → `gaps[]` (sliced to 15)    | "No content gaps detected."                                                   |
 | Unanswered Questions     | `GET /analytics/unanswered` → `questions[]` (sliced to 20) | "No unanswered questions found."                                              |
 
-All six server fetches (five analytics endpoints plus `GET /agents` for the filter dropdown) run in parallel via `Promise.all` in the page shell. Each is wrapped in try/catch and returns `null` on failure — the page never throws; the affected section just degrades to its empty state.
+All six server fetches (five analytics endpoints plus `GET /agents` for the filter dropdown) run in parallel via `Promise.all` in the page shell, through `lib/api/server-load.ts`. A failed load never renders as an empty state (#518). Topics, unanswered questions and content gaps are required — `<AnalyticsView>` would render them missing as "No topic data yet", "No unanswered questions found" and "No content gaps detected" — so their failure throws to the admin error boundary, whose **Try again** re-fetches. A failed engagement load leaves the cards at "—". A failed feedback or agents load shows a "Couldn't load …" notice above the view, with the feedback card hidden or the agent filter empty.
 
 ## Filters
 

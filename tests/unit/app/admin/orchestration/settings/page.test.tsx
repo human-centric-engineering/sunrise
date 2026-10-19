@@ -3,9 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -50,30 +51,11 @@ vi.mock('next/link', () => ({
 
 import React from 'react';
 import OrchestrationSettingsPage, { metadata } from '@/app/admin/orchestration/settings/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
-
-const defaults = {
-  inputGuardMode: null,
-  outputGuardMode: null,
-  citationGuardMode: null,
-  globalMonthlyBudgetUsd: null,
-  defaultMaxCostPerExecutionUsd: null,
-  defaultMaxCostPerTurnUsd: null,
-  defaultApprovalTimeoutMs: null,
-  approvalDefaultAction: null,
-  searchConfig: null,
-  webhookRetentionDays: null,
-  costLogRetentionDays: null,
-  auditLogRetentionDays: null,
-  executionRetentionDays: null,
-  evaluationRetentionDays: null,
-  maxConversationsPerUser: null,
-  maxMessagesPerConversation: null,
-  stuckExecutionThresholdMins: 5,
-  escalationConfig: null,
-};
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const mockSettings = {
   inputGuardMode: 'strict',
@@ -90,6 +72,34 @@ const mockSettings = {
   escalationConfig: null,
 };
 
+type Source = 'settings' | 'chat' | 'audio' | 'embeddingMatrix' | 'providers' | 'embeddingModels';
+
+function sourceOf(url: string): Source {
+  if (url.startsWith(API.ADMIN.ORCHESTRATION.SETTINGS)) return 'settings';
+  if (url.startsWith(API.ADMIN.ORCHESTRATION.PROVIDER_MODELS)) {
+    if (url.includes('capability=chat')) return 'chat';
+    if (url.includes('capability=audio')) return 'audio';
+    return 'embeddingMatrix';
+  }
+  if (url.startsWith(API.ADMIN.ORCHESTRATION.PROVIDERS)) return 'providers';
+  return 'embeddingModels';
+}
+
+/**
+ * Route the page's six parallel fetches by URL. Every source answers with
+ * its body in `bodies` (default: settings → mockSettings, lists → []); a
+ * `Response` or `Error` replaces the answer (an Error makes serverFetch reject).
+ */
+function answer(bodies: Partial<Record<Source, unknown>> = {}) {
+  vi.mocked(serverFetch).mockImplementation(async (url: string) => {
+    const source = sourceOf(url);
+    const given = source in bodies ? bodies[source] : source === 'settings' ? mockSettings : [];
+    if (given instanceof Error) throw given;
+    if (given instanceof Response) return given;
+    return apiSuccess(given);
+  });
+}
+
 describe('OrchestrationSettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -105,92 +115,90 @@ describe('OrchestrationSettingsPage', () => {
 
   // 2. serverFetch called with correct endpoint
   it('calls serverFetch with the orchestration settings endpoint', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    answer();
 
     await OrchestrationSettingsPage();
 
-    expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.SETTINGS);
+    expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(
+      API.ADMIN.ORCHESTRATION.SETTINGS
+    );
   });
 
   // 3. Happy path: passes fetched settings object to SettingsForm
-  it('passes fetched settings to SettingsForm when res.ok and body.success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockSettings,
-    } as never);
+  it('passes fetched settings to SettingsForm when the load succeeds', async () => {
+    answer();
 
     render(await OrchestrationSettingsPage());
 
     const form = screen.getByTestId('settings-form');
     expect(form).toHaveAttribute('data-settings', JSON.stringify(mockSettings));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  // 4. res.ok === false: passes defaults to SettingsForm
-  it('passes defaults to SettingsForm when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  // 4–6. A failed settings load must never pre-fill the forms with defaults
+  // an admin could then save over the real settings (#518): it throws to the
+  // error boundary instead.
+  it.each([
+    ['answers 500', () => apiFailure(500)],
+    ['answers success:false', () => apiFailure(200)],
+    ['rejects', () => new Error('Network failure')],
+  ])('throws to the error boundary when the settings load %s', async (_label, failure) => {
+    answer({ settings: failure() });
+
+    await expect(OrchestrationSettingsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['chat models', 'chat'],
+    ['providers', 'providers'],
+    ['embedding models', 'embeddingModels'],
+    ['audio models', 'audio'],
+  ] as const)(
+    'shows a notice in place of the default-models form when the %s load fails',
+    async (_label, source) => {
+      answer({ [source]: apiFailure(500) });
+
+      render(await OrchestrationSettingsPage());
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        "Couldn't load the default model options"
+      );
+      expect(screen.queryByTestId('default-models-form')).not.toBeInTheDocument();
+      // The settings form still renders with the real settings.
+      expect(screen.getByTestId('settings-form')).toHaveAttribute(
+        'data-settings',
+        JSON.stringify(mockSettings)
+      );
+      expect(logger.error).toHaveBeenCalled();
+    }
+  );
+
+  it('shows a notice in place of the active embedding model form when its options fail', async () => {
+    answer({ embeddingMatrix: apiFailure(500) });
 
     render(await OrchestrationSettingsPage());
 
-    const form = screen.getByTestId('settings-form');
-    expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Couldn't load the embedding model options"
+    );
+    expect(screen.getByTestId('default-models-form')).toBeInTheDocument();
   });
 
-  // 5. body.success === false: passes defaults to SettingsForm
-  it('passes defaults to SettingsForm when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' },
-    } as never);
+  it('renders the forms with real empty option lists, with no notice', async () => {
+    answer();
 
     render(await OrchestrationSettingsPage());
 
-    const form = screen.getByTestId('settings-form');
-    expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
-  });
-
-  // 6. serverFetch throws: logger.error called for ALL five helpers and
-  // defaults passed to SettingsForm. Each helper has its own try/catch
-  // with a distinct message — toHaveBeenCalledWith is a partial check,
-  // so a regression that broke any one of the chat/providers/
-  // embeddings/audio error branches would have been invisible without
-  // this coverage.
-  it('calls logger.error for each of the six helpers and passes defaults when serverFetch throws', async () => {
-    const fetchError = new Error('Network failure');
-    vi.mocked(serverFetch).mockRejectedValue(fetchError);
-
-    render(await OrchestrationSettingsPage());
-
-    const form = screen.getByTestId('settings-form');
-    expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
-    expect(logger.error).toHaveBeenCalledTimes(6);
-    expect(logger.error).toHaveBeenCalledWith('settings page: fetch failed', fetchError);
-    expect(logger.error).toHaveBeenCalledWith(
-      'settings page: chat models fetch failed',
-      fetchError
-    );
-    expect(logger.error).toHaveBeenCalledWith('settings page: providers fetch failed', fetchError);
-    expect(logger.error).toHaveBeenCalledWith(
-      'settings page: embedding models fetch failed',
-      fetchError
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'settings page: audio models fetch failed',
-      fetchError
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'settings page: embedding matrix fetch failed',
-      fetchError
-    );
+    const form = screen.getByTestId('default-models-form');
+    expect(form).toHaveAttribute('data-models', '[]');
+    expect(form).toHaveAttribute('data-providers', '[]');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   // 6b. Happy path covering ALL four parallel serverFetch calls — proves
   // each helper's data lands on the corresponding DefaultModelsForm prop
-  // (chat models, providers, embedding models). The original happy-path
-  // test only verified settings; the other three helpers always
-  // returned empty arrays in tests because their fetches resolved to
-  // `{ ok: false }` from the global mock.
+  // (chat models, providers, embedding models), not just the settings.
   it('passes chat models, providers, and embedding models through to DefaultModelsForm', async () => {
     // Cover every matrixTierToModelTier branch by including one row
     // per tierRole + deploymentProfile combination the source maps.
@@ -245,29 +253,9 @@ describe('OrchestrationSettingsPage', () => {
       { id: 'voyage-3', name: 'Voyage 3', provider: 'voyage', model: 'voyage-3' },
     ];
 
-    // serverFetch returns a tagged response so parseApiResponse can
-    // dispatch on the original URL — Promise.all() does not guarantee
-    // call ordering, so dispatching by URL is more robust than relying
-    // on mockResolvedValueOnce sequencing.
-    vi.mocked(serverFetch).mockImplementation((url: string) =>
-      Promise.resolve({ ok: true, _testUrl: url } as unknown as Response)
-    );
-    vi.mocked(parseApiResponse).mockImplementation(((res: Response & { _testUrl?: string }) => {
-      const url = res._testUrl ?? '';
-      if (url.includes(API.ADMIN.ORCHESTRATION.SETTINGS)) {
-        return Promise.resolve({ success: true, data: mockSettings });
-      }
-      if (url.includes(API.ADMIN.ORCHESTRATION.PROVIDER_MODELS)) {
-        return Promise.resolve({ success: true, data: chatRows });
-      }
-      if (url.includes(API.ADMIN.ORCHESTRATION.PROVIDERS)) {
-        return Promise.resolve({ success: true, data: providers });
-      }
-      if (url.includes(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS)) {
-        return Promise.resolve({ success: true, data: embeddingModels });
-      }
-      return Promise.resolve({ success: false });
-    }) as never);
+    // Promise.all() does not guarantee call ordering, so answers are
+    // dispatched by URL rather than by mockResolvedValueOnce sequencing.
+    answer({ chat: chatRows, providers, embeddingModels });
 
     render(await OrchestrationSettingsPage());
 
@@ -298,7 +286,7 @@ describe('OrchestrationSettingsPage', () => {
 
   // 7. Renders breadcrumb link to /admin/orchestration
   it('renders breadcrumb link to /admin/orchestration', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    answer();
 
     render(await OrchestrationSettingsPage());
 
@@ -308,7 +296,7 @@ describe('OrchestrationSettingsPage', () => {
 
   // 8. Renders h1 containing "Settings"
   it('renders h1 heading containing "Settings"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    answer();
 
     render(await OrchestrationSettingsPage());
 
@@ -318,7 +306,7 @@ describe('OrchestrationSettingsPage', () => {
 
   // 9. Renders subtitle paragraph with exact copy
   it('renders the subtitle paragraph with exact copy', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    answer();
 
     render(await OrchestrationSettingsPage());
 
@@ -331,7 +319,7 @@ describe('OrchestrationSettingsPage', () => {
 
   // 10. Renders BackupPanel
   it('renders BackupPanel', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    answer();
 
     render(await OrchestrationSettingsPage());
 

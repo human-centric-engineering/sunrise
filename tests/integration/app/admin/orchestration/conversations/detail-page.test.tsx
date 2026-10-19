@@ -8,7 +8,8 @@
  *
  * Test coverage:
  * - Happy path: renders conversation title as heading, breadcrumb
- * - notFound() called when conversation fetch returns non-ok
+ * - notFound() called on a 404, and only on a 404: a 500 throws to the
+ *   error boundary instead of reading as a missing conversation (#518)
  *
  * @see app/admin/orchestration/conversations/[id]/page.tsx
  */
@@ -16,11 +17,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -100,6 +104,14 @@ const MOCK_MESSAGES = [
   },
 ];
 
+/** Route the page's two parallel fetches: the conversation, then its messages. */
+async function route(conversation: Response, messages: Response) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation(async (url: string) =>
+    url.includes('messages') ? messages : conversation
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ConversationDetailPage (server component)', () => {
@@ -108,11 +120,7 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('renders conversation title as heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    await route(apiSuccess(MOCK_CONVERSATION), apiSuccess({ messages: MOCK_MESSAGES }));
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -123,11 +131,7 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('shows "AI Orchestration" breadcrumb link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    await route(apiSuccess(MOCK_CONVERSATION), apiSuccess({ messages: MOCK_MESSAGES }));
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -140,11 +144,7 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('renders the ConversationTraceViewer', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    await route(apiSuccess(MOCK_CONVERSATION), apiSuccess({ messages: MOCK_MESSAGES }));
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -154,9 +154,8 @@ describe('ConversationDetailPage (server component)', () => {
     expect(screen.getByTestId('trace-viewer')).toBeInTheDocument();
   });
 
-  it('calls notFound() when conversation fetch returns non-ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 404 } as Response);
+  it('calls notFound() when the conversation does not exist', async () => {
+    await route(apiFailure(404, 'NOT_FOUND'), apiFailure(404, 'NOT_FOUND'));
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -165,18 +164,24 @@ describe('ConversationDetailPage (server component)', () => {
       ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
     ).rejects.toThrow('NEXT_NOT_FOUND');
 
-    expect(mockNotFound).toHaveBeenCalledOnce();
+    expect(mockNotFound).toHaveBeenCalled();
+  });
+
+  it('throws to the error boundary, not notFound(), when the load fails', async () => {
+    await route(apiFailure(500), apiSuccess({ messages: MOCK_MESSAGES }));
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+
+    const { default: ConversationDetailPage } =
+      await import('@/app/admin/orchestration/conversations/[id]/page');
+
+    await expect(
+      ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
   });
 
   it('shows "Untitled conversation" as heading when title is null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...MOCK_CONVERSATION, title: null },
-      })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    await route(apiSuccess({ ...MOCK_CONVERSATION, title: null }), apiSuccess({ messages: [] }));
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');

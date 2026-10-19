@@ -4,9 +4,9 @@ import {
   AnalyticsView,
   type AgentOption,
 } from '@/components/admin/orchestration/analytics/analytics-view';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
 import type {
   TopicEntry,
   UnansweredEntry,
@@ -33,77 +33,58 @@ function buildQuery(params: Record<string, string | string[] | undefined>): stri
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
+/*
+ * A failed load never renders as an empty state (#518). `<AnalyticsView>`
+ * renders missing topics, unanswered questions and content gaps as "No topic
+ * data yet", "No unanswered questions found" and "No content gaps detected",
+ * so those three are required: their failure throws to the error boundary.
+ * Engagement figures show "—" when unknown, which already reads as unknown.
+ * The feedback summary and the agent filter options are panels the page can
+ * live without: each failure shows `<LoadFailedNotice>` above the view.
+ */
+
 async function getEngagement(query: string): Promise<EngagementMetrics | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT}${query}`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ metrics: EngagementMetrics }>(res);
-    return body.success ? body.data.metrics : null;
-  } catch (err) {
-    logger.error('analytics page: failed to load engagement', err);
-    return null;
-  }
+  const result = await loadServerData<{ metrics: EngagementMetrics }>(
+    `${API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT}${query}`
+  );
+  return result.ok ? result.data.metrics : null;
 }
 
-async function getTopics(query: string): Promise<TopicEntry[] | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${query}`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ topics: TopicEntry[] }>(res);
-    return body.success ? body.data.topics : null;
-  } catch (err) {
-    logger.error('analytics page: failed to load topics', err);
-    return null;
-  }
+async function getTopics(query: string): Promise<TopicEntry[]> {
+  const { data } = await requireServerData<{ topics: TopicEntry[] }>(
+    `${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${query}`
+  );
+  return data.topics;
 }
 
-async function getUnanswered(query: string): Promise<UnansweredEntry[] | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${query}`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ questions: UnansweredEntry[] }>(res);
-    return body.success ? body.data.questions : null;
-  } catch (err) {
-    logger.error('analytics page: failed to load unanswered', err);
-    return null;
-  }
+async function getUnanswered(query: string): Promise<UnansweredEntry[]> {
+  const { data } = await requireServerData<{ questions: UnansweredEntry[] }>(
+    `${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${query}`
+  );
+  return data.questions;
 }
 
-async function getFeedback(query: string): Promise<FeedbackSummary | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK}${query}`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ feedback: FeedbackSummary }>(res);
-    return body.success ? body.data.feedback : null;
-  } catch (err) {
-    logger.error('analytics page: failed to load feedback', err);
-    return null;
-  }
+async function getFeedback(query: string): Promise<LoadResult<FeedbackSummary>> {
+  const result = await loadServerData<{ feedback: FeedbackSummary }>(
+    `${API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK}${query}`
+  );
+  return result.ok ? { ...result, data: result.data.feedback } : result;
 }
 
-async function getContentGaps(query: string): Promise<ContentGap[] | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${query}`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ gaps: ContentGap[] }>(res);
-    return body.success ? body.data.gaps : null;
-  } catch (err) {
-    logger.error('analytics page: failed to load content gaps', err);
-    return null;
-  }
+async function getContentGaps(query: string): Promise<ContentGap[]> {
+  const { data } = await requireServerData<{ gaps: ContentGap[] }>(
+    `${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${query}`
+  );
+  return data.gaps;
 }
 
-async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.AGENTS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<Array<{ id: string; name: string }>>(res);
-    if (!body.success) return [];
-    return body.data.map((a) => ({ id: a.id, name: a.name }));
-  } catch (err) {
-    logger.error('analytics page: failed to load agents', err);
-    return [];
-  }
+async function getAgents(): Promise<LoadResult<AgentOption[]>> {
+  const result = await loadServerData<Array<{ id: string; name: string }>>(
+    API.ADMIN.ORCHESTRATION.AGENTS
+  );
+  return result.ok
+    ? { ...result, data: result.data.map((a) => ({ id: a.id, name: a.name })) }
+    : result;
 }
 
 export default async function AnalyticsPage({ searchParams }: PageProps) {
@@ -130,13 +111,16 @@ export default async function AnalyticsPage({ searchParams }: PageProps) {
         </p>
       </div>
 
+      {!feedback.ok && <LoadFailedNotice what="the feedback summary" />}
+      {!agents.ok && <LoadFailedNotice what="the agent filter options" />}
+
       <AnalyticsView
         engagement={engagement}
         topics={topics}
         unanswered={unanswered}
-        feedback={feedback}
+        feedback={feedback.ok ? feedback.data : null}
         contentGaps={contentGaps}
-        agents={agents}
+        agents={agents.ok ? agents.data : []}
         filters={{
           from: (typeof params.from === 'string' ? params.from : '') || thirtyDaysAgo,
           to: (typeof params.to === 'string' ? params.to : '') || today,

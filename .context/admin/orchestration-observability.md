@@ -180,8 +180,8 @@ All new API routes use `getRouteLogger(request)` for request-scoped structured l
 | `tests/integration/api/.../executions.list.test.ts`               | Auth, pagination, ownership scope                                 |
 | `tests/integration/api/.../conversations.id.get.test.ts`          | Auth, detail, 404 cross-user, CUID validation                     |
 | `tests/integration/api/.../observability.dashboard-stats.test.ts` | Auth, all stats, zero-division safety                             |
-| `tests/integration/app/.../conversations/detail-page.test.tsx`    | Heading, breadcrumb, notFound                                     |
-| `tests/integration/app/.../executions/detail-page.test.tsx`       | Heading, breadcrumb, notFound                                     |
+| `tests/integration/app/.../conversations/detail-page.test.tsx`    | Heading, breadcrumb, notFound on 404 only                         |
+| `tests/integration/app/.../executions/detail-page.test.tsx`       | Heading, breadcrumb, notFound on 404 only                         |
 | `tests/unit/.../observability-stats-cards.test.tsx`               | Card rendering, null safety, error rate styling                   |
 | `tests/unit/.../recent-errors-panel.test.tsx`                     | Errors, empty state, links                                        |
 | `tests/unit/.../top-capabilities-panel.test.tsx`                  | Ranked list, empty state, bars                                    |

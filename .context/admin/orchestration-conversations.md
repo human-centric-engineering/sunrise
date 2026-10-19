@@ -78,7 +78,7 @@ The endpoint caps at 500 conversations (`MAX_EXPORT_CONVERSATIONS`) and is rate-
 
 Route: `/admin/orchestration/conversations/:id`.
 
-Server component fetches conversation + messages in parallel via `serverFetch`. A missing conversation calls `notFound()` → 404 page.
+Server component fetches conversation + messages in parallel with `requireServerData(…, { notFound: true })`. A 404 from either calls `notFound()` → 404 page; any other failure throws to the admin error boundary rather than showing a missing conversation or an empty trace (#518).
 
 Header shows the title (or `"Untitled conversation"`), breadcrumb, agent name, creation date (localeDateString), and message count.
 

@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
 
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import type {
   BudgetAlert,
@@ -23,8 +23,7 @@ export const metadata: Metadata = {
 /**
  * Admin Orchestration — Costs & Budget page (Phase 4 Session 4.4)
  *
- * Thin async server component. Fires every required fetch in parallel,
- * null-safe on each one, and hands the results off to the `<CostsView>`
+ * Thin async server component. Fires every fetch in parallel and hands the results off to the `<CostsView>`
  * client island for the interactive bits (chart tooltips, pause-agent
  * optimistic updates, settings form state).
  *
@@ -43,37 +42,18 @@ export const metadata: Metadata = {
  * platform-ops half — each org's usage and the settings card for the global
  * budget — is not fetched or rendered for them, and its routes refuse them.
  *
- * Every fetch is wrapped so that an upstream failure renders an empty
- * state rather than throwing. This mirrors `app/admin/orchestration/page.tsx`.
+ * A failed load never renders as an empty state (#518). `<CostsView>` renders
+ * a missing summary or alert list as "no spend" and "no agents over budget",
+ * so those two are required: their failure throws to the error boundary. The
+ * per-model breakdown, the model registry and the per-org table are panels
+ * the page can live without: each failure shows `<LoadFailedNotice>` above
+ * the view. A 403 from `/costs/orgs` is the expected refusal described above
+ * and hides the table without a notice.
  */
-
-async function getCostSummary(): Promise<CostSummary | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<CostSummary>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load cost summary', err);
-    return null;
-  }
-}
 
 interface AlertsResponse {
   alerts: BudgetAlert[];
   globalCap: GlobalCapStatus;
-}
-
-async function getBudgetAlerts(): Promise<AlertsResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<AlertsResponse>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load budget alerts', err);
-    return null;
-  }
 }
 
 interface PerModelDaily {
@@ -81,38 +61,14 @@ interface PerModelDaily {
   totalCostUsd: number;
 }
 
-async function getPerModel30Day(): Promise<PerModelDaily[] | null> {
-  try {
-    const now = new Date();
-    const from = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
-    const dateFrom = from.toISOString().slice(0, 10);
-    const dateTo = now.toISOString().slice(0, 10);
-    const res = await serverFetch(
-      `${API.ADMIN.ORCHESTRATION.COSTS}?groupBy=model&dateFrom=${dateFrom}&dateTo=${dateTo}`
-    );
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{
-      rows: PerModelDaily[];
-      groupBy: string;
-    }>(res);
-    return body.success ? body.data.rows : null;
-  } catch (err) {
-    logger.error('costs page: failed to load per-model breakdown', err);
-    return null;
-  }
-}
-
-async function getOrgUsage(): Promise<OrgUsageReport | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_ORGS);
-    // 403: an admin switched into a customer org may not see every org's spend.
-    if (!res.ok) return null;
-    const body = await parseApiResponse<OrgUsageReport>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load per-org usage', err);
-    return null;
-  }
+async function getPerModel30Day(): Promise<LoadResult<{ rows: PerModelDaily[]; groupBy: string }>> {
+  const now = new Date();
+  const from = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const dateFrom = from.toISOString().slice(0, 10);
+  const dateTo = now.toISOString().slice(0, 10);
+  return loadServerData<{ rows: PerModelDaily[]; groupBy: string }>(
+    `${API.ADMIN.ORCHESTRATION.COSTS}?groupBy=model&dateFrom=${dateFrom}&dateTo=${dateTo}`
+  );
 }
 
 interface ModelsResponse {
@@ -120,16 +76,9 @@ interface ModelsResponse {
   fetchedAt: number;
 }
 
-async function getModels(): Promise<ModelsResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<ModelsResponse>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load models', err);
-    return null;
-  }
+/** A refusal (403) is the expected answer outside the install org at `multi`. */
+function isRefusal(result: LoadResult<unknown>): boolean {
+  return !result.ok && result.failure.kind === 'failed' && result.failure.status === 403;
 }
 
 export default async function CostsPage() {
@@ -140,13 +89,14 @@ export default async function CostsPage() {
 
   // Settings are no longer needed here — the default-models form moved
   // to the Settings page; the Costs page keeps a footer link to it.
-  const [summary, alertsResponse, perModel, modelsResponse, orgUsage] = await Promise.all([
-    getCostSummary(),
-    getBudgetAlerts(),
-    getPerModel30Day(),
-    getModels(),
-    platform ? getOrgUsage() : Promise.resolve(null),
-  ]);
+  const [{ data: summary }, { data: alertsResponse }, perModel, modelsResponse, orgUsage] =
+    await Promise.all([
+      requireServerData<CostSummary>(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY),
+      requireServerData<AlertsResponse>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS),
+      getPerModel30Day(),
+      loadServerData<ModelsResponse>(API.ADMIN.ORCHESTRATION.MODELS),
+      platform ? loadServerData<OrgUsageReport>(API.ADMIN.ORCHESTRATION.COSTS_ORGS) : null,
+    ]);
 
   return (
     <div className="space-y-8">
@@ -180,14 +130,20 @@ export default async function CostsPage() {
         </p>
       </header>
 
+      {!perModel.ok && <LoadFailedNotice what="the per-model spend breakdown" />}
+      {!modelsResponse.ok && <LoadFailedNotice what="the model registry" />}
+      {orgUsage && !orgUsage.ok && !isRefusal(orgUsage) && (
+        <LoadFailedNotice what="per-organisation usage" />
+      )}
+
       <CostsView
         summary={summary}
-        alerts={alertsResponse?.alerts ?? null}
-        globalCap={alertsResponse?.globalCap ?? null}
-        perModel={perModel}
-        models={modelsResponse?.models ?? null}
-        registryFetchedAt={modelsResponse?.fetchedAt ?? null}
-        orgUsage={orgUsage}
+        alerts={alertsResponse.alerts}
+        globalCap={alertsResponse.globalCap}
+        perModel={perModel.ok ? perModel.data.rows : null}
+        models={modelsResponse.ok ? modelsResponse.data.models : null}
+        registryFetchedAt={modelsResponse.ok ? modelsResponse.data.fetchedAt : null}
+        orgUsage={orgUsage?.ok ? orgUsage.data : null}
         viewerTier={viewerTier}
       />
     </div>

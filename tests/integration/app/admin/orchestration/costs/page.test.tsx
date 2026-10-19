@@ -8,9 +8,11 @@
  *
  * Test Coverage:
  * - Happy path: all 5 parallel fetches succeed, page sections render
- * - Every fetch rejects: page renders stable empty-state layout, does not throw
- * - Partial failure: some fetches fail, rest still render
- * - An envelope with success: false is treated as not loaded
+ * - A failed summary or alerts load throws to the error boundary: the view
+ *   would render it as "no spend" / "no agents over budget" (#518)
+ * - A failed per-model, models or per-org load shows a "Couldn't load"
+ *   notice and the rest of the page still renders; a 403 from /costs/orgs
+ *   (the expected refusal) hides the table without one
  * - The per-org usage table renders from /costs/orgs (§110 t-790)
  *
  * @see app/admin/orchestration/costs/page.tsx
@@ -19,11 +21,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -112,6 +117,72 @@ const MOCK_MODELS = [
   },
 ];
 
+const ORG_REPORT = {
+  period: '2026-10',
+  periodStart: '2026-10-01T00:00:00.000Z',
+  periodEnd: '2026-11-01T00:00:00.000Z',
+  orgs: [orgRow('acme', 'Acme', 5), orgRow('install', 'Install', 1)],
+  detached: null,
+  totals: { totalCostUsd: 6, inputTokens: 200, outputTokens: 20, count: 2 },
+};
+
+function orgRow(orgId: string, name: string, totalCostUsd: number) {
+  return {
+    orgId,
+    name,
+    slug: orgId,
+    status: 'ACTIVE',
+    totalCostUsd,
+    inputTokens: 100,
+    outputTokens: 10,
+    count: 1,
+    monthlyBudgetUsd: null,
+    utilisation: null,
+  };
+}
+
+const PATHS = {
+  summary: '/api/v1/admin/orchestration/costs/summary',
+  alerts: '/api/v1/admin/orchestration/costs/alerts',
+  perModel: '/api/v1/admin/orchestration/costs',
+  models: '/api/v1/admin/orchestration/models',
+  orgs: '/api/v1/admin/orchestration/costs/orgs',
+} as const;
+
+type Source = keyof typeof PATHS;
+
+// `globalCap` and `fetchedAt` mirror the real AlertsResponse / ModelsResponse
+// shapes, so the UI branches that read them are exercised.
+const HAPPY: Record<Source, unknown> = {
+  summary: MOCK_SUMMARY,
+  alerts: { alerts: MOCK_ALERTS, globalCap: { cap: 100, spent: 60, exceeded: false } },
+  perModel: { rows: [], groupBy: 'model' },
+  models: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
+  orgs: { ...ORG_REPORT, orgs: [orgRow('install', 'Install', 1)] },
+};
+
+/**
+ * Route each fetch by path (query string stripped): five fetches race in
+ * Promise.all. A source in `answers` gets that answer (a body, a Response,
+ * or an Error to reject with); the rest get their happy body.
+ */
+async function answer(answers: Partial<Record<Source, unknown>> = {}) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+    const source = (Object.keys(PATHS) as Source[]).find((k) => PATHS[k] === path.split('?')[0]);
+    if (!source) return apiFailure(404, 'NOT_FOUND');
+    const given = source in answers ? answers[source] : HAPPY[source];
+    if (given instanceof Error) throw given;
+    if (given instanceof Response) return given;
+    return apiSuccess(given);
+  });
+}
+
+async function fetchedPaths(): Promise<string[]> {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  return vi.mocked(serverFetch).mock.calls.map((call) => call[0]);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('CostsPage (server component)', () => {
@@ -124,64 +195,23 @@ describe('CostsPage (server component)', () => {
   });
 
   it('renders the Costs & Budget heading', async () => {
-    // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-
-    // Mock all fetches to succeed. `globalCap` and `fetchedAt` mirror
-    // the real AlertsResponse / ModelsResponse shapes — without them
-    // the page reads `?? null` fallbacks and the corresponding UI
-    // branches go untested.
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY }) // summary
-      .mockResolvedValueOnce({
-        success: true,
-        data: { alerts: MOCK_ALERTS, globalCap: { cap: 100, spent: 60, exceeded: false } },
-      }) // alerts
-      .mockResolvedValueOnce({
-        success: true,
-        data: { rows: [], groupBy: 'model' },
-      }) // perModel
-      .mockResolvedValueOnce({
-        success: true,
-        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
-      }); // models
-
+    await answer();
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-    // Act
     render(await CostsPage());
 
-    // Assert: page heading
     expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('renders all section containers under happy path', async () => {
-    // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { alerts: MOCK_ALERTS, globalCap: { cap: 100, spent: 60, exceeded: false } },
-      })
-      .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
-      });
-
+    await answer();
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-    // Act
     render(await CostsPage());
 
-    // Assert key sections by data-testid. The default-models /
-    // settings form moved to the Settings page in this branch — the
-    // Costs page now keeps only spend-reporting sections plus a
-    // footer link to Settings.
+    // The default-models / settings form moved to the Settings page — the
+    // Costs page keeps only spend-reporting sections plus a footer link.
     expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
     expect(screen.getByTestId('budget-alerts-list')).toBeInTheDocument();
     expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
@@ -191,27 +221,8 @@ describe('CostsPage (server component)', () => {
   });
 
   it('renders the global-cap-exceeded alert block when globalCap.exceeded is true', async () => {
-    // Covers the BudgetAlertsList `hasGlobalCapAlert` branch — when
-    // `globalCap.exceeded === true` the component renders a distinct
-    // "Global monthly budget exceeded" block. Without globalCap in the
-    // mock fixture this branch was unreachable.
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY })
-      .mockResolvedValueOnce({
-        success: true,
-        data: {
-          alerts: [],
-          globalCap: { cap: 100, spent: 110, exceeded: true },
-        },
-      })
-      .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
-      });
-
+    // Covers the BudgetAlertsList `hasGlobalCapAlert` branch.
+    await answer({ alerts: { alerts: [], globalCap: { cap: 100, spent: 110, exceeded: true } } });
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
     render(await CostsPage());
@@ -219,159 +230,91 @@ describe('CostsPage (server component)', () => {
     expect(screen.getByText(/global monthly budget exceeded/i)).toBeInTheDocument();
   });
 
-  it('renders stable empty-state layout when every fetch rejects, and logs each helper failure', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    const { logger } = await import('@/lib/logging');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network failure'));
+  // ── A failed load is a failure, not an empty state (#518) ────────────────
 
-    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+  it.each([
+    ['summary', apiFailure(500)],
+    ['summary', apiFailure(200)],
+    ['alerts', apiFailure(500)],
+    ['alerts', new Error('Network failure')],
+  ] as const)(
+    'throws to the error boundary when the %s load fails (%#)',
+    async (source, failure) => {
+      const { ServerLoadError } = await import('@/lib/api/server-load');
+      const { logger } = await import('@/lib/logging');
+      await answer({ [source]: failure });
+      const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-    // Direct render — Vitest surfaces unhandled exceptions natively, so
-    // a try/catch flag is redundant. The real contract: each failed
-    // helper logs via logger.error AND the page still renders.
-    render(await CostsPage());
+      await expect(CostsPage()).rejects.toBeInstanceOf(ServerLoadError);
+      expect(logger.error).toHaveBeenCalled();
+    }
+  );
 
-    expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
-    expect(logger.error).toHaveBeenCalledWith(
-      'costs page: failed to load cost summary',
-      expect.any(Error)
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'costs page: failed to load budget alerts',
-      expect.any(Error)
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'costs page: failed to load per-model breakdown',
-      expect.any(Error)
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'costs page: failed to load models',
-      expect.any(Error)
-    );
-  });
+  it.each([
+    ['perModel', 'the per-model spend breakdown'],
+    ['models', 'the model registry'],
+    ['orgs', 'per-organisation usage'],
+  ] as const)(
+    'shows a notice when the %s load fails, and still renders the rest',
+    async (source, what) => {
+      const { logger } = await import('@/lib/logging');
+      await answer({ [source]: apiFailure(500) });
+      const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-  it('renders the heading when serverFetch returns non-ok status (no helper throws, none log)', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    const { logger } = await import('@/lib/logging');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 500 } as Response);
+      render(await CostsPage());
 
-    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+      expect(screen.getByRole('alert')).toHaveTextContent(`Couldn't load ${what}`);
+      expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
+      expect(screen.getByText('Beta Bot')).toBeInTheDocument();
+      expect(logger.error).toHaveBeenCalled();
+    }
+  );
 
-    render(await CostsPage());
-
-    expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
-    // Non-ok responses take the `if (!res.ok) return null` early-out
-    // (NOT the catch arm) — so logger.error must NOT fire. Asserting
-    // this distinguishes the "non-ok" path from the "throws" path
-    // covered by the previous test.
-    expect(logger.error).not.toHaveBeenCalled();
-  });
-
-  it('treats an envelope with success: false as not loaded, without logging', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    const { logger } = await import('@/lib/logging');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'boom' },
-    });
-
+  it('hides the per-org table without a notice when /costs/orgs refuses (403)', async () => {
+    await answer({ orgs: apiFailure(403, 'FORBIDDEN') });
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
     render(await CostsPage());
 
-    expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
-    expect(screen.getByText('No agent spend recorded this month.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
-    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('renders a real month with no spend as empty, with no notice', async () => {
+    await answer({
+      summary: { ...MOCK_SUMMARY, byAgent: [], byModel: [], trend: [] },
+      alerts: { alerts: [], globalCap: { cap: null, spent: null, exceeded: false } },
+    });
+    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+    render(await CostsPage());
+
+    expect(screen.getByText('No agent spend recorded this month.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('renders the per-org usage table from /costs/orgs when there is more than one org', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    const orgRow = (orgId: string, name: string, totalCostUsd: number) => ({
-      orgId,
-      name,
-      slug: orgId,
-      status: 'ACTIVE',
-      totalCostUsd,
-      inputTokens: 100,
-      outputTokens: 10,
-      count: 1,
-      monthlyBudgetUsd: null,
-      utilisation: null,
-    });
-    const bodies: Record<string, unknown> = {
-      '/api/v1/admin/orchestration/costs/orgs': {
-        period: '2026-10',
-        periodStart: '2026-10-01T00:00:00.000Z',
-        periodEnd: '2026-11-01T00:00:00.000Z',
-        orgs: [orgRow('acme', 'Acme', 5), orgRow('install', 'Install', 1)],
-        detached: null,
-        totals: { totalCostUsd: 6, inputTokens: 200, outputTokens: 20, count: 2 },
-      },
-    };
-    // Keyed by path rather than call order: five fetches race in Promise.all.
-    vi.mocked(serverFetch).mockImplementation(
-      async (path: string) => ({ ok: path in bodies, path }) as unknown as Response
-    );
-    vi.mocked(parseApiResponse).mockImplementation((async (res: { path: string }) => ({
-      success: true,
-      data: bodies[res.path],
-    })) as never);
-
+    await answer({ orgs: ORG_REPORT });
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
     render(await CostsPage());
 
-    expect(serverFetch).toHaveBeenCalledWith('/api/v1/admin/orchestration/costs/orgs');
+    expect(await fetchedPaths()).toContain(PATHS.orgs);
     expect(screen.getByTestId('per-org-usage-table')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Acme' })).toHaveAttribute('href', '/admin/orgs/acme');
   });
 });
 
 describe('CostsPage — an org admin’s half (§111 t-812)', () => {
-  const orgRow = (orgId: string, name: string, totalCostUsd: number) => ({
-    orgId,
-    name,
-    slug: orgId,
-    status: 'ACTIVE',
-    totalCostUsd,
-    inputTokens: 100,
-    outputTokens: 10,
-    count: 1,
-    monthlyBudgetUsd: null,
-    utilisation: null,
-  });
-  // Every route answers, the per-org one included, so a page that still
-  // fetched and rendered it would show it.
-  const bodies: Record<string, unknown> = {
-    '/api/v1/admin/orchestration/costs/summary': MOCK_SUMMARY,
-    '/api/v1/admin/orchestration/costs/alerts': {
-      alerts: MOCK_ALERTS,
-      globalCap: { cap: null, spent: null, exceeded: false },
-    },
-    '/api/v1/admin/orchestration/models': { models: MOCK_MODELS, fetchedAt: 1715260800000 },
-    '/api/v1/admin/orchestration/costs/orgs': {
-      period: '2026-10',
-      periodStart: '2026-10-01T00:00:00.000Z',
-      periodEnd: '2026-11-01T00:00:00.000Z',
-      orgs: [orgRow('acme', 'Acme', 5), orgRow('install', 'Install', 1)],
-      detached: null,
-      totals: { totalCostUsd: 6, inputTokens: 200, outputTokens: 20, count: 2 },
-    },
-  };
-
   beforeEach(async () => {
     vi.clearAllMocks();
     viewer.tier = 'org';
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockImplementation(
-      async (path: string) => ({ ok: path in bodies, path }) as unknown as Response
-    );
-    vi.mocked(parseApiResponse).mockImplementation((async (res: { path: string }) => ({
-      success: true,
-      data: bodies[res.path],
-    })) as never);
+    // Every route answers, the per-org one included, so a page that still
+    // fetched and rendered it would show it.
+    await answer({
+      alerts: { alerts: MOCK_ALERTS, globalCap: { cap: null, spent: null, exceeded: false } },
+      orgs: ORG_REPORT,
+    });
   });
 
   afterEach(() => {
@@ -392,12 +335,11 @@ describe('CostsPage — an org admin’s half (§111 t-812)', () => {
   });
 
   it('neither fetches nor shows each org’s usage, nor links to the budget settings', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
     render(await CostsPage());
 
-    expect(serverFetch).not.toHaveBeenCalledWith('/api/v1/admin/orchestration/costs/orgs');
+    expect(await fetchedPaths()).not.toContain(PATHS.orgs);
     expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /open settings/i })).not.toBeInTheDocument();
   });

@@ -33,7 +33,7 @@ The default-models form and global monthly cap used to live on this page; they w
 
 ## Data sources
 
-The server shell fires five parallel null-safe fetches via `serverFetch()`. Any upstream failure renders an empty state in its section — the page never throws.
+The server shell fires five parallel fetches through `lib/api/server-load.ts`, and a failed load never renders as an empty state (#518). `/costs/summary` and `/costs/alerts` are required: `<CostsView>` would render them missing as "no spend" and "no agents over budget", so their failure throws to the admin error boundary, whose **Try again** re-fetches. The per-model breakdown, `/models` and `/costs/orgs` are optional: a failure shows a "Couldn't load …" notice above the view and the rest of the page renders. A 403 from `/costs/orgs` is the expected refusal outside the install org and hides that table without a notice.
 
 | Section                | Endpoint                                                    | Notes                                                  |
 | ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |

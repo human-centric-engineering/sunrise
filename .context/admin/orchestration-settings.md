@@ -6,7 +6,7 @@ Dedicated admin page for global orchestration settings.
 
 ## Page
 
-`app/admin/orchestration/settings/page.tsx` — server component that fetches current settings via `serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS)` and passes them to the client form. Also renders the `BackupPanel` below the form for config export/import.
+`app/admin/orchestration/settings/page.tsx` — server component that fetches current settings via `requireServerData(API.ADMIN.ORCHESTRATION.SETTINGS)` and passes them to the client form. A failed settings load throws to the admin error boundary: the forms are never pre-filled with defaults an admin could save over the real settings (#518). A failed load of a form's option lists (models, providers) shows a "Couldn't load …" notice in that form's place. Also renders the `BackupPanel` below the form for config export/import.
 
 ## Component
 
