@@ -43,7 +43,6 @@ import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { protectedNavItems } from '@/lib/app/protected-nav';
 import { appAuthLandingRoute, appAuthLandingLabel } from '@/lib/app/auth-landing';
-import { emailOverrides } from '@/lib/app/emails';
 import { initApp } from '@/lib/app/bootstrap';
 import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 import { initAppGuardFloorContributors } from '@/lib/app/guard-floor-contributors';
@@ -260,7 +259,12 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   {
     seam: 'lib/app/emails.ts',
     risk: 'a stray override would swap an auth email for every install',
-    assert: () => expect(emailOverrides).toEqual({}),
+    assert: async () => {
+      // `importActual`, NOT a plain import: tests/setup.ts pins this seam to
+      // `{}` for every other file (#895), so a plain import would assert the pin.
+      const seam = await vi.importActual<typeof import('@/lib/app/emails')>('@/lib/app/emails');
+      expect(seam.emailOverrides).toEqual({});
+    },
   },
   {
     seam: 'lib/app/data-export.ts',

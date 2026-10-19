@@ -33,7 +33,9 @@ const verifyProps = {
 
 afterEach(() => {
   vi.resetModules();
-  vi.doUnmock('@/lib/app/emails');
+  // Restore the suite-wide pin from tests/setup.ts. `doUnmock` would remove it
+  // and let the next import read a fork's real overrides (#895).
+  vi.doMock('@/lib/app/emails', () => ({ emailOverrides: {} }));
 });
 
 describe('resolveEmailTemplate', () => {
@@ -101,7 +103,7 @@ describe('resolveEmailTemplate', () => {
 describe('resolveEmailTemplate — fork-added kinds', () => {
   afterEach(() => {
     vi.resetModules();
-    vi.doUnmock('@/lib/app/emails');
+    vi.doMock('@/lib/app/emails', () => ({ emailOverrides: {} }));
   });
 
   it('resolves a kind that exists ONLY as a fork override', async () => {

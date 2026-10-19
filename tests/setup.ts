@@ -316,6 +316,23 @@ vi.mock('@/lib/app/brand', async (importOriginal) => {
 });
 
 /**
+ * Pin the email-override seam to "overrides nothing", for every test file (#895).
+ *
+ * Same class as the brand pin above: `emailOverrides` is read from
+ * `lib/app/emails.ts`, a committed file a fork fills, so a fork that overrides
+ * a template changes what `resolveEmailTemplate` returns inside the CORE suite
+ * and reds `tests/unit/lib/email/registry.test.tsx`, which asserts the platform
+ * default comes back. The fork has nothing of its own to change to fix it.
+ *
+ * Tests that need an override `vi.doMock` their own; restore this pin with
+ * another `vi.doMock`, never `vi.doUnmock`, which removes it. The one file that
+ * must read the real scaffold uses `vi.importActual`
+ * (tests/unit/lib/app/defaults.test.ts), which keeps "seams ship empty" able to
+ * fail in a fork.
+ */
+vi.mock('@/lib/app/emails', () => ({ emailOverrides: {} }));
+
+/**
  * Mock Analytics
  *
  * Analytics hooks require AnalyticsProvider context.
