@@ -4,9 +4,8 @@ import Link from 'next/link';
 
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
 import { KnowledgeTagsTable } from '@/components/admin/orchestration/knowledge/knowledge-tags-table';
 import type { KnowledgeTagListItem } from '@/types/orchestration';
@@ -19,17 +18,12 @@ export const metadata: Metadata = {
 
 const EMPTY_META: PaginationMeta = { page: 1, limit: 50, total: 0, totalPages: 1 };
 
+/** A failed load throws to the error boundary rather than rendering an empty table (#518). */
 async function getTags(): Promise<{ tags: KnowledgeTagListItem[]; meta: PaginationMeta }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?page=1&limit=50`);
-    if (!res.ok) return { tags: [], meta: EMPTY_META };
-    const body = await parseApiResponse<KnowledgeTagListItem[]>(res);
-    if (!body.success) return { tags: [], meta: EMPTY_META };
-    return { tags: body.data, meta: parsePaginationMeta(body.meta) ?? EMPTY_META };
-  } catch (err) {
-    logger.error('knowledge tags page: initial fetch failed', err);
-    return { tags: [], meta: EMPTY_META };
-  }
+  const { data, meta } = await requireServerData<KnowledgeTagListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?page=1&limit=50`
+  );
+  return { tags: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function KnowledgeTagsPage(): Promise<React.ReactElement> {

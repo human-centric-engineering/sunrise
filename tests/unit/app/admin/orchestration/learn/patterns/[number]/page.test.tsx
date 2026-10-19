@@ -6,14 +6,13 @@
  *
  * Branch coverage targets:
  * - params.number is not a number (isNaN) → renders "Invalid pattern number" fallback
- * - getPatternDetail: res.ok false → null
- * - getPatternDetail: body.success false → null
- * - getPatternDetail: serverFetch throws → null + logger.error
- * - detail === null → renders "Pattern not found" fallback
+ * - params.number below 1 → "Invalid pattern number" without a fetch (the API
+ *   would reject it with a 400)
+ * - getPatternDetail: API 404 → renders "Pattern not found" fallback
+ * - getPatternDetail: any other failure (error status, error envelope, network
+ *   error) → ServerLoadError to the error boundary (#518)
  * - detail.chunks.length === 0 → renders "Pattern not found" fallback
- * - getPatternNames: res.ok false → empty Map
- * - getPatternNames: body.success false → empty Map
- * - getPatternNames: serverFetch throws → empty Map (no logger call per source)
+ * - getPatternNames failure → notice in place of RelatedPatterns, page renders
  * - Happy path: renders pattern name, hero/rest chunks, related patterns
  * - overview chunk: rendered as labelled subtitle in header, not a hero card
  * - heroChunks: sections "tldr" / "summary" → hero cards
@@ -21,6 +20,7 @@
  * - restChunks empty → PatternDetailSections NOT rendered
  * - generateMetadata: isNaN → "Pattern Not Found" title
  * - generateMetadata: detail found → pattern name in title
+ * - generateMetadata: detail load failed → fallback title (the page throws)
  * - generateMetadata: detail.patternName null → fallback title
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout.
  *
@@ -30,11 +30,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -84,6 +87,10 @@ vi.mock('@/components/admin/orchestration/learn/use-pattern-button', () => ({
   ),
 }));
 
+vi.mock('next/navigation', () => ({
+  useRouter: vi.fn(() => ({ refresh: vi.fn() })),
+}));
+
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
     <a href={href}>{children}</a>
@@ -95,19 +102,39 @@ vi.mock('next/link', () => ({
 import PatternDetailPage, {
   generateMetadata,
 } from '@/app/admin/orchestration/learn/patterns/[number]/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
 import { API } from '@/lib/api/endpoints';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
+type Answer = () => Promise<Response>;
 
-function notOkResponse(): Response {
-  return { ok: false } as Response;
+const ok =
+  (data: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data));
+
+/** A 200 whose body is an error envelope. */
+const errorEnvelope: Answer = () =>
+  Promise.resolve(
+    new Response(
+      JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: 'boom' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )
+  );
+
+/**
+ * Route the page's two loads by URL — the pattern detail
+ * (`/knowledge/patterns/:n`) and the name list (`/knowledge/patterns`) — to
+ * fresh `Response`s. The name list defaults to empty.
+ */
+function wireFetches({ detail, names = ok([]) }: { detail: Answer; names?: Answer }): void {
+  vi.mocked(serverFetch).mockImplementation((url: string) =>
+    /\/patterns\/\d+/.test(url) ? detail() : names()
+  );
 }
 
 function makeChunk(id: string, section: string | null, content = 'chunk content') {
@@ -139,11 +166,8 @@ function makePatternDetail(chunks = [makeChunk('c1', 'overview'), makeChunk('c2'
 
 // Default: server returns ok but pattern detail fetch returns data
 // and patternNames returns an empty Map (no related patterns)
-function setupHappyPath(detail = makePatternDetail()) {
-  vi.mocked(serverFetch).mockResolvedValue(okResponse());
-  vi.mocked(parseApiResponse)
-    .mockResolvedValueOnce({ success: true, data: detail } as never) // getPatternDetail
-    .mockResolvedValueOnce({ success: true, data: [] } as never); // getPatternNames
+function setupHappyPath(detail: unknown = makePatternDetail()) {
+  wireFetches({ detail: ok(detail) });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -183,12 +207,20 @@ describe('PatternDetailPage', () => {
     expect(serverFetch).not.toHaveBeenCalled();
   });
 
+  it('treats a number below 1 as invalid without fetching', async () => {
+    // The API rejects it with a 400, which would otherwise reach the error boundary.
+    render(await PatternDetailPage({ params: Promise.resolve({ number: '0' }) }));
+
+    expect(screen.getByText('Invalid pattern number.')).toBeInTheDocument();
+    expect(serverFetch).not.toHaveBeenCalled();
+  });
+
   // ── getPatternDetail error branches ─────────────────────────────────────
 
   describe('getPatternDetail', () => {
-    it('renders "Pattern not found" when res.ok is false', async () => {
+    it('renders "Pattern not found" when the API answers 404', async () => {
       // Arrange
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+      wireFetches({ detail: () => Promise.resolve(apiFailure(404, 'NOT_FOUND')) });
       const params = Promise.resolve({ number: '3' });
 
       // Act
@@ -202,45 +234,42 @@ describe('PatternDetailPage', () => {
       );
     });
 
-    it('renders "Pattern not found" when body.success is false', async () => {
+    it('throws ServerLoadError, not "Pattern not found", when the load fails', async () => {
       // Arrange
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'not found' },
-      } as never);
-      const params = Promise.resolve({ number: '5' });
+      wireFetches({ detail: () => Promise.resolve(apiFailure(500)) });
+      const params = Promise.resolve({ number: '3' });
 
-      // Act
-      render(await PatternDetailPage({ params }));
-
-      // Assert
-      expect(screen.getByText('Pattern not found.')).toBeInTheDocument();
+      // Act + Assert
+      await expect(PatternDetailPage({ params })).rejects.toBeInstanceOf(ServerLoadError);
     });
 
-    it('logs error and renders "Pattern not found" when serverFetch throws', async () => {
+    it('throws ServerLoadError when the API answers with an error envelope', async () => {
+      // Arrange
+      wireFetches({ detail: errorEnvelope });
+      const params = Promise.resolve({ number: '5' });
+
+      // Act + Assert
+      await expect(PatternDetailPage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+    });
+
+    it('logs and throws ServerLoadError when serverFetch throws', async () => {
       // Arrange
       const fetchErr = new Error('Network failure');
-      vi.mocked(serverFetch).mockRejectedValue(fetchErr);
+      wireFetches({ detail: () => Promise.reject(fetchErr) });
       const params = Promise.resolve({ number: '7' });
 
-      // Act
-      render(await PatternDetailPage({ params }));
-
-      // Assert
-      expect(logger.error).toHaveBeenCalledWith('pattern detail page: fetch failed', fetchErr);
-      expect(screen.getByText('Pattern not found.')).toBeInTheDocument();
+      // Act + Assert
+      await expect(PatternDetailPage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(logger.error).toHaveBeenCalledWith(
+        'Server data load failed: no response',
+        fetchErr,
+        expect.objectContaining({ path: API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(7) })
+      );
     });
 
     it('renders "Pattern not found" when detail has no chunks', async () => {
       // Arrange — detail returned but chunks array is empty
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({
-          success: true,
-          data: { patternName: PATTERN_NAME, chunks: [], totalTokens: 0 },
-        } as never) // getPatternDetail
-        .mockResolvedValueOnce({ success: true, data: [] } as never); // getPatternNames
+      setupHappyPath({ patternName: PATTERN_NAME, chunks: [], totalTokens: 0 });
       const params = Promise.resolve({ number: '2' });
 
       // Act
@@ -251,64 +280,54 @@ describe('PatternDetailPage', () => {
     });
   });
 
-  // ── getPatternNames error branches ───────────────────────────────────────
+  // ── getPatternNames failure ─────────────────────────────────────────────
 
   describe('getPatternNames', () => {
-    it('renders happy path when getPatternNames fails (res.ok false) — falls back to empty Map', async () => {
-      // Arrange — detail succeeds, patternNames fails
-      const detail = makePatternDetail();
-      vi.mocked(serverFetch)
-        .mockResolvedValueOnce(okResponse()) // detail
-        .mockResolvedValueOnce(notOkResponse()); // patternNames
-      vi.mocked(parseApiResponse).mockResolvedValueOnce({
-        success: true,
-        data: detail,
-      } as never);
+    it('shows a notice in place of related patterns when the name list fails', async () => {
+      // Arrange — detail succeeds, the name list fails
+      wireFetches({
+        detail: ok(makePatternDetail()),
+        names: () => Promise.resolve(apiFailure(500)),
+      });
       const params = Promise.resolve({ number: '1' });
 
       // Act
       render(await PatternDetailPage({ params }));
 
-      // Assert: page still renders (empty patternNames → no related patterns shown)
-      // Use getByRole to avoid ambiguity between <h1> and <span> breadcrumb
+      // Assert: the pattern still renders; "no related patterns" is not implied
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(PATTERN_NAME);
-      const relatedPatterns = screen.getByTestId('related-patterns');
-      expect(relatedPatterns).toHaveAttribute('data-patterns-count', '0');
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load related patterns/i);
+      expect(screen.queryByTestId('related-patterns')).not.toBeInTheDocument();
     });
 
-    it('renders happy path when getPatternNames body.success is false', async () => {
+    it('shows the notice when the name list fetch throws', async () => {
       // Arrange
-      const detail = makePatternDetail();
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: detail } as never) // detail
-        .mockResolvedValueOnce({ success: false } as never); // patternNames
+      wireFetches({
+        detail: ok(makePatternDetail()),
+        names: () => Promise.reject(new Error('names failed')),
+      });
       const params = Promise.resolve({ number: '1' });
 
       // Act
       render(await PatternDetailPage({ params }));
 
-      // Assert: page still renders
+      // Assert
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(PATTERN_NAME);
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.queryByTestId('related-patterns')).not.toBeInTheDocument();
     });
 
-    it('renders happy path when getPatternNames throws — catch returns empty Map', async () => {
-      // Arrange — pattern detail succeeds, getPatternNames throws
-      const detail = makePatternDetail();
-      vi.mocked(serverFetch)
-        .mockResolvedValueOnce(okResponse()) // detail
-        .mockRejectedValueOnce(new Error('names failed')); // patternNames
-      vi.mocked(parseApiResponse).mockResolvedValueOnce({
-        success: true,
-        data: detail,
-      } as never);
+    it('renders related patterns and no notice when the name list loads', async () => {
+      // Arrange
+      setupHappyPath();
       const params = Promise.resolve({ number: '1' });
 
-      // Act — should not crash; getPatternNames catch returns new Map()
+      // Act
       render(await PatternDetailPage({ params }));
 
-      // Assert: page still renders
-      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(PATTERN_NAME);
+      // Assert
+      expect(screen.getByTestId('related-patterns')).toHaveAttribute('data-patterns-count', '0');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 
@@ -350,7 +369,8 @@ describe('PatternDetailPage', () => {
 
       // Assert: the knowledgePatternByNumber endpoint was called with num=42
       expect(serverFetch).toHaveBeenCalledWith(
-        API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(42)
+        API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(42),
+        undefined
       );
     });
 
@@ -384,10 +404,7 @@ describe('PatternDetailPage', () => {
         makeChunk('c1', 'overview', overviewContent),
         makeChunk('c2', 'when_to_use', 'When to use'),
       ]);
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: detail } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never);
+      setupHappyPath(detail);
       const params = Promise.resolve({ number: '1' });
 
       // Act
@@ -404,10 +421,7 @@ describe('PatternDetailPage', () => {
     it('routes "tldr" section chunks to hero cards', async () => {
       // Arrange — "tldr" is a HERO_SECTION
       const detail = makePatternDetail([makeChunk('c1', 'tldr', 'TL;DR content')]);
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: detail } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never);
+      setupHappyPath(detail);
       const params = Promise.resolve({ number: '1' });
 
       // Act
@@ -423,10 +437,7 @@ describe('PatternDetailPage', () => {
         makeChunk('c1', 'overview', 'overview content'),
         makeChunk('c2', 'deep_dive', 'Deep dive section'),
       ]);
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: detail } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never);
+      setupHappyPath(detail);
       const params = Promise.resolve({ number: '1' });
 
       // Act
@@ -440,10 +451,7 @@ describe('PatternDetailPage', () => {
     it('does NOT render PatternDetailSections when all chunks are hero sections', async () => {
       // Arrange — only overview chunk
       const detail = makePatternDetail([makeChunk('c1', 'overview', 'overview content')]);
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: detail } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never);
+      setupHappyPath(detail);
       const params = Promise.resolve({ number: '1' });
 
       // Act
@@ -470,9 +478,7 @@ describe('PatternDetailPage', () => {
 
     it('returns pattern name in title when detail is found', async () => {
       // Arrange
-      const detail = makePatternDetail();
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: detail } as never);
+      setupHappyPath();
       const params = Promise.resolve({ number: '1' });
 
       // Act
@@ -482,25 +488,33 @@ describe('PatternDetailPage', () => {
       expect(metadata.title).toBe(`${PATTERN_NAME} · Learning · AI Orchestration`);
     });
 
-    it('returns "Pattern Not Found" title when detail is null (res.ok false)', async () => {
+    it('returns "Pattern Not Found" title when the pattern does not exist', async () => {
       // Arrange
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+      wireFetches({ detail: () => Promise.resolve(apiFailure(404, 'NOT_FOUND')) });
       const params = Promise.resolve({ number: '99' });
 
       // Act
       const metadata = await generateMetadata({ params });
 
-      // Assert: null detail → fallback title
+      // Assert: no detail → fallback title
+      expect(metadata.title).toBe('Pattern Not Found · AI Orchestration');
+    });
+
+    it('returns the fallback title, without throwing, when the detail load fails', async () => {
+      // Arrange — the page itself throws for this; metadata must not.
+      wireFetches({ detail: () => Promise.resolve(apiFailure(500)) });
+      const params = Promise.resolve({ number: '99' });
+
+      // Act
+      const metadata = await generateMetadata({ params });
+
+      // Assert
       expect(metadata.title).toBe('Pattern Not Found · AI Orchestration');
     });
 
     it('returns "Pattern Not Found" title when detail.patternName is null', async () => {
       // Arrange — detail returned but patternName is null
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: { patternName: null, chunks: [], totalTokens: 0 },
-      } as never);
+      setupHappyPath({ patternName: null, chunks: [], totalTokens: 0 });
       const params = Promise.resolve({ number: '3' });
 
       // Act

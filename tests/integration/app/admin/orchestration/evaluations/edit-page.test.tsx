@@ -8,14 +8,16 @@
  *
  * Test Coverage:
  * - Renders evaluation title as heading when found
- * - Calls notFound() when fetch returns ok: false
- * - Calls notFound() when serverFetch rejects
+ * - Calls notFound() on a 404, and only on a 404: a 500 or a network error
+ *   throws to the error boundary instead of reading as a missing evaluation (#518)
  *
  * @see app/admin/orchestration/evaluations/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -34,9 +36,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -91,12 +94,8 @@ describe('EvaluationDetailPage (server component)', () => {
 
   it('renders evaluation title as heading when found', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: MOCK_EVALUATION,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_EVALUATION));
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');
@@ -104,20 +103,17 @@ describe('EvaluationDetailPage (server component)', () => {
     // Act
     render(await EvaluationDetailPage({ params: Promise.resolve({ id: 'eval-edit-id' }) }));
 
-    // Assert: evaluation title rendered as heading
+    // Assert: evaluation title rendered as heading, fetched by id
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /my tone check/i })).toBeInTheDocument();
     });
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toContain('eval-edit-id');
   });
 
-  it('calls notFound() when fetch returns ok: false', async () => {
+  it('calls notFound() when the evaluation does not exist', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Not found', code: 'NOT_FOUND' },
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');
@@ -131,20 +127,35 @@ describe('EvaluationDetailPage (server component)', () => {
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
-  it('calls notFound() when serverFetch rejects', async () => {
+  it('throws to the error boundary, not notFound(), when the load fails', async () => {
     // Arrange
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+
+    const { default: EvaluationDetailPage } =
+      await import('@/app/admin/orchestration/evaluations/[id]/page');
+
+    // Act + Assert
+    await expect(
+      EvaluationDetailPage({ params: Promise.resolve({ id: 'eval-edit-id' }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
+
+  it('throws to the error boundary, not notFound(), when serverFetch rejects', async () => {
+    // Arrange
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');
 
-    // Act: evaluation returns null → notFound() is called
+    // Act + Assert
     await expect(
       EvaluationDetailPage({ params: Promise.resolve({ id: 'some-id' }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-
-    // Assert
-    expect(mockNotFound).toHaveBeenCalledOnce();
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
   });
 });

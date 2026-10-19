@@ -111,9 +111,9 @@ Cross-references to other patterns are extracted from chunk content via regex (`
 
 ## Data flow
 
-1. Server page calls `serverFetch()` → API route → `listPatterns()` / `getPatternDetail()`
+1. Server page loads through `lib/api/server-load.ts` → API route → `listPatterns()` / `getPatternDetail()`
 2. Passes data to client component islands as props
-3. Fetch failures return empty arrays — pages always render
+3. A failed load never reads as an empty catalogue (#518). The pattern list on `/learn`, and a pattern's detail, throw to the admin error boundary, whose **Try again** re-fetches; a pattern the API answers 404 for renders "Pattern not found". The pattern-name list behind a detail page's related patterns is secondary: when it fails, a "Couldn't load related patterns" notice takes their place. The advisor and quiz agent lookups fall back to text-only chat when they fail; the failure is logged.
 
 ## Related
 

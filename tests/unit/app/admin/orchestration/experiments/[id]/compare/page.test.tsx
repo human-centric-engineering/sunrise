@@ -6,11 +6,12 @@
  * Tests the admin "Compare variants" server component page.
  *
  * Test Coverage:
- * - notFound() path — compare data missing (res 404, res.ok false, success false, fetch throws)
+ * - notFound() only on a compare 404; a 500, an error envelope or a network
+ *   error throws ServerLoadError to the error boundary (#518)
  * - Happy path — renders heading, variant/metric counts, PairwiseVerdictCard + VariantCompareTable
  * - "No comparison data yet" branch when no variant has an evaluation run
  * - "Some variant runs still queued" notice when a run is still queued or running
- * - Judge-list fetch tolerance — page still renders with an empty judge list on failure
+ * - Judge-list failure — a notice above the verdict card, which still renders
  * - serverFetch called with the correct compare endpoint
  *
  * @see app/admin/orchestration/experiments/[id]/compare/page.tsx
@@ -19,11 +20,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -34,6 +38,7 @@ vi.mock('next/navigation', () => ({
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
+  useRouter: vi.fn(() => ({ refresh: vi.fn() })),
 }));
 
 vi.mock('next/link', () => ({
@@ -73,7 +78,8 @@ vi.mock('@/components/admin/orchestration/experiments/variant-compare-table', ()
 // ─── Imports (after mocks) ─────────────────────────────────────────────────
 
 import ExperimentComparePage from '@/app/admin/orchestration/experiments/[id]/compare/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
 import { API } from '@/lib/api/endpoints';
@@ -115,37 +121,37 @@ function makeCompareData(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-const COMPARE = '__compare__';
-const GRADERS = '__graders__';
+/** A real `Response` carrying `envelope` as its body. */
+function envelopeResponse(envelope: unknown, status = 200): Response {
+  return new Response(JSON.stringify(envelope), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 /**
- * Routes the two parallel fetches the page fires. `serverFetch` returns a
- * tagged stub per URL; `parseApiResponse` reads the tag to return the matching
- * parsed body. `compareResult` / `gradersResult` are the parsed envelopes.
+ * Routes the two parallel fetches the page fires to real `Response`s.
+ * `compareResult` / `gradersResult` are the envelopes the API answers with;
+ * a non-200 status without an envelope answers with an error envelope.
  */
 function wireFetches({
   compareStatus = 200,
-  compareOk = true,
   compareResult,
-  gradersOk = true,
-  gradersResult,
+  gradersStatus = 200,
+  gradersResult = { success: true, data: { judgeAgents: [] } },
 }: {
   compareStatus?: number;
-  compareOk?: boolean;
   compareResult?: unknown;
-  gradersOk?: boolean;
+  gradersStatus?: number;
   gradersResult?: unknown;
 }) {
   vi.mocked(serverFetch).mockImplementation(async (url: string) => {
     if (url.includes('/compare')) {
-      return { ok: compareOk, status: compareStatus, __tag: COMPARE } as unknown as Response;
+      return compareResult === undefined
+        ? apiFailure(compareStatus, compareStatus === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR')
+        : envelopeResponse(compareResult, compareStatus);
     }
-    return { ok: gradersOk, status: gradersOk ? 200 : 500, __tag: GRADERS } as unknown as Response;
-  });
-  vi.mocked(parseApiResponse).mockImplementation(async (res: Response) => {
-    const tag = (res as unknown as { __tag: string }).__tag;
-    if (tag === COMPARE) return compareResult as never;
-    return gradersResult as never;
+    return gradersStatus === 200 ? envelopeResponse(gradersResult) : apiFailure(gradersStatus);
   });
 }
 
@@ -160,51 +166,51 @@ describe('ExperimentComparePage', () => {
 
   describe('notFound behavior', () => {
     it('calls notFound when the compare endpoint returns 404', async () => {
-      wireFetches({ compareStatus: 404, compareOk: false });
+      wireFetches({ compareStatus: 404 });
       const params = Promise.resolve({ id: 'exp-1' });
 
       await expect(ExperimentComparePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
       expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard
     });
 
-    it('calls notFound and warns when the compare fetch is non-ok', async () => {
-      wireFetches({ compareStatus: 500, compareOk: false });
+    it('throws ServerLoadError, not notFound, and logs when the compare fetch fails', async () => {
+      wireFetches({ compareStatus: 500 });
       const params = Promise.resolve({ id: 'exp-1' });
 
-      await expect(ExperimentComparePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Experiment compare: fetch failed',
-        expect.objectContaining({ id: 'exp-1', status: 500 })
+      await expect(ExperimentComparePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(
+        'Server data load failed',
+        undefined,
+        expect.objectContaining({
+          path: API.ADMIN.ORCHESTRATION.experimentCompareById('exp-1'),
+          status: 500,
+        })
       );
     });
 
-    it('calls notFound when the parsed compare envelope is unsuccessful', async () => {
-      wireFetches({
-        compareResult: { success: false, error: { code: 'X', message: 'no' } },
-        gradersResult: { success: true, data: { judgeAgents: [] } },
-      });
+    it('throws ServerLoadError when the compare envelope is unsuccessful', async () => {
+      wireFetches({ compareResult: { success: false, error: { code: 'X', message: 'no' } } });
       const params = Promise.resolve({ id: 'exp-1' });
 
-      await expect(ExperimentComparePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard
+      await expect(ExperimentComparePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
     });
 
-    it('calls notFound and logs when the compare fetch throws', async () => {
+    it('throws ServerLoadError and logs when the compare fetch throws', async () => {
       const boom = new Error('Network down');
       vi.mocked(serverFetch).mockImplementation(async (url: string) => {
         if (url.includes('/compare')) throw boom;
-        return { ok: true, status: 200, __tag: GRADERS } as unknown as Response;
+        return apiSuccess({ judgeAgents: [] });
       });
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: { judgeAgents: [] },
-      } as never);
       const params = Promise.resolve({ id: 'exp-1' });
 
-      await expect(ExperimentComparePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
+      await expect(ExperimentComparePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledWith(
-        'Experiment compare: fetch threw',
-        expect.objectContaining({ id: 'exp-1', error: 'Network down' })
+        'Server data load failed: no response',
+        boom,
+        expect.objectContaining({ path: API.ADMIN.ORCHESTRATION.experimentCompareById('exp-1') })
       );
     });
   });
@@ -222,7 +228,8 @@ describe('ExperimentComparePage', () => {
       render(await ExperimentComparePage({ params }));
 
       expect(serverFetch).toHaveBeenCalledWith(
-        API.ADMIN.ORCHESTRATION.experimentCompareById('exp-42')
+        API.ADMIN.ORCHESTRATION.experimentCompareById('exp-42'),
+        undefined
       );
     });
   });
@@ -391,21 +398,34 @@ describe('ExperimentComparePage', () => {
 
   // ── Judge-list tolerance ─────────────────────────────────────────────────────
 
-  describe('judge-list fetch tolerance', () => {
-    it('renders with an empty judge list and warns when the graders fetch is non-ok', async () => {
+  describe('judge-list failure', () => {
+    it('shows a notice above the verdict card when the graders fetch fails', async () => {
       wireFetches({
         compareResult: { success: true, data: makeCompareData() },
-        gradersOk: false,
+        gradersStatus: 500,
       });
       const params = Promise.resolve({ id: 'exp-1' });
 
       render(await ExperimentComparePage({ params }));
 
-      expect(screen.getByTestId('pairwise-verdict-card')).toHaveAttribute('data-judge-count', '0');
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Experiment compare: judge list fetch failed',
-        expect.objectContaining({ status: 500 })
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load judge agents for the pairwise verdict/i
       );
+      // The card still shows any existing verdict; it gets no judges to pick from.
+      expect(screen.getByTestId('pairwise-verdict-card')).toHaveAttribute('data-judge-count', '0');
+      expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
+    });
+
+    it('shows no notice when the graders fetch succeeds', async () => {
+      wireFetches({
+        compareResult: { success: true, data: makeCompareData() },
+        gradersResult: { success: true, data: { judgeAgents: [{ slug: 'j', name: 'J' }] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 });

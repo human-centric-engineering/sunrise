@@ -6,17 +6,23 @@
  * Tests the server-component page at
  * `app/admin/orchestration/knowledge/page.tsx`.
  *
+ * A failed document load throws to the error boundary rather than reading as
+ * an empty knowledge base (#518); a real empty list still shows the empty state.
+ *
  * @see app/admin/orchestration/knowledge/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -91,12 +97,8 @@ describe('KnowledgeBasePage (server component)', () => {
   });
 
   it('renders "Knowledge Base" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DOCUMENTS,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_DOCUMENTS));
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -106,12 +108,8 @@ describe('KnowledgeBasePage (server component)', () => {
   });
 
   it('renders document names and status badges', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DOCUMENTS,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_DOCUMENTS));
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -123,9 +121,9 @@ describe('KnowledgeBasePage (server component)', () => {
     expect(screen.getByText('Processing')).toBeInTheDocument();
   });
 
-  it('renders empty state when fetch returns not ok', async () => {
+  it('renders the empty state when there are no documents', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -135,40 +133,24 @@ describe('KnowledgeBasePage (server component)', () => {
     expect(screen.getByText(/no documents yet/i)).toBeInTheDocument();
   });
 
-  it('does not throw when fetch rejects', async () => {
+  it('throws to the error boundary when the document load fails', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+
+    const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
+
+    // Not "No documents yet"
+    await expect(KnowledgeBasePage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('throws to the error boundary when fetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
-    let thrown = false;
-    try {
-      render(await KnowledgeBasePage());
-    } catch {
-      thrown = true;
-    }
-
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^knowledge base$/i })).toBeInTheDocument();
-  });
-
-  it('returns empty list when parseApiResponse returns success:false', async () => {
-    // Arrange: fetch ok, but API response envelope has success:false
-    // This covers the `body.success ? body.data : []` false branch (line 21).
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'No documents' },
-    });
-
-    const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
-
-    render(await KnowledgeBasePage());
-
-    // The page still renders (just with no documents)
-    expect(screen.getByRole('heading', { name: /^knowledge base$/i })).toBeInTheDocument();
-    // No document names should appear
-    expect(screen.queryByText('Agentic Design Patterns')).not.toBeInTheDocument();
+    await expect(KnowledgeBasePage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

@@ -4,8 +4,7 @@ import Link from 'next/link';
 import { KnowledgeView } from '@/components/admin/orchestration/knowledge/knowledge-view';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -13,20 +12,12 @@ export const metadata: Metadata = {
   description: 'Manage documents, seed patterns, and test knowledge base search.',
 };
 
-async function getDocuments(): Promise<KnowledgeDocumentListItem[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<KnowledgeDocumentListItem[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('knowledge page: document fetch failed', err);
-    return [];
-  }
-}
-
 export default async function KnowledgeBasePage() {
-  const documents = await getDocuments();
+  // A failed load reaches the error boundary rather than reading as an empty
+  // knowledge base (#518).
+  const { data: documents } = await requireServerData<KnowledgeDocumentListItem[]>(
+    API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS
+  );
 
   return (
     <div className="space-y-6">

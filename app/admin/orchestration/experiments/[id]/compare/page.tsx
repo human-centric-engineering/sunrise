@@ -12,7 +12,6 @@
  */
 
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 
@@ -22,10 +21,10 @@ import {
   PairwiseVerdictCard,
   type JudgeOption,
 } from '@/components/admin/orchestration/experiments/pairwise-verdict-card';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { VariantCompareTable } from '@/components/admin/orchestration/experiments/variant-compare-table';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import type { PairwiseVerdictSummary } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -54,45 +53,15 @@ interface CompareResponse {
   pairwiseVerdict: PairwiseVerdictSummary | null;
 }
 
-async function loadCompare(id: string): Promise<CompareResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.experimentCompareById(id));
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      logger.warn('Experiment compare: fetch failed', { id, status: res.status });
-      return null;
-    }
-    const parsed = await parseApiResponse<CompareResponse>(res);
-    return parsed.success ? parsed.data : null;
-  } catch (err) {
-    logger.error('Experiment compare: fetch threw', {
-      id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  }
-}
-
 interface GradersResponse {
   judgeAgents: Array<{ slug: string; name: string }>;
 }
 
-async function loadJudges(): Promise<JudgeOption[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.EVAL_GRADERS);
-    if (!res.ok) {
-      logger.warn('Experiment compare: judge list fetch failed', { status: res.status });
-      return [];
-    }
-    const parsed = await parseApiResponse<GradersResponse>(res);
-    if (!parsed.success) return [];
-    return parsed.data.judgeAgents.map((j) => ({ slug: j.slug, name: j.name }));
-  } catch (err) {
-    logger.warn('Experiment compare: judge list fetch threw', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
+/** The judge picker's options, or `null` when they could not be loaded. */
+async function loadJudges(): Promise<JudgeOption[] | null> {
+  const result = await loadServerData<GradersResponse>(API.ADMIN.ORCHESTRATION.EVAL_GRADERS);
+  if (!result.ok) return null;
+  return result.data.judgeAgents.map((j) => ({ slug: j.slug, name: j.name }));
 }
 
 const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled']);
@@ -102,8 +71,15 @@ export default async function ExperimentComparePage({
 }: PageProps): Promise<React.ReactElement> {
   const { id } = await params;
 
-  const [data, judges] = await Promise.all([loadCompare(id), loadJudges()]);
-  if (!data) notFound();
+  // The comparison is the page: a 404 is a missing experiment, any other
+  // failure reaches the error boundary. The judge list only feeds the verdict
+  // picker, so its failure shows a notice above the verdict card.
+  const [{ data }, judges] = await Promise.all([
+    requireServerData<CompareResponse>(API.ADMIN.ORCHESTRATION.experimentCompareById(id), {
+      notFound: true,
+    }),
+    loadJudges(),
+  ]);
 
   const noRunsYet = data.variants.every((v) => v.evaluationRunId === null);
   // Terminal statuses are listed, not in-flight ones, so an unrecognised status
@@ -164,10 +140,13 @@ export default async function ExperimentComparePage({
               </CardContent>
             </Card>
           ) : null}
+          {judges === null ? (
+            <LoadFailedNotice what="judge agents for the pairwise verdict" />
+          ) : null}
           <PairwiseVerdictCard
             experimentId={id}
             verdict={data.pairwiseVerdict}
-            judges={judges}
+            judges={judges ?? []}
             variants={data.variants.map((v) => ({
               variantId: v.variantId,
               label: v.label,

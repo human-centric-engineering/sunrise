@@ -17,34 +17,18 @@ import {
   type RunListItem,
 } from '@/components/admin/orchestration/evaluations-foundations/runs-table';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Batch runs · AI Orchestration',
   description: 'Dataset-driven evaluation runs.',
 };
 
-async function loadRuns(): Promise<RunListItem[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EVAL_RUNS}?limit=50`);
-    if (!res.ok) {
-      logger.warn('Failed to load runs', { status: res.status });
-      return [];
-    }
-    const parsed = await parseApiResponse<RunListItem[]>(res);
-    if (!parsed.success) return [];
-    return Array.isArray(parsed.data) ? parsed.data : [];
-  } catch (err) {
-    logger.error('Runs list fetch failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
-}
-
 export default async function RunsListPage(): Promise<React.ReactElement> {
-  const runs = await loadRuns();
+  // A failed load reaches the error boundary rather than reading as "No runs yet".
+  const { data: runs } = await requireServerData<RunListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.EVAL_RUNS}?limit=50`
+  );
 
   return (
     <div className="space-y-6">

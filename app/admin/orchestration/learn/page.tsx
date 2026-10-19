@@ -7,8 +7,7 @@ import {
 } from '@/components/admin/orchestration/learn/learning-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import type { PatternSummary } from '@/types/orchestration';
 
@@ -17,16 +16,15 @@ export const metadata: Metadata = {
   description: 'Explore agentic design patterns and test your knowledge.',
 };
 
+/**
+ * The pattern catalogue is the page's main data: a failed load throws to the
+ * error boundary rather than reading as an empty catalogue (#518).
+ */
 async function getPatterns(): Promise<PatternSummary[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<PatternSummary[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('learn page: pattern fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<PatternSummary[]>(
+    API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS
+  );
+  return data;
 }
 
 /**
@@ -39,34 +37,27 @@ async function getPatterns(): Promise<PatternSummary[]> {
  * add a new route for a one-off lookup. The `?q=<slug>` shape can
  * return multiple matches (substring), so we filter for the exact
  * slug match in the caller before reading metadata. Returns `null`
- * when the agent row hasn't been seeded yet or the lookup failed —
- * callers fall back to text-only chat.
+ * when the agent row hasn't been seeded yet or the lookup failed (which
+ * `loadServerData` logs) — callers fall back to text-only chat.
  */
 async function getAgentBySlug(slug: string): Promise<LearningTabsAgent | null> {
-  try {
-    // System rows only: the list sorts them last, so a page of an org's own
-    // similarly-named agents could otherwise push the platform instance off it.
-    const url = `${API.ADMIN.ORCHESTRATION.AGENTS}?q=${encodeURIComponent(slug)}&isSystem=true&limit=10`;
-    const res = await serverFetch(url);
-    if (!res.ok) return null;
-    const body =
-      await parseApiResponse<
-        Array<{ id: string; slug: string; isSystem: boolean; enableVoiceInput?: boolean }>
-      >(res);
-    if (!body.success) return null;
-    // The org's platform instance, never its own agent holding the slug.
-    const match = body.data.find((a) => a.slug === slug && a.isSystem);
-    if (!match) return null;
-    return {
-      id: match.id,
-      // Defensive default — older list responses may not carry the
-      // field; treat absence as voice-off rather than throwing.
-      enableVoiceInput: match.enableVoiceInput ?? false,
-    };
-  } catch (err) {
-    logger.error('learn page: agent fetch failed', { slug, err });
-    return null;
-  }
+  // System rows only: the list sorts them last, so a page of an org's own
+  // similarly-named agents could otherwise push the platform instance off it.
+  const url = `${API.ADMIN.ORCHESTRATION.AGENTS}?q=${encodeURIComponent(slug)}&isSystem=true&limit=10`;
+  const result =
+    await loadServerData<
+      Array<{ id: string; slug: string; isSystem: boolean; enableVoiceInput?: boolean }>
+    >(url);
+  if (!result.ok) return null;
+  // The org's platform instance, never its own agent holding the slug.
+  const match = result.data.find((a) => a.slug === slug && a.isSystem);
+  if (!match) return null;
+  return {
+    id: match.id,
+    // Defensive default — older list responses may not carry the
+    // field; treat absence as voice-off rather than throwing.
+    enableVoiceInput: match.enableVoiceInput ?? false,
+  };
 }
 
 interface PageProps {

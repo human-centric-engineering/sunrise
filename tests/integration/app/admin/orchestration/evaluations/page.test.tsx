@@ -9,8 +9,9 @@
  * Test Coverage:
  * - Renders heading and description with valid serverFetch response
  * - Renders evaluation titles from pre-fetched data
- * - Graceful empty state when serverFetch returns not ok
- * - No throw when serverFetch rejects
+ * - Real empty list renders the empty state
+ * - A failed evaluations load throws to the error boundary (#518)
+ * - A failed agents load shows a notice above the table, which still renders
  *
  * @see app/admin/orchestration/evaluations/page.tsx
  */
@@ -18,11 +19,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -82,6 +86,19 @@ const MOCK_AGENTS = [
   { id: 'agent-2', name: 'Another Agent' },
 ];
 
+/** Answer each endpoint the page calls; `agents` defaults to success. */
+async function mockEndpoints(answers: {
+  evaluations: () => Promise<Response>;
+  agents?: () => Promise<Response>;
+}): Promise<void> {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) =>
+    path.includes('/agents')
+      ? (answers.agents ?? (() => Promise.resolve(apiSuccess(MOCK_AGENTS))))()
+      : answers.evaluations()
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EvaluationsListPage (server component)', () => {
@@ -95,11 +112,9 @@ describe('EvaluationsListPage (server component)', () => {
 
   it('renders Evaluations heading and description', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_EVALUATIONS, meta: MOCK_META })
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENTS, meta: undefined });
+    await mockEndpoints({
+      evaluations: () => Promise.resolve(apiSuccess(MOCK_EVALUATIONS, MOCK_META)),
+    });
 
     // Import the page after mocks are set up
     const { default: EvaluationsListPage } =
@@ -117,11 +132,9 @@ describe('EvaluationsListPage (server component)', () => {
 
   it('renders evaluation titles from pre-fetched data', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_EVALUATIONS, meta: MOCK_META })
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENTS, meta: undefined });
+    await mockEndpoints({
+      evaluations: () => Promise.resolve(apiSuccess(MOCK_EVALUATIONS, MOCK_META)),
+    });
 
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');
@@ -136,56 +149,80 @@ describe('EvaluationsListPage (server component)', () => {
     });
   });
 
-  it('renders empty state gracefully when serverFetch returns not ok', async () => {
+  it('renders the empty state when there are no evaluations', async () => {
     // Arrange
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    await mockEndpoints({
+      evaluations: () => Promise.resolve(apiSuccess([], { ...MOCK_META, total: 0 })),
+    });
 
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');
 
-    // Act: should not throw
+    // Act
     render(await EvaluationsListPage());
-
-    // Assert: page renders (empty state in table)
-    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
-    expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
-  });
-
-  it('falls back to empty state when API returns success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: false, error: { code: 'ERR', message: 'fail' } })
-      .mockResolvedValueOnce({ success: false, error: { code: 'ERR', message: 'fail' } });
-
-    const { default: EvaluationsListPage } =
-      await import('@/app/admin/orchestration/evaluations/page');
-
-    render(await EvaluationsListPage());
-
-    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
-    expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
-  });
-
-  it('does not throw when serverFetch rejects', async () => {
-    // Arrange
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
-
-    const { default: EvaluationsListPage } =
-      await import('@/app/admin/orchestration/evaluations/page');
-
-    // Act: should not throw
-    let thrown = false;
-    try {
-      render(await EvaluationsListPage());
-    } catch {
-      thrown = true;
-    }
 
     // Assert
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
+    expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('throws to the error boundary when the evaluations load fails', async () => {
+    // Arrange
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockEndpoints({ evaluations: () => Promise.resolve(apiFailure(500)) });
+
+    const { default: EvaluationsListPage } =
+      await import('@/app/admin/orchestration/evaluations/page');
+
+    // Act + Assert: not an empty table
+    await expect(EvaluationsListPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('throws to the error boundary when the evaluations fetch rejects', async () => {
+    // Arrange
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockEndpoints({ evaluations: () => Promise.reject(new Error('Network error')) });
+
+    const { default: EvaluationsListPage } =
+      await import('@/app/admin/orchestration/evaluations/page');
+
+    // Act + Assert
+    await expect(EvaluationsListPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('shows a notice when the agent filter options fail, and still renders the table', async () => {
+    // Arrange
+    await mockEndpoints({
+      evaluations: () => Promise.resolve(apiSuccess(MOCK_EVALUATIONS, MOCK_META)),
+      agents: () => Promise.resolve(apiFailure(500)),
+    });
+
+    const { default: EvaluationsListPage } =
+      await import('@/app/admin/orchestration/evaluations/page');
+
+    // Act
+    render(await EvaluationsListPage());
+
+    // Assert: the notice names what failed; the evaluations still show
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /couldn.t load agents for the agent filter/i
+    );
+    expect(screen.getByText('Tone Check')).toBeInTheDocument();
+  });
+
+  it('shows no notice when the agent filter options load', async () => {
+    // Arrange
+    await mockEndpoints({
+      evaluations: () => Promise.resolve(apiSuccess(MOCK_EVALUATIONS, MOCK_META)),
+    });
+
+    const { default: EvaluationsListPage } =
+      await import('@/app/admin/orchestration/evaluations/page');
+
+    // Act
+    render(await EvaluationsListPage());
+
+    // Assert
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

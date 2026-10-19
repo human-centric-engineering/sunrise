@@ -5,9 +5,9 @@
  * (app/admin/orchestration/learn/page.tsx)
  *
  * Branch coverage targets:
- * - getPatterns: res.ok false → empty list
- * - getPatterns: body.success false → empty list
- * - getPatterns: serverFetch throws → empty list + logger.error
+ * - getPatterns: error status, error envelope or network error →
+ *   ServerLoadError to the error boundary, never an empty catalogue (#518)
+ * - getAgentBySlug: a failed lookup is logged and falls back to text-only chat
  * - Happy path: passes patterns and search params through to LearningTabs
  *
  * @see app/admin/orchestration/learn/page.tsx
@@ -16,11 +16,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -69,18 +72,41 @@ vi.mock('next/link', () => ({
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import LearnPage from '@/app/admin/orchestration/learn/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function okResponse(): Response {
-  return { ok: true } as Response;
+type Answer = () => Promise<Response>;
+
+const ok =
+  (data: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data));
+
+/**
+ * Route the page's three parallel loads by URL: the pattern catalogue and the
+ * two agent lookups. Each answer is a fresh `Response`, so bodies are never
+ * read twice. Agents default to "none found".
+ */
+function wireFetches({
+  patterns = ok(PATTERNS),
+  advisor = ok([]),
+  quiz = ok([]),
+}: {
+  patterns?: Answer;
+  advisor?: Answer;
+  quiz?: Answer;
+} = {}): void {
+  vi.mocked(serverFetch).mockImplementation((url: string) => {
+    if (url.includes('pattern-advisor')) return advisor();
+    if (url.includes('quiz-master')) return quiz();
+    return patterns();
+  });
 }
 
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
+const QUIZ_ROW = { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false };
 
 const PATTERNS = [
   {
@@ -106,39 +132,50 @@ describe('LearnPage', () => {
     vi.clearAllMocks();
   });
 
-  describe('getPatterns error branches', () => {
-    it('passes an empty patterns list to LearningTabs when res.ok is false', async () => {
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
-      const searchParams = Promise.resolve({});
+  describe('getPatterns failure', () => {
+    it('throws to the error boundary when the pattern load fails', async () => {
+      wireFetches({ patterns: () => Promise.resolve(apiFailure(500)) });
 
-      render(await LearnPage({ searchParams }));
-
-      const tabs = screen.getByTestId('learning-tabs');
-      expect(tabs).toHaveAttribute('data-patterns-count', '0');
-      expect(parseApiResponse).not.toHaveBeenCalled();
+      await expect(LearnPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+        ServerLoadError
+      );
     });
 
-    it('passes an empty patterns list when body.success is false', async () => {
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: false,
-        error: { code: 'BOOM', message: 'parse failure' },
-      } as never);
-      const searchParams = Promise.resolve({});
+    it('throws to the error boundary when the API answers with an error envelope', async () => {
+      wireFetches({
+        patterns: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ success: false, error: { code: 'BOOM', message: 'parse failure' } }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          ),
+      });
 
-      render(await LearnPage({ searchParams }));
-
-      expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-patterns-count', '0');
+      await expect(LearnPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+        ServerLoadError
+      );
     });
 
-    it('logs and renders an empty list when serverFetch throws', async () => {
+    it('logs and throws when serverFetch throws', async () => {
       const fetchErr = new Error('Network down');
-      vi.mocked(serverFetch).mockRejectedValue(fetchErr);
-      const searchParams = Promise.resolve({});
+      wireFetches({ patterns: () => Promise.reject(fetchErr) });
 
-      render(await LearnPage({ searchParams }));
+      await expect(LearnPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+        ServerLoadError
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'Server data load failed: no response',
+        fetchErr,
+        expect.objectContaining({ path: expect.stringContaining('/knowledge/patterns') })
+      );
+    });
 
-      expect(logger.error).toHaveBeenCalledWith('learn page: pattern fetch failed', fetchErr);
+    it('passes a real empty catalogue through to LearningTabs', async () => {
+      wireFetches({ patterns: ok([]) });
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
       expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-patterns-count', '0');
     });
   });
@@ -148,11 +185,7 @@ describe('LearnPage', () => {
       // The `tab` query param is no longer a page-level concern — the
       // LearningTabs client component reads it directly via useUrlTabs.
       // The page only forwards context props (contextType / contextId).
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: PATTERNS,
-      } as never);
+      wireFetches();
       const searchParams = Promise.resolve({
         contextType: 'pattern',
         contextId: '1',
@@ -167,41 +200,16 @@ describe('LearnPage', () => {
     });
 
     it('forwards advisor + quiz agent metadata when the API returns matching rows', async () => {
-      // Page fires three parallel serverFetch calls: patterns,
-      // pattern-advisor agent, quiz-master agent. The first returns
-      // patterns; the next two return agent list pages we filter to
-      // the exact slug. Stubbing `mockResolvedValue` returns the same
-      // ok-response for every call — what matters is the parseApiResponse
-      // sequence, which mirrors the call order.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            {
-              id: 'agent-advisor',
-              slug: 'pattern-advisor',
-              isSystem: true,
-              enableVoiceInput: true,
-            },
-            // Substring match noise — `pattern-advisor-old` would be
-            // returned by `?q=pattern-advisor`; the page must filter
-            // for the exact slug.
-            {
-              id: 'agent-old',
-              slug: 'pattern-advisor-old',
-              isSystem: true,
-              enableVoiceInput: false,
-            },
-          ],
-        } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
-          ],
-        } as never);
+      wireFetches({
+        advisor: ok([
+          { id: 'agent-advisor', slug: 'pattern-advisor', isSystem: true, enableVoiceInput: true },
+          // Substring match noise — `pattern-advisor-old` would be
+          // returned by `?q=pattern-advisor`; the page must filter
+          // for the exact slug.
+          { id: 'agent-old', slug: 'pattern-advisor-old', isSystem: true, enableVoiceInput: false },
+        ]),
+        quiz: ok([QUIZ_ROW]),
+      });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -215,27 +223,11 @@ describe('LearnPage', () => {
 
   describe('getAgentBySlug error branches', () => {
     // The page hides the mic affordance when agent metadata can't be
-    // fetched. Each branch below proves the data-advisor-* attributes
-    // collapse to '' so the LearningTabs render falls back to text-
-    // only chat for the affected tab.
+    // fetched: the chat still works, text-only. Each branch below proves
+    // the data-advisor-* attributes collapse to '' for the affected tab.
 
-    it('passes null advisorAgent when the agent fetch returns !res.ok', async () => {
-      // First call (patterns) ok; second call (pattern-advisor)
-      // !res.ok; third call (quiz-master) ok with a real row.
-      vi.mocked(serverFetch)
-        .mockResolvedValueOnce(okResponse())
-        .mockResolvedValueOnce(notOkResponse())
-        .mockResolvedValueOnce(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        // No parseApiResponse for the !res.ok branch — the route
-        // returns early. The quiz call still goes through.
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
-          ],
-        } as never);
+    it('passes null advisorAgent and logs when the agent load fails', async () => {
+      wireFetches({ advisor: () => Promise.resolve(apiFailure(500)), quiz: ok([QUIZ_ROW]) });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -245,34 +237,28 @@ describe('LearnPage', () => {
       // Quiz still wired up — failure on one slug must not poison the
       // other.
       expect(tabs).toHaveAttribute('data-quiz-id', 'agent-quiz');
+      expect(logger.error).toHaveBeenCalledWith(
+        'Server data load failed',
+        undefined,
+        expect.objectContaining({ path: expect.stringContaining('pattern-advisor'), status: 500 })
+      );
     });
 
     it('passes null advisorAgent when no row matches the exact slug', async () => {
       // The agents list `?q=pattern-advisor` is substring, so it can
       // return a wrong-slug match. The page filters to exact and must
       // fall through to null when nothing matches.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            // Substring matches like `pattern-advisor-archived`
-            // but the exact `pattern-advisor` slug is not present.
-            {
-              id: 'agent-old',
-              slug: 'pattern-advisor-archived',
-              isSystem: true,
-              enableVoiceInput: true,
-            },
-          ],
-        } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
-          ],
-        } as never);
+      wireFetches({
+        advisor: ok([
+          {
+            id: 'agent-old',
+            slug: 'pattern-advisor-archived',
+            isSystem: true,
+            enableVoiceInput: true,
+          },
+        ]),
+        quiz: ok([QUIZ_ROW]),
+      });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -281,26 +267,16 @@ describe('LearnPage', () => {
 
     it('passes null and logs when the agent fetch throws', async () => {
       const agentErr = new Error('Connection refused');
-      vi.mocked(serverFetch)
-        .mockResolvedValueOnce(okResponse())
-        .mockRejectedValueOnce(agentErr)
-        .mockResolvedValueOnce(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
-          ],
-        } as never);
+      wireFetches({ advisor: () => Promise.reject(agentErr), quiz: ok([QUIZ_ROW]) });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
-      // The catch in getAgentBySlug logs with the slug + err so a
+      // The loader logs the path (carrying the slug) and the error, so a
       // misconfigured deployment is visible in server logs.
       expect(logger.error).toHaveBeenCalledWith(
-        'learn page: agent fetch failed',
-        expect.objectContaining({ slug: 'pattern-advisor' })
+        'Server data load failed: no response',
+        agentErr,
+        expect.objectContaining({ path: expect.stringContaining('pattern-advisor') })
       );
       expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-advisor-id', '');
     });
@@ -309,8 +285,7 @@ describe('LearnPage', () => {
       // The list sorts system rows last, so filtering client-side after a
       // 10-row page could lose the platform instance behind the org's own
       // similarly-named agents.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+      wireFetches();
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -323,17 +298,10 @@ describe('LearnPage', () => {
     it("ignores an org's own agent holding a platform slug (§116 t-725)", async () => {
       // An org that took `pattern-advisor` before the slug was reserved keeps
       // that agent; the Learn tab must not wire it up as the Pattern Advisor.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [{ id: 'own-advisor', slug: 'pattern-advisor', isSystem: false }],
-        } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }],
-        } as never);
+      wireFetches({
+        advisor: ok([{ id: 'own-advisor', slug: 'pattern-advisor', isSystem: false }]),
+        quiz: ok([{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }]),
+      });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -346,17 +314,10 @@ describe('LearnPage', () => {
       // Older versions of the agents list may not surface the
       // `enableVoiceInput` field. Treat absence as voice-off rather
       // than throwing.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [{ id: 'agent-advisor', slug: 'pattern-advisor', isSystem: true }],
-        } as never)
-        .mockResolvedValueOnce({
-          success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }],
-        } as never);
+      wireFetches({
+        advisor: ok([{ id: 'agent-advisor', slug: 'pattern-advisor', isSystem: true }]),
+        quiz: ok([{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }]),
+      });
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
@@ -368,14 +329,9 @@ describe('LearnPage', () => {
 
   describe('happy path (continued)', () => {
     it('renders the heading and breadcrumb back to AI Orchestration', async () => {
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: PATTERNS,
-      } as never);
-      const searchParams = Promise.resolve({});
+      wireFetches();
 
-      render(await LearnPage({ searchParams }));
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/learning/i);
       expect(screen.getByRole('link', { name: 'AI Orchestration' })).toHaveAttribute(
@@ -385,14 +341,9 @@ describe('LearnPage', () => {
     });
 
     it('renders the Antonio Gullí attribution line', async () => {
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: PATTERNS,
-      } as never);
-      const searchParams = Promise.resolve({});
+      wireFetches();
 
-      render(await LearnPage({ searchParams }));
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
       expect(screen.getByText(/agentic design patterns by antonio gullí/i)).toBeInTheDocument();
     });

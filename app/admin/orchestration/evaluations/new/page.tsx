@@ -3,8 +3,7 @@ import Link from 'next/link';
 
 import { EvaluationForm } from '@/components/admin/orchestration/evaluation-form';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'New Evaluation · AI Orchestration',
@@ -16,20 +15,12 @@ interface AgentOption {
   name: string;
 }
 
-async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('new evaluation page: agent fetch failed', err);
-    return [];
-  }
-}
-
 export default async function NewEvaluationPage() {
-  const agents = await getAgents();
+  // The form cannot work without its agent list, so a failed load reaches the
+  // error boundary rather than offering an empty dropdown (#518).
+  const { data: agents } = await requireServerData<AgentOption[]>(
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`
+  );
 
   return (
     <div className="space-y-6">

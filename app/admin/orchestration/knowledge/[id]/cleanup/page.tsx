@@ -1,11 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 
 import { CleanupView } from '@/components/admin/orchestration/knowledge/cleanup-view';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import { resolveCleanupAgentContextWindow } from '@/lib/orchestration/knowledge/cleanup-agent';
 import { parseDocumentMetadata } from '@/lib/orchestration/knowledge/document-manager';
 
@@ -26,23 +25,16 @@ interface CleanupDocResponse {
   };
 }
 
-async function getCleanupDocument(id: string): Promise<CleanupDocResponse['document'] | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<CleanupDocResponse>(res);
-    return body.success ? body.data.document : null;
-  } catch (err) {
-    logger.error('cleanup page: document fetch failed', { documentId: id, err });
-    return null;
-  }
-}
-
 export default async function CleanupPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const document = await getCleanupDocument(id);
-  if (!document) notFound();
+  // A 404 is a missing document; any other failure reaches the error boundary.
+  const {
+    data: { document },
+  } = await requireServerData<CleanupDocResponse>(
+    API.ADMIN.ORCHESTRATION.knowledgeDocumentById(id),
+    { notFound: true }
+  );
 
   // Already-finalised docs shouldn't be reachable via this URL — kick the
   // admin back to the main KB page rather than rendering a stale chat.

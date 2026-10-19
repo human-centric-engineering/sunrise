@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { EvaluationsTable } from '@/components/admin/orchestration/evaluations-table';
 import { ExperimentsList } from '@/components/admin/orchestration/experiments/experiments-list';
 import { TestingTabs } from '@/components/admin/orchestration/testing-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
@@ -39,38 +39,27 @@ interface AgentOption {
   name: string;
 }
 
+/**
+ * The evaluations list is the page's main data: a failed load throws to the
+ * error boundary rather than rendering an empty table (#518).
+ */
 async function getEvaluations(): Promise<{
   evaluations: EvaluationListItem[];
   meta: PaginationMeta;
 }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EVALUATIONS}?page=1&limit=25`);
-    if (!res.ok) return { evaluations: [], meta: EMPTY_META };
-    const body = await parseApiResponse<EvaluationListItem[]>(res);
-    if (!body.success) return { evaluations: [], meta: EMPTY_META };
-    return {
-      evaluations: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('evaluations list page: initial fetch failed', err);
-    return { evaluations: [], meta: EMPTY_META };
-  }
-}
-
-async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
-  } catch {
-    return [];
-  }
+  const { data, meta } = await requireServerData<EvaluationListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.EVALUATIONS}?page=1&limit=25`
+  );
+  return { evaluations: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function TestingPage() {
-  const [{ evaluations, meta }, agents] = await Promise.all([getEvaluations(), getAgents()]);
+  // The agent list only fills the table's agent filter, so its failure shows a
+  // notice above the table instead of stopping the page.
+  const [{ evaluations, meta }, agents] = await Promise.all([
+    getEvaluations(),
+    loadServerData<AgentOption[]>(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -124,7 +113,16 @@ export default async function TestingPage() {
 
       <TestingTabs
         evaluationsContent={
-          <EvaluationsTable initialEvaluations={evaluations} initialMeta={meta} agents={agents} />
+          <>
+            {agents.ok ? null : (
+              <LoadFailedNotice what="agents for the agent filter" className="mb-4" />
+            )}
+            <EvaluationsTable
+              initialEvaluations={evaluations}
+              initialMeta={meta}
+              agents={agents.ok ? agents.data : []}
+            />
+          </>
         }
         experimentsContent={<ExperimentsList />}
       />

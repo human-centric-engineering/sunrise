@@ -7,7 +7,6 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -17,9 +16,9 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { datasetHelp } from '@/components/admin/orchestration/evaluations-foundations/help-text';
 import { GenerateCasesButton } from '@/components/admin/orchestration/evaluations-foundations/generate-cases-button';
 import { DatasetCasesTable } from '@/components/admin/orchestration/evaluations-foundations/dataset-cases-table';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Dataset · AI Orchestration',
@@ -54,47 +53,21 @@ interface AgentOption {
   slug: string;
 }
 
-async function loadChatAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&kind=chat`);
-    if (!res.ok) return [];
-    const parsed = await parseApiResponse<AgentOption[]>(res);
-    return parsed.success && Array.isArray(parsed.data) ? parsed.data : [];
-  } catch (err) {
-    logger.warn('Dataset detail: failed to load agents for synthesis button', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
-}
-
-async function loadDataset(id: string): Promise<DatasetDetail | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.evalDatasetById(id));
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      logger.warn('Failed to load dataset detail', { id, status: res.status });
-      return null;
-    }
-    const parsed = await parseApiResponse<DatasetDetail>(res);
-    return parsed.success ? parsed.data : null;
-  } catch (err) {
-    logger.error('Dataset detail fetch failed', {
-      id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  }
-}
-
 export default async function DatasetDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }): Promise<React.ReactElement> {
   const { id } = await params;
-  const [detail, chatAgents] = await Promise.all([loadDataset(id), loadChatAgents()]);
-  if (!detail) notFound();
+  // The dataset is the page: a 404 is a missing dataset, any other failure
+  // reaches the error boundary. The agent list only feeds the synthesis
+  // button, so its failure shows a notice in the button's place.
+  const [{ data: detail }, chatAgents] = await Promise.all([
+    requireServerData<DatasetDetail>(API.ADMIN.ORCHESTRATION.evalDatasetById(id), {
+      notFound: true,
+    }),
+    loadServerData<AgentOption[]>(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&kind=chat`),
+  ]);
 
   const { dataset, cases } = detail;
   return (
@@ -116,7 +89,11 @@ export default async function DatasetDetailPage({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <GenerateCasesButton datasetId={dataset.id} agents={chatAgents} />
+          {chatAgents.ok ? (
+            <GenerateCasesButton datasetId={dataset.id} agents={chatAgents.data} />
+          ) : (
+            <LoadFailedNotice what="chat agents for case generation" />
+          )}
           <Button asChild>
             <Link
               href={`/admin/orchestration/evaluations/runs/new?datasetId=${encodeURIComponent(dataset.id)}`}

@@ -18,7 +18,7 @@ Admin surface for two complementary evaluation flows: **manual sessions** (a hum
 | `/admin/orchestration/evaluations/runs/new`      | `app/admin/orchestration/evaluations/runs/new/page.tsx`      | Single-page create form — basics / subject / dataset / heuristic graders / judge agents                                                   |
 | `/admin/orchestration/evaluations/runs/[id]`     | `app/admin/orchestration/evaluations/runs/[id]/page.tsx`     | Run detail with 3 s polling, summary table, per-case drill-in dialog                                                                      |
 
-All pages are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to empty state or `notFound()`. The run-detail and form pages hand off to client components for interactive parts.
+All pages are async server components. Each loads what it exists to show — the list, the record, or the options its form cannot work without — with `requireServerData()` from `lib/api/server-load.ts`. A failed load throws to the admin error boundary, whose **Try again** re-fetches, instead of rendering an empty list or an empty dropdown; a detail page renders not-found only when the API answers 404 (#518). Two loads are secondary and show a "Couldn't load" notice in their place instead: the agent list behind the Testing page's agent filter, and the chat-agent list behind the dataset detail's **Generate cases** button. The run-detail and form pages hand off to client components for interactive parts.
 
 ## What landed in Phase 3
 

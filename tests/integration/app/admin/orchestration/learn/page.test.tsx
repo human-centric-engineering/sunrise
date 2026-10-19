@@ -6,11 +6,16 @@
  * Tests the server-component page at
  * `app/admin/orchestration/learn/page.tsx`.
  *
+ * A failed pattern load throws to the error boundary rather than reading as
+ * an empty catalogue (#518); a real empty catalogue still shows the empty state.
+ *
  * @see app/admin/orchestration/learn/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -20,9 +25,10 @@ import { render, screen } from '@testing-library/react';
 // test environment (the mock doesn't re-render on `router.replace`).
 let urlParams = new URLSearchParams();
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -75,6 +81,14 @@ const MOCK_PATTERNS = [
   },
 ];
 
+/** Answer the pattern load with `patterns`; the agent lookups find nothing. */
+async function mockPatterns(patterns: () => Promise<Response>): Promise<void> {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) =>
+    path.includes('/agents') ? Promise.resolve(apiSuccess([])) : patterns()
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('LearnPage (server component)', () => {
@@ -88,12 +102,7 @@ describe('LearnPage (server component)', () => {
   });
 
   it('renders "Learning" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PATTERNS,
-    });
+    await mockPatterns(() => Promise.resolve(apiSuccess(MOCK_PATTERNS)));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -103,12 +112,7 @@ describe('LearnPage (server component)', () => {
   });
 
   it('renders pattern cards with names', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PATTERNS,
-    });
+    await mockPatterns(() => Promise.resolve(apiSuccess(MOCK_PATTERNS)));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -118,9 +122,8 @@ describe('LearnPage (server component)', () => {
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
-  it('renders empty state when fetch returns not ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders the empty state when there are no patterns', async () => {
+    await mockPatterns(() => Promise.resolve(apiSuccess([])));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -130,31 +133,32 @@ describe('LearnPage (server component)', () => {
     expect(screen.getByText(/no patterns found/i)).toBeInTheDocument();
   });
 
-  it('does not throw when fetch rejects', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+  it('throws to the error boundary when the pattern load fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockPatterns(() => Promise.resolve(apiFailure(500)));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    let thrown = false;
-    try {
-      render(await LearnPage({ searchParams: Promise.resolve({}) }));
-    } catch {
-      thrown = true;
-    }
+    // Not "No patterns found"
+    await expect(LearnPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
+  });
 
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^learning$/i })).toBeInTheDocument();
+  it('throws to the error boundary when the pattern fetch rejects', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockPatterns(() => Promise.reject(new Error('Network error')));
+
+    const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
+
+    await expect(LearnPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
   });
 
   it('renders ChatInterface on the advisor tab when URL has ?tab=advisor', async () => {
     urlParams = new URLSearchParams('tab=advisor');
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PATTERNS,
-    });
+    await mockPatterns(() => Promise.resolve(apiSuccess(MOCK_PATTERNS)));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -165,12 +169,7 @@ describe('LearnPage (server component)', () => {
 
   it('renders ChatInterface on the quiz tab when URL has ?tab=quiz', async () => {
     urlParams = new URLSearchParams('tab=quiz');
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PATTERNS,
-    });
+    await mockPatterns(() => Promise.resolve(apiSuccess(MOCK_PATTERNS)));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 

@@ -19,34 +19,18 @@ import {
   type DatasetListItem,
 } from '@/components/admin/orchestration/evaluations-foundations/datasets-table';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Datasets · AI Orchestration',
   description: 'Test case collections used to run batch evaluations.',
 };
 
-async function loadDatasets(): Promise<DatasetListItem[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EVAL_DATASETS}?limit=50`);
-    if (!res.ok) {
-      logger.warn('Failed to load datasets', { status: res.status });
-      return [];
-    }
-    const parsed = await parseApiResponse<DatasetListItem[]>(res);
-    if (!parsed.success) return [];
-    return Array.isArray(parsed.data) ? parsed.data : [];
-  } catch (err) {
-    logger.error('Datasets list fetch failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
-}
-
 export default async function DatasetsListPage(): Promise<React.ReactElement> {
-  const datasets = await loadDatasets();
+  // A failed load reaches the error boundary rather than reading as "No datasets yet".
+  const { data: datasets } = await requireServerData<DatasetListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.EVAL_DATASETS}?limit=50`
+  );
 
   return (
     <div className="space-y-6">

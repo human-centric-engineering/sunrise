@@ -1,11 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import { EvaluationRunner } from '@/components/admin/orchestration/evaluation-runner';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Evaluation · AI Orchestration',
@@ -25,27 +23,17 @@ interface EvaluationSession {
   metadata?: Record<string, unknown> | null;
 }
 
-async function getEvaluation(id: string): Promise<EvaluationSession | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.evaluationById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<EvaluationSession>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('evaluation detail page: fetch failed', err, { id });
-    return null;
-  }
-}
-
 export default async function EvaluationDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const evaluation = await getEvaluation(id);
-
-  if (!evaluation) notFound();
+  // A 404 is a missing evaluation; any other failure reaches the error boundary.
+  const { data: evaluation } = await requireServerData<EvaluationSession>(
+    API.ADMIN.ORCHESTRATION.evaluationById(id),
+    { notFound: true }
+  );
 
   return (
     <div className="space-y-6">

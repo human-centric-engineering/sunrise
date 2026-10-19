@@ -4,6 +4,10 @@
  * Shell page for the run-creation form. Loads the option lists
  * (agents, datasets, heuristic graders, judge agents) server-side and
  * hands them to the client form.
+ *
+ * Every list is main data: the form reads an empty one as "none exist" and
+ * tells the admin to create one, so a failed load throws to the error
+ * boundary instead (#518).
  */
 
 import type { Metadata } from 'next';
@@ -20,8 +24,7 @@ import {
   RunCreateForm,
 } from '@/components/admin/orchestration/evaluations-foundations/run-create-form';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'New run · AI Orchestration',
@@ -29,34 +32,17 @@ export const metadata: Metadata = {
 };
 
 async function loadAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&kind=chat`);
-    if (!res.ok) return [];
-    const parsed = await parseApiResponse<Array<{ id: string; name: string; slug: string }>>(res);
-    if (!parsed.success) return [];
-    return parsed.data;
-  } catch (err) {
-    logger.error('Failed to load agents for run-create', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
+  const { data } = await requireServerData<Array<{ id: string; name: string; slug: string }>>(
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&kind=chat`
+  );
+  return data;
 }
 
 async function loadDatasets(): Promise<DatasetOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EVAL_DATASETS}?limit=100`);
-    if (!res.ok) return [];
-    const parsed =
-      await parseApiResponse<Array<{ id: string; name: string; caseCount: number }>>(res);
-    if (!parsed.success) return [];
-    return parsed.data;
-  } catch (err) {
-    logger.error('Failed to load datasets for run-create', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
+  const { data } = await requireServerData<Array<{ id: string; name: string; caseCount: number }>>(
+    `${API.ADMIN.ORCHESTRATION.EVAL_DATASETS}?limit=100`
+  );
+  return data;
 }
 
 interface RawWorkflowListItem {
@@ -100,28 +86,20 @@ function extractSteps(definition: unknown): Array<{ id: string; name: string; ty
 }
 
 async function loadWorkflows(): Promise<WorkflowOption[]> {
-  try {
-    // Only workflows that are runnable as eval subjects: active + has a
-    // published version. Filtering at the API layer keeps the picker
-    // honest — a draft-only workflow can't be a subject.
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?limit=100&isActive=true`);
-    if (!res.ok) return [];
-    const parsed = await parseApiResponse<RawWorkflowListItem[]>(res);
-    if (!parsed.success) return [];
-    return parsed.data
-      .filter((w) => w.publishedVersion !== null)
-      .map((w) => ({
-        id: w.id,
-        name: w.name,
-        slug: w.slug,
-        steps: extractSteps(w.publishedVersion?.snapshot),
-      }));
-  } catch (err) {
-    logger.error('Failed to load workflows for run-create', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
+  // Only workflows that are runnable as eval subjects: active + has a
+  // published version. Filtering at the API layer keeps the picker
+  // honest — a draft-only workflow can't be a subject.
+  const { data } = await requireServerData<RawWorkflowListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?limit=100&isActive=true`
+  );
+  return data
+    .filter((w) => w.publishedVersion !== null)
+    .map((w) => ({
+      id: w.id,
+      name: w.name,
+      slug: w.slug,
+      steps: extractSteps(w.publishedVersion?.snapshot),
+    }));
 }
 
 interface GradersResponse {
@@ -130,18 +108,8 @@ interface GradersResponse {
 }
 
 async function loadGraders(): Promise<GradersResponse> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.EVAL_GRADERS);
-    if (!res.ok) return { heuristicGraders: [], judgeAgents: [] };
-    const parsed = await parseApiResponse<GradersResponse>(res);
-    if (!parsed.success) return { heuristicGraders: [], judgeAgents: [] };
-    return parsed.data;
-  } catch (err) {
-    logger.error('Failed to load graders for run-create', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { heuristicGraders: [], judgeAgents: [] };
-  }
+  const { data } = await requireServerData<GradersResponse>(API.ADMIN.ORCHESTRATION.EVAL_GRADERS);
+  return data;
 }
 
 export default async function NewRunPage(): Promise<React.ReactElement> {

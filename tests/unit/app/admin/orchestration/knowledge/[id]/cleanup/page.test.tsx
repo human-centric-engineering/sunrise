@@ -2,7 +2,8 @@
 
 /**
  * Cleanup page (Server Component) — branch coverage for the three SSR paths:
- *   1. doc not found → notFound()
+ *   1. doc not found (API 404) → notFound(); any other load failure →
+ *      ServerLoadError to the error boundary, never notFound() (#518)
  *   2. doc exists but status !== 'cleaning' → redirect to /admin/orchestration/knowledge
  *   3. happy path → CleanupView rendered with props derived from the doc + metadata
  */
@@ -10,12 +11,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // vi.hoisted so the spies are available inside vi.mock factories.
 const {
   mockNotFound,
   mockRedirect,
   mockServerFetch,
-  mockParseApiResponse,
   mockCleanupView,
   mockResolveCleanupAgentContextWindow,
 } = vi.hoisted(() => ({
@@ -26,7 +28,6 @@ const {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
   mockServerFetch: vi.fn(),
-  mockParseApiResponse: vi.fn(),
   mockCleanupView: vi.fn(() => null as unknown as React.ReactElement),
   mockResolveCleanupAgentContextWindow: vi.fn().mockResolvedValue(128_000),
 }));
@@ -36,9 +37,10 @@ vi.mock('next/navigation', () => ({
   redirect: mockRedirect,
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: mockServerFetch,
-  parseApiResponse: mockParseApiResponse,
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -60,6 +62,7 @@ vi.mock('next/link', () => ({
 }));
 
 import CleanupPage from '@/app/admin/orchestration/knowledge/[id]/cleanup/page';
+import { ServerLoadError } from '@/lib/api/server-load';
 
 const DOC_ID = 'doc-xyz-999';
 
@@ -76,11 +79,8 @@ function makeDoc(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockFetchResolves(doc: ReturnType<typeof makeDoc> | null) {
-  mockServerFetch.mockResolvedValue({ ok: doc !== null });
-  mockParseApiResponse.mockResolvedValue(
-    doc === null ? { success: false } : { success: true, data: { document: doc } }
-  );
+function mockFetchResolves(doc: ReturnType<typeof makeDoc>) {
+  mockServerFetch.mockResolvedValue(apiSuccess({ document: doc }));
 }
 
 describe('CleanupPage (Server Component)', () => {
@@ -88,8 +88,8 @@ describe('CleanupPage (Server Component)', () => {
     vi.clearAllMocks();
   });
 
-  it('calls notFound() when the doc fetch returns a non-ok response', async () => {
-    mockServerFetch.mockResolvedValue({ ok: false });
+  it('calls notFound() when the document does not exist', async () => {
+    mockServerFetch.mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     await expect(CleanupPage({ params: Promise.resolve({ id: DOC_ID }) })).rejects.toThrow(
       'NEXT_NOT_FOUND'
@@ -100,14 +100,25 @@ describe('CleanupPage (Server Component)', () => {
     expect(mockCleanupView).not.toHaveBeenCalled();
   });
 
-  it('calls notFound() when serverFetch throws', async () => {
-    mockServerFetch.mockRejectedValue(new Error('network down'));
+  it('throws to the error boundary, not notFound(), when the doc load fails', async () => {
+    mockServerFetch.mockResolvedValue(apiFailure(500));
 
-    await expect(CleanupPage({ params: Promise.resolve({ id: DOC_ID }) })).rejects.toThrow(
-      'NEXT_NOT_FOUND'
+    await expect(CleanupPage({ params: Promise.resolve({ id: DOC_ID }) })).rejects.toBeInstanceOf(
+      ServerLoadError
     );
 
-    expect(mockNotFound).toHaveBeenCalledTimes(1);
+    expect(mockNotFound).not.toHaveBeenCalled();
+    expect(mockCleanupView).not.toHaveBeenCalled();
+  });
+
+  it('throws to the error boundary, not notFound(), when serverFetch throws', async () => {
+    mockServerFetch.mockRejectedValue(new Error('network down'));
+
+    await expect(CleanupPage({ params: Promise.resolve({ id: DOC_ID }) })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
+
+    expect(mockNotFound).not.toHaveBeenCalled();
   });
 
   it('redirects to the KB list when the doc status is not "cleaning"', async () => {

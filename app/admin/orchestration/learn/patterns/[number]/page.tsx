@@ -2,14 +2,14 @@ import { cache } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { DiscussPatternButton } from '@/components/admin/orchestration/learn/discuss-pattern-button';
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
 import { RelatedPatterns } from '@/components/admin/orchestration/learn/related-patterns';
 import { UsePatternButton } from '@/components/admin/orchestration/learn/use-pattern-button';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, ServerLoadError } from '@/lib/api/server-load';
 import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
 import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
@@ -26,36 +26,29 @@ interface PageProps {
   params: Promise<{ number: string }>;
 }
 
-const getPatternDetail = cache(async (num: number): Promise<PatternDetail | null> => {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<PatternDetail>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('pattern detail page: fetch failed', err);
-    return null;
-  }
-});
+/**
+ * Shared by `generateMetadata` and the page. The API answers 404 for a pattern
+ * with no chunks, which the page renders as "Pattern not found"; any other
+ * failure is the page's to throw (#518).
+ */
+const getPatternDetail = cache((num: number) =>
+  loadServerData<PatternDetail>(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num))
+);
 
-async function getPatternNames(): Promise<Map<number, string>> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
-    if (!res.ok) return new Map();
-    const body = await parseApiResponse<PatternSummary[]>(res);
-    if (!body.success) return new Map();
-    return new Map(body.data.map((p) => [p.patternNumber, p.patternName]));
-  } catch {
-    return new Map();
-  }
+/** Pattern names for the related-patterns strip, or `null` when they could not be loaded. */
+async function getPatternNames(): Promise<Map<number, string> | null> {
+  const result = await loadServerData<PatternSummary[]>(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
+  if (!result.ok) return null;
+  return new Map(result.data.map((p) => [p.patternNumber, p.patternName]));
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { number: rawNum } = await params;
   const num = parseInt(rawNum, 10);
-  if (isNaN(num)) return { title: 'Pattern Not Found · AI Orchestration' };
+  if (isNaN(num) || num < 1) return { title: 'Pattern Not Found · AI Orchestration' };
 
-  const detail = await getPatternDetail(num);
+  const result = await getPatternDetail(num);
+  const detail = result.ok ? result.data : null;
   return {
     title: detail?.patternName
       ? `${detail.patternName} · Learning · AI Orchestration`
@@ -67,7 +60,9 @@ export default async function PatternDetailPage({ params }: PageProps) {
   const { number: rawNum } = await params;
   const num = parseInt(rawNum, 10);
 
-  if (isNaN(num)) {
+  // The API rejects a number below 1, so it is caught here as invalid rather
+  // than reaching the load as a failure.
+  if (isNaN(num) || num < 1) {
     return (
       <div className="space-y-6">
         <p className="text-muted-foreground">Invalid pattern number.</p>
@@ -78,7 +73,16 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
-  const [detail, patternNames] = await Promise.all([getPatternDetail(num), getPatternNames()]);
+  const [result, patternNames] = await Promise.all([getPatternDetail(num), getPatternNames()]);
+
+  // Only a 404 is a missing pattern; any other failure reaches the error boundary.
+  if (!result.ok && result.failure.kind === 'failed') {
+    throw new ServerLoadError(
+      API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num),
+      result.failure
+    );
+  }
+  const detail = result.ok ? result.data : null;
 
   if (!detail || detail.chunks.length === 0) {
     return (
@@ -111,9 +115,11 @@ export default async function PatternDetailPage({ params }: PageProps) {
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
-  const relatedPatterns = extractRelatedPatterns(detail.chunks, num, patternNames).filter((p) =>
-    patternNames.has(p.number)
-  );
+  const relatedPatterns = patternNames
+    ? extractRelatedPatterns(detail.chunks, num, patternNames).filter((p) =>
+        patternNames.has(p.number)
+      )
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -157,7 +163,11 @@ export default async function PatternDetailPage({ params }: PageProps) {
       ))}
 
       {/* Related patterns — extracted from cross-references in content */}
-      <RelatedPatterns patterns={relatedPatterns} />
+      {relatedPatterns ? (
+        <RelatedPatterns patterns={relatedPatterns} />
+      ) : (
+        <LoadFailedNotice what="related patterns" />
+      )}
 
       {/* Remaining sections — collapsible accordions */}
       {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}

@@ -6,17 +6,24 @@
  * Tests the server-component page at
  * `app/admin/orchestration/learn/patterns/[number]/page.tsx`.
  *
+ * Only a 404 renders "Pattern not found"; any other detail failure throws to
+ * the error boundary, and a failed name list shows a notice in place of the
+ * related patterns (#518).
+ *
  * @see app/admin/orchestration/learn/patterns/[number]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -96,6 +103,22 @@ const MOCK_DETAIL = {
   totalTokens: 130,
 };
 
+const MOCK_NAMES = [{ patternNumber: 1, patternName: 'Chain of Thought' }];
+
+/** Answer the detail load and the pattern-name list separately. */
+async function wireFetches({
+  detail = () => Promise.resolve(apiSuccess(MOCK_DETAIL)),
+  names = () => Promise.resolve(apiSuccess(MOCK_NAMES)),
+}: {
+  detail?: () => Promise<Response>;
+  names?: () => Promise<Response>;
+} = {}): Promise<void> {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) =>
+    /\/patterns\/\d+/.test(path) ? detail() : names()
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('PatternDetailPage (server component)', () => {
@@ -108,12 +131,7 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders pattern title', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    await wireFetches();
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -124,12 +142,7 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders breadcrumb with Learning link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    await wireFetches();
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -140,12 +153,7 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders content sections', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    await wireFetches();
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -162,8 +170,7 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders not-found when pattern does not exist', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    await wireFetches({ detail: () => Promise.resolve(apiFailure(404, 'NOT_FOUND')) });
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -171,6 +178,30 @@ describe('PatternDetailPage (server component)', () => {
     render(await PatternDetailPage({ params: Promise.resolve({ number: '999' }) }));
 
     expect(screen.getByText(/pattern not found/i)).toBeInTheDocument();
+  });
+
+  it('throws to the error boundary, not "Pattern not found", when the detail load fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await wireFetches({ detail: () => Promise.resolve(apiFailure(500)) });
+
+    const { default: PatternDetailPage } =
+      await import('@/app/admin/orchestration/learn/patterns/[number]/page');
+
+    await expect(
+      PatternDetailPage({ params: Promise.resolve({ number: '1' }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('shows a notice in place of related patterns when the name list fails', async () => {
+    await wireFetches({ names: () => Promise.resolve(apiFailure(500)) });
+
+    const { default: PatternDetailPage } =
+      await import('@/app/admin/orchestration/learn/patterns/[number]/page');
+
+    render(await PatternDetailPage({ params: Promise.resolve({ number: '1' }) }));
+
+    expect(screen.getByRole('heading', { name: /chain of thought/i })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load related patterns/i);
   });
 
   it('renders invalid message for non-numeric param', async () => {

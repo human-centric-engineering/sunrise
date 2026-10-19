@@ -4,9 +4,8 @@
  * Unit Tests: KnowledgeTagsPage (app/admin/orchestration/knowledge/tags/page.tsx)
  *
  * Branch coverage targets for `getTags`:
- *  - res.ok false → empty list + EMPTY_META
- *  - body.success false → empty list + EMPTY_META
- *  - serverFetch throws → empty list + logger.error
+ *  - error status, error envelope or network error → ServerLoadError to the
+ *    error boundary, never an empty table (#518)
  *  - happy path → tags + parsed meta forwarded to KnowledgeTagsTable
  *  - parsePaginationMeta returns null → EMPTY_META fallback
  *
@@ -19,9 +18,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -53,13 +55,12 @@ vi.mock('next/link', () => ({
 }));
 
 import KnowledgeTagsPage from '@/app/admin/orchestration/knowledge/tags/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { API } from '@/lib/api/endpoints';
 
-const okResponse = (): Response => ({ ok: true }) as Response;
-const notOkResponse = (): Response => ({ ok: false }) as Response;
 const fullMeta = { page: 1, limit: 50, total: 4, totalPages: 1 };
 
 describe('KnowledgeTagsPage', () => {
@@ -67,41 +68,38 @@ describe('KnowledgeTagsPage', () => {
     vi.clearAllMocks();
   });
 
-  it('renders an empty table with the EMPTY_META fallback when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+  it('throws to the error boundary, not an empty table, when the load fails', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    render(await KnowledgeTagsPage());
-
-    const table = screen.getByTestId('knowledge-tags-table');
-    expect(table).toHaveAttribute('data-tags-count', '0');
-    expect(table).toHaveAttribute('data-meta-total', '0');
-    // We never reach parseApiResponse on a !ok response.
-    expect(parseApiResponse).not.toHaveBeenCalled();
+    await expect(KnowledgeTagsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Server data load failed',
+      undefined,
+      expect.objectContaining({ status: 500, code: 'INTERNAL_ERROR' })
+    );
   });
 
-  it('renders an empty table when the API returns success=false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'boom' },
-    } as never);
+  it('throws to the error boundary when the API answers with an error envelope', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: 'boom' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
 
-    render(await KnowledgeTagsPage());
-
-    const table = screen.getByTestId('knowledge-tags-table');
-    expect(table).toHaveAttribute('data-tags-count', '0');
-    expect(table).toHaveAttribute('data-meta-total', '0');
+    await expect(KnowledgeTagsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  it('logs and falls back to empty when serverFetch throws', async () => {
+  it('throws to the error boundary and logs when serverFetch throws', async () => {
     const err = new Error('network down');
     vi.mocked(serverFetch).mockRejectedValue(err);
 
-    render(await KnowledgeTagsPage());
-
-    expect(logger.error).toHaveBeenCalledWith('knowledge tags page: initial fetch failed', err);
-    const table = screen.getByTestId('knowledge-tags-table');
-    expect(table).toHaveAttribute('data-tags-count', '0');
+    await expect(KnowledgeTagsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Server data load failed: no response',
+      err,
+      expect.objectContaining({ path: `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?page=1&limit=50` })
+    );
   });
 
   it('forwards tags + parsed meta to KnowledgeTagsTable on the happy path', async () => {
@@ -109,12 +107,7 @@ describe('KnowledgeTagsPage', () => {
       { id: 't-1', slug: 'internal', name: 'Internal' },
       { id: 't-2', slug: 'public', name: 'Public' },
     ];
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockTags,
-      meta: fullMeta,
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockTags, fullMeta));
     vi.mocked(parsePaginationMeta).mockReturnValue(fullMeta);
 
     render(await KnowledgeTagsPage());
@@ -125,12 +118,7 @@ describe('KnowledgeTagsPage', () => {
   });
 
   it('falls back to EMPTY_META when parsePaginationMeta returns null', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: null,
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
     vi.mocked(parsePaginationMeta).mockReturnValue(null);
 
     render(await KnowledgeTagsPage());
@@ -140,17 +128,17 @@ describe('KnowledgeTagsPage', () => {
   });
 
   it('hits the KNOWLEDGE_TAGS endpoint with page=1 and limit=50', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     await KnowledgeTagsPage();
 
-    expect(serverFetch).toHaveBeenCalledWith(
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
       `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?page=1&limit=50`
     );
   });
 
   it('renders the "Knowledge tags" heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await KnowledgeTagsPage());
 
@@ -158,7 +146,7 @@ describe('KnowledgeTagsPage', () => {
   });
 
   it('renders the breadcrumb links back to AI Orchestration and Knowledge', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await KnowledgeTagsPage());
 
