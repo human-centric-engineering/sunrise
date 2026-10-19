@@ -9,7 +9,9 @@
  * Test Coverage (5.1a carry-over):
  * - Happy path: serverFetch returns a valid workflow → builder is rendered,
  *   notFound is NOT called
- * - Failure path: serverFetch returns ok=false → notFound is called
+ * - A 404 for the workflow → notFound; any other failure throws
+ *   ServerLoadError and notFound is NOT called (#518)
+ * - A failed option list → a `role="alert"` notice; the builder still renders
  *
  * Test Coverage (5.1b additions):
  * - Clicking Save calls apiClient.patch directly (no dialog in edit mode)
@@ -50,9 +52,10 @@ vi.mock('@/hooks/use-theme', () => ({
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -105,6 +108,9 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { apiClient } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +146,29 @@ const TWO_STEP_WORKFLOW = {
   updatedAt: new Date('2025-01-01').toISOString(),
 };
 
+type Endpoint = 'workflow' | 'capabilities' | 'agents' | 'templates';
+
+/**
+ * Answer each endpoint the page reads with a fresh Response per call. The
+ * workflow defaults to TWO_STEP_WORKFLOW, every list to empty.
+ */
+function routeFetch(overrides: Partial<Record<Endpoint, () => Response>> = {}) {
+  const answers: Record<Endpoint, () => Response> = {
+    workflow: () => apiSuccess(TWO_STEP_WORKFLOW),
+    capabilities: () => apiSuccess([]),
+    agents: () => apiSuccess([]),
+    templates: () => apiSuccess([]),
+    ...overrides,
+  };
+  vi.mocked(serverFetch).mockImplementation(async (url: string) => {
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.CAPABILITIES)) return answers.capabilities();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.AGENTS)) return answers.agents();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES)) return answers.templates();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOWS)) return answers.workflow();
+    throw new Error(`Unexpected URL: ${url}`);
+  });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditWorkflowPage (server component)', () => {
@@ -153,12 +182,7 @@ describe('EditWorkflowPage (server component)', () => {
   });
 
   it('renders the WorkflowBuilder and does NOT call notFound on happy path', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }); // templates
+    routeFetch();
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -166,63 +190,50 @@ describe('EditWorkflowPage (server component)', () => {
     render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
 
     expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(notFoundMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
-  it('calls notFound when serverFetch returns ok=false for the workflow', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch)
-      .mockResolvedValueOnce({ ok: false } as Response) // workflow → not found
-      .mockResolvedValueOnce({ ok: true } as Response) // capabilities
-      .mockResolvedValueOnce({ ok: true } as Response); // templates
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }); // templates
+  it('calls notFound when the workflow does not exist', async () => {
+    routeFetch({ workflow: () => apiFailure(404, 'NOT_FOUND') });
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
 
-    let caught: Error | undefined;
-    try {
-      await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-missing' }) });
-    } catch (err) {
-      caught = err as Error;
-    }
-
+    await expect(
+      EditWorkflowPage({ params: Promise.resolve({ id: 'wf-missing' }) })
+    ).rejects.toThrow('NEXT_NOT_FOUND');
     expect(notFoundMock).toHaveBeenCalledTimes(1);
-    expect(caught?.message).toBe('NEXT_NOT_FOUND');
   });
 
-  it('calls notFound when parseApiResponse returns success=false for the workflow', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } }) // workflow
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }); // templates
+  it('throws to the error boundary, not notFound(), when the workflow load fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    routeFetch({ workflow: () => apiFailure(500) });
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
 
-    let caught: Error | undefined;
-    try {
-      await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-gone' }) });
-    } catch (err) {
-      caught = err as Error;
-    }
+    await expect(
+      EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(notFoundMock).not.toHaveBeenCalled();
+  });
 
-    expect(notFoundMock).toHaveBeenCalledTimes(1);
-    expect(caught?.message).toBe('NEXT_NOT_FOUND');
+  it('still renders the builder, under a notice, when the capabilities fail to load', async () => {
+    routeFetch({ capabilities: () => apiFailure(500) });
+
+    const { default: EditWorkflowPage } =
+      await import('@/app/admin/orchestration/workflows/[id]/page');
+
+    render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load capabilities/i);
+    expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
   });
 
   it('5.1b: clicking Save calls apiClient.patch directly (no dialog in edit mode)', async () => {
     const user = userEvent.setup();
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }); // templates
+    routeFetch();
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =
@@ -242,12 +253,7 @@ describe('EditWorkflowPage (server component)', () => {
 
   it('5.1b: PATCH body draftDefinition contains the serialised steps', async () => {
     const user = userEvent.setup();
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }); // templates
+    routeFetch();
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =
@@ -275,27 +281,19 @@ describe('EditWorkflowPage (server component)', () => {
     // templateCatalogueSchema's `.transform()` that maps a catalogue entry to
     // the builder's template shape. Both fire only when the
     // upstream lists are non-empty.
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
-      .mockResolvedValueOnce({
-        success: true,
-        data: [
+    routeFetch({
+      capabilities: () =>
+        apiSuccess([
           { slug: 'cap-1', name: 'Cap One', description: 'One' },
           { slug: 'cap-2', name: 'Cap Two', description: null },
-        ],
-      }) // capabilities
-      .mockResolvedValueOnce({
-        success: true,
-        data: [
+        ]),
+      agents: () =>
+        apiSuccess([
           { slug: 'agent-1', name: 'Agent One', description: 'A1' },
           { slug: 'agent-2', name: 'Agent Two', description: null },
-        ],
-      }) // agents (exercises the inline `body.data.map` transform on line ~89)
-      .mockResolvedValueOnce({
-        success: true,
-        data: [
+        ]),
+      templates: () =>
+        apiSuccess([
           // Exercises the `templateCatalogueSchema.transform` callback.
           {
             source: 'custom',
@@ -306,8 +304,8 @@ describe('EditWorkflowPage (server component)', () => {
             patternsUsed: [],
             metadata: null,
           },
-        ],
-      }); // templates
+        ]),
+    });
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');

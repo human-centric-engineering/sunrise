@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 import { McpSettingsForm } from '@/components/admin/orchestration/mcp/mcp-settings-form';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData, ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
@@ -13,17 +13,20 @@ export const metadata: Metadata = {
   description: 'Configure MCP server rate limits and audit retention.',
 };
 
-async function getSettings(): Promise<McpSettingsResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<unknown>(res);
-    if (!body.success) return null;
-    return mcpSettingsResponseSchema.parse(body.data);
-  } catch (err) {
-    logger.error('MCP settings page: fetch failed', err);
-    return null;
+/**
+ * Required: the form falls back to defaults when it has no settings, and
+ * saving those would overwrite the real ones. A failed load throws to the
+ * admin error boundary instead (#518).
+ */
+async function getSettings(): Promise<McpSettingsResponse> {
+  const path = API.ADMIN.ORCHESTRATION.MCP_SETTINGS;
+  const { data } = await requireServerData<unknown>(path);
+  const parsed = mcpSettingsResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    logger.error('MCP settings page: settings response did not parse', parsed.error, { path });
+    throw new ServerLoadError(path, { kind: 'failed', status: 200, code: null });
   }
+  return parsed.data;
 }
 
 export default async function McpSettingsPage() {

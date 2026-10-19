@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { McpToolsList } from '@/components/admin/orchestration/mcp/mcp-tools-list';
 import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-modal';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'MCP Tools · AI Orchestration',
@@ -44,28 +43,23 @@ interface CapabilityRow {
   category: string;
 }
 
+/**
+ * Both lists are required. The capabilities are the options the "add tool"
+ * picker offers: without them it would read as "nothing left to expose".
+ * A failed load throws to the admin error boundary (#518).
+ */
 async function getExposedTools(): Promise<ExposedToolRow[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_TOOLS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<ExposedToolRow[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('MCP tools page: fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<ExposedToolRow[]>(
+    `${API.ADMIN.ORCHESTRATION.MCP_TOOLS}?page=1&limit=100`
+  );
+  return data;
 }
 
 async function getCapabilities(): Promise<CapabilityRow[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<CapabilityRow[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('MCP tools page: capabilities fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<CapabilityRow[]>(
+    `${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=100`
+  );
+  return data;
 }
 
 export default async function McpToolsPage() {

@@ -3,9 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -44,7 +45,9 @@ vi.mock('next/link', () => ({
 
 import React from 'react';
 import McpToolsPage, { metadata } from '@/app/admin/orchestration/mcp/tools/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -75,52 +78,21 @@ const mockCapabilities = [
   { id: 'cap-3', name: 'Webhook', slug: 'webhook', description: '', category: 'integration' },
 ];
 
-/** Build a URL-dispatching serverFetch mock. */
+/**
+ * Answer each endpoint the page reads with a fresh Response per call.
+ * Pass a factory to fail one of them.
+ */
 function makeServerFetchMock({
-  toolsOk = true,
-  capabilitiesOk = true,
-  toolsThrows = false,
-  capabilitiesThrows = false,
+  tools = () => apiSuccess(mockTools),
+  capabilities = () => apiSuccess(mockCapabilities),
 }: {
-  toolsOk?: boolean;
-  capabilitiesOk?: boolean;
-  toolsThrows?: boolean;
-  capabilitiesThrows?: boolean;
+  tools?: () => Response;
+  capabilities?: () => Response;
 } = {}) {
   return vi.mocked(serverFetch).mockImplementation(async (url: string) => {
-    if (url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS)) {
-      if (toolsThrows) throw new Error('tools network failure');
-      return { ok: toolsOk, _src: 'tools' } as unknown as Response;
-    }
-    if (url.includes(API.ADMIN.ORCHESTRATION.CAPABILITIES)) {
-      if (capabilitiesThrows) throw new Error('capabilities network failure');
-      return { ok: capabilitiesOk, _src: 'capabilities' } as unknown as Response;
-    }
+    if (url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS)) return tools();
+    if (url.includes(API.ADMIN.ORCHESTRATION.CAPABILITIES)) return capabilities();
     throw new Error(`Unexpected URL: ${url}`);
-  });
-}
-
-/** Build a URL-dispatching parseApiResponse mock keyed off `_src` marker. */
-function makeParseApiResponseMock({
-  toolsSuccess = true,
-  capabilitiesSuccess = true,
-}: {
-  toolsSuccess?: boolean;
-  capabilitiesSuccess?: boolean;
-} = {}) {
-  return vi.mocked(parseApiResponse).mockImplementation(async (res: Response) => {
-    const src = (res as unknown as { _src: string })._src;
-    if (src === 'tools') {
-      return toolsSuccess
-        ? { success: true, data: mockTools }
-        : { success: false, error: { code: 'ERR', message: 'fail' } };
-    }
-    if (src === 'capabilities') {
-      return capabilitiesSuccess
-        ? { success: true, data: mockCapabilities }
-        : { success: false, error: { code: 'ERR', message: 'fail' } };
-    }
-    throw new Error(`parseApiResponse: unknown _src on response`);
   });
 }
 
@@ -138,7 +110,6 @@ describe('McpToolsPage', () => {
   // 2. Renders heading and description paragraph
   it('renders "Exposed Tools" heading and description paragraph', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     render(await McpToolsPage());
 
@@ -149,7 +120,6 @@ describe('McpToolsPage', () => {
   // 3. Renders breadcrumbs
   it('renders breadcrumb links to /admin/orchestration and /admin/orchestration/mcp', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     render(await McpToolsPage());
 
@@ -163,7 +133,6 @@ describe('McpToolsPage', () => {
   // 4. Happy path: tools passed to McpToolsList
   it('passes fetched tools array to McpToolsList initialTools prop', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     render(await McpToolsPage());
 
@@ -174,7 +143,6 @@ describe('McpToolsPage', () => {
   // 5. Happy path: capabilities passed to McpToolsList
   it('passes fetched capabilities array to McpToolsList capabilities prop', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     render(await McpToolsPage());
 
@@ -182,95 +150,50 @@ describe('McpToolsPage', () => {
     expect(list).toHaveAttribute('data-capabilities', String(mockCapabilities.length));
   });
 
-  // 6. Tools fetch res.ok === false: initialTools=[]
-  it('passes initialTools=[] when tools fetch returns res.ok false, capabilities still work', async () => {
-    makeServerFetchMock({ toolsOk: false });
-    // parseApiResponse only called for capabilities (tools short-circuits on !res.ok)
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: mockCapabilities });
+  // 6–11. Both lists are required: a failed load throws to the error
+  // boundary rather than an empty table or an empty "add tool" picker (#518).
+  it('throws to the error boundary when the tools API answers 500', async () => {
+    makeServerFetchMock({ tools: () => apiFailure(500) });
 
-    render(await McpToolsPage());
-
-    const list = screen.getByTestId('mcp-tools-list');
-    expect(list).toHaveAttribute('data-tools', '0');
-    expect(list).toHaveAttribute('data-capabilities', String(mockCapabilities.length));
+    await expect(McpToolsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 7. Capabilities fetch res.ok === false: capabilities=[]
-  it('passes capabilities=[] when capabilities fetch returns res.ok false, tools still work', async () => {
-    makeServerFetchMock({ capabilitiesOk: false });
-    // parseApiResponse only called for tools (capabilities short-circuits on !res.ok)
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: mockTools });
+  it('throws when the capabilities API answers 500, rather than offering no capabilities', async () => {
+    makeServerFetchMock({ capabilities: () => apiFailure(500) });
 
-    render(await McpToolsPage());
-
-    const list = screen.getByTestId('mcp-tools-list');
-    expect(list).toHaveAttribute('data-tools', String(mockTools.length));
-    expect(list).toHaveAttribute('data-capabilities', '0');
+    await expect(McpToolsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 8. Tools parseApiResponse returns success: false: initialTools=[]
-  it('passes initialTools=[] when tools parseApiResponse returns success: false', async () => {
-    makeServerFetchMock();
-    makeParseApiResponseMock({ toolsSuccess: false });
+  it('throws when the tools API answers success:false', async () => {
+    makeServerFetchMock({ tools: () => apiFailure(200) });
 
-    render(await McpToolsPage());
-
-    const list = screen.getByTestId('mcp-tools-list');
-    expect(list).toHaveAttribute('data-tools', '0');
+    await expect(McpToolsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 9. Capabilities parseApiResponse returns success: false: capabilities=[]
-  it('passes capabilities=[] when capabilities parseApiResponse returns success: false', async () => {
-    makeServerFetchMock();
-    makeParseApiResponseMock({ capabilitiesSuccess: false });
-
-    render(await McpToolsPage());
-
-    const list = screen.getByTestId('mcp-tools-list');
-    expect(list).toHaveAttribute('data-capabilities', '0');
-  });
-
-  // 10. Tools fetch throws: initialTools=[] AND correct logger.error message
-  it('passes initialTools=[] and calls logger.error with tools message when tools fetch throws', async () => {
+  it('logs and throws when the tools fetch rejects', async () => {
     const toolsError = new Error('tools network failure');
-
     vi.mocked(serverFetch).mockImplementation(async (url: string) => {
       if (url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS)) throw toolsError;
-      return { ok: true, _src: 'capabilities' } as unknown as Response;
+      return apiSuccess(mockCapabilities);
     });
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: mockCapabilities });
+
+    await expect(McpToolsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), toolsError, expect.any(Object));
+  });
+
+  it('renders an empty tools list as an empty list', async () => {
+    makeServerFetchMock({ tools: () => apiSuccess([]) });
 
     render(await McpToolsPage());
 
     const list = screen.getByTestId('mcp-tools-list');
     expect(list).toHaveAttribute('data-tools', '0');
-    expect(logger.error).toHaveBeenCalledWith('MCP tools page: fetch failed', toolsError);
-  });
-
-  // 11. Capabilities fetch throws: capabilities=[] AND correct logger.error message
-  it('passes capabilities=[] and calls logger.error with capabilities message when capabilities fetch throws', async () => {
-    const capabilitiesError = new Error('capabilities network failure');
-
-    vi.mocked(serverFetch).mockImplementation(async (url: string) => {
-      if (url.includes(API.ADMIN.ORCHESTRATION.CAPABILITIES)) throw capabilitiesError;
-      return { ok: true, _src: 'tools' } as unknown as Response;
-    });
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: mockTools });
-
-    render(await McpToolsPage());
-
-    const list = screen.getByTestId('mcp-tools-list');
-    expect(list).toHaveAttribute('data-capabilities', '0');
-    expect(logger.error).toHaveBeenCalledWith(
-      'MCP tools page: capabilities fetch failed',
-      capabilitiesError
-    );
+    expect(list).toHaveAttribute('data-capabilities', String(mockCapabilities.length));
   });
 
   // 12. Both fetches called — serverFetch invoked with both URLs
   it('calls serverFetch with both MCP_TOOLS and CAPABILITIES URLs', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     await McpToolsPage();
 
@@ -282,7 +205,6 @@ describe('McpToolsPage', () => {
   // 13. McpInfoModal rendered with title="MCP Tools"
   it('renders McpInfoModal with title="MCP Tools"', async () => {
     makeServerFetchMock();
-    makeParseApiResponseMock();
 
     render(await McpToolsPage());
 

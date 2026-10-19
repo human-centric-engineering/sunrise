@@ -46,9 +46,10 @@ vi.mock('@/hooks/use-theme', () => ({
   ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -96,7 +97,8 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { apiSuccess } from '@/tests/helpers/api';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -124,8 +126,8 @@ const MOCK_DEFINITION = {
 describe('NewWorkflowPage — definition pre-population', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    // A fresh Response per call: the page loads three lists in parallel.
+    vi.mocked(serverFetch).mockImplementation(async () => apiSuccess([]));
   });
 
   afterEach(() => {
@@ -146,6 +148,19 @@ describe('NewWorkflowPage — definition pre-population', () => {
 
     // The builder should render (palette, canvas, toolbar are present)
     expect(screen.getByTestId('pattern-palette')).toBeInTheDocument();
+    expect(screen.getByTestId('workflow-canvas')).toBeInTheDocument();
+  });
+
+  it('still renders the pre-populated builder, under notices, when the option lists fail', async () => {
+    vi.mocked(serverFetch).mockRejectedValue(new Error('network down'));
+    const encoded = encodeURIComponent(JSON.stringify(MOCK_DEFINITION));
+
+    const { default: NewWorkflowPage } =
+      await import('@/app/admin/orchestration/workflows/new/page');
+
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({ definition: encoded }) }));
+
+    expect(screen.getAllByRole('alert')).toHaveLength(3);
     expect(screen.getByTestId('workflow-canvas')).toBeInTheDocument();
   });
 

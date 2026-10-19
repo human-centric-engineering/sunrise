@@ -1,13 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import { WebhookForm } from '@/components/admin/orchestration/webhook-form';
 import { WebhookTestButton } from '@/components/admin/orchestration/webhook-test-button';
 import { WebhookDeliveries } from '@/components/admin/orchestration/webhook-deliveries';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'Edit Event Subscription · AI Orchestration',
@@ -30,22 +28,13 @@ interface WebhookDetail {
   updatedAt: string;
 }
 
-async function getWebhook(id: string): Promise<WebhookDetail | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.webhookById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<WebhookDetail>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('webhook detail page: fetch failed', err);
-    return null;
-  }
-}
-
 export default async function WebhookDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const webhook = await getWebhook(id);
-  if (!webhook) notFound();
+  // A 404 is a missing subscription; any other failure reaches the error boundary.
+  const { data: webhook } = await requireServerData<WebhookDetail>(
+    API.ADMIN.ORCHESTRATION.webhookById(id),
+    { notFound: true }
+  );
 
   return (
     <div className="space-y-8">

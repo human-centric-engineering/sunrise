@@ -4,11 +4,11 @@
  * Unit Tests: EditWorkflowPage (app/admin/orchestration/workflows/[id]/page.tsx)
  *
  * Branch coverage targets:
- * - getWorkflow: res.ok false → null, body.success false → null, throw → null
- * - getCapabilities: res.ok false → [], body.success false → [], throw → []
- * - getAgents: res.ok false → [], body.success false → [], throw → []
- * - getTemplates: res.ok false → [], body.success false → [], schema fail → [] (logged), throw → []
- * - workflow === null → notFound() called
+ * - getWorkflow: a 404 → notFound(); any other failure (5xx, success:false,
+ *   no response) throws ServerLoadError and does NOT call notFound() (#518)
+ * - each option list (capabilities, agents, templates) is secondary: a failed
+ *   load renders a `role="alert"` notice naming it above the builder, which
+ *   still renders with that list empty
  * - workflow found → builder rendered in edit mode, WorkflowSchedulesTab rendered
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout.
  *
@@ -20,9 +20,10 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -34,6 +35,8 @@ vi.mock('next/navigation', () => ({
     throw new Error('NEXT_NOT_FOUND');
   }),
   useSearchParams: () => ({ get: () => null }),
+  // LoadFailedNotice's "Try again" calls router.refresh().
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 
 vi.mock('@/components/admin/orchestration/workflow-builder/workflow-builder', () => ({
@@ -65,20 +68,14 @@ vi.mock('@/components/admin/orchestration/workflow-schedules-tab', () => ({
 // ─── Imports (after mocks) ─────────────────────────────────────────────────────
 
 import EditWorkflowPage from '@/app/admin/orchestration/workflows/[id]/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
 import { API } from '@/lib/api/endpoints';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
-
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
 
 function createMockWorkflow(id = 'wf-123', name = 'My Workflow') {
   return {
@@ -97,6 +94,30 @@ function createMockWorkflow(id = 'wf-123', name = 'My Workflow') {
   };
 }
 
+type Endpoint = 'workflow' | 'capabilities' | 'agents' | 'templates';
+
+/**
+ * Answer each endpoint the page reads with a fresh Response per call. The
+ * workflow defaults to `createMockWorkflow()`, every list to empty. An
+ * override may throw to simulate no response.
+ */
+function routeFetch(overrides: Partial<Record<Endpoint, () => Response>> = {}) {
+  const answers: Record<Endpoint, () => Response> = {
+    workflow: () => apiSuccess(createMockWorkflow()),
+    capabilities: () => apiSuccess([]),
+    agents: () => apiSuccess([]),
+    templates: () => apiSuccess([]),
+    ...overrides,
+  };
+  vi.mocked(serverFetch).mockImplementation(async (url: string) => {
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.CAPABILITIES)) return answers.capabilities();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.AGENTS)) return answers.agents();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES)) return answers.templates();
+    if (url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOWS)) return answers.workflow();
+    throw new Error(`Unexpected URL: ${url}`);
+  });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditWorkflowPage', () => {
@@ -104,52 +125,50 @@ describe('EditWorkflowPage', () => {
     vi.clearAllMocks();
   });
 
-  // ── notFound paths ────────────────────────────────────────────────────────
+  // ── notFound only on a 404 (#518) ─────────────────────────────────────────
 
-  describe('notFound behavior', () => {
-    it('calls notFound when getWorkflow returns null (res.ok false)', async () => {
-      // Arrange: only the workflow fetcher fails — capabilities/agents/templates succeed with
-      // empty arrays so they don't exercise unrelated branches.
-      vi.mocked(serverFetch).mockImplementation((url: string) => {
-        if (String(url).includes('/workflows/wf-missing')) return Promise.resolve(notOkResponse());
-        return Promise.resolve(okResponse());
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // capabilities
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
-        .mockResolvedValueOnce({ success: true, data: [] } as never); // templates
-      const params = Promise.resolve({ id: 'wf-missing' });
+  describe('loading the workflow', () => {
+    it('calls notFound when the workflow does not exist', async () => {
+      routeFetch({ workflow: () => apiFailure(404, 'NOT_FOUND') });
 
-      // Act & Assert
-      await expect(EditWorkflowPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      await expect(
+        EditWorkflowPage({ params: Promise.resolve({ id: 'wf-missing' }) })
+      ).rejects.toThrow('NEXT_NOT_FOUND');
+      expect(notFound).toHaveBeenCalledOnce();
     });
 
-    it('calls notFound when body.success is false', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'Workflow not found' },
-      } as never);
-      const params = Promise.resolve({ id: 'wf-missing' });
+    it('throws to the error boundary, not notFound(), when the API answers 500', async () => {
+      routeFetch({ workflow: () => apiFailure(500) });
 
-      // Act & Assert
-      await expect(EditWorkflowPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      await expect(
+        EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) })
+      ).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
     });
 
-    it('calls notFound and logs error when serverFetch throws', async () => {
-      // Arrange
+    it('throws, not notFound(), when the API answers success:false', async () => {
+      routeFetch({ workflow: () => apiFailure(200) });
+
+      await expect(
+        EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) })
+      ).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+    });
+
+    it('logs and throws, not notFound(), when the workflow fetch rejects', async () => {
       const fetchErr = new Error('Network failure');
-      vi.mocked(serverFetch).mockRejectedValue(fetchErr);
-      const params = Promise.resolve({ id: 'wf-123' });
+      routeFetch({
+        workflow: () => {
+          throw fetchErr;
+        },
+      });
 
-      // Act & Assert
-      await expect(EditWorkflowPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
-      expect(logger.error).toHaveBeenCalledWith('edit workflow page: fetch failed', fetchErr, {
-        id: 'wf-123',
+      await expect(
+        EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) })
+      ).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, {
+        path: API.ADMIN.ORCHESTRATION.workflowById('wf-123'),
       });
     });
   });
@@ -157,157 +176,84 @@ describe('EditWorkflowPage', () => {
   // ── Happy path rendering ───────────────────────────────────────────────────
 
   describe('happy path rendering', () => {
-    it('renders WorkflowBuilder in edit mode when workflow is found', async () => {
-      // Arrange
-      const workflow = createMockWorkflow('wf-123', 'My Workflow');
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: workflow } as never) // workflow
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // capabilities
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
-        .mockResolvedValueOnce({ success: true, data: [] } as never); // templates
-      const params = Promise.resolve({ id: 'wf-123' });
+    it('renders WorkflowBuilder in edit mode, with no notice, when workflow is found', async () => {
+      routeFetch({ workflow: () => apiSuccess(createMockWorkflow('wf-123', 'My Workflow')) });
 
-      // Act
-      render(await EditWorkflowPage({ params }));
+      render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) }));
 
-      // Assert: builder rendered in edit mode with the fetched workflow
       const builder = screen.getByTestId('workflow-builder');
       expect(builder).toHaveAttribute('data-mode', 'edit');
       expect(builder).toHaveAttribute('data-workflow-id', 'wf-123');
       expect(builder).toHaveAttribute('data-workflow-name', 'My Workflow');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
     it('renders WorkflowSchedulesTab with the workflow id', async () => {
-      // Arrange
-      const workflow = createMockWorkflow('wf-456');
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: workflow } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never)
-        .mockResolvedValueOnce({ success: true, data: [] } as never);
-      const params = Promise.resolve({ id: 'wf-456' });
+      routeFetch({ workflow: () => apiSuccess(createMockWorkflow('wf-456')) });
 
-      // Act
-      render(await EditWorkflowPage({ params }));
+      render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-456' }) }));
 
-      // Assert: schedules tab rendered with correct workflow id
-      const tab = screen.getByTestId('schedules-tab');
-      expect(tab).toHaveAttribute('data-workflow-id', 'wf-456');
+      expect(screen.getByTestId('schedules-tab')).toHaveAttribute('data-workflow-id', 'wf-456');
     });
   });
 
-  // ── getCapabilities error branches ────────────────────────────────────────
+  // ── Option lists are secondary ────────────────────────────────────────────
 
-  describe('getCapabilities', () => {
-    it('passes empty capabilities when res.ok is false for capabilities', async () => {
-      // Arrange: workflow succeeds but capabilities fetch fails
-      const workflow = createMockWorkflow();
-      // serverFetch is called multiple times; each call returns notOkResponse
-      // but workflow fetch is first. We need the workflow to return ok=true
-      // while the rest fail.
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: workflow } as never) // workflow
-        .mockResolvedValueOnce({ success: false } as never) // capabilities body.success false
-        .mockResolvedValueOnce({ success: false } as never) // agents body.success false
-        .mockResolvedValueOnce({ success: false } as never); // templates body.success false
-      const params = Promise.resolve({ id: 'wf-123' });
+  describe('option lists', () => {
+    it('shows a notice naming capabilities, and still renders the builder, when they fail', async () => {
+      routeFetch({ capabilities: () => apiFailure(500) });
 
-      // Act
-      render(await EditWorkflowPage({ params }));
+      render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) }));
 
-      // Assert: builder receives 0 capabilities
-      const builder = screen.getByTestId('workflow-builder');
-      expect(builder).toHaveAttribute('data-capabilities-count', '0');
-    });
-
-    it('logs and passes empty capabilities when capabilities fetch throws', async () => {
-      // Arrange: first serverFetch (workflow) succeeds, then throws for capabilities
-      const workflow = createMockWorkflow();
-      const capErr = new Error('Capabilities failed');
-      vi.mocked(serverFetch)
-        .mockResolvedValueOnce(okResponse()) // workflow
-        .mockRejectedValue(capErr); // everything else throws
-      vi.mocked(parseApiResponse).mockResolvedValueOnce({
-        success: true,
-        data: workflow,
-      } as never);
-      const params = Promise.resolve({ id: 'wf-123' });
-
-      // Act — this calls notFound because workflow fetch itself succeeds,
-      // but then Promise.all resolves with null workflow when the
-      // sequential calls throw. Actually: let's check — the source fetches
-      // workflow separately in getWorkflow(), then parallels the rest.
-      // If getWorkflow succeeds but getCapabilities throws, the page renders.
-      render(await EditWorkflowPage({ params }));
-
-      expect(logger.error).toHaveBeenCalledWith(
-        'edit workflow page: capabilities fetch failed',
-        capErr
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load capabilities/i);
+      expect(screen.getByTestId('workflow-builder')).toHaveAttribute(
+        'data-capabilities-count',
+        '0'
       );
-      const builder = screen.getByTestId('workflow-builder');
-      expect(builder).toHaveAttribute('data-capabilities-count', '0');
     });
-  });
 
-  // ── getTemplates Zod parse-failure branch ─────────────────────────────────
+    it('logs and shows a notice naming agents when the agents fetch rejects', async () => {
+      const agentsErr = new Error('Agents failed');
+      routeFetch({
+        agents: () => {
+          throw agentsErr;
+        },
+      });
 
-  describe('getTemplates schema parse failure', () => {
-    it('logs and passes empty templates when the response fails templateCatalogueSchema', async () => {
-      // Arrange: workflow + capabilities + agents all succeed; templates body.data passes
-      // body.success=true but contains objects that do not satisfy the catalogue entry
-      // shape (missing required fields like source, slug, name, etc.).
-      const workflow = createMockWorkflow();
-      vi.mocked(serverFetch).mockResolvedValue(okResponse());
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: workflow } as never) // workflow
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // capabilities
-        .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
-        .mockResolvedValueOnce({
-          success: true,
-          data: [{ not: 'a-template' }], // fails templateCatalogueSchema
-        } as never); // templates
-      const params = Promise.resolve({ id: 'wf-123' });
+      render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) }));
 
-      // Act
-      render(await EditWorkflowPage({ params }));
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), agentsErr, expect.any(Object));
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load agents/i);
+      expect(screen.getByTestId('workflow-builder')).toHaveAttribute('data-agents-count', '0');
+    });
 
-      // Assert: the parse failure is logged, and the builder receives 0 templates
+    it('logs and shows a notice naming templates when the response fails templateCatalogueSchema', async () => {
+      routeFetch({ templates: () => apiSuccess([{ not: 'a-template' }]) });
+
+      render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-123' }) }));
+
       expect(logger.warn).toHaveBeenCalledWith(
         'edit workflow page: templates response did not parse',
         expect.objectContaining({ issues: expect.any(Array) })
       );
-      const builder = screen.getByTestId('workflow-builder');
-      expect(builder).toHaveAttribute('data-templates-count', '0');
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load workflow templates/i);
+      expect(screen.getByTestId('workflow-builder')).toHaveAttribute('data-templates-count', '0');
     });
   });
 
   // ── serverFetch endpoint verification ─────────────────────────────────────
 
   describe('serverFetch endpoint calls', () => {
-    it('calls the workflowById endpoint with the route id', async () => {
-      // Arrange: workflow not found (ok=false) → notFound()
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
-      const params = Promise.resolve({ id: 'wf-abc' });
+    it('reads the workflow by the route id, and the templates catalogue', async () => {
+      routeFetch();
 
-      // Act (will throw notFound)
-      await expect(EditWorkflowPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
+      await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-abc' }) });
 
-      // Assert: the correct endpoint was called
-      expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.workflowById('wf-abc'));
-    });
-
-    it('reads templates from the templates catalogue endpoint', async () => {
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
-
-      await expect(EditWorkflowPage({ params: Promise.resolve({ id: 'wf-abc' }) })).rejects.toThrow(
-        'NEXT_NOT_FOUND'
-      );
-
-      expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
-      expect(serverFetch).not.toHaveBeenCalledWith(expect.stringContaining('isTemplate=true'));
+      const urls = vi.mocked(serverFetch).mock.calls.map(([url]) => url);
+      expect(urls).toContain(API.ADMIN.ORCHESTRATION.workflowById('wf-abc'));
+      expect(urls).toContain(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
+      expect(urls.some((url) => url.includes('isTemplate=true'))).toBe(false);
     });
   });
 });

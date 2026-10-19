@@ -4,9 +4,10 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -34,7 +35,9 @@ vi.mock('next/link', () => ({
 }));
 
 import McpResourcesPage, { metadata } from '@/app/admin/orchestration/mcp/resources/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -42,10 +45,6 @@ const mockResources = [
   { id: '1', name: 'Resource A' },
   { id: '2', name: 'Resource B' },
 ];
-
-function makeMockResponse(ok: boolean) {
-  return { ok, status: ok ? 200 : 500 } as Response;
-}
 
 describe('McpResourcesPage', () => {
   beforeEach(() => {
@@ -60,11 +59,7 @@ describe('McpResourcesPage', () => {
 
   // 2. serverFetch called with correct URL
   it('calls serverFetch with MCP_RESOURCES URL and pagination params', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockResources,
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockResources));
 
     render(await McpResourcesPage());
 
@@ -76,11 +71,7 @@ describe('McpResourcesPage', () => {
 
   // 3. Happy path: passes fetched resources to McpResourcesList
   it('passes fetched resources to McpResourcesList on success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockResources,
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockResources));
 
     render(await McpResourcesPage());
 
@@ -88,50 +79,39 @@ describe('McpResourcesPage', () => {
     expect(list).toHaveAttribute('data-count', String(mockResources.length));
   });
 
-  // 4. res.ok === false: passes empty array
-  it('passes empty array to McpResourcesList when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(false));
+  // A genuinely empty list is still an empty list
+  it('passes an empty array to the list when there are no resources', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpResourcesPage());
 
-    const list = screen.getByTestId('mcp-resources-list');
-    expect(list).toHaveAttribute('data-count', '0');
+    expect(screen.getByTestId('mcp-resources-list')).toHaveAttribute('data-count', '0');
   });
 
-  // 5. body.success === false: passes empty array
-  it('passes empty array to McpResourcesList when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: 'Something went wrong' },
-    });
+  // A failed load is a failure, not an empty list (#518)
+  it('throws to the error boundary when the resources API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    render(await McpResourcesPage());
-
-    const list = screen.getByTestId('mcp-resources-list');
-    expect(list).toHaveAttribute('data-count', '0');
+    await expect(McpResourcesPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 6. serverFetch throws: passes empty array and calls logger.error
-  it('passes empty array and logs error when serverFetch throws', async () => {
+  it('throws when the resources API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
+
+    await expect(McpResourcesPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('logs and throws when serverFetch rejects', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
-    render(await McpResourcesPage());
-
-    const list = screen.getByTestId('mcp-resources-list');
-    expect(list).toHaveAttribute('data-count', '0');
-    expect(logger.error).toHaveBeenCalledOnce();
-    expect(vi.mocked(logger.error).mock.calls[0][0]).toContain('MCP resources page');
+    await expect(McpResourcesPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchError, expect.any(Object));
   });
 
   // 7. Renders heading "Resources"
   it('renders the Resources heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpResourcesPage());
 
@@ -140,11 +120,7 @@ describe('McpResourcesPage', () => {
 
   // 8. Renders breadcrumb links with correct hrefs
   it('renders breadcrumb links with correct hrefs', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpResourcesPage());
 
@@ -157,11 +133,7 @@ describe('McpResourcesPage', () => {
 
   // 9. Renders McpInfoModal with title="MCP Resources"
   it('renders McpInfoModal with title "MCP Resources"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpResourcesPage());
 

@@ -4,9 +4,8 @@
  * Unit Tests: WorkflowsListPage (app/admin/orchestration/workflows/page.tsx)
  *
  * Branch coverage targets:
- * - getWorkflows: res.ok false → empty + error string
- * - getWorkflows: body.success false → empty + error string
- * - getWorkflows: serverFetch throws → empty + error string + logger.error
+ * - a failed load (5xx, success:false, no response) → the table's existing
+ *   "Failed to load workflows" banner, never a silent empty list (#518)
  * - getWorkflows: happy path → data + meta forwarded to WorkflowsTable
  * - parsePaginationMeta returns null (no meta in response) → EMPTY_META used
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout.
@@ -19,9 +18,10 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -61,20 +61,13 @@ vi.mock('next/link', () => ({
 // ─── Imports (after mocks) ─────────────────────────────────────────────────────
 
 import WorkflowsListPage from '@/app/admin/orchestration/workflows/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { API } from '@/lib/api/endpoints';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
-
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
 
 const mockMeta = { page: 1, limit: 25, total: 2, totalPages: 1 };
 
@@ -87,9 +80,9 @@ describe('WorkflowsListPage', () => {
 
   // ── getWorkflows: res.ok false ────────────────────────────────────────────
 
-  it('passes empty workflows and error message when res.ok is false', async () => {
+  it('passes empty workflows and error message when the API answers 500', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
     vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
 
     // Act
@@ -106,11 +99,7 @@ describe('WorkflowsListPage', () => {
 
   it('passes empty workflows and error message when body.success is false', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'fail' },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
     vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
 
     // Act
@@ -135,10 +124,7 @@ describe('WorkflowsListPage', () => {
     render(await WorkflowsListPage());
 
     // Assert: error logged + empty state
-    expect(logger.error).toHaveBeenCalledWith(
-      'workflows list page: initial fetch failed',
-      fetchErr
-    );
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, expect.any(Object));
     const table = screen.getByTestId('workflows-table');
     expect(table).toHaveAttribute('data-workflows-count', '0');
     expect(table).toHaveAttribute('data-has-error', 'true');
@@ -152,12 +138,7 @@ describe('WorkflowsListPage', () => {
       { id: 'wf-1', name: 'Workflow A', _count: { executions: 3 } },
       { id: 'wf-2', name: 'Workflow B', _count: { executions: 7 } },
     ];
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockWorkflows,
-      meta: mockMeta,
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockWorkflows, mockMeta));
     vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
 
     // Act
@@ -173,12 +154,7 @@ describe('WorkflowsListPage', () => {
 
   it('falls back to EMPTY_META when parsePaginationMeta returns null', async () => {
     // Arrange — meta in body is malformed → parsePaginationMeta returns null
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: null,
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
     vi.mocked(parsePaginationMeta).mockReturnValue(null);
 
     // Act — no assertion on meta shape via WorkflowsTable stub (not exposed);
@@ -195,13 +171,13 @@ describe('WorkflowsListPage', () => {
 
   it('calls the workflows endpoint with page=1 and limit=25', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     // Act
     await WorkflowsListPage();
 
     // Assert: the correct endpoint was used
-    expect(serverFetch).toHaveBeenCalledWith(
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
       `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`
     );
   });
@@ -209,7 +185,7 @@ describe('WorkflowsListPage', () => {
   // ── Heading and breadcrumb ────────────────────────────────────────────────
 
   it('renders the Workflows heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await WorkflowsListPage());
 
@@ -217,7 +193,7 @@ describe('WorkflowsListPage', () => {
   });
 
   it('renders a breadcrumb link to /admin/orchestration', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await WorkflowsListPage());
 

@@ -3,9 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -30,7 +31,9 @@ vi.mock('next/link', () => ({
 
 import React from 'react';
 import McpSettingsPage, { metadata } from '@/app/admin/orchestration/mcp/settings/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -55,28 +58,16 @@ describe('McpSettingsPage', () => {
 
   // 2. serverFetch called with correct endpoint
   it('calls serverFetch with the MCP settings endpoint', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: true,
-    } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockSettings,
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     await McpSettingsPage();
 
-    expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
   });
 
   // 3. Happy path: passes settings object to McpSettingsForm
   it('passes fetched settings to McpSettingsForm when res.ok and body.success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: true,
-    } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockSettings,
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     render(await McpSettingsPage());
 
@@ -85,51 +76,44 @@ describe('McpSettingsPage', () => {
     expect(form).toHaveAttribute('data-settings', JSON.stringify(mockSettings));
   });
 
-  // 4. res.ok === false: passes null to McpSettingsForm
-  it('passes null to McpSettingsForm when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: false,
-    } as Response);
+  // ── A failed load must not pre-fill the form with defaults (#518) ───────
+  // Saving a defaults-filled form would overwrite the real settings, so a
+  // failed load throws to the error boundary and the form is never rendered.
 
-    render(await McpSettingsPage());
+  it('throws to the error boundary when the settings API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    const form = screen.getByTestId('mcp-settings-form');
-    expect(form).toHaveAttribute('data-has-settings', 'false');
+    await expect(McpSettingsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 5. body.success === false: passes null
-  it('passes null to McpSettingsForm when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: true,
-    } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' },
-    });
+  it('throws when the settings API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
-    render(await McpSettingsPage());
-
-    const form = screen.getByTestId('mcp-settings-form');
-    expect(form).toHaveAttribute('data-has-settings', 'false');
+    await expect(McpSettingsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 6. serverFetch throws: passes null AND logger.error called
-  it('passes null and calls logger.error when serverFetch throws', async () => {
+  it('logs and throws when serverFetch rejects', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
-    render(await McpSettingsPage());
+    await expect(McpSettingsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchError, expect.any(Object));
+  });
 
-    const form = screen.getByTestId('mcp-settings-form');
-    expect(form).toHaveAttribute('data-has-settings', 'false');
-    expect(logger.error).toHaveBeenCalledWith('MCP settings page: fetch failed', fetchError);
+  it('logs and throws when the settings do not match the expected shape', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ isEnabled: 'yes' }));
+
+    await expect(McpSettingsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('did not parse'),
+      expect.anything(),
+      expect.any(Object)
+    );
   });
 
   // 7. Renders breadcrumb link to /admin/orchestration
   it('renders breadcrumb link to /admin/orchestration', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: false,
-    } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     render(await McpSettingsPage());
 
@@ -139,9 +123,7 @@ describe('McpSettingsPage', () => {
 
   // 8. Renders breadcrumb link to /admin/orchestration/mcp
   it('renders breadcrumb link to /admin/orchestration/mcp', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: false,
-    } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     render(await McpSettingsPage());
 
@@ -151,9 +133,7 @@ describe('McpSettingsPage', () => {
 
   // 9. Renders <h1> "MCP Settings"
   it('renders h1 heading "MCP Settings"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: false,
-    } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     render(await McpSettingsPage());
 
@@ -162,9 +142,7 @@ describe('McpSettingsPage', () => {
 
   // 10. Renders subtitle paragraph
   it('renders the subtitle paragraph', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({
-      ok: false,
-    } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockSettings));
 
     render(await McpSettingsPage());
 

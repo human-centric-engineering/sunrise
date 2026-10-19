@@ -3,8 +3,7 @@ import Link from 'next/link';
 
 import { McpAuditLog } from '@/components/admin/orchestration/mcp/mcp-audit-log';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'MCP Audit Log · AI Orchestration',
@@ -31,32 +30,24 @@ interface AuditMeta {
   totalPages: number;
 }
 
+function toAuditMeta(raw: unknown): AuditMeta | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  if (!('total' in raw) || typeof raw.total !== 'number') return null;
+  if (!('page' in raw) || typeof raw.page !== 'number') return null;
+  const limit = 'limit' in raw && typeof raw.limit === 'number' ? raw.limit : 50;
+  const totalPages =
+    'totalPages' in raw && typeof raw.totalPages === 'number'
+      ? raw.totalPages
+      : Math.ceil(raw.total / limit);
+  return { page: raw.page, limit, total: raw.total, totalPages };
+}
+
+/** A failed load throws to the admin error boundary rather than an empty log (#518). */
 async function getAuditLogs(): Promise<{ items: AuditEntry[]; meta: AuditMeta | null }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_AUDIT}?page=1&limit=50`);
-    if (!res.ok) return { items: [], meta: null };
-    const body = await parseApiResponse<AuditEntry[]>(res);
-    if (!body.success) return { items: [], meta: null };
-    let meta: AuditMeta | null = null;
-    if (body.meta && typeof body.meta === 'object') {
-      const raw = body.meta as Record<string, unknown>;
-      if (typeof raw.total === 'number' && typeof raw.page === 'number') {
-        const limit = typeof raw.limit === 'number' ? raw.limit : 50;
-        const totalPages =
-          typeof raw.totalPages === 'number' ? raw.totalPages : Math.ceil(raw.total / limit);
-        meta = {
-          page: raw.page,
-          limit,
-          total: raw.total,
-          totalPages,
-        };
-      }
-    }
-    return { items: body.data, meta };
-  } catch (err) {
-    logger.error('MCP audit page: fetch failed', err);
-    return { items: [], meta: null };
-  }
+  const { data, meta } = await requireServerData<AuditEntry[]>(
+    `${API.ADMIN.ORCHESTRATION.MCP_AUDIT}?page=1&limit=50`
+  );
+  return { items: data, meta: toAuditMeta(meta) };
 }
 
 export default async function McpAuditPage() {

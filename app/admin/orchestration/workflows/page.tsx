@@ -4,9 +4,8 @@ import Link from 'next/link';
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { AiWorkflowListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
@@ -25,31 +24,26 @@ const EMPTY_META: PaginationMeta = {
 /**
  * Admin — Workflows list page (Phase 5 Session 5.1a).
  *
- * Server shell that pre-renders the first page of workflows via
- * `serverFetch` and hands the result to `<WorkflowsTable>` for
- * client-side search / sort / pagination / mutations. Fetch failures
- * never throw — the table renders an empty-state banner.
+ * Server shell that pre-renders the first page of workflows and hands the
+ * result to `<WorkflowsTable>` for client-side search / sort / pagination /
+ * mutations. A failed load does not throw: the table shows its own
+ * "Failed to load workflows" error banner above the empty table, which
+ * `loadServerData` drives and logs (#518).
  */
 async function getWorkflows(): Promise<{
   workflows: AiWorkflowListItem[];
   meta: PaginationMeta;
   error: string | null;
 }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`);
-    if (!res.ok) return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
-    const body = await parseApiResponse<AiWorkflowListItem[]>(res);
-    if (!body.success)
-      return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
-    return {
-      workflows: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-      error: null,
-    };
-  } catch (err) {
-    logger.error('workflows list page: initial fetch failed', err);
-    return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
-  }
+  const result = await loadServerData<AiWorkflowListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`
+  );
+  if (!result.ok) return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
+  return {
+    workflows: result.data,
+    meta: parsePaginationMeta(result.meta) ?? EMPTY_META,
+    error: null,
+  };
 }
 
 export default async function WorkflowsListPage() {

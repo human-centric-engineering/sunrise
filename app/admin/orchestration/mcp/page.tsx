@@ -6,7 +6,7 @@ import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-moda
 import { McpDashboard } from '@/components/admin/orchestration/mcp/mcp-dashboard';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData, ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
@@ -15,22 +15,35 @@ export const metadata: Metadata = {
   description: 'Configure Model Context Protocol server for external AI client access.',
 };
 
-async function getMcpSettings(): Promise<McpSettingsResponse | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<unknown>(res);
-    if (!body.success) return null;
-    return mcpSettingsResponseSchema.parse(body.data);
-  } catch (err) {
-    logger.error('MCP dashboard: settings fetch failed', err);
-    return null;
+/**
+ * Required, not a degradable panel: the dashboard would otherwise show the
+ * server as "Disabled" — a false signal — whenever the load failed. A failed
+ * load throws to the admin error boundary (#518).
+ */
+async function getMcpSettings(): Promise<McpSettingsResponse> {
+  const path = API.ADMIN.ORCHESTRATION.MCP_SETTINGS;
+  const { data } = await requireServerData<unknown>(path);
+  const parsed = mcpSettingsResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    logger.error('MCP dashboard: settings response did not parse', parsed.error, { path });
+    throw new ServerLoadError(path, { kind: 'failed', status: 200, code: null });
   }
+  return parsed.data;
+}
+
+function hasNumericTotal(meta: unknown): meta is { total: number } {
+  return (
+    typeof meta === 'object' && meta !== null && 'total' in meta && typeof meta.total === 'number'
+  );
 }
 
 /**
  * The count on each card. An org viewer (§111 t-812) gets the keys count only:
  * the other three lists are the platform's, and their routes refuse them.
+ *
+ * The counts are required too: the cards have no "unknown" state, so a failed
+ * count would read as 0 — and zero tools and keys also shows the "Getting
+ * Started" card. A failed load throws to the admin error boundary (#518).
  */
 async function getStats(platformRead: Promise<boolean>): Promise<{
   tools: number;
@@ -38,33 +51,24 @@ async function getStats(platformRead: Promise<boolean>): Promise<{
   prompts: number;
   keys: number;
 }> {
-  // One list's total, or 0 when it is not fetched or fails.
+  // One list's total, or 0 when it is not fetched for this viewer.
   const total = async (path: string | null): Promise<number> => {
     if (!path) return 0;
-    const res = await serverFetch(`${path}?page=1&limit=1`);
-    if (!res.ok) return 0;
-    const body = await parseApiResponse<unknown[]>(res);
-    if (!body.success || !body.meta || typeof body.meta !== 'object' || !('total' in body.meta))
-      return 0;
-    const value = (body.meta as Record<string, unknown>).total;
-    return typeof value === 'number' ? value : 0;
+    const { meta } = await requireServerData<unknown[]>(`${path}?page=1&limit=1`);
+    return hasNumericTotal(meta) ? meta.total : 0;
   };
   // A platform-only list's total; the keys count does not wait on the tier.
   const platformTotal = async (path: string): Promise<number> =>
     total((await platformRead) ? path : null);
 
-  try {
-    const [tools, resources, prompts, keys] = await Promise.all([
-      platformTotal(API.ADMIN.ORCHESTRATION.MCP_TOOLS),
-      platformTotal(API.ADMIN.ORCHESTRATION.MCP_RESOURCES),
-      platformTotal(API.ADMIN.ORCHESTRATION.MCP_PROMPTS),
-      total(API.ADMIN.ORCHESTRATION.MCP_KEYS),
-    ]);
+  const [tools, resources, prompts, keys] = await Promise.all([
+    platformTotal(API.ADMIN.ORCHESTRATION.MCP_TOOLS),
+    platformTotal(API.ADMIN.ORCHESTRATION.MCP_RESOURCES),
+    platformTotal(API.ADMIN.ORCHESTRATION.MCP_PROMPTS),
+    total(API.ADMIN.ORCHESTRATION.MCP_KEYS),
+  ]);
 
-    return { tools, resources, prompts, keys };
-  } catch {
-    return { tools: 0, resources: 0, prompts: 0, keys: 0 };
-  }
+  return { tools, resources, prompts, keys };
 }
 
 export default async function McpDashboardPage() {

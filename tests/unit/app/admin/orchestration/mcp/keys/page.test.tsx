@@ -4,9 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -44,7 +45,9 @@ vi.mock('next/link', () => ({
 }));
 
 import McpKeysPage, { metadata } from '@/app/admin/orchestration/mcp/keys/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -72,23 +75,20 @@ describe('McpKeysPage', () => {
 
   // 2. serverFetch called with correct URL
   it('calls serverFetch with MCP_KEYS endpoint and pagination query params', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
-    expect(serverFetch).toHaveBeenCalledWith(
-      expect.stringContaining(API.ADMIN.ORCHESTRATION.MCP_KEYS)
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      `${API.ADMIN.ORCHESTRATION.MCP_KEYS}?page=1&limit=50`
     );
-    expect(serverFetch).toHaveBeenCalledWith(expect.stringContaining('?page=1&limit=50'));
   });
 
   // 3. Happy path — passes fetched data to McpKeysList
   it('passes fetched keys to McpKeysList on happy path', async () => {
     const mockKeys: ApiKeyRow[] = [makeKey(1), makeKey(2)];
 
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: mockKeys } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockKeys));
 
     render(await McpKeysPage());
 
@@ -96,47 +96,39 @@ describe('McpKeysPage', () => {
     expect(list).toHaveAttribute('data-count', '2');
   });
 
-  // 4. res.ok === false — passes empty array
-  it('passes empty array to McpKeysList when response is not ok', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  // 4. A genuinely empty list is still an empty list
+  it('passes an empty array to McpKeysList when there are no keys', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
-    const list = screen.getByTestId('mcp-keys-list');
-    expect(list).toHaveAttribute('data-count', '0');
-    expect(parseApiResponse).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    expect(screen.getByTestId('mcp-keys-list')).toHaveAttribute('data-count', '0');
   });
 
-  // 5. body.success === false — passes empty array
-  it('passes empty array to McpKeysList when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: 'fail' },
-    } as never);
+  // 5–6. A failed load is a failure, not an empty list (#518)
+  it('throws to the error boundary when the keys API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    render(await McpKeysPage());
-
-    const list = screen.getByTestId('mcp-keys-list');
-    expect(list).toHaveAttribute('data-count', '0');
+    await expect(McpKeysPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // 6. serverFetch throws — empty array + logger.error called
-  it('passes empty array and logs error when serverFetch throws', async () => {
+  it('throws when the keys API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
+
+    await expect(McpKeysPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('logs and throws when serverFetch rejects', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
-    render(await McpKeysPage());
-
-    const list = screen.getByTestId('mcp-keys-list');
-    expect(list).toHaveAttribute('data-count', '0');
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('MCP keys page'), fetchError);
+    await expect(McpKeysPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchError, expect.any(Object));
   });
 
   // 7. Breadcrumb: AI Orchestration
   it('renders breadcrumb link "AI Orchestration" with correct href', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
@@ -146,8 +138,7 @@ describe('McpKeysPage', () => {
 
   // 8. Breadcrumb: MCP Server
   it('renders breadcrumb link "MCP Server" with correct href', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
@@ -157,8 +148,7 @@ describe('McpKeysPage', () => {
 
   // 9. h1 contains "API Keys"
   it('renders h1 heading containing "API Keys"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
@@ -167,8 +157,7 @@ describe('McpKeysPage', () => {
 
   // 10. McpInfoModal rendered with correct title prop
   it('renders McpInfoModal with title="MCP API Keys"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
@@ -178,8 +167,7 @@ describe('McpKeysPage', () => {
 
   // 11. Subtitle paragraph rendered
   it('renders subtitle paragraph about MCP client API keys', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpKeysPage());
 
@@ -190,8 +178,7 @@ describe('McpKeysPage', () => {
   it('passes full 50-item array to McpKeysList when response contains max page size', async () => {
     const largeKeys = Array.from({ length: 50 }, (_, i) => makeKey(i + 1));
 
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: largeKeys } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(largeKeys));
 
     render(await McpKeysPage());
 

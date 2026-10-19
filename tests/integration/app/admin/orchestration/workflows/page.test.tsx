@@ -9,7 +9,9 @@
  * Test Coverage:
  * - Renders heading and description with valid serverFetch response
  * - With 3 workflows in the response, the table renders 3 rows
- * - Rejecting fetch → table renders empty state, logger.error called
+ * - A genuinely empty list → the "No workflows found" empty state, no banner
+ * - A failed load (500 or no response) → the table's "Failed to load
+ *   workflows" banner and a logged error, never a silent empty list (#518)
  *
  * @see app/admin/orchestration/workflows/page.tsx
  */
@@ -17,11 +19,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -94,13 +99,8 @@ describe('WorkflowsListPage (server component)', () => {
   });
 
   it('renders the Workflows heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_WORKFLOWS,
-      meta: MOCK_META,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_WORKFLOWS, MOCK_META));
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
@@ -110,13 +110,8 @@ describe('WorkflowsListPage (server component)', () => {
   });
 
   it('renders 3 workflow names from the pre-fetched data', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_WORKFLOWS,
-      meta: MOCK_META,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_WORKFLOWS, MOCK_META));
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
@@ -129,34 +124,41 @@ describe('WorkflowsListPage (server component)', () => {
     });
   });
 
-  it('renders empty state gracefully when serverFetch returns not ok', async () => {
+  it('renders the empty state, with no error banner, for a genuinely empty list', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { ...MOCK_META, total: 0 }));
+
+    const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
+
+    render(await WorkflowsListPage());
+
+    expect(screen.getByText(/no workflows found/i)).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load workflows')).not.toBeInTheDocument();
+  });
+
+  it('shows the "Failed to load workflows" banner when the API answers 500', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
     render(await WorkflowsListPage());
 
     expect(screen.getByRole('heading', { name: /^workflows$/i })).toBeInTheDocument();
-    expect(screen.getByText(/no workflows found/i)).toBeInTheDocument();
+    expect(screen.getByText('Failed to load workflows')).toBeInTheDocument();
   });
 
-  it('does not throw and calls logger.error when serverFetch rejects', async () => {
+  it('logs and shows the banner, without throwing, when serverFetch rejects', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+    const fetchErr = new Error('Network error');
+    vi.mocked(serverFetch).mockRejectedValue(fetchErr);
 
     const { logger } = await import('@/lib/logging');
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
-    let thrown = false;
-    try {
-      render(await WorkflowsListPage());
-    } catch {
-      thrown = true;
-    }
+    render(await WorkflowsListPage());
 
-    expect(thrown).toBe(false);
-    expect(logger.error).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
-    expect(screen.getByRole('heading', { name: /^workflows$/i })).toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, expect.any(Object));
+    expect(screen.getByText('Failed to load workflows')).toBeInTheDocument();
   });
 });

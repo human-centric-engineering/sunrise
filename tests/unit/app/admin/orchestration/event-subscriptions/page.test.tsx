@@ -6,16 +6,18 @@
  * @see app/admin/orchestration/event-subscriptions/page.tsx
  *
  * Server component. Asserts the page renders its header, breadcrumb,
- * and the WebhooksTable, and that the data path through `serverFetch`
- * / `parseApiResponse` is exercised on both success and failure.
+ * and the WebhooksTable, and that a failed load of either the subscriptions
+ * or the dead-letter queue throws to the error boundary rather than rendering
+ * an empty list (an empty DLQ is the all-clear) (#518).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -52,8 +54,21 @@ import React from 'react';
 import EventSubscriptionsPage, {
   metadata,
 } from '@/app/admin/orchestration/event-subscriptions/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
+/** Answer each endpoint the page reads; a fresh Response per call. */
+function routeFetch(answers: { webhooks?: () => Response; dlq?: () => Response }) {
+  vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+    if (path.startsWith(API.ADMIN.ORCHESTRATION.WEBHOOK_DLQ)) {
+      return (answers.dlq ?? (() => apiSuccess([])))();
+    }
+    return (answers.webhooks ?? (() => apiSuccess([])))();
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,11 +91,8 @@ describe('EventSubscriptionsPage (list)', () => {
         updatedAt: '2026-05-18T00:00:00Z',
       },
     ];
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: webhooks,
-      meta: { page: 1, limit: 25, total: 1, totalPages: 1 },
+    routeFetch({
+      webhooks: () => apiSuccess(webhooks, { page: 1, limit: 25, total: 1, totalPages: 1 }),
     });
 
     const ui = await EventSubscriptionsPage();
@@ -96,8 +108,8 @@ describe('EventSubscriptionsPage (list)', () => {
     expect(table.getAttribute('data-webhooks')).toBe(JSON.stringify(webhooks));
   });
 
-  it('falls back to an empty list when the fetch is not ok', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders a genuinely empty list as an empty list', async () => {
+    routeFetch({});
 
     const ui = await EventSubscriptionsPage();
     render(ui);
@@ -106,28 +118,35 @@ describe('EventSubscriptionsPage (list)', () => {
     expect(table.getAttribute('data-webhooks')).toBe('[]');
   });
 
-  it('falls back to an empty list when the API response indicates failure', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'oh_no', message: 'boom' },
-    });
+  // ── A failed load is a failure, not an empty list (#518) ─────────────────
 
-    const ui = await EventSubscriptionsPage();
-    render(ui);
+  it('throws to the error boundary when the subscriptions API answers 500', async () => {
+    routeFetch({ webhooks: () => apiFailure(500) });
 
-    const table = screen.getByTestId('webhooks-table');
-    expect(table.getAttribute('data-webhooks')).toBe('[]');
+    await expect(EventSubscriptionsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  it('logs and falls back to an empty list when fetch throws', async () => {
-    vi.mocked(serverFetch).mockRejectedValue(new Error('network down'));
+  it('throws when the subscriptions API answers success:false', async () => {
+    routeFetch({ webhooks: () => apiFailure(200) });
 
-    const ui = await EventSubscriptionsPage();
-    render(ui);
+    await expect(EventSubscriptionsPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
 
-    expect(vi.mocked(logger.error)).toHaveBeenCalled();
-    const table = screen.getByTestId('webhooks-table');
-    expect(table.getAttribute('data-webhooks')).toBe('[]');
+  it('logs and throws when fetch rejects', async () => {
+    const fetchErr = new Error('network down');
+    vi.mocked(serverFetch).mockRejectedValue(fetchErr);
+
+    await expect(EventSubscriptionsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.any(String),
+      fetchErr,
+      expect.any(Object)
+    );
+  });
+
+  it('throws when only the dead-letter queue fails, rather than showing it empty', async () => {
+    routeFetch({ dlq: () => apiFailure(500) });
+
+    await expect(EventSubscriptionsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

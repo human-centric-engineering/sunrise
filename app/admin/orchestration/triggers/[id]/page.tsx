@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import {
   TriggerForm,
@@ -9,8 +8,8 @@ import {
   type TriggerFormInitial,
 } from '@/components/admin/orchestration/trigger-form';
 import { API } from '@/lib/api/endpoints';
-import { getPublicUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { getPublicUrl } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
 export const metadata: Metadata = {
@@ -29,38 +28,31 @@ interface ApiTrigger {
   workflow: { id: string; name: string; slug: string; isActive: boolean };
 }
 
-async function getTrigger(id: string): Promise<ApiTrigger | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.triggerById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<ApiTrigger>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('trigger edit: fetch failed', err);
-    return null;
-  }
+/** A 404 is a missing trigger; any other failure reaches the error boundary (#518). */
+async function getTrigger(id: string): Promise<ApiTrigger> {
+  const { data } = await requireServerData<ApiTrigger>(API.ADMIN.ORCHESTRATION.triggerById(id), {
+    notFound: true,
+  });
+  return data;
 }
 
+/**
+ * The form's options are required as well: an empty channel list flags the
+ * trigger's adapter as unregistered, and an empty agent list hides the
+ * conversation agent it is set to. A failed load throws (#518).
+ */
 async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
-  } catch {
-    return [];
-  }
+  const { data } = await requireServerData<AgentOption[]>(
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`
+  );
+  return data;
 }
 
 async function getEnabledChannels(): Promise<string[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=1`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<unknown>(res);
-    return body.success ? parseEnabledChannelsFromMeta(body.meta) : [];
-  } catch {
-    return [];
-  }
+  const { meta } = await requireServerData<unknown>(
+    `${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=1`
+  );
+  return parseEnabledChannelsFromMeta(meta);
 }
 
 export default async function EditTriggerPage({ params }: { params: Promise<{ id: string }> }) {
@@ -70,8 +62,6 @@ export default async function EditTriggerPage({ params }: { params: Promise<{ id
     getAgents(),
     getEnabledChannels(),
   ]);
-
-  if (!trigger) notFound();
 
   const initial: TriggerFormInitial = {
     id: trigger.id,

@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { McpResourcesList } from '@/components/admin/orchestration/mcp/mcp-resources-list';
 import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-modal';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 
 export const metadata: Metadata = {
   title: 'MCP Resources · AI Orchestration',
@@ -23,16 +22,12 @@ interface ResourceRow {
   isEnabled: boolean;
 }
 
+/** A failed load throws to the admin error boundary rather than an empty list (#518). */
 async function getResources(): Promise<ResourceRow[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_RESOURCES}?page=1&limit=50`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<ResourceRow[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('MCP resources page: fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<ResourceRow[]>(
+    `${API.ADMIN.ORCHESTRATION.MCP_RESOURCES}?page=1&limit=50`
+  );
+  return data;
 }
 
 export default async function McpResourcesPage() {

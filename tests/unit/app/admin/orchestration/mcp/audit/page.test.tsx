@@ -3,9 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -36,7 +37,9 @@ vi.mock('next/link', () => ({
 
 import React from 'react';
 import McpAuditPage, { metadata } from '@/app/admin/orchestration/mcp/audit/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -54,12 +57,7 @@ describe('McpAuditPage', () => {
   // Test 2: Renders heading and breadcrumb nav
   it('renders heading "Audit Log" and breadcrumb nav', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 0 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 0 }));
 
     // Act
     render(await McpAuditPage());
@@ -72,12 +70,7 @@ describe('McpAuditPage', () => {
   // Test 3: Breadcrumb link to /admin/orchestration
   it('renders breadcrumb link to /admin/orchestration with text "AI Orchestration"', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 0 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 0 }));
 
     // Act
     render(await McpAuditPage());
@@ -91,12 +84,7 @@ describe('McpAuditPage', () => {
   // Test 4: Breadcrumb link to /admin/orchestration/mcp
   it('renders breadcrumb link to /admin/orchestration/mcp with text "MCP Server"', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 0 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 0 }));
 
     // Act
     render(await McpAuditPage());
@@ -110,21 +98,15 @@ describe('McpAuditPage', () => {
   // Test 5: serverFetch called with correct URL
   it('calls serverFetch with MCP_AUDIT endpoint and pagination params', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 0 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 0 }));
 
     // Act
     render(await McpAuditPage());
 
     // Assert
-    expect(serverFetch).toHaveBeenCalledWith(
-      expect.stringContaining(API.ADMIN.ORCHESTRATION.MCP_AUDIT)
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      `${API.ADMIN.ORCHESTRATION.MCP_AUDIT}?page=1&limit=50`
     );
-    expect(serverFetch).toHaveBeenCalledWith(expect.stringContaining('?page=1&limit=50'));
   });
 
   // Test 6: Passes items array to McpAuditLog
@@ -134,12 +116,7 @@ describe('McpAuditPage', () => {
       { id: '1', method: 'tools/list' },
       { id: '2', method: 'tools/call' },
     ];
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockItems,
-      meta: { total: 2 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockItems, { total: 2 }));
 
     // Act
     render(await McpAuditPage());
@@ -152,12 +129,7 @@ describe('McpAuditPage', () => {
   // Test 7: Subtitle does NOT include "total entries" when total === 0
   it('does not include "total entries" text in subtitle when total is 0', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 0 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 0 }));
 
     // Act
     render(await McpAuditPage());
@@ -169,12 +141,9 @@ describe('McpAuditPage', () => {
   // Test 8: Subtitle includes "42 total entries." when meta.total === 42
   it('includes " 42 total entries." in subtitle when meta.total is 42', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 42, page: 1, limit: 50, totalPages: 1 },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiSuccess([], { total: 42, page: 1, limit: 50, totalPages: 1 })
+    );
 
     // Act
     render(await McpAuditPage());
@@ -183,62 +152,31 @@ describe('McpAuditPage', () => {
     expect(screen.getByText(/42 total entries\./)).toBeInTheDocument();
   });
 
-  // Test 9: When res.ok === false, renders McpAuditLog with empty array
-  it('renders McpAuditLog with empty initialEntries when res.ok is false', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  // Tests 9–11: a failed load is a failure, not an empty log (#518)
+  it('throws to the error boundary when the audit API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    // Act
-    render(await McpAuditPage());
-
-    // Assert
-    const auditLog = screen.getByTestId('mcp-audit-log');
-    expect(auditLog).toHaveAttribute('data-count', '0');
-    expect(parseApiResponse).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    await expect(McpAuditPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // Test 10: When parseApiResponse returns { success: false }, renders empty array
-  it('renders McpAuditLog with empty initialEntries when parseApiResponse returns success: false', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'FETCH_ERROR', message: 'Something went wrong' },
-    } as never);
+  it('throws when the audit API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
-    // Act
-    render(await McpAuditPage());
-
-    // Assert
-    const auditLog = screen.getByTestId('mcp-audit-log');
-    expect(auditLog).toHaveAttribute('data-count', '0');
-    expect(screen.queryByText(/total entries/)).not.toBeInTheDocument();
+    await expect(McpAuditPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // Test 11: When serverFetch throws, renders empty array and calls logger.error
-  it('renders McpAuditLog with empty initialEntries and calls logger.error when serverFetch throws', async () => {
-    // Arrange
+  it('logs and throws when serverFetch rejects', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
-    // Act
-    render(await McpAuditPage());
-
-    // Assert
-    const auditLog = screen.getByTestId('mcp-audit-log');
-    expect(auditLog).toHaveAttribute('data-count', '0');
-    expect(logger.error).toHaveBeenCalledWith('MCP audit page: fetch failed', fetchError);
+    await expect(McpAuditPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchError, expect.any(Object));
   });
 
   // Test 12 (bonus): meta.total as non-number string defaults to 0
   it('defaults total to 0 when meta.total is a non-numeric string', async () => {
     // Arrange
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: { total: 'five' },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([], { total: 'five' }));
 
     // Act
     render(await McpAuditPage());

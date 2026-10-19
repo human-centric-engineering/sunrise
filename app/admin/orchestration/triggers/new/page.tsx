@@ -9,8 +9,8 @@ import {
 } from '@/components/admin/orchestration/trigger-form';
 import { WhatsAppWorkedExample } from '@/components/admin/orchestration/whatsapp-worked-example';
 import { API } from '@/lib/api/endpoints';
-import { getPublicUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { getPublicUrl } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { INBOUND_TRIGGER_STARTER_HREF } from '@/lib/orchestration/admin/inbound-trigger-starter';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
@@ -18,39 +18,32 @@ export const metadata: Metadata = {
   title: 'New Inbound Trigger · AI Orchestration',
 };
 
+/**
+ * All three are options the form cannot work honestly without, so each is
+ * required and a failed load throws to the admin error boundary (#518). An
+ * empty workflow list reads as "You need a workflow first"; an empty channel
+ * list flags every adapter as unregistered; an empty agent list offers no
+ * conversation agent for the channels that need one.
+ */
 async function getWorkflows(): Promise<WorkflowOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=200`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<WorkflowOption[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('trigger new: workflows fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<WorkflowOption[]>(
+    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=200`
+  );
+  return data;
 }
 
 async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('trigger new: agents fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<AgentOption[]>(
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`
+  );
+  return data;
 }
 
 async function getEnabledChannels(): Promise<string[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=1`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<unknown>(res);
-    return body.success ? parseEnabledChannelsFromMeta(body.meta) : [];
-  } catch {
-    return [];
-  }
+  const { meta } = await requireServerData<unknown>(
+    `${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=1`
+  );
+  return parseEnabledChannelsFromMeta(meta);
 }
 
 export default async function NewTriggerPage() {

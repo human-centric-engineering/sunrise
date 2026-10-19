@@ -15,6 +15,10 @@
  *   serialised WorkflowDefinition
  * - After successful create, router.push is called to the edit URL
  *
+ * Failure path (#518):
+ * - A failed templates load shows a `role="alert"` notice above a working
+ *   builder, rather than a silently empty template menu
+ *
  * @see app/admin/orchestration/workflows/new/page.tsx
  */
 
@@ -63,9 +67,10 @@ vi.mock('@/hooks/use-theme', () => ({
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -116,7 +121,9 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { apiClient } from '@/lib/api/client';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -149,16 +156,31 @@ describe('NewWorkflowPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.get).mockResolvedValue([]);
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    // Page calls getCapabilities() + getAgents() + getTemplates() in parallel — all use parseApiResponse
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
-      .mockResolvedValueOnce({ success: true, data: [] }) // agents
-      .mockResolvedValueOnce({ success: true, data: [MOCK_TEMPLATE] }); // templates
+    // Page loads capabilities, agents and templates in parallel; a fresh
+    // Response per call.
+    vi.mocked(serverFetch).mockImplementation(async (url: string) =>
+      url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES)
+        ? apiSuccess([MOCK_TEMPLATE])
+        : apiSuccess([])
+    );
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('shows a notice above a working builder when the templates fail to load', async () => {
+    vi.mocked(serverFetch).mockImplementation(async (url: string) =>
+      url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES) ? apiFailure(500) : apiSuccess([])
+    );
+
+    const { default: NewWorkflowPage } =
+      await import('@/app/admin/orchestration/workflows/new/page');
+
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load workflow templates/i);
+    expect(screen.getByTestId('pattern-palette')).toBeInTheDocument();
   });
 
   it('renders the pattern palette', async () => {

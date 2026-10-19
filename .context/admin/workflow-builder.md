@@ -25,7 +25,7 @@ Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand
 | `/admin/orchestration/workflows/[id]` | `app/admin/orchestration/workflows/[id]/page.tsx` | Hydrated builder — edit mode                         |
 | `/admin/orchestration/executions`     | `app/admin/orchestration/executions/page.tsx`     | Execution list, status filter, workflow filter       |
 
-All three are async server components. The list page calls `serverFetch(API.ADMIN.ORCHESTRATION.WORKFLOWS + '?page=1&limit=25')` with a null-safe fallback — failures surface as an empty state, never a thrown error. The edit page calls `serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id))` and hands off to `notFound()` on any non-OK response.
+All three are async server components. The list page loads `API.ADMIN.ORCHESTRATION.WORKFLOWS + '?page=1&limit=25'` with `loadServerData` and never throws: a failed load shows the table's "Failed to load workflows" banner above the empty table, never a bare empty state (#518). The edit page loads `API.ADMIN.ORCHESTRATION.workflowById(id)` with `requireServerData(…, { notFound: true })`: a 404 renders `notFound()`, any other failure throws to the admin error boundary. On both builder pages the capabilities, agents and templates are secondary: a failed list shows a `<LoadFailedNotice>` above the builder, which still renders with that list empty.
 
 ## Layout
 

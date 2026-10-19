@@ -9,8 +9,9 @@ import type {
   CapabilityOption,
 } from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { templateCatalogueSchema } from '@/components/admin/orchestration/workflow-builder/template-types';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -19,52 +20,59 @@ export const metadata: Metadata = {
   description: 'Design a new AI workflow from pattern blocks.',
 };
 
-async function getCapabilities(): Promise<CapabilityOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<CapabilityOption[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('new workflow page: capabilities fetch failed', err);
-    return [];
-  }
+/**
+ * The editor's option lists. None is the page's reason to exist: the canvas
+ * still works without them, so each is loaded with `loadServerData` and is
+ * `null` when it failed. The page then shows `<LoadFailedNotice>` above the
+ * builder, so an empty capability, agent or template picker is not taken as
+ * "there are none" (#518). The builder also retries capabilities and agents
+ * client-side when it is handed an empty list.
+ */
+async function getCapabilities(): Promise<CapabilityOption[] | null> {
+  const result = await loadServerData<CapabilityOption[]>(
+    `${API.ADMIN.ORCHESTRATION.CAPABILITIES}?limit=100`
+  );
+  return result.ok ? result.data : null;
 }
 
-async function getAgents(): Promise<AgentOption[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&isActive=true`);
-    if (!res.ok) return [];
-    const body =
-      await parseApiResponse<Array<{ slug: string; name: string; description: string | null }>>(
-        res
-      );
-    if (!body.success) return [];
-    return body.data.map((a) => ({ slug: a.slug, name: a.name, description: a.description }));
-  } catch (err) {
-    logger.error('new workflow page: agents fetch failed', err);
-    return [];
-  }
+async function getAgents(): Promise<AgentOption[] | null> {
+  const result = await loadServerData<
+    Array<{ slug: string; name: string; description: string | null }>
+  >(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&isActive=true`);
+  if (!result.ok) return null;
+  return result.data.map((a) => ({ slug: a.slug, name: a.name, description: a.description }));
 }
 
-async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates']> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<unknown[]>(res);
-    if (!body.success) return [];
-    const result = templateCatalogueSchema.safeParse(body.data);
-    if (!result.success) {
-      logger.warn('new workflow page: templates response did not parse', {
-        issues: result.error.issues,
-      });
-      return [];
-    }
-    return result.data;
-  } catch (err) {
-    logger.error('new workflow page: templates fetch failed', err);
-    return [];
+async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates'] | null> {
+  const result = await loadServerData<unknown[]>(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
+  if (!result.ok) return null;
+  const parsed = templateCatalogueSchema.safeParse(result.data);
+  if (!parsed.success) {
+    logger.warn('new workflow page: templates response did not parse', {
+      issues: parsed.error.issues,
+    });
+    return null;
   }
+  return parsed.data;
+}
+
+/** A notice for each option list that could not be loaded. */
+function OptionLoadFailures({
+  capabilities,
+  agents,
+  templates,
+}: {
+  capabilities: unknown;
+  agents: unknown;
+  templates: unknown;
+}) {
+  return (
+    <>
+      {capabilities === null && <LoadFailedNotice what="capabilities for Tool Call steps" />}
+      {agents === null && <LoadFailedNotice what="agents for Orchestrator steps" />}
+      {templates === null && <LoadFailedNotice what="workflow templates" />}
+    </>
+  );
 }
 
 /**
@@ -101,12 +109,15 @@ export default async function NewWorkflowPage({
   ]);
 
   return (
-    <WorkflowBuilder
-      mode="create"
-      initialDefinition={initialDefinition}
-      initialCapabilities={capabilities}
-      initialAgents={agents}
-      initialTemplates={templates}
-    />
+    <>
+      <OptionLoadFailures capabilities={capabilities} agents={agents} templates={templates} />
+      <WorkflowBuilder
+        mode="create"
+        initialDefinition={initialDefinition}
+        initialCapabilities={capabilities ?? []}
+        initialAgents={agents ?? []}
+        initialTemplates={templates ?? []}
+      />
+    </>
   );
 }

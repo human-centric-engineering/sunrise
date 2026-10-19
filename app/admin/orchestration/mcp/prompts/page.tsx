@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { McpPromptsList } from '@/components/admin/orchestration/mcp/mcp-prompts-list';
 import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-modal';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import { promptRowSchema, type PromptRow } from '@/lib/validations/mcp';
 
 export const metadata: Metadata = {
@@ -24,25 +23,20 @@ interface PromptRecord {
   createdAt: string;
 }
 
+/** A failed load throws to the admin error boundary rather than an empty list (#518). */
 async function getPrompts(): Promise<PromptRow[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_PROMPTS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<PromptRecord[]>(res);
-    if (!body.success) return [];
-    // Coerce server payload through the validation schema so the client
-    // component receives a stable, typed shape regardless of any backend
-    // serialisation quirks.
-    return body.data
-      .map((row): PromptRow | null => {
-        const parsed = promptRowSchema.safeParse(row);
-        return parsed.success ? parsed.data : null;
-      })
-      .filter((r): r is PromptRow => r !== null);
-  } catch (err) {
-    logger.error('MCP prompts page: fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<PromptRecord[]>(
+    `${API.ADMIN.ORCHESTRATION.MCP_PROMPTS}?page=1&limit=100`
+  );
+  // Coerce server payload through the validation schema so the client
+  // component receives a stable, typed shape regardless of any backend
+  // serialisation quirks.
+  return data
+    .map((row): PromptRow | null => {
+      const parsed = promptRowSchema.safeParse(row);
+      return parsed.success ? parsed.data : null;
+    })
+    .filter((r): r is PromptRow => r !== null);
 }
 
 export default async function McpPromptsPage() {

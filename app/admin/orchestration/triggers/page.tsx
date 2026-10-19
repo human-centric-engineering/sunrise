@@ -8,8 +8,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
 export const metadata: Metadata = {
@@ -18,20 +17,15 @@ export const metadata: Metadata = {
     'Manage workflow inbound triggers — webhook configurations that fire workflows from Slack, Postmark, Twilio, WhatsApp Cloud, or generic HMAC senders.',
 };
 
+/** A failed load throws to the admin error boundary rather than an empty table (#518). */
 async function getTriggers(): Promise<{
   triggers: TriggerListItem[];
   enabledChannels: string[];
 }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=100`);
-    if (!res.ok) return { triggers: [], enabledChannels: [] };
-    const body = await parseApiResponse<TriggerListItem[]>(res);
-    if (!body.success) return { triggers: [], enabledChannels: [] };
-    return { triggers: body.data, enabledChannels: parseEnabledChannelsFromMeta(body.meta) };
-  } catch (err) {
-    logger.error('triggers list page: initial fetch failed', err);
-    return { triggers: [], enabledChannels: [] };
-  }
+  const { data, meta } = await requireServerData<TriggerListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.TRIGGERS}?page=1&limit=100`
+  );
+  return { triggers: data, enabledChannels: parseEnabledChannelsFromMeta(meta) };
 }
 
 export default async function TriggersListPage() {

@@ -4,9 +4,10 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -34,7 +35,9 @@ vi.mock('next/link', () => ({
 }));
 
 import McpPromptsPage, { metadata } from '@/app/admin/orchestration/mcp/prompts/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -53,10 +56,6 @@ const validPromptRow = {
   createdAt: '2025-01-01T00:00:00Z',
 };
 
-function makeMockResponse(ok: boolean): Response {
-  return { ok, status: ok ? 200 : 500 } as Response;
-}
-
 describe('McpPromptsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -68,8 +67,7 @@ describe('McpPromptsPage', () => {
   });
 
   it('calls serverFetch with MCP_PROMPTS URL and pagination params', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpPromptsPage());
 
@@ -80,11 +78,9 @@ describe('McpPromptsPage', () => {
   });
 
   it('passes parsed prompts to McpPromptsList on success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [validPromptRow, { ...validPromptRow, id: 'p-2' }],
-    });
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiSuccess([validPromptRow, { ...validPromptRow, id: 'p-2' }])
+    );
 
     render(await McpPromptsPage());
 
@@ -95,53 +91,50 @@ describe('McpPromptsPage', () => {
     // Mix a valid row with a row missing required fields. The page
     // coerces each row through promptRowSchema and silently drops failures
     // so a single bad row never breaks the whole list.
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiSuccess([
         validPromptRow,
         { id: 'broken' }, // missing name, description, template, etc.
-      ],
-    });
+      ])
+    );
 
     render(await McpPromptsPage());
 
     expect(screen.getByTestId('mcp-prompts-list')).toHaveAttribute('data-count', '1');
   });
 
-  it('passes empty array when res.ok is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(false));
+  // A genuinely empty list is still an empty list
+  it('passes an empty array to the list when there are no prompts', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpPromptsPage());
 
     expect(screen.getByTestId('mcp-prompts-list')).toHaveAttribute('data-count', '0');
   });
 
-  it('passes empty array when body.success is false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: 'boom' },
-    });
+  // A failed load is a failure, not an empty list (#518)
+  it('throws to the error boundary when the prompts API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    render(await McpPromptsPage());
-
-    expect(screen.getByTestId('mcp-prompts-list')).toHaveAttribute('data-count', '0');
+    await expect(McpPromptsPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  it('passes empty array and logs error when serverFetch throws', async () => {
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network failure'));
+  it('throws when the prompts API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
-    render(await McpPromptsPage());
+    await expect(McpPromptsPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
 
-    expect(screen.getByTestId('mcp-prompts-list')).toHaveAttribute('data-count', '0');
-    expect(logger.error).toHaveBeenCalledOnce();
-    expect(vi.mocked(logger.error).mock.calls[0][0]).toContain('MCP prompts page');
+  it('logs and throws when serverFetch rejects', async () => {
+    const fetchError = new Error('Network failure');
+    vi.mocked(serverFetch).mockRejectedValue(fetchError);
+
+    await expect(McpPromptsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchError, expect.any(Object));
   });
 
   it('renders the Prompts heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpPromptsPage());
 
@@ -149,8 +142,7 @@ describe('McpPromptsPage', () => {
   });
 
   it('renders breadcrumb links with correct hrefs', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpPromptsPage());
 
@@ -165,8 +157,7 @@ describe('McpPromptsPage', () => {
   });
 
   it('renders McpInfoModal with title "MCP Prompts"', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(makeMockResponse(true));
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await McpPromptsPage());
 

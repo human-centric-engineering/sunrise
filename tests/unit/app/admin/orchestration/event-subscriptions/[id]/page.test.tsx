@@ -6,8 +6,9 @@
  * @see app/admin/orchestration/event-subscriptions/[id]/page.tsx
  *
  * Server component. Fetches the webhook by id; calls `notFound()` on a
- * missing or failed fetch; otherwise renders WebhookForm + test button
- * + delivery list.
+ * 404 and only on a 404 — any other failure throws to the error boundary
+ * rather than reading as a missing subscription (#518); otherwise renders
+ * WebhookForm + test button + delivery list.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,9 +24,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -66,9 +68,12 @@ import React from 'react';
 import EventSubscriptionDetailPage, {
   metadata,
 } from '@/app/admin/orchestration/event-subscriptions/[id]/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const webhookFixture = {
   id: 'wh_1',
@@ -90,15 +95,14 @@ describe('EventSubscriptionDetailPage', () => {
   });
 
   it('renders WebhookForm (edit mode), test button, and deliveries on success', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: webhookFixture,
-    });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(webhookFixture));
 
     const ui = await EventSubscriptionDetailPage({ params: Promise.resolve({ id: 'wh_1' }) });
     render(ui);
 
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      API.ADMIN.ORCHESTRATION.webhookById('wh_1')
+    );
     const form = screen.getByTestId('webhook-form');
     expect(form.getAttribute('data-mode')).toBe('edit');
     expect(form.getAttribute('data-webhook')).toBe(JSON.stringify(webhookFixture));
@@ -106,35 +110,47 @@ describe('EventSubscriptionDetailPage', () => {
     expect(screen.getByTestId('webhook-deliveries').getAttribute('data-id')).toBe('wh_1');
   });
 
-  it('calls notFound() when the API responds not-ok', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('calls notFound() when the subscription does not exist', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     await expect(
       EventSubscriptionDetailPage({ params: Promise.resolve({ id: 'wh_1' }) })
     ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(vi.mocked(notFound)).toHaveBeenCalled();
+    expect(vi.mocked(notFound)).toHaveBeenCalledOnce();
   });
 
-  it('calls notFound() when the API response is success=false', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'not_found', message: 'gone' },
-    });
+  // ── A failed load is a failure, not a missing subscription (#518) ────────
+
+  it('throws to the error boundary, not notFound(), when the API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     await expect(
       EventSubscriptionDetailPage({ params: Promise.resolve({ id: 'wh_1' }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(vi.mocked(notFound)).toHaveBeenCalled();
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
   });
 
-  it('logs and calls notFound() when fetch throws', async () => {
-    vi.mocked(serverFetch).mockRejectedValue(new Error('network down'));
+  it('throws, not notFound(), when the API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
     await expect(
       EventSubscriptionDetailPage({ params: Promise.resolve({ id: 'wh_1' }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(vi.mocked(logger.error)).toHaveBeenCalled();
-    expect(vi.mocked(notFound)).toHaveBeenCalled();
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
+  });
+
+  it('logs and throws, not notFound(), when fetch rejects', async () => {
+    const fetchErr = new Error('network down');
+    vi.mocked(serverFetch).mockRejectedValue(fetchErr);
+
+    await expect(
+      EventSubscriptionDetailPage({ params: Promise.resolve({ id: 'wh_1' }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.any(String),
+      fetchErr,
+      expect.any(Object)
+    );
+    expect(vi.mocked(notFound)).not.toHaveBeenCalled();
   });
 });
