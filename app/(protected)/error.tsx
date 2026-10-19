@@ -15,15 +15,15 @@ import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route
 
 export default function ProtectedError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }): React.ReactElement {
   return (
     <RouteErrorBoundary
       error={error}
-      reset={reset}
+      retry={retry}
       boundaryName="ProtectedError"
       tag="protected"
       title="Something went wrong"

@@ -60,11 +60,11 @@ const expiredSession = (): SessionResult =>
   });
 
 function renderBoundary(props: Partial<React.ComponentProps<typeof RouteErrorBoundary>> = {}) {
-  const reset = vi.fn();
+  const retry = vi.fn();
   const utils = render(
     <RouteErrorBoundary
       error={error}
-      reset={reset}
+      retry={retry}
       boundaryName="TestError"
       tag="test"
       title="Something went wrong"
@@ -73,7 +73,7 @@ function renderBoundary(props: Partial<React.ComponentProps<typeof RouteErrorBou
       {...props}
     />
   );
-  return { ...utils, reset };
+  return { ...utils, retry };
 }
 
 describe('RouteErrorBoundary', () => {
@@ -164,11 +164,11 @@ describe('RouteErrorBoundary', () => {
   });
 
   describe('actions', () => {
-    it('wires "Try again" to reset', async () => {
-      const { reset } = renderBoundary();
+    it('wires "Try again" to retry', async () => {
+      const { retry } = renderBoundary();
 
       await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-      expect(reset).toHaveBeenCalledTimes(1);
+      expect(retry).toHaveBeenCalledTimes(1);
     });
 
     it('soft-navigates the fallback by default', async () => {

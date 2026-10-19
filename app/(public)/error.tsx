@@ -13,15 +13,15 @@ import { RouteErrorBoundary } from '@/components/errors/route-error-boundary';
 
 export default function PublicError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }): React.ReactElement {
   return (
     <RouteErrorBoundary
       error={error}
-      reset={reset}
+      retry={retry}
       boundaryName="PublicError"
       tag="public"
       title="Oops! Something went wrong"

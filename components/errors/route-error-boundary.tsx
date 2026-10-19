@@ -42,8 +42,12 @@ export interface RouteErrorFallbackAction {
 export interface RouteErrorBoundaryProps {
   /** The error Next.js handed the boundary */
   error: Error & { digest?: string };
-  /** The reset callback Next.js handed the boundary */
-  reset: () => void;
+  /**
+   * The retry callback Next.js handed the boundary. Not `reset`: `reset` only
+   * re-renders, so a page whose server data load failed would fail the same
+   * way again. `retry` re-fetches the segment first.
+   */
+  retry: () => void;
   /** Identifies the boundary in logs, e.g. `"AdminError"` */
   boundaryName: string;
   /** Sentry `boundary` tag, e.g. `"admin"` */
@@ -70,7 +74,7 @@ export interface RouteErrorBoundaryProps {
 
 export function RouteErrorBoundary({
   error,
-  reset,
+  retry,
   boundaryName,
   tag,
   title,
@@ -162,7 +166,7 @@ export function RouteErrorBoundary({
       error={error}
       containerClassName={containerClassName}
       actions={[
-        { label: 'Try again', onClick: reset },
+        { label: 'Try again', onClick: retry },
         {
           label: fallback.label,
           onClick: () => {

@@ -10,7 +10,7 @@
  * - Component renders correctly with error information
  * - Logger is called with correct parameters
  * - Sentry trackError is called with Fatal severity
- * - "Try again" button calls reset() function
+ * - "Try again" button calls retry() function
  * - "Go home" button navigates to "/"
  * - Development mode shows error details
  * - Production mode hides error details
@@ -66,7 +66,7 @@ import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
  * Test Suite: Global Error Boundary
  */
 describe('app/global-error', () => {
-  const mockReset = vi.fn();
+  const mockRetry = vi.fn();
   const mockError = new Error('Test error message');
   const mockErrorWithDigest = Object.assign(new Error('Test error with digest'), {
     digest: 'abc123',
@@ -84,7 +84,7 @@ describe('app/global-error', () => {
   describe('rendering', () => {
     it('should render error boundary with error message', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByText('Application Error')).toBeInTheDocument();
@@ -95,7 +95,7 @@ describe('app/global-error', () => {
 
     it('should render component structure with container', () => {
       // Arrange & Act
-      const { container } = render(<GlobalError error={mockError} reset={mockReset} />);
+      const { container } = render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Verify the component renders and contains expected elements
       // Note: In test environment, html/body tags are not rendered in the DOM tree
@@ -108,7 +108,7 @@ describe('app/global-error', () => {
 
     it('should render alert triangle icon', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByTestId('alert-triangle-icon')).toBeInTheDocument();
@@ -116,7 +116,7 @@ describe('app/global-error', () => {
 
     it('should render "Try again" button with icon', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
@@ -125,7 +125,7 @@ describe('app/global-error', () => {
 
     it('should render "Go home" button with icon', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByRole('button', { name: /go home/i })).toBeInTheDocument();
@@ -136,7 +136,7 @@ describe('app/global-error', () => {
   describe('error logging', () => {
     it('should log error with correct parameters', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -154,7 +154,7 @@ describe('app/global-error', () => {
 
     it('should log error with digest when present', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockErrorWithDigest} reset={mockReset} />);
+      render(<GlobalError error={mockErrorWithDigest} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -172,7 +172,7 @@ describe('app/global-error', () => {
 
     it('should call logger.error only once per error', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -184,7 +184,7 @@ describe('app/global-error', () => {
   describe('sentry error tracking', () => {
     it('should call trackError with Fatal severity', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -199,7 +199,7 @@ describe('app/global-error', () => {
 
     it('should call trackError with correct tags', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -217,7 +217,7 @@ describe('app/global-error', () => {
 
     it('should call trackError with correct extra context', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -235,7 +235,7 @@ describe('app/global-error', () => {
 
     it('should call trackError with digest when present', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockErrorWithDigest} reset={mockReset} />);
+      render(<GlobalError error={mockErrorWithDigest} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -252,7 +252,7 @@ describe('app/global-error', () => {
 
     it('should call trackError only once per error', async () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Wait for useEffect to trigger
       await waitFor(() => {
@@ -262,23 +262,23 @@ describe('app/global-error', () => {
   });
 
   describe('user interactions', () => {
-    it('should call reset() when "Try again" button is clicked', async () => {
+    it('should call retry() when "Try again" button is clicked', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Act: Click the "Try again" button
       const tryAgainButton = screen.getByRole('button', { name: /try again/i });
       await user.click(tryAgainButton);
 
       // Assert
-      expect(mockReset).toHaveBeenCalledTimes(1);
+      expect(mockRetry).toHaveBeenCalledTimes(1);
     });
 
     it('should navigate to "/" when "Go home" button is clicked', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Act: Click the "Go home" button
       const goHomeButton = screen.getByRole('button', { name: /go home/i });
@@ -288,17 +288,17 @@ describe('app/global-error', () => {
       expect(window.location.href).toBe('/');
     });
 
-    it('should not call reset() when "Go home" button is clicked', async () => {
+    it('should not call retry() when "Go home" button is clicked', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Act: Click the "Go home" button
       const goHomeButton = screen.getByRole('button', { name: /go home/i });
       await user.click(goHomeButton);
 
       // Assert
-      expect(mockReset).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(mockRetry).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -310,7 +310,7 @@ describe('app/global-error', () => {
 
     it('should show error message in development mode', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByText('Error:')).toBeInTheDocument();
@@ -319,7 +319,7 @@ describe('app/global-error', () => {
 
     it('should show error digest in development mode when present', () => {
       // Arrange & Act
-      render(<GlobalError error={mockErrorWithDigest} reset={mockReset} />);
+      render(<GlobalError error={mockErrorWithDigest} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByText('Error Digest:')).toBeInTheDocument();
@@ -328,7 +328,7 @@ describe('app/global-error', () => {
 
     it('should not show error digest section when digest is missing', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.queryByText('Error Digest:')).not.toBeInTheDocument();
@@ -336,7 +336,7 @@ describe('app/global-error', () => {
 
     it('should not show contact support link in development mode', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.queryByText(/contact support/i)).not.toBeInTheDocument();
@@ -351,7 +351,7 @@ describe('app/global-error', () => {
 
     it('should hide error message in production mode', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.queryByText('Error:')).not.toBeInTheDocument();
@@ -360,7 +360,7 @@ describe('app/global-error', () => {
 
     it('should hide error digest in production mode', () => {
       // Arrange & Act
-      render(<GlobalError error={mockErrorWithDigest} reset={mockReset} />);
+      render(<GlobalError error={mockErrorWithDigest} retry={mockRetry} />);
 
       // Assert
       expect(screen.queryByText('Error Digest:')).not.toBeInTheDocument();
@@ -369,7 +369,7 @@ describe('app/global-error', () => {
 
     it('should show contact support link in production mode', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByText(/If this problem persists, please/i)).toBeInTheDocument();
@@ -378,7 +378,7 @@ describe('app/global-error', () => {
 
     it('should have correct href for contact support link', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       const contactLink = screen.getByRole('link', { name: /contact support/i });
@@ -389,7 +389,7 @@ describe('app/global-error', () => {
   describe('styling', () => {
     it('should render with proper container styling', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Verify styling on the main container div
       // Note: body and html tags are not rendered in test environment
@@ -401,7 +401,7 @@ describe('app/global-error', () => {
 
     it('should have error styling on alert icon', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       const iconContainer = screen.getByTestId('alert-triangle-icon').parentElement;
@@ -410,7 +410,7 @@ describe('app/global-error', () => {
 
     it('should have proper button styling for "Try again"', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       const tryAgainButton = screen.getByRole('button', { name: /try again/i });
@@ -422,7 +422,7 @@ describe('app/global-error', () => {
 
     it('should have proper button styling for "Go home"', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       const goHomeButton = screen.getByRole('button', { name: /go home/i });
@@ -438,7 +438,7 @@ describe('app/global-error', () => {
   describe('accessibility', () => {
     it('should render component with semantic HTML structure', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert: Verify component renders with proper structure
       // Note: html/body elements with lang attr are in source but not testable in isolation
@@ -450,7 +450,7 @@ describe('app/global-error', () => {
 
     it('should have descriptive button text', () => {
       // Arrange & Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
@@ -462,7 +462,7 @@ describe('app/global-error', () => {
       (process.env as { NODE_ENV: string }).NODE_ENV = 'production';
 
       // Act
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
 
       // Assert
       const contactLink = screen.getByRole('link', { name: /contact support/i });
@@ -477,7 +477,7 @@ describe('app/global-error', () => {
       const emptyError = new Error('');
 
       // Act
-      render(<GlobalError error={emptyError} reset={mockReset} />);
+      render(<GlobalError error={emptyError} retry={mockRetry} />);
 
       // Assert: Should still render and log
       expect(screen.getByText('Application Error')).toBeInTheDocument();
@@ -490,7 +490,7 @@ describe('app/global-error', () => {
     it('should handle multiple clicks on "Try again" button', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<GlobalError error={mockError} reset={mockReset} />);
+      render(<GlobalError error={mockError} retry={mockRetry} />);
       const tryAgainButton = screen.getByRole('button', { name: /try again/i });
 
       // Act: Click multiple times
@@ -499,12 +499,12 @@ describe('app/global-error', () => {
       await user.click(tryAgainButton);
 
       // Assert
-      expect(mockReset).toHaveBeenCalledTimes(3);
+      expect(mockRetry).toHaveBeenCalledTimes(3);
     });
 
     it('should re-log error if error prop changes', async () => {
       // Arrange
-      const { rerender } = render(<GlobalError error={mockError} reset={mockReset} />);
+      const { rerender } = render(<GlobalError error={mockError} retry={mockRetry} />);
       await waitFor(() => {
         expect(logger.error).toHaveBeenCalledTimes(1);
       });
@@ -512,7 +512,7 @@ describe('app/global-error', () => {
 
       // Act: Change error
       const newError = new Error('New error');
-      rerender(<GlobalError error={newError} reset={mockReset} />);
+      rerender(<GlobalError error={newError} retry={mockRetry} />);
 
       // Assert: Should log the new error
       await waitFor(() => {

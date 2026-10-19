@@ -20,10 +20,10 @@ import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 export default function GlobalError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     logger.error('Global error boundary triggered', error, {
@@ -79,7 +79,7 @@ export default function GlobalError({
 
             <div className="mt-6 flex gap-3">
               <button
-                onClick={reset}
+                onClick={retry}
                 className="flex flex-1 items-center justify-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
               >
                 <RotateCcw className="h-4 w-4" />
