@@ -430,6 +430,27 @@ describe('validateAlwaysRun', () => {
     ).toContain('cannot be passed as an argument');
   });
 
+  it.each([
+    ['a parent-directory segment', '../outside/x.test.ts'],
+    ['a parent-directory segment mid-path', 'tests/../../outside/x.test.ts'],
+    ['a POSIX absolute path', '/tmp/x.test.ts'],
+    ['a Windows drive path', 'C:/repo/tests/x.test.ts'],
+    ['a backslash-rooted path', '\\tmp\\x.test.ts'],
+  ])('rejects %s, which resolves outside the repository (#765)', (_label, path) => {
+    // The CLI keeps an entry when `existsSync(resolve(root, path))`, and
+    // `resolve` does not confine to `root` — so these passed every check and the
+    // scoped run silently skipped them.
+    expect(validateAlwaysRun([{ path, reason: 'x'.repeat(30) }])).toContain(
+      'not a path inside the repository'
+    );
+  });
+
+  it('accepts a name that only contains dots, which stays inside the repository', () => {
+    expect(
+      validateAlwaysRun([{ path: 'tests/unit/a..b.test.ts', reason: 'x'.repeat(30) }])
+    ).toBeNull();
+  });
+
   it('rejects an entry with no reason, because the reason is what stops the list rotting', () => {
     expect(validateAlwaysRun([{ path: 'tests/a.test.ts', reason: '   ' }])).toContain('no reason');
   });

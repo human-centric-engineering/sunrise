@@ -405,8 +405,8 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   //
   // Spread rather than left as a second list every caller must remember to
   // union, so every guard already written over `ALWAYS_RUN_TESTS` covers a
-  // fork's entries too: `validateAlwaysRun` below rejects a non-test path or a
-  // bare reason, and `tests/unit/scripts/ci/scoped-tests.test.ts` fails on an
+  // fork's entries too: `validateAlwaysRun` below rejects a non-test path, one
+  // outside the repository, or a bare reason, and `tests/unit/scripts/ci/scoped-tests.test.ts` fails on an
   // entry whose file does not exist, a reason under 20 characters, or a
   // duplicate path. A fork's declaration gets the checks core's gets, in the
   // fork, without a line of its own.
@@ -682,11 +682,30 @@ export function validateAlwaysRun(entries: readonly AlwaysRunEntry[]): string | 
     if (unsafeArgvPaths([entry.path]).length > 0) {
       return `ALWAYS_RUN_TESTS holds "${entry.path}", which cannot be passed as an argument.`;
     }
+    // The prefix also kept every entry inside the repository, and nothing else
+    // does: the CLI keeps an entry when `existsSync(resolve(root, path))`, and
+    // `resolve` happily leaves `root`. So `../other/x.test.ts` or
+    // `/tmp/x.test.ts` passed every check and the scoped run then skipped it,
+    // or ran a file outside the tree (#765). A stale path copied from another
+    // checkout is the ordinary way to write one.
+    if (isOutsideRepo(entry.path)) {
+      return `ALWAYS_RUN_TESTS holds "${entry.path}", which is not a path inside the repository.`;
+    }
     if (entry.reason.trim() === '') {
       return `ALWAYS_RUN_TESTS entry "${entry.path}" has no reason.`;
     }
   }
   return null;
+}
+
+/**
+ * An absolute path (POSIX, a Windows drive, or a backslash root), or one with a
+ * `..` segment. Either can resolve outside the repository; a repo-relative
+ * path with neither cannot.
+ */
+function isOutsideRepo(path: string): boolean {
+  if (path.startsWith('/') || path.startsWith('\\') || /^[A-Za-z]:/.test(path)) return true;
+  return path.split(/[/\\]/).includes('..');
 }
 
 /** The three collaborators {@link selfTestFailure} exercises, injectable for its own test. */
