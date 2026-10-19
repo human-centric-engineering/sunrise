@@ -188,8 +188,9 @@ DELETE /api/v1/users/me
 
 - **401 Unauthorized**: No valid session
 - **400 Validation Error**: Missing or incorrect confirmation
+- **409 Conflict**: The account is already being deleted
 
-**Note**: Deletion cascades to sessions and accounts. Session cookie is cleared automatically.
+**Note**: The deletion is recorded and the account disabled (sessions, API keys, sign-in) before the erasure starts. If the erasure fails, the request returns the error, but the maintenance tick finishes the deletion. See [Pending erasures](../privacy/data-erasure.md#pending-erasures). Session cookie is cleared automatically on success.
 
 ## Export Current User's Data (Subject Access)
 
@@ -598,8 +599,9 @@ DELETE /api/v1/users/:id
 - **400 Bad Request**: Attempting to delete own account
 - **400 Bad Request**: Attempting to delete another admin account
 - **404 Not Found**: User ID does not exist
+- **409 Conflict**: The user is already being deleted
 
-**Note**: Deletion cascades to related records (sessions, accounts) as configured in Prisma schema.
+**Note**: The deletion is recorded and the account disabled before the erasure starts; if the erasure fails, the maintenance tick finishes it. See [Pending erasures](../privacy/data-erasure.md#pending-erasures).
 
 **Admin Protection**: Admins cannot delete other admin accounts. To delete an admin, first demote them to USER role using the PATCH endpoint, then delete.
 

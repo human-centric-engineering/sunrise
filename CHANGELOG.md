@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **Account deletion is recorded before it starts, and finished if the
+  request is not** (t-842). `requestUserErasure()` in
+  `lib/privacy/erasure-requests.ts` records the deletion on the `User` row and
+  disables the account in one transaction (sessions deleted, `AiApiKey`s
+  revoked, sign-in refused), then runs `eraseUser()`. If the erasure fails or
+  the request is killed, the new `pendingErasures` maintenance job
+  (`processPendingErasures()`) finishes it. `User` gains five columns
+  (`erasureRequestedAt`, `erasureRequestedBy`, `erasureReason`,
+  `erasureAttempts`, `erasureNextAttemptAt`; migration
+  `20261019120000_user_pending_erasure`). Also exported: `erasureBackoffMs()`,
+  `ERASURE_LEASE_MS`, `ERASURE_MAX_BACKOFF_MS`, `ERASURES_PER_RUN`, and
+  `refuseIfErasurePending()` from `lib/auth/config.ts`. Both `DELETE` user
+  routes now answer `409` when another attempt already holds the deletion, and
+  the tick's `backgroundTasks` list gains `pendingErasures`. See
+  `.context/privacy/data-erasure.md` → "Pending erasures". **Forks:** a route
+  of yours that deletes an account should call `requestUserErasure()` rather
+  than `eraseUser()`. Your erasure hooks may now run again in a later
+  attempt, so make them idempotent.
+
 - **`lib/api/server-load.ts`: `requireServerData()` and `loadServerData()`,
   for reading internal API routes from a server component** (t-861, #518).
   `requireServerData()` returns a page's main data or throws a

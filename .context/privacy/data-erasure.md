@@ -1,14 +1,18 @@
 # Account Deletion & Right to Erasure
 
 How Sunrise erases a user and the data tied to them (GDPR Art. 17), and what it
-deliberately retains. The entry point is `eraseUser()` in `lib/privacy/erase-user.ts`;
-both delete endpoints route through it.
+deliberately retains. Both delete endpoints call `requestUserErasure()` in
+`lib/privacy/erasure-requests.ts`, which records the deletion and disables the
+account, then runs `eraseUser()` in `lib/privacy/erase-user.ts`. See
+[Pending erasures](#pending-erasures).
 
 ## Quick Reference
 
 | Need                          | Use                                                                   |
 | ----------------------------- | --------------------------------------------------------------------- |
+| Delete an account (a request) | `requestUserErasure()` — `lib/privacy/erasure-requests.ts`            |
 | Erase a user (the only way)   | `eraseUser()` — `lib/privacy/erase-user.ts`                           |
+| Finish pending deletions      | `processPendingErasures()` — the `pendingErasures` maintenance job    |
 | Self-service deletion         | `DELETE /api/v1/users/me` (confirmation `{ confirmation: "DELETE" }`) |
 | Admin deletes another user    | `DELETE /api/v1/users/[id]` (admin only)                              |
 | What cascades vs. is retained | Per-table `onDelete` in `prisma/schema/`                              |
@@ -22,18 +26,80 @@ both delete endpoints route through it.
 await prisma.user.delete({ where: { id: userId } });
 ```
 
-**Do** route through the service:
+**Do** route through the service. A route deleting an account calls
+`requestUserErasure()`, so a request killed part-way is still finished:
 
 ```typescript
-// ✅ Scrub residual PII + write receipt + delete + remove blobs, atomically.
-import { eraseUser } from '@/lib/privacy/erase-user';
+// ✅ Record + disable the account, then scrub residual PII + write receipt +
+// delete + remove blobs. A failure is retried by the maintenance tick.
+import { requestUserErasure } from '@/lib/privacy/erasure-requests';
 
-await eraseUser({
+const result = await requestUserErasure({
   userId: session.user.id,
   actorUserId: session.user.id, // who initiated (self or an admin)
   reason: 'self_service', // 'self_service' | 'admin_action'
 });
+// result.status: 'erased' (with receiptId) | 'in_progress' (another attempt holds it)
 ```
+
+`eraseUser()` with the same arguments is the erasure itself, for callers that
+need no durability, such as the seed and the smoke scripts.
+
+## Pending erasures
+
+`eraseUser()` can take minutes. Its pre-passes redact in committed chunks, and
+its transaction can wait up to about 13 minutes behind a writer holding the
+person's lock (t-840). A host with a short request limit can kill the request
+between the two. Before t-842 that left a live account with part of its data
+already redacted, and nothing that would finish the job. So a deletion is
+recorded before any of that work starts (t-842; design on f-gdpr-erasure,
+2026-10-18):
+
+1. **Record and disable, in one transaction.** `requestUserErasure()` sets the
+   intent on the `User` row (`erasureRequestedAt`, `erasureRequestedBy`,
+   `erasureReason`), deletes the person's sessions and sets `revokedAt` on
+   their `AiApiKey`s. From then on `sessionCreateBeforeHook` refuses sign-in
+   (`refuseIfErasurePending`), and fails closed: if it can't read the row, the
+   sign-in is refused.
+2. **Erase.** `eraseUser()`, unchanged. Its delete removes the intent columns
+   with the row, and the `DataErasureReceipt` is the record that it finished.
+3. **Finish what did not.** The `pendingErasures` platform job
+   (`processPendingErasures()`, every minute on the maintenance tick, system
+   scope) erases every person whose intent is still there once their next
+   attempt is due, with the actor and reason the request stored.
+
+`erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
+claims the row by moving it 20 minutes ahead (`ERASURE_LEASE_MS`, longer than an
+erasure's worst case), and the claim only applies if the row still has the
+values it read. So two retriers, or a retrier and a request, never run the same
+erasure at once. A killed attempt is retried when its lease runs out. A failed
+one is retried after a backoff of 1, 2, 4… minutes, capped at an hour
+(`erasureBackoffMs`). Nothing gives up: an erasure that keeps failing logs an
+error on every attempt. While any erasure is pending, the job reports work, so
+the idle gate never skips past its next attempt.
+
+What a caller sees today: `200` when the erasure finishes within the request,
+`409 CONFLICT` when another attempt holds it, and the original error when it
+fails. In that last case the account is already disabled and the tick
+finishes the job. t-845 adds a request budget and a `202 pending` answer.
+
+**Limits:**
+
+- **No cancelling.** A pending erasure can't be called off (owner ruling,
+  2026-10-18): its pre-passes may already have redacted data, and a cancelled
+  account would be left damaged.
+- **Up to 5 minutes of cached session.** Deleting the session rows does not end
+  a session cookie that is already cached. It can still authenticate until the
+  cache expires, as with any revocation (see
+  [Auth Security](../auth/security.md)).
+- **A session minted mid-claim.** A sign-in that read the row just before the
+  intent committed can create its session just after the sessions were
+  deleted. That session lasts until the next attempt, which deletes sessions
+  again, or until the erasure's cascade.
+- **MCP keys are not revoked.** An `McpApiKey` is the org's service key, kept
+  through erasure (`createdBy` is `SetNull`), not the person's credential.
+- **The tick must run.** On a host without the tick cron, nothing retries
+  (see [scheduling](../orchestration/scheduling.md)).
 
 ## Erase-vs-Retain Model
 
@@ -803,11 +869,11 @@ the subject's PII:
 
 ## Deletion Guards
 
-| Guard                            | Where                       | Rule                                                              |
-| -------------------------------- | --------------------------- | ----------------------------------------------------------------- |
-| **Last admin** (`LAST_ADMIN`)    | `DELETE /api/v1/users/me`   | An admin may self-delete only if another **human** admin remains. |
-| **No admin-deletes-admin**       | `DELETE /api/v1/users/[id]` | Must demote the target to `USER` first.                           |
-| **No self-delete (admin route)** | `DELETE /api/v1/users/[id]` | Admins delete their own account via `/users/me`, not this route.  |
+| Guard                            | Where                       | Rule                                                                                                              |
+| -------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Last admin** (`LAST_ADMIN`)    | `DELETE /api/v1/users/me`   | An admin may self-delete only if another **human** admin remains, not counting one whose own deletion is pending. |
+| **No admin-deletes-admin**       | `DELETE /api/v1/users/[id]` | Must demote the target to `USER` first.                                                                           |
+| **No self-delete (admin route)** | `DELETE /api/v1/users/[id]` | Admins delete their own account via `/users/me`, not this route.                                                  |
 
 The asymmetry is deliberate: the admin route blocks deleting any admin (demote
 first), but self-delete has no demotion gate — so the **last-admin** check lives
