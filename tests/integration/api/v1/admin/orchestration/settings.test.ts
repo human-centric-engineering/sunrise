@@ -143,6 +143,7 @@ function makeSettingsRow(
     outputGuardMode: string | null;
     citationGuardMode: string | null;
     webhookRetentionDays: number | null;
+    webhookDlqRetentionDays: number | null;
     costLogRetentionDays: number | null;
     auditLogRetentionDays: number | null;
     executionRetentionDays: number | null;
@@ -171,6 +172,7 @@ function makeSettingsRow(
     outputGuardMode: 'log_only' as string | null,
     citationGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
+    webhookDlqRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
     auditLogRetentionDays: null as number | null,
     executionRetentionDays: null as number | null,
@@ -533,6 +535,38 @@ describe('Admin Orchestration — /settings', () => {
       expect(res.status).toBe(200);
       const body = await parseJson<{ data: { webhookRetentionDays: number | null } }>(res);
       expect(body.data.webhookRetentionDays).toBe(30);
+    });
+
+    it('writes webhookDlqRetentionDays and returns it (#838)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ webhookDlqRetentionDays: 90 }) as never
+      );
+
+      const res = await PATCH(makePatch({ webhookDlqRetentionDays: 90 }));
+
+      expect(res.status).toBe(200);
+      const call = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0][0];
+      expect(call.update).toEqual({ webhookDlqRetentionDays: 90 });
+      const body = await parseJson<{ data: { webhookDlqRetentionDays: number | null } }>(res);
+      expect(body.data.webhookDlqRetentionDays).toBe(90);
+    });
+
+    it('clears webhookDlqRetentionDays back to the webhook window with null', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ webhookDlqRetentionDays: null }) as never
+      );
+
+      const res = await PATCH(makePatch({ webhookDlqRetentionDays: null }));
+
+      expect(res.status).toBe(200);
+      const call = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0][0];
+      expect(call.update).toEqual({ webhookDlqRetentionDays: null });
+    });
+
+    it('rejects webhookDlqRetentionDays above 365 (400)', async () => {
+      const res = await PATCH(makePatch({ webhookDlqRetentionDays: 366 }));
+      expect(res.status).toBe(400);
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
     });
 
     it('updates costLogRetentionDays', async () => {

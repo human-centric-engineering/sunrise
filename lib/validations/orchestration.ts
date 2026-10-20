@@ -2984,6 +2984,14 @@ export const updateOrchestrationSettingsSchema = z
       .max(365, 'Webhook retention must be at most 365 days')
       .nullable()
       .optional(),
+    /** `null` prunes dead-lettered deliveries on `webhookRetentionDays`. */
+    webhookDlqRetentionDays: z
+      .number()
+      .int()
+      .positive('Failed webhook retention must be a positive number of days')
+      .max(365, 'Failed webhook retention must be at most 365 days')
+      .nullable()
+      .optional(),
     costLogRetentionDays: z
       .number()
       .int()
@@ -3106,6 +3114,7 @@ export const updateOrchestrationSettingsSchema = z
       v.outputGuardMode !== undefined ||
       v.citationGuardMode !== undefined ||
       v.webhookRetentionDays !== undefined ||
+      v.webhookDlqRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
       v.auditLogRetentionDays !== undefined ||
       v.executionRetentionDays !== undefined ||

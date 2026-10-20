@@ -175,6 +175,7 @@ async function readConfig(includeShared: boolean): Promise<BackupPayload> {
           outputGuardMode: true,
           citationGuardMode: true,
           webhookRetentionDays: true,
+          webhookDlqRetentionDays: true,
           costLogRetentionDays: true,
           auditLogRetentionDays: true,
           executionRetentionDays: true,

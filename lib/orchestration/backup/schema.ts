@@ -167,6 +167,7 @@ const settingsBackupSchema = z.object({
   outputGuardMode: z.string().nullable(),
   citationGuardMode: z.string().nullable().optional().default(null),
   webhookRetentionDays: z.number().nullable(),
+  webhookDlqRetentionDays: z.number().nullable().optional().default(null),
   costLogRetentionDays: z.number().nullable(),
   auditLogRetentionDays: z.number().nullable().optional().default(null),
   executionRetentionDays: z.number().nullable().optional().default(null),

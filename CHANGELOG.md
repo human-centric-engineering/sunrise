@@ -867,6 +867,15 @@ release process.
 
 ### Fixed
 
+- **Operators can set how long failed webhook deliveries are kept** (t-884,
+  #838). `webhookDlqRetentionDays` on `AiOrchestrationSettings` was read by
+  the retention prune but nothing could write it globally, so dead-lettered
+  deliveries were always pruned on the webhook window. `PATCH
+  /api/v1/admin/orchestration/settings` now accepts it (a positive integer up
+  to 365, or `null` to use `webhookRetentionDays`), `GET` and
+  `OrchestrationSettings` return it, the Settings → Retention card has a
+  "Failed webhook retention" field, and backup export / import carry it. A
+  backup made before this imports it as `null`.
 - **The API response helpers no longer invite a `public` `Cache-Control`
   override** (t-881, #751). The `successResponse()` docblock and
   `.context/api/headers.md` said a route could replace `private, no-cache`

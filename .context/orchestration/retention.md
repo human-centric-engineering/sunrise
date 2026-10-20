@@ -36,9 +36,11 @@ subject erasure is separate — see
 | Admin audit logs _(system sweep)_                                                            | `auditLogRetentionDays`              | global settings | Max 3650 days (10y) for compliance regimes.     |
 | MCP audit logs _(system sweep)_                                                              | `McpServerConfig.auditRetentionDays` | MCP config      | **Always on** (default 90) — see below.         |
 
-Every global window is **nullable: `null` = keep forever** (skip that prune).
-The two retention columns added for executions and evaluations live on
-`AiOrchestrationSettings` and are editable in the admin Settings → Retention card.
+Every global window is **nullable: `null` = keep forever** (skip that prune),
+except `webhookDlqRetentionDays`, where `null` means "use `webhookRetentionDays`".
+All six global window columns live on `AiOrchestrationSettings` and are editable in the
+admin Settings → Retention card, through `PATCH /api/v1/admin/orchestration/settings`,
+and round-trip through backup export / import.
 
 The five windows the tenant sweep uses are **defaults an org can override** —
 see below. The two on the system sweep cannot be: those rows have no org.

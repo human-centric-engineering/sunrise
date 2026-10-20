@@ -638,6 +638,31 @@ describe('importOrchestrationConfig', () => {
     expect(invalidateSettingsCache).toHaveBeenCalledOnce();
   });
 
+  it('restores the failed-webhook retention window (#838)', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), webhookDlqRetentionDays: 45 } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.create.webhookDlqRetentionDays).toBe(45);
+    expect(call.update.webhookDlqRetentionDays).toBe(45);
+  });
+
+  it('restores a backup from before the failed-webhook window as null (the webhook window)', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+
+    const payload = { ...minPayload, data: { ...minPayload.data, settings: makeSettings() } };
+    expect(payload.data.settings).not.toHaveProperty('webhookDlqRetentionDays');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.update).toHaveProperty('webhookDlqRetentionDays', null);
+  });
+
   it('sets settingsUpdated: false when settings is null', async () => {
     const payload = { ...minPayload, data: { ...minPayload.data, settings: null } };
     const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);

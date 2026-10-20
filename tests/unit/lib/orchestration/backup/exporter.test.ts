@@ -262,6 +262,26 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.settings?.globalMonthlyBudgetUsd).toBeNull();
   });
 
+  it('reads and exports the failed-webhook retention window (#838)', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({ ...settingsRow, webhookDlqRetentionDays: 120 });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    // The mock ignores `select`, so assert the column is actually asked for.
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ webhookDlqRetentionDays: true }),
+      })
+    );
+    expect(payload.data.settings?.webhookDlqRetentionDays).toBe(120);
+  });
+
   it('webhook entries do not have a secret field (secrets are never exported)', async () => {
     // The Prisma select excludes secret — the row never has it
     mockFindMany
