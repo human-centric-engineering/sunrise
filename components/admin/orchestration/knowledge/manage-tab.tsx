@@ -264,6 +264,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  // Counts preview opens from any path (Review or upload). A Review response
+  // that arrives after a later open, or after the row was deleted, is dropped
+  // rather than replacing what the admin is now looking at.
+  const previewRequestRef = useRef(0);
   // Bumped on every open so the modal remounts: reopening the same document
   // must show its stored text, not edits abandoned in the last session.
   const [pdfPreviewKey, setPdfPreviewKey] = useState(0);
@@ -386,6 +390,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const handleDelete = useCallback(
     async (docId: string) => {
+      // A Review still loading for any row is dropped, not opened over the list.
+      previewRequestRef.current += 1;
+      setReviewingId(null);
       setDeletingId(docId);
       setDeleteError(null);
       try {
@@ -415,6 +422,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     // Close the upload dialog so the PDF preview gets a single, unstacked
     // modal context. The operator returns to the document list (with the
     // preview overlay) rather than the upload zone behind the preview.
+    previewRequestRef.current += 1;
+    setReviewingId(null);
     setUploadOpen(false);
     setPdfPreview(data);
     setPdfPreviewKey((k) => k + 1);
@@ -424,11 +433,14 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // Reopen the preview for a document left in pending_review, rebuilt from the
   // text the upload already stored (#807).
   const handleReviewPending = useCallback(async (docId: string) => {
+    const request = ++previewRequestRef.current;
+    const isStale = () => previewRequestRef.current !== request;
     setReviewingId(docId);
     setReviewError(null);
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId));
       const body: unknown = await res.json().catch(() => null);
+      if (isStale()) return;
       if (!res.ok) {
         const raw = errorBodySchema.safeParse(body);
         setReviewError(
@@ -448,9 +460,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
       setPdfPreviewKey((k) => k + 1);
       setPdfPreviewOpen(true);
     } catch {
-      setReviewError('Network error — could not reach the server.');
+      if (!isStale()) setReviewError('Network error — could not reach the server.');
     } finally {
-      setReviewingId(null);
+      if (!isStale()) setReviewingId(null);
     }
   }, []);
 
@@ -1181,9 +1193,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    // One review loads at a time, so a slower earlier
-                                    // response cannot replace the preview just opened.
-                                    disabled={reviewingId !== null}
+                                    disabled={reviewingId === doc.id}
                                     onClick={() => void handleReviewPending(doc.id)}
                                   >
                                     <Eye className="mr-1 h-3 w-3" />
@@ -1381,7 +1391,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           refreshAll();
           void fetchEmbeddingStatus();
         }}
-        onDiscarded={refreshAll}
+        onDiscarded={() => {
+          refreshAll();
+          void fetchEmbeddingStatus();
+        }}
       />
       <DocumentChunksModal
         documentId={viewChunksId}

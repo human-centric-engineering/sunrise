@@ -147,6 +147,10 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The notice describes one export; it goes when the selection it described does.
+  useEffect(() => {
+    setExportNotice(null);
+  }, [selected]);
   const [deleteTarget, setDeleteTarget] = useState<AiAgentListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [duplicateSource, setDuplicateSource] = useState<AiAgent | null>(null);

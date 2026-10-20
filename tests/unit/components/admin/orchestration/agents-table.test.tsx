@@ -530,6 +530,31 @@ describe('AgentsTable', () => {
       ).toBeInTheDocument();
     });
 
+    it('clears the left-out notice when the selection changes', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        if (toUrlString(url).includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(
+            new Response('{}', { status: 200, headers: { 'X-Skipped-System-Agents': '1' } })
+          );
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      await user.click(screen.getAllByRole('checkbox')[1]);
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+      expect(await screen.findByText(/1 built-in agent was left out/)).toBeInTheDocument();
+
+      await user.click(screen.getAllByRole('checkbox')[2]);
+
+      await waitFor(() =>
+        expect(screen.queryByText(/left out of the export/)).not.toBeInTheDocument()
+      );
+    });
+
     it('shows no notice when nothing was left out', async () => {
       const user = userEvent.setup();
       mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {

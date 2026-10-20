@@ -982,16 +982,37 @@ describe('ManageTab', () => {
     expect(screen.queryByDisplayValue('Abandoned edit')).not.toBeInTheDocument();
   });
 
-  it('disables every Review button while one review is loading', async () => {
+  it('ignores a slower earlier Review response once a later one has opened', async () => {
     const user = userEvent.setup();
-    let release: (value: unknown) => void = () => undefined;
-    mockFetch.mockImplementation((url: string) =>
-      typeof url === 'string' && url.endsWith('/knowledge/documents/doc-a')
-        ? new Promise((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
-    );
+    let releaseA: (value: unknown) => void = () => undefined;
+    const docResponse = (id: string, text: string) => ({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            document: {
+              id,
+              name: id,
+              fileName: `${id}.pdf`,
+              status: 'pending_review',
+              metadata: { extractedText: text },
+            },
+          },
+        }),
+    });
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.endsWith('/knowledge/documents/doc-a')) {
+        return new Promise((resolve) => {
+          releaseA = resolve;
+        });
+      }
+      if (typeof url === 'string' && url.endsWith('/knowledge/documents/doc-b')) {
+        return Promise.resolve(docResponse('doc-b', 'Text of B'));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
     const docs = [
       makeDocument({ id: 'doc-a', name: 'PDF A', status: 'pending_review' }),
       makeDocument({ id: 'doc-b', name: 'PDF B', status: 'pending_review' }),
@@ -1000,12 +1021,15 @@ describe('ManageTab', () => {
 
     const [reviewA, reviewB] = screen.getAllByRole('button', { name: /review/i });
     await user.click(reviewA);
+    await user.click(reviewB);
+    expect(await screen.findByDisplayValue('Text of B')).toBeInTheDocument();
 
-    await waitFor(() => expect(reviewB).toBeDisabled());
-    expect(reviewA).toBeDisabled();
+    await act(async () => {
+      releaseA(docResponse('doc-a', 'Text of A'));
+    });
 
-    release({ ok: false, status: 404, json: () => Promise.resolve(null) });
-    await waitFor(() => expect(reviewB).not.toBeDisabled());
+    expect(screen.getByDisplayValue('Text of B')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Text of A')).not.toBeInTheDocument();
   });
 
   it('says the preview cannot be rebuilt when the stored text is missing', async () => {

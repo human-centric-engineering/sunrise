@@ -372,9 +372,10 @@ DELETE /api/v1/admin/invitations/jane%40example.com
 
 **Error Responses**:
 
+- **400 Bad Request** (`VALIDATION_ERROR`): the segment has a malformed percent-escape or is not an email address (#954)
 - **404 Not Found**: Invitation not found or already expired
 
-**Note**: The email parameter must be URL-encoded when it contains special characters like `@`.
+**Note**: The email parameter must be URL-encoded when it contains special characters like `@`. It is trimmed and lowercased before the lookup, as every invitation's address is stored, so `Jane@Example.com` deletes the invitation for `jane@example.com`.
 
 ## Common Error Responses
 
