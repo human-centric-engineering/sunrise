@@ -98,7 +98,7 @@ describe('AdminUsersPage', () => {
 
     expect(screen.getByTestId('user-management-tabs')).toBeInTheDocument();
     expect(tabsProps).toHaveBeenCalledWith({
-      users: [{ ...USER, createdAt: new Date(USER.createdAt) }],
+      users: [{ ...USER, createdAt: new Date(USER.createdAt), erasureRequestedAt: null }],
       usersMeta,
       invitations: [
         {
@@ -168,7 +168,7 @@ describe('AdminUsersPage', () => {
 
     expect(screen.getByTestId('user-management-tabs')).toBeInTheDocument();
     expect(tabsProps).toHaveBeenCalledWith({
-      users: [{ ...USER, createdAt: new Date(USER.createdAt) }],
+      users: [{ ...USER, createdAt: new Date(USER.createdAt), erasureRequestedAt: null }],
       usersMeta: { page: 1, limit: 20, total: 1, totalPages: 1 },
       // null, not [] — an empty tab would read as "none pending".
       invitations: null,

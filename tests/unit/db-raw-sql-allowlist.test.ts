@@ -166,6 +166,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken by a writer and by erasure’s wait outside its transaction, which first sets `lock_timeout` with `set_config` (a bound parameter, transaction-local); its `_shared` form, which a notification send and an approval pause take so they exclude only an erasure, not each other (t-841); and `pg_try_advisory_xact_lock`, which erasure and the scheduler tick try (t-839, t-840). Prisma has no call for any of them, and they touch no table, so RLS has nothing to filter',
   },
   {
+    file: 'lib/privacy/erasure-deadline.ts',
+    calls: 1,
+    why: 'an erasure with a deadline (t-845) caps its own transaction: `set_config` of `statement_timeout` and `lock_timeout`, transaction-local, with a bound parameter. Prisma has no call for it, and it touches no table, so RLS has nothing to filter',
+  },
+  {
     file: 'lib/privacy/run-recipients.ts',
     calls: 6,
     why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under; and erasure's pass after its commit, which lists the runs not finished or written since by id and then locks each one by id (system-scoped, as every erasure read)",
