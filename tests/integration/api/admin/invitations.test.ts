@@ -643,14 +643,14 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
-    it('looks up a valid address exactly as given, without changing its case', async () => {
+    it('lowercases the address, as invitations are stored', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       const response = await DELETE(createMockRequest(), createRouteContext('Alice@Example.com'));
 
       expect(response.status).toBe(404);
-      expect(getValidInvitation).toHaveBeenCalledWith('Alice@Example.com');
+      expect(getValidInvitation).toHaveBeenCalledWith('alice@example.com');
     });
   });
 

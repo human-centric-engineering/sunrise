@@ -6,16 +6,13 @@
  * Authentication: Required (Admin role only)
  */
 
-import { z } from 'zod';
-
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validatePathParam } from '@/lib/api/validation';
+import { emailSchema } from '@/lib/validations/auth';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { deleteInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
-
-const invitationEmailSchema = z.string().email('Invalid email address').max(255);
 
 /**
  * DELETE /api/v1/admin/invitations/:email
@@ -51,8 +48,9 @@ export const DELETE = withAdminAuth<{ email: string }>(async (request, session, 
       email: ['The address contains a malformed percent-escape'],
     });
   }
-  // No trim or lowercase: the lookup must match the address exactly as stored.
-  const decodedEmail = validatePathParam(decoded, invitationEmailSchema, {
+  // The schema every invitation is created through, so the trimmed, lowercased
+  // address matches the one stored.
+  const decodedEmail = validatePathParam(decoded, emailSchema, {
     label: 'email address',
     field: 'email',
   });
