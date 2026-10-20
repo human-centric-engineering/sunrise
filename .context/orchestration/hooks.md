@@ -198,7 +198,7 @@ emitHookEvent('workflow.completed', {
 });
 ```
 
-`emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch.
+`emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch. The dispatch, and each hook's first delivery attempt, is still held past the response by Next's `after()` (`keepRunningAfterResponse`, t-903), so on a serverless host it is not frozen part-way. Outside a request it runs on the process as before.
 
 ## Webhook Action
 
