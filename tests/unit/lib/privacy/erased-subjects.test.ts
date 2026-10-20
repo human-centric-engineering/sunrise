@@ -19,6 +19,7 @@ import {
   ERASED_SUBJECT_MESSAGE,
   findErasedSubjects,
   lockSubjects,
+  matchErasedSubjects,
   refuseErasedSubjects,
   stringsIn,
   subjectEmailHash,
@@ -330,6 +331,28 @@ describe('findErasedSubjects', () => {
     expect(result).toEqual({ addresses: [], userIds: [] });
     expect(ctx.executeRaw).not.toHaveBeenCalled();
     expect(ctx.receiptFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('matchErasedSubjects (t-843)', () => {
+  it('matches as findErasedSubjects does, without taking a lock', async () => {
+    const ctx = makeTx();
+    ctx.receiptFindMany.mockResolvedValue([
+      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
+      {
+        subjectUserId: 'other',
+        subjectEmailHash: sha256Hex('gone@example.com'),
+        metadata: { addressVerified: true },
+      },
+    ]);
+
+    const result = await matchErasedSubjects(ctx.tx, {
+      addresses: [' Gone@Example.com '],
+      userIds: ['gone-user'],
+    });
+
+    expect(result).toEqual({ addresses: ['gone@example.com'], userIds: ['gone-user'] });
+    expect(ctx.executeRaw).not.toHaveBeenCalled();
   });
 });
 
