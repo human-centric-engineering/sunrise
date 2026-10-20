@@ -44,6 +44,7 @@ Agents can override both guard modes in their own configuration. "None" maps to 
 | Field                               | Type   | Description                                                                                                                    |
 | ----------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | Webhook log retention (days)        | Number | Auto-cleanup webhook delivery logs. Blank = keep forever. Max 365                                                              |
+| Failed webhook retention (days)     | Number | Auto-cleanup deliveries that ran out of retries (the DLQ). Blank = use the webhook log retention. Max 365                      |
 | Cost log retention (days)           | Number | Auto-cleanup cost logs. Blank = keep forever. Max 365                                                                          |
 | Audit log retention (days)          | Number | Auto-cleanup admin audit logs. Blank = keep forever. Max 3650 (10 years)                                                       |
 | Workflow execution retention (days) | Number | Auto-cleanup terminal workflow executions (+ steps, cost logs, inbound payloads). In-flight runs never pruned. Blank = forever |

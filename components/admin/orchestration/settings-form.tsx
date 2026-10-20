@@ -69,6 +69,7 @@ export interface OrchestrationSettings {
     bm25Weight?: number;
   } | null;
   webhookRetentionDays: number | null;
+  webhookDlqRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
   executionRetentionDays: number | null;
@@ -124,6 +125,7 @@ const settingsFormSchema = z
     stuckExecutionThresholdMins: nullableNumber.pipe(z.number().int().min(1).max(1440).nullable()),
     // Retention
     webhookRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
+    webhookDlqRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
     costLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
     auditLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
     executionRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
@@ -290,6 +292,7 @@ export function SettingsForm({
       maxMessagesPerConversation: toStr(initialSettings.maxMessagesPerConversation),
       stuckExecutionThresholdMins: toStr(initialSettings.stuckExecutionThresholdMins ?? null),
       webhookRetentionDays: toStr(initialSettings.webhookRetentionDays),
+      webhookDlqRetentionDays: toStr(initialSettings.webhookDlqRetentionDays),
       costLogRetentionDays: toStr(initialSettings.costLogRetentionDays),
       auditLogRetentionDays: toStr(initialSettings.auditLogRetentionDays),
       executionRetentionDays: toStr(initialSettings.executionRetentionDays),
@@ -390,6 +393,7 @@ export function SettingsForm({
             ? { stuckExecutionThresholdMins: values.stuckExecutionThresholdMins }
             : {}),
           webhookRetentionDays: values.webhookRetentionDays,
+          webhookDlqRetentionDays: values.webhookDlqRetentionDays,
           costLogRetentionDays: values.costLogRetentionDays,
           auditLogRetentionDays: values.auditLogRetentionDays,
           executionRetentionDays: values.executionRetentionDays,
@@ -839,6 +843,28 @@ export function SettingsForm({
             />
             {errors.webhookRetentionDays && (
               <p className="text-xs text-red-600">{errors.webhookRetentionDays.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="webhookDlqRetentionDays" className="flex items-center gap-1">
+              Failed webhook retention (days)
+              <FieldHelp title="Failed webhook delivery cleanup">
+                Webhook deliveries that ran out of retries are deleted after this many days. Set it
+                longer than webhook log retention to keep failures around for replay. Leave blank to
+                use the webhook log retention above.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="webhookDlqRetentionDays"
+              type="number"
+              min={1}
+              max={365}
+              placeholder="Same as webhook log retention"
+              {...register('webhookDlqRetentionDays')}
+            />
+            {errors.webhookDlqRetentionDays && (
+              <p className="text-xs text-red-600">{errors.webhookDlqRetentionDays.message}</p>
             )}
           </div>
 

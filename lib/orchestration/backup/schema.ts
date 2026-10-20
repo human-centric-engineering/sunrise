@@ -167,6 +167,10 @@ const settingsBackupSchema = z.object({
   outputGuardMode: z.string().nullable(),
   citationGuardMode: z.string().nullable().optional().default(null),
   webhookRetentionDays: z.number().nullable(),
+  // Bounded like the settings PATCH: 0 or a negative window would prune every
+  // dead-lettered delivery on the next tick. Left absent (not defaulted) so a
+  // backup from before this field restores without touching the current value.
+  webhookDlqRetentionDays: z.number().int().positive().max(365).nullable().optional(),
   costLogRetentionDays: z.number().nullable(),
   auditLogRetentionDays: z.number().nullable().optional().default(null),
   executionRetentionDays: z.number().nullable().optional().default(null),

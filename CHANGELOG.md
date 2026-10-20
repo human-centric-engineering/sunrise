@@ -879,6 +879,16 @@ release process.
   `lib/privacy/erased-subjects.ts` (`findErasedSubjects()` without the locks).
   Each run write now opens a transaction, about 2 ms more per step on a local
   Postgres. See `.context/privacy/data-erasure.md` → "And what it writes back".
+- **Operators can set how long failed webhook deliveries are kept** (t-884,
+  #838). `webhookDlqRetentionDays` on `AiOrchestrationSettings` was read by
+  the retention prune but nothing could write it globally, so dead-lettered
+  deliveries were always pruned on the webhook window. `PATCH
+  /api/v1/admin/orchestration/settings` now accepts it (a positive integer up
+  to 365, or `null` to use `webhookRetentionDays`), `GET` and
+  `OrchestrationSettings` return it, the Settings → Retention card has a
+  "Failed webhook retention" field, and backup export / import carry it,
+  held to the same 1–365 bound. Restoring a backup made before this leaves
+  the current value as it is.
 - **The API response helpers no longer invite a `public` `Cache-Control`
   override** (t-881, #751). The `successResponse()` docblock and
   `.context/api/headers.md` said a route could replace `private, no-cache`

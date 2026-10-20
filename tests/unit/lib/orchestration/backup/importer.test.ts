@@ -638,6 +638,43 @@ describe('importOrchestrationConfig', () => {
     expect(invalidateSettingsCache).toHaveBeenCalledOnce();
   });
 
+  it('restores the failed-webhook retention window (#838)', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), webhookDlqRetentionDays: 45 } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.create.webhookDlqRetentionDays).toBe(45);
+    expect(call.update.webhookDlqRetentionDays).toBe(45);
+  });
+
+  it('leaves the current failed-webhook window alone when the backup predates it', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+
+    const payload = { ...minPayload, data: { ...minPayload.data, settings: makeSettings() } };
+    expect(payload.data.settings).not.toHaveProperty('webhookDlqRetentionDays');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    // Undefined is Prisma's "do not write"; null would clear a window the
+    // operator set after the backup was taken.
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.update.webhookDlqRetentionDays).toBeUndefined();
+    expect(call.update.webhookRetentionDays).toBeNull();
+  });
+
+  it.each([0, -1, 1.5, 366])('refuses a backup whose failed-webhook window is %s', async (days) => {
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), webhookDlqRetentionDays: days } },
+    };
+    await expect(importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE)).rejects.toThrow();
+    expect(mockTx.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+  });
+
   it('sets settingsUpdated: false when settings is null', async () => {
     const payload = { ...minPayload, data: { ...minPayload.data, settings: null } };
     const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);

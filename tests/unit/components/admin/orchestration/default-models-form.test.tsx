@@ -79,6 +79,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   outputGuardMode: 'log_only',
   citationGuardMode: 'log_only',
   webhookRetentionDays: null,
+  webhookDlqRetentionDays: null,
   costLogRetentionDays: null,
   auditLogRetentionDays: null,
   executionRetentionDays: null,

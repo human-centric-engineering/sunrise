@@ -273,6 +273,9 @@ export const PATCH = withAdminAuth(
     if (body.webhookRetentionDays !== undefined) {
       updateData.webhookRetentionDays = body.webhookRetentionDays;
     }
+    if (body.webhookDlqRetentionDays !== undefined) {
+      updateData.webhookDlqRetentionDays = body.webhookDlqRetentionDays;
+    }
     if (body.costLogRetentionDays !== undefined) {
       updateData.costLogRetentionDays = body.costLogRetentionDays;
     }

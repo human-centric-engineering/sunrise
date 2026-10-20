@@ -58,6 +58,7 @@ const FULL_SETTINGS: OrchestrationSettings = {
   approvalDefaultAction: 'deny',
   searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2 },
   webhookRetentionDays: 30,
+  webhookDlqRetentionDays: 120,
   // Cost-log retention must be >= execution retention (#456) or the form
   // refuses to submit — an execution outliving its cost logs shows a total
   // with an empty breakdown.
@@ -80,6 +81,7 @@ const EMPTY_SETTINGS: OrchestrationSettings = {
   approvalDefaultAction: null,
   searchConfig: null,
   webhookRetentionDays: null,
+  webhookDlqRetentionDays: null,
   costLogRetentionDays: null,
   auditLogRetentionDays: null,
   executionRetentionDays: null,
@@ -428,6 +430,59 @@ describe('SettingsForm', () => {
 
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ── Failed webhook retention (#838) ─────────────────────────────────────
+
+  describe('Failed webhook retention', () => {
+    it('loads the saved window and sends an edited one', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const input = document.getElementById('webhookDlqRetentionDays');
+      expect(input).toHaveValue(120);
+      await user.clear(input!);
+      await user.type(input!, '200');
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({ webhookDlqRetentionDays: 200 }),
+          })
+        );
+      });
+    });
+
+    it('sends null when cleared, so failures follow the webhook window', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      await user.clear(document.getElementById('webhookDlqRetentionDays')!);
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({ webhookDlqRetentionDays: null }),
+          })
+        );
       });
     });
   });
