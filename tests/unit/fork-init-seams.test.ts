@@ -14,10 +14,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { scaffoldSourceFiles } from '@/tests/helpers/app-scaffolds';
-
-const APP_DIR = join(process.cwd(), 'lib', 'app');
+import { join, sep } from 'node:path';
+import { APP_DIR, scaffoldSourceFiles } from '@/tests/helpers/app-scaffolds';
 const DOC = join(process.cwd(), '.context', 'architecture', 'fork-init-seams.md');
 
 /**
@@ -115,11 +113,11 @@ const FILES = [
   // Root-level, and the only consumer of the tenant-resolver registrar (§106).
   // The proxy is invisible to a lib/components/app scan the same way.
   join(process.cwd(), 'proxy.ts'),
-].filter((f) => !f.startsWith(APP_DIR));
+].filter((f) => !f.startsWith(APP_DIR + sep));
 
 /** Everything `FILES` covers, plus `scripts/` — see the registrar check below. */
 const REGISTRAR_FILES = [...FILES, ...sourceFiles(join(process.cwd(), 'scripts'))].filter(
-  (f) => !f.startsWith(APP_DIR)
+  (f) => !f.startsWith(APP_DIR + sep)
 );
 
 describe('fork init seams', () => {
