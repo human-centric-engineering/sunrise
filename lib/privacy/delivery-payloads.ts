@@ -594,18 +594,27 @@ const PRE_PASS_CHUNK = 5_000;
  * statement returns, so a caller still knows what was written when a later
  * chunk throws. Each chunk commits on its own only when `client` is not inside
  * a transaction, which is how `eraseUser()` calls it.
+ *
+ * `runStatement`, when given, runs each statement — the match and each
+ * chunk — in place of running it on `client` directly. `eraseUser()` passes
+ * one that runs it in a transaction of its own, capped at the time its
+ * deadline leaves (t-845); a chunk still commits on its own that way.
  */
 export async function preRedactSubjectFromDeliveries(
   client: RawClient,
   table: DeliveryTable,
   userId: string,
-  onCommitted: (changed: number) => void = () => undefined
+  onCommitted: (changed: number) => void = () => undefined,
+  runStatement: <T>(statement: (c: RawClient) => Promise<T>) => Promise<T> = (statement) =>
+    statement(client)
 ): Promise<number> {
-  const matched = await client.$queryRaw<Array<{ id: string; activity: boolean }>>`
+  const matched = await runStatement(
+    (c) => c.$queryRaw<Array<{ id: string; activity: boolean }>>`
     SELECT DISTINCT ON (id) id, activity
       FROM (${matchArms(table, userId, Prisma.sql`d.id`)}) matched
      ORDER BY id, activity DESC
-  `;
+  `
+  );
   const t = TABLES[table];
   let changed = 0;
   for (let i = 0; i < matched.length; i += PRE_PASS_CHUNK) {
@@ -615,7 +624,7 @@ export async function preRedactSubjectFromDeliveries(
         FROM unnest(${chunk.map((m) => m.id)}::text[], ${chunk.map((m) => m.activity)}::boolean[])
              AS w(id, activity)
         JOIN ${t} d ON d.id = w.id`;
-    const written = await client.$executeRaw(redactUpdate(table, userId, source));
+    const written = await runStatement((c) => c.$executeRaw(redactUpdate(table, userId, source)));
     changed += written;
     onCommitted(written);
   }

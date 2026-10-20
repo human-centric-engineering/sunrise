@@ -184,13 +184,27 @@ DELETE /api/v1/users/me
 }
 ```
 
+**Response** (202 Accepted) — the erasure did not finish within the request's budget (about 8 s; `ERASURE_REQUEST_BUDGET_MS`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "pending": true,
+    "requestedAt": "2026-10-20T09:15:00.000Z"
+  }
+}
+```
+
+The account is already disabled and the person signed out. The maintenance tick finishes the erasure, usually within a few minutes; nothing more is needed from the caller.
+
 **Error Responses**:
 
 - **401 Unauthorized**: No valid session
 - **400 Validation Error**: Missing or incorrect confirmation
 - **409 Conflict**: The account is already being deleted
 
-**Note**: The deletion is recorded and the account disabled (sessions, API keys, sign-in) before the erasure starts. If the erasure fails, the request returns the error, but the maintenance tick finishes the deletion. See [Pending erasures](../privacy/data-erasure.md#pending-erasures). Session cookie is cleared automatically on success.
+**Note**: The deletion is recorded and the account disabled (sessions, API keys, sign-in) before the erasure starts. If the erasure fails, the request returns the error, but the maintenance tick finishes the deletion. See [Pending erasures](../privacy/data-erasure.md#pending-erasures). Session cookie is cleared automatically on a 200 or a 202.
 
 ## Export Current User's Data (Subject Access)
 
@@ -433,7 +447,8 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
       "name": "John Doe",
       "email": "john@example.com",
       "role": "USER",
-      "createdAt": "2025-01-01T08:00:00.000Z"
+      "createdAt": "2025-01-01T08:00:00.000Z",
+      "erasureRequestedAt": null
     }
   ],
   "meta": {
@@ -591,6 +606,21 @@ DELETE /api/v1/users/:id
   }
 }
 ```
+
+**Response** (202 Accepted) — the erasure did not finish within the request's budget (about 8 s; `ERASURE_REQUEST_BUDGET_MS`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "clxxxx",
+    "pending": true,
+    "requestedAt": "2026-10-20T09:15:00.000Z"
+  }
+}
+```
+
+The account is already disabled. The maintenance tick finishes the erasure; until then the user list shows the user with `erasureRequestedAt` set.
 
 **Error Responses**:
 

@@ -18,6 +18,12 @@
  *     person. The audit row it writes cannot name the erased admin (a foreign
  *     key to `User`), so it names the person instead, and loses that when the
  *     person's row goes.
+ *   • **An erasure longer than the request's budget answers pending** (t-845).
+ *     Once while another session holds the person's lock (the wait is cut
+ *     short), and once while a statement in the transaction runs past the
+ *     budget (the statement is cancelled). Each request answers `pending`
+ *     within the budget, leaves the account disabled with its next attempt
+ *     due at once, and the retrier then erases it.
  *
  * Refuses to run if the database already holds a pending erasure it did not
  * create, since the retrier would erase that person too. Everything it
@@ -34,6 +40,7 @@ import {
   processPendingErasures,
   requestUserErasure,
 } from '@/lib/privacy/erasure-requests';
+import { lockSubjects } from '@/lib/privacy/erased-subjects';
 import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 import { refuseIfErasurePending } from '@/lib/auth/config';
 import { eraseUser } from '@/lib/privacy/erase-user';
@@ -61,6 +68,13 @@ function check(cond: boolean, msg: string): void {
 
 /** People whose erasure fails on its first try. */
 const failOnce = new Set<string>();
+/** People whose erasure transaction runs a statement past any short budget. */
+const slow = new Set<string>();
+
+/** The request budget the pending checks run with, kept short so the smoke is. */
+const BUDGET_MS = 2_000;
+/** What a request may take past its budget: the claim, and the answer. */
+const BUDGET_SLACK_MS = 1_500;
 
 async function main(): Promise<void> {
   if (!(await dbReachable())) {
@@ -78,10 +92,10 @@ async function main(): Promise<void> {
 
   registerErasureCleanupHook({
     name: `${PREFIX}-fail-once`,
-    scrubInTransaction: ({ userId }) =>
-      failOnce.delete(userId)
-        ? Promise.reject(new Error('smoke: first erasure attempt fails'))
-        : Promise.resolve(),
+    scrubInTransaction: async ({ tx, userId }) => {
+      if (failOnce.delete(userId)) throw new Error('smoke: first erasure attempt fails');
+      if (slow.has(userId)) await tx.$executeRaw`SELECT pg_sleep(30)`;
+    },
   });
 
   const userIds: string[] = [];
@@ -248,8 +262,80 @@ async function main(): Promise<void> {
     });
     check(audit !== null && audit.userId === null, 'its audit row stands, with no actor');
 
+    // ── 5. Longer than the request's budget ───────────────────────────────
+    console.log("an erasure longer than the request's budget answers pending");
+    process.env.ERASURE_REQUEST_BUDGET_MS = String(BUDGET_MS);
+
+    /** Request the erasure; check it answered pending, in time, and left it due. */
+    const expectPending = async (userId: string, what: string) => {
+      const started = Date.now();
+      const answer = await requestUserErasure({
+        userId,
+        actorUserId: userId,
+        reason: 'self_service',
+      });
+      const tookMs = Date.now() - started;
+      check(answer.status === 'pending', `${what}: the request answers pending`);
+      check(
+        tookMs < BUDGET_MS + BUDGET_SLACK_MS,
+        `${what}: within the budget (${tookMs} ms of ${BUDGET_MS})`
+      );
+      const row = await prisma.user.findUnique({ where: { id: userId } });
+      check(
+        row !== null && row.erasureRequestedAt !== null,
+        `${what}: the account still exists, pending`
+      );
+      check(
+        (row?.erasureNextAttemptAt?.getTime() ?? Infinity) <= Date.now(),
+        `${what}: with its next attempt due at once`
+      );
+      check((await receiptsFor(userId)).length === 0, `${what}: and no receipt yet`);
+    };
+
+    // a. Another session holds the person's lock, as a backup import would.
+    const locked = await person('locked');
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let holding: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      holding = resolve;
+    });
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await lockSubjects(tx, { userIds: [locked.id] });
+        holding();
+        await released;
+      },
+      { timeout: 60_000 }
+    );
+    try {
+      await held;
+      await expectPending(locked.id, 'behind a held lock');
+    } finally {
+      release();
+      await holder;
+    }
+    const afterLock = await processPendingErasures();
+    check(
+      afterLock.erased === 1,
+      'behind a held lock: the retrier erases it once the lock is free'
+    );
+    check((await receiptsFor(locked.id)).length === 1, 'behind a held lock: with one receipt');
+
+    // b. A statement in the transaction runs past the budget.
+    const sleepy = await person('slow');
+    slow.add(sleepy.id);
+    await expectPending(sleepy.id, 'a slow statement');
+    slow.delete(sleepy.id);
+    const afterSlow = await processPendingErasures();
+    check(afterSlow.erased === 1, 'a slow statement: the retrier erases it');
+    check((await receiptsFor(sleepy.id)).length === 1, 'a slow statement: with one receipt');
+
     console.log('\n✓ smoke:erasure-pending passed');
   } finally {
+    delete process.env.ERASURE_REQUEST_BUDGET_MS;
     await prisma.aiAdminAuditLog
       .deleteMany({ where: { entityId: { in: subscriptionIds } } })
       .catch(() => undefined);

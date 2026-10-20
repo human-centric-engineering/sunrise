@@ -393,6 +393,17 @@ export const DELETE = withAuth(
         userId: session.user.id,
       });
 
+      // The erasure did not finish within the request's budget (t-845). The
+      // account is disabled and the maintenance tick finishes the erasure.
+      if (erasure.status === 'pending') {
+        log.info('User account deletion pending; the maintenance tick finishes it');
+        return successResponse(
+          { pending: true, requestedAt: erasure.requestedAt.toISOString() },
+          undefined,
+          { status: 202 }
+        );
+      }
+
       log.info('User account deleted successfully');
 
       return successResponse({

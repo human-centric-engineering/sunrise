@@ -254,6 +254,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       claimed: 0,
       erased: 0,
       failed: 0,
+      deferred: 0,
       pending: 0,
     });
     // Vanilla default: no fork jobs registered.
@@ -300,6 +301,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       claimed: 0,
       erased: 0,
       failed: 0,
+      deferred: 0,
       pending: 0,
     });
   }
@@ -752,6 +754,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
         claimed: 0,
         erased: 0,
         failed: 0,
+        deferred: 0,
         pending: 1,
       });
       await tick();
@@ -760,6 +763,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
         claimed: 0,
         erased: 0,
         failed: 0,
+        deferred: 0,
         pending: 1,
       });
 

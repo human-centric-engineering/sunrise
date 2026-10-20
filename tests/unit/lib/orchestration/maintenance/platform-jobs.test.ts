@@ -106,7 +106,7 @@ const RETENTION_IDLE = {
 
 const SYSTEM_RETENTION_IDLE = { auditLogsDeleted: 0, mcpAuditLogsDeleted: 0 };
 
-const ERASURES_IDLE = { claimed: 0, erased: 0, failed: 0, pending: 0 };
+const ERASURES_IDLE = { claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 0 };
 
 const ORG_A = 'org_a';
 const ORG_B = 'org_b';
@@ -448,14 +448,14 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(processPendingErasures)
-          .mockResolvedValue({ claimed: 1, erased: 1, failed: 0, pending: 0 }),
+          .mockResolvedValue({ claimed: 1, erased: 1, failed: 0, deferred: 0, pending: 0 }),
     ],
     [
       'pendingErasures — one is still waiting out its backoff',
       () =>
         vi
           .mocked(processPendingErasures)
-          .mockResolvedValue({ claimed: 0, erased: 0, failed: 0, pending: 2 }),
+          .mockResolvedValue({ claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 2 }),
     ],
     [
       'evaluationRuns — a claimed run needs the next time-slice',

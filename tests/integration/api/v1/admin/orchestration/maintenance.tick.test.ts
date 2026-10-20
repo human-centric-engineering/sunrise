@@ -198,6 +198,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       claimed: 0,
       erased: 0,
       failed: 0,
+      deferred: 0,
       pending: 0,
     });
   });

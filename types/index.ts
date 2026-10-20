@@ -112,7 +112,13 @@ export type PublicUser = User;
 export type UserListItem = Pick<
   User,
   'id' | 'name' | 'email' | 'image' | 'role' | 'emailVerified' | 'createdAt'
->;
+> & {
+  /**
+   * When the user's deletion was asked for, while it is still pending (t-845);
+   * null otherwise. Optional so a list built without it still type-checks.
+   */
+  erasureRequestedAt?: Date | null;
+};
 
 /**
  * User Profile Type

@@ -40,6 +40,11 @@
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
  * best-effort side effect (object storage cannot enlist in the DB transaction).
+ *
+ * With a `deadline` (t-845), the erasure stops at the next safe point once
+ * time runs out and throws {@link ErasureDeferredError}; what committed before
+ * then stays done, and running it again finishes the rest. See
+ * `lib/privacy/erasure-deadline.ts`.
  */
 
 import type { Prisma } from '@prisma/client';
@@ -66,6 +71,14 @@ import {
   tryLockSubjects,
   waitForSubjectLocks,
 } from '@/lib/privacy/erased-subjects';
+import {
+  boundStatements,
+  checkDeadline,
+  deferredIfLate,
+  ErasureDeferredError,
+  inBoundedTransaction,
+  msLeft,
+} from '@/lib/privacy/erasure-deadline';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
   AWAITING_RETRY_STATUSES,
@@ -80,6 +93,8 @@ import {
 } from '@/lib/orchestration/webhooks/destination';
 
 export type ErasureReason = 'self_service' | 'admin_action';
+
+export { ErasureDeferredError };
 
 /**
  * How long the erasure transaction may run. Generous on purpose: an erasure is
@@ -109,6 +124,15 @@ export interface EraseUserParams {
   /** Who initiated the erasure (the user themselves, or an admin). */
   actorUserId: string;
   reason: ErasureReason;
+  /**
+   * When to stop (t-845). Checked before the avatars, each hook, each
+   * pre-pass chunk or page, and each try of the transaction; a lock wait or
+   * transaction already running is capped at the time left. Once it has
+   * passed, {@link ErasureDeferredError} is thrown and the account still
+   * exists; what committed before then stays done. Without one, nothing is
+   * cut short.
+   */
+  deadline?: Date;
 }
 
 export interface EraseUserResult {
@@ -123,9 +147,10 @@ export interface EraseUserResult {
  * guard with their own existence/authorization checks first.
  */
 export async function eraseUser(params: EraseUserParams): Promise<EraseUserResult> {
-  const { userId, actorUserId, reason } = params;
+  const { userId, actorUserId, reason, deadline } = params;
 
   // 1. Object-storage blobs (avatars) — best-effort, outside the DB transaction.
+  checkDeadline(deadline, 'the avatars');
   const { deleteByPrefix, isStorageEnabled } = await import('@/lib/storage/upload');
   if (isStorageEnabled()) {
     await deleteByPrefix(`avatars/${userId}/`);
@@ -215,13 +240,14 @@ async function eraseRows(params: EraseUserParams): Promise<{
   /** Other people's runs whose input or trace named the user (t-804). */
   executionsRedacted: number;
 }> {
-  const { userId } = params;
+  const { userId, deadline } = params;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
   // Best-effort like the avatar cleanup above: a hook failure is logged and
   // swallowed so app-side trouble can never block the user's erasure.
   for (const hook of getErasureCleanupHooks()) {
     if (!hook.cleanupExternal) continue;
+    checkDeadline(deadline, `the ${hook.name} cleanup hook`);
     try {
       await hook.cleanupExternal({ userId });
     } catch (error) {
@@ -244,13 +270,28 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // whole job instead.
   const preRedacted = { webhook: 0, hook: 0 };
   for (const table of ['webhook', 'hook'] as const) {
+    const stage = `the ${table} delivery pre-pass`;
+    checkDeadline(deadline, stage);
     try {
       // Counted per committed chunk: one that throws part-way has still
       // written the chunks before it, which the transaction then skips.
-      await preRedactSubjectFromDeliveries(prisma, table, userId, (written) => {
-        preRedacted[table] += written;
-      });
+      await preRedactSubjectFromDeliveries(
+        prisma,
+        table,
+        userId,
+        (written) => {
+          preRedacted[table] += written;
+        },
+        // With a deadline, each statement in a transaction of its own capped
+        // at the time left; each chunk still commits as it goes.
+        deadline
+          ? (statement) => inBoundedTransaction(prisma, deadline, stage, (tx) => statement(tx))
+          : undefined
+      );
     } catch (error) {
+      // Out of time is not a failure to fall back from: the next attempt
+      // carries on from the chunks this one committed.
+      if (error instanceof ErasureDeferredError) throw error;
       logger.error('Erasure delivery pre-pass failed; the transaction redacts instead', {
         userId,
         table,
@@ -267,6 +308,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // transaction's pass reads every run instead.
   let runsChangedSince: Date | null = null;
   let runsPreRedacted = 0;
+  checkDeadline(deadline, 'the run pre-pass');
   try {
     const subjectRow = await prisma.user.findUnique({
       where: { id: userId },
@@ -276,11 +318,17 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const address = webhookDeliveriesAddressedTo(subjectRow)
         ? normaliseAddress(subjectRow.email)
         : null;
-      runsChangedSince = await preRedactSubjectFromRuns(prisma, { userId, address }, (n) => {
-        runsPreRedacted += n;
-      });
+      runsChangedSince = await preRedactSubjectFromRuns(
+        prisma,
+        { userId, address },
+        (n) => {
+          runsPreRedacted += n;
+        },
+        deadline
+      );
     }
   } catch (error) {
+    if (error instanceof ErasureDeferredError) throw error;
     runsChangedSince = null;
     logger.error('Erasure run pre-pass failed; the transaction redacts instead', {
       userId,
@@ -300,13 +348,22 @@ async function eraseRows(params: EraseUserParams): Promise<{
   const transactionFrom = new Date();
   for (let attempt = 1; ; attempt += 1) {
     const lastTry = attempt >= SUBJECT_LOCK_TRIES;
+    // With a deadline, each try gets only the time left (t-845), and none
+    // starts once it has passed: the transaction rolls back whole, so a
+    // deferral here leaves the account as the pre-passes left it.
+    checkDeadline(deadline, 'the erasure transaction');
+    const budgetMs = deadline
+      ? Math.min(ERASURE_TRANSACTION_TIMEOUT_MS, msLeft(deadline))
+      : ERASURE_TRANSACTION_TIMEOUT_MS;
     try {
       const { runSubject, ...receipt } = await prisma.$transaction(
-        (tx) => eraseInTransaction(tx, params, runsChangedSince, lastTry),
+        (tx) => eraseInTransaction(tx, params, runsChangedSince, lastTry, budgetMs),
         // The delivery match scales with the person's history — every chat event
         // a hook received — so Prisma's 5s default is too short for a heavy user,
         // and a timeout rolls the whole erasure back every time it is tried.
-        { timeout: ERASURE_TRANSACTION_TIMEOUT_MS }
+        deadline
+          ? { timeout: budgetMs, maxWait: Math.min(2_000, budgetMs) }
+          : { timeout: ERASURE_TRANSACTION_TIMEOUT_MS }
       );
       // 3. A running workflow that wrote while the transaction was open, from
       // what it held in memory, to a run the transaction's pass did not lock,
@@ -340,13 +397,23 @@ async function eraseRows(params: EraseUserParams): Promise<{
     } catch (error) {
       // The last try waited for the locks, so a busy error from it is not
       // ours (a fork's hook can throw one): never retried, or this would not
-      // end.
-      if (lastTry || !(error instanceof SubjectLocksBusyError)) throw error;
+      // end. Past the deadline, whatever stopped the try is most likely the
+      // cap on it, so it is a deferral rather than a failure.
+      if (lastTry || !(error instanceof SubjectLocksBusyError)) {
+        throw deferredIfLate(error, deadline, 'the erasure transaction');
+      }
       // Best-effort, like the pre-passes: if the wait fails, the next try
-      // finds out for itself.
+      // finds out for itself. With a deadline, it waits only for the time
+      // left, and the next try's check then defers.
       try {
-        await waitForSubjectLocks(prisma, error.subjects);
+        await waitForSubjectLocks(
+          prisma,
+          error.subjects,
+          deadline ? { maxWaitMs: msLeft(deadline) } : undefined
+        );
       } catch (waitError) {
+        // Out of time is not worth an error line: the next try defers.
+        if (deadline && msLeft(deadline) <= 0) continue;
         logger.error('Erasure could not wait for a writer holding the person’s lock', {
           userId: params.userId,
           error: waitError instanceof Error ? waitError.message : String(waitError),
@@ -359,19 +426,27 @@ async function eraseRows(params: EraseUserParams): Promise<{
 /**
  * The erasure transaction's work. `waitForLocks` false only tries the
  * person's locks and throws {@link SubjectLocksBusyError} when one is held
- * (t-840); true waits for them, as every try did before.
+ * (t-840); true waits for them, as every try did before. `budgetMs` is the
+ * transaction's timeout.
  */
 async function eraseInTransaction(
   tx: Prisma.TransactionClient,
   params: EraseUserParams,
   runsChangedSince: Date | null,
-  waitForLocks: boolean
+  waitForLocks: boolean,
+  budgetMs: number
 ) {
-  const { userId, actorUserId, reason } = params;
+  const { userId, actorUserId, reason, deadline } = params;
   // Every lock wait below, the last try's wait for the person's locks among
   // them, gives up within the transaction's budget: Prisma's timeout alone
-  // would leave a waiting statement running past it (review round 3).
-  await boundLockWaits(tx, ERASURE_TRANSACTION_TIMEOUT_MS);
+  // would leave a waiting statement running past it (review round 3). With a
+  // deadline every statement does too (t-845), or one still running would
+  // keep the request waiting past it.
+  if (deadline) {
+    await boundStatements(tx, budgetMs);
+  } else {
+    await boundLockWaits(tx, budgetMs);
+  }
 
   // The address is read from the user row, as the export reads it, not taken
   // from `userEmail`: a caller's copy can be stale (a cached session that

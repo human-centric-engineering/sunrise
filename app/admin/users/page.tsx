@@ -29,6 +29,7 @@ async function getUsers(): Promise<{
   const users: UserListItem[] = data.map((user) => ({
     ...user,
     createdAt: new Date(user.createdAt),
+    erasureRequestedAt: user.erasureRequestedAt ? new Date(user.erasureRequestedAt) : null,
   }));
 
   return {

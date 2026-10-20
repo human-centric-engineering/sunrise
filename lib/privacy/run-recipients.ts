@@ -60,6 +60,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
+import { inBoundedTransaction } from '@/lib/privacy/erasure-deadline';
 import {
   matchErasedSubjects,
   stringsIn,
@@ -468,11 +469,16 @@ type PrePassClient = Pick<PrismaClient, '$queryRaw' | '$transaction'>;
  * fails, these runs stay redacted while the account still exists — accepted,
  * as for deliveries: it is what the erasure was asked to do, and a retry
  * completes it. `onCommitted` hears each page's count as it commits.
+ *
+ * With a `deadline` (t-845), each page is capped at the time left and none is
+ * started once it has passed: `ErasureDeferredError` is thrown, and the
+ * pages already committed stay redacted.
  */
 export async function preRedactSubjectFromRuns(
   client: PrePassClient,
   subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
-  onCommitted: (redacted: number) => void
+  onCommitted: (redacted: number) => void,
+  deadline?: Date
 ): Promise<Date> {
   const [{ now }] = await client.$queryRaw<Array<{ now: Date }>>`SELECT now() AS now`;
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
@@ -481,9 +487,16 @@ export async function preRedactSubjectFromRuns(
     // A page may scan the whole table to fill itself when the person is named
     // in few runs, so it is not held to Prisma's 5 s default (review round 3);
     // each page commits on its own, outside the erasure's 60 s.
-    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, null), {
-      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
-    });
+    const runPage = (tx: Prisma.TransactionClient) => redactExecutionsPage(tx, full, after, null);
+    const page = deadline
+      ? await inBoundedTransaction(
+          client,
+          deadline,
+          'a run pre-pass page',
+          runPage,
+          PRE_PASS_PAGE_TIMEOUT_MS
+        )
+      : await client.$transaction(runPage, { timeout: PRE_PASS_PAGE_TIMEOUT_MS });
     onCommitted(page.redacted);
     if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
     after = page.lastId;

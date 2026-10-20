@@ -71,6 +71,9 @@ export const GET = withAdminAuth(async (request, _session) => {
         role: true,
         emailVerified: true,
         createdAt: true,
+        // Set while the user's deletion is pending (t-845): the admin table
+        // shows it in place of a delete action.
+        erasureRequestedAt: true,
       },
       orderBy: { [query.sortBy]: query.sortOrder },
     }),

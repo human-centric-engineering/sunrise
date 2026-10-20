@@ -310,6 +310,19 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   if (erasure.status === 'in_progress') {
     throw new ConflictError('This user is already being deleted.');
   }
+  // The erasure did not finish within the request's budget (t-845). The
+  // account is disabled and the maintenance tick finishes the erasure.
+  if (erasure.status === 'pending') {
+    log.info('User deletion pending; the maintenance tick finishes it', {
+      deletedUserId: id,
+      adminId: session.user.id,
+    });
+    return successResponse(
+      { id, pending: true, requestedAt: erasure.requestedAt.toISOString() },
+      undefined,
+      { status: 202 }
+    );
+  }
 
   log.info('User deleted by admin', { deletedUserId: id, adminId: session.user.id });
 

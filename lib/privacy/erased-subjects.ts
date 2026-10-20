@@ -196,18 +196,28 @@ export const SUBJECT_LOCK_WAIT_MS = 150_000;
  * once, so this never holds one lock while it waits for the next: a writer
  * queued on an earlier key is not kept waiting past its own timeout. Erasure
  * calls this after {@link tryLockSubjects} fails, then tries again.
+ *
+ * `maxWaitMs` caps the whole wait, across every lock, below
+ * {@link SUBJECT_LOCK_WAIT_MS} per lock (t-845): an erasure with a deadline
+ * waits only for the time it has left. A lock still held when it runs out
+ * throws Postgres's lock-timeout error; once the time is spent, this returns
+ * without waiting for the locks left.
  */
 export async function waitForSubjectLocks(
   client: Pick<PrismaClient, '$transaction'>,
-  subjects: NamedSubjects
+  subjects: NamedSubjects,
+  options: { maxWaitMs?: number } = {}
 ): Promise<void> {
+  const until = Date.now() + (options.maxWaitMs ?? Number.POSITIVE_INFINITY);
   for (const key of subjectKeys(subjects)) {
+    const waitMs = Math.min(SUBJECT_LOCK_WAIT_MS, until - Date.now());
+    if (waitMs <= 0) return;
     await client.$transaction(
       async (tx) => {
-        await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
+        await boundLockWaits(tx, waitMs);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
       },
-      { timeout: SUBJECT_LOCK_WAIT_MS + 5_000 }
+      { timeout: waitMs + 5_000 }
     );
   }
 }

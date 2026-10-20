@@ -118,6 +118,7 @@ export function UserTable({
           role: string;
           emailVerified: boolean;
           createdAt: string;
+          erasureRequestedAt?: string | null;
         }
 
         // Build URL with params
@@ -151,6 +152,7 @@ export function UserTable({
         const usersWithDates: UserListItem[] = response.data.map((user) => ({
           ...user,
           createdAt: new Date(user.createdAt),
+          erasureRequestedAt: user.erasureRequestedAt ? new Date(user.erasureRequestedAt) : null,
         }));
 
         setUsers(usersWithDates);
@@ -342,6 +344,12 @@ export function UserTable({
                     <Link href={`/admin/users/${user.id}`} className="hover:underline">
                       {user.name}
                     </Link>
+                    {user.erasureRequestedAt && (
+                      // Disabled already; the maintenance tick erases it (t-845).
+                      <Badge variant="destructive" className="ml-2">
+                        Deletion pending
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground truncate">{user.email}</TableCell>
                   <TableCell className="text-center">
@@ -380,13 +388,15 @@ export function UserTable({
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => setDeleteUserId(user.id)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {!user.erasureRequestedAt && (
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => setDeleteUserId(user.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
