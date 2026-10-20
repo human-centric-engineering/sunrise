@@ -24,8 +24,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // A run's writes check for erasures in the transaction that writes them
+  // (t-843); `$queryRaw` finds no erasure receipt.
+  const prisma = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
@@ -33,8 +36,14 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
     },
     aiCostLog: { create: vi.fn().mockResolvedValue({ id: 'cost_1' }) },
-  },
-}));
+  };
+  return {
+    prisma: {
+      ...prisma,
+      $transaction: vi.fn((run: (client: unknown) => Promise<unknown>) => run(prisma)),
+    },
+  };
+});
 
 // Mock the lease module to keep claimLease/startHeartbeat out of the cost-log trace
 // correlation assertions and avoid setInterval timer leaks across tests.

@@ -73,7 +73,8 @@ export interface ErasedSubjects {
 }
 
 type LockClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
-type CheckClient = LockClient & Pick<Prisma.TransactionClient, 'dataErasureReceipt' | 'user'>;
+type ReceiptClient = Pick<Prisma.TransactionClient, 'dataErasureReceipt' | 'user'>;
+type CheckClient = LockClient & ReceiptClient;
 
 /**
  * The hash an erasure receipt records for an address (`subjectEmailHash`):
@@ -228,9 +229,25 @@ export async function findErasedSubjects(
   subjects: NamedSubjects,
   options: LockOptions = {}
 ): Promise<ErasedSubjects> {
+  const named = normalised(subjects);
+  if (named.addresses.length === 0 && named.userIds.length === 0) {
+    return { addresses: [], userIds: [] };
+  }
+  await lockSubjects(tx, named, options);
+  return matchErasedSubjects(tx, named);
+}
+
+/**
+ * {@link findErasedSubjects} without the locks, for a writer already ordered
+ * against erasure another way: a running workflow's write holds its run's row,
+ * which erasure locks before it redacts the run (t-843).
+ */
+export async function matchErasedSubjects(
+  tx: ReceiptClient,
+  subjects: NamedSubjects
+): Promise<ErasedSubjects> {
   const { addresses, userIds } = normalised(subjects);
   if (addresses.length === 0 && userIds.length === 0) return { addresses: [], userIds: [] };
-  await lockSubjects(tx, { addresses, userIds }, options);
 
   const byHash = new Map(addresses.map((a) => [subjectEmailHash(a), a]));
   const receipts = await tx.dataErasureReceipt.findMany({

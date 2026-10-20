@@ -18,16 +18,25 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // A run's writes check for erasures in the transaction that writes them
+  // (t-843); `$queryRaw` finds no erasure receipt.
+  const prisma = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
-  },
-}));
+  };
+  return {
+    prisma: {
+      ...prisma,
+      $transaction: vi.fn((run: (client: unknown) => Promise<unknown>) => run(prisma)),
+    },
+  };
+});
 
 vi.mock('@/lib/env', () => ({
   env: {

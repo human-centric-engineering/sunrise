@@ -53,7 +53,11 @@ import {
   preRedactSubjectFromDeliveries,
 } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
-import { eraseFromRunInputs, preRedactSubjectFromRuns } from '@/lib/privacy/run-recipients';
+import {
+  eraseFromRunInputs,
+  preRedactSubjectFromRuns,
+  redactSubjectFromRunsSince,
+} from '@/lib/privacy/run-recipients';
 import {
   boundLockWaits,
   lockSubjects,
@@ -263,6 +267,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // transaction's pass reads every run instead.
   let runsChangedSince: Date | null = null;
   let runsPreRedacted = 0;
+  let runSubject: { userId: string; address: string | null } | null = null;
   try {
     const subjectRow = await prisma.user.findUnique({
       where: { id: userId },
@@ -272,7 +277,8 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const address = webhookDeliveriesAddressedTo(subjectRow)
         ? normaliseAddress(subjectRow.email)
         : null;
-      runsChangedSince = await preRedactSubjectFromRuns(prisma, { userId, address }, (n) => {
+      runSubject = { userId, address };
+      runsChangedSince = await preRedactSubjectFromRuns(prisma, runSubject, (n) => {
         runsPreRedacted += n;
       });
     }
@@ -293,6 +299,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // the wait happens outside it, and it runs again. The last try waits inside
   // as before, so a lock that keeps being taken cannot hold the erasure off
   // for good.
+  const transactionFrom = new Date();
   for (let attempt = 1; ; attempt += 1) {
     const lastTry = attempt >= SUBJECT_LOCK_TRIES;
     try {
@@ -303,11 +310,27 @@ async function eraseRows(params: EraseUserParams): Promise<{
         // and a timeout rolls the whole erasure back every time it is tried.
         { timeout: ERASURE_TRANSACTION_TIMEOUT_MS }
       );
+      // 3. A running workflow that wrote while the transaction was open, from
+      // what it held in memory, to a run the transaction's pass did not lock,
+      // found no receipt then (t-843). One more pass over the runs written
+      // since, now the receipt is visible to their next writes too.
+      // Best-effort: the erasure has committed.
+      let runsRedactedAfter = 0;
+      if (runSubject) {
+        try {
+          runsRedactedAfter = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
+        } catch (error) {
+          logger.error('Erasure run pass after the commit failed', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       return {
         ...receipt,
         webhookPayloadsRedacted: receipt.webhookPayloadsRedacted + preRedacted.webhook,
         eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted + preRedacted.hook,
-        executionsRedacted: receipt.executionsRedacted + runsPreRedacted,
+        executionsRedacted: receipt.executionsRedacted + runsPreRedacted + runsRedactedAfter,
       };
     } catch (error) {
       // The last try waited for the locks, so a busy error from it is not

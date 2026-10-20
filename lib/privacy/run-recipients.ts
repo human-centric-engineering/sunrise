@@ -38,11 +38,16 @@
  *
  * **Reading.** Every row is read `FOR NO KEY UPDATE`, so an admin's write to a
  * schedule waits for the erasure rather than landing between its read and its
- * write. One writer is not reached by that: **a run still executing** holds its
- * trace in memory and writes it whole after each step, so its next write can
- * restore what this removed. Runs are minutes long and retention prunes them;
- * that gap is named in `.context/privacy/data-erasure.md` rather than closed by
- * locking the engine out of its own run.
+ * write. **A run still executing** holds its input, definition and trace in
+ * memory and writes the trace whole after each step, so its next write could
+ * restore what this removed. The engine's writes therefore check, holding the
+ * run's row, for anyone erased since the run started
+ * ({@link findErasedSinceRunStarted}), and take them out before they commit
+ * (t-843). Holding the row orders the two: a write queued behind this lock
+ * sees the receipt once erasure commits, and an erasure queued behind a write
+ * reads what it wrote. A write that commits while an erasure is open, to a
+ * row erasure's pass did not lock, is reached by the pass after the commit
+ * ({@link redactSubjectFromRunsSince}).
  *
  * Schedules are configuration: each change is audit-logged, naming the
  * schedule and never the address. Runs are records: they are counted in the
@@ -55,7 +60,12 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
-import type { ErasedSubjects } from '@/lib/privacy/erased-subjects';
+import {
+  matchErasedSubjects,
+  stringsIn,
+  subjectEmailHash,
+  type ErasedSubjects,
+} from '@/lib/privacy/erased-subjects';
 
 /** Written on the audit row as the reason for every schedule changed here. */
 const ERASURE_REASON = 'A person this schedule named was erased.';
@@ -184,6 +194,51 @@ export function redactErased(value: Prisma.JsonValue, erased: ErasedSubjects): P
     current = redactPerson(current, subject, ERASED_VALUE)?.value ?? current;
   }
   return current;
+}
+
+type RunWriterClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'dataErasureReceipt' | 'user'>;
+
+/**
+ * Anyone erased since the run started whom `values` name, or null when nobody
+ * was (t-843): for the engine's writes of a run it holds in memory. Call
+ * inside the transaction that writes the run, **after** the write has locked
+ * its row, so an erasure that held the row first has committed and its
+ * receipt is seen.
+ *
+ * The first query is the whole cost when nobody was erased: receipts by
+ * `erasedAt`, which is indexed, since the run's `startedAt` less
+ * {@link RUN_CLOCK_SKEW_MS}. Both are stamped by app hosts' clocks, and the
+ * margin also covers a definition read just before the run started, and a
+ * receipt stamped before its erasure committed. Anything found is then
+ * matched as {@link matchErasedSubjects} matches it: an id exact, an address
+ * only when erasure matched it verified and no live account holds it now.
+ */
+export async function findErasedSinceRunStarted(
+  tx: RunWriterClient,
+  executionId: string,
+  values: unknown[]
+): Promise<ErasedSubjects | null> {
+  const receipts = await tx.$queryRaw<
+    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+  >`SELECT r."subjectUserId", r."subjectEmailHash"
+     FROM data_erasure_receipt r
+     JOIN ai_workflow_execution e ON e.id = ${executionId}
+     WHERE r."erasedAt" >= coalesce(e."startedAt", e."createdAt")
+       - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
+  if (receipts.length === 0) return null;
+
+  // An id is matched in the text, as erasure's own pass narrows by it.
+  const text = JSON.stringify(values);
+  const hashes = new Set(receipts.flatMap((r) => (r.subjectEmailHash ? [r.subjectEmailHash] : [])));
+  const addresses = new Set<string>();
+  for (const value of stringsIn(values)) {
+    if (value.includes('@') && hashes.has(subjectEmailHash(value))) addresses.add(value);
+  }
+  const erased = await matchErasedSubjects(tx, {
+    addresses,
+    userIds: receipts.map((r) => r.subjectUserId).filter((id) => text.includes(id)),
+  });
+  return erased.addresses.length > 0 || erased.userIds.length > 0 ? erased : null;
 }
 
 /**
@@ -391,18 +446,48 @@ export async function preRedactSubjectFromRuns(
   onCommitted: (redacted: number) => void
 ): Promise<Date> {
   const [{ now }] = await client.$queryRaw<Array<{ now: Date }>>`SELECT now() AS now`;
+  await redactRunsInPages(client, subject, null, onCommitted);
+  return now;
+}
+
+/**
+ * The run redaction once more, after the erasure has committed, over the runs
+ * written since `since` or not yet finished (t-843). A running workflow's
+ * write that committed while the erasure was open, to a row the erasure's pass
+ * had not locked, names the person from what the run held in memory; nothing
+ * else reaches it, since the engine found no receipt then. Writes after the
+ * commit find the receipt themselves ({@link findErasedSinceRunStarted}).
+ * Returns how many runs it redacted.
+ */
+export async function redactSubjectFromRunsSince(
+  client: PrePassClient,
+  subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
+  since: Date
+): Promise<number> {
+  let redacted = 0;
+  await redactRunsInPages(client, subject, since, (n) => {
+    redacted += n;
+  });
+  return redacted;
+}
+
+async function redactRunsInPages(
+  client: PrePassClient,
+  subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
+  since: Date | null,
+  onCommitted: (redacted: number) => void
+): Promise<void> {
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
   let after = '';
   for (;;) {
     // A page may scan the whole table to fill itself when the person is named
     // in few runs, so it is not held to Prisma's 5 s default (review round 3);
     // each page commits on its own, outside the erasure's 60 s.
-    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, null), {
+    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, since), {
       timeout: PRE_PASS_PAGE_TIMEOUT_MS,
     });
     onCommitted(page.redacted);
     if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
     after = page.lastId;
   }
-  return now;
 }

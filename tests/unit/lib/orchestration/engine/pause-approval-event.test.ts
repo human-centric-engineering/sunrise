@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // through the same `updateMany` mock either way.
 const tx = vi.hoisted(() => ({
   $executeRaw: vi.fn(),
+  // Every write of a run also asks for erasures since it started (t-843): none.
+  $queryRaw: vi.fn().mockResolvedValue([]),
   dataErasureReceipt: { findMany: vi.fn() },
   user: { findMany: vi.fn() },
 }));
@@ -399,14 +401,14 @@ describe('pauseForApproval event emission', () => {
       expect(JSON.stringify(webhookPayload)).not.toMatch(/gone@example\.com/i);
     });
 
-    it('opens no transaction for an approval that names nobody', async () => {
+    it('takes no erasure lock for an approval that names nobody', async () => {
       registerStepType('human_approval', async (step) => {
         throw new PausedForApproval(step.id, { prompt: 'approve', notificationChannel: 'slack' });
       });
 
       await collect(new OrchestrationEngine(), makeWorkflow(approvalDefinition()));
 
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
       expect(tx.dataErasureReceipt.findMany).not.toHaveBeenCalled();
     });
   });

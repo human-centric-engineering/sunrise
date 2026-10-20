@@ -47,12 +47,13 @@ import { z } from 'zod';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
 import { approvalRecipients } from '@/lib/privacy/config-recipients';
-import { redactErased } from '@/lib/privacy/run-recipients';
+import { findErasedSinceRunStarted, redactErased } from '@/lib/privacy/run-recipients';
 import { isRecord } from '@/lib/utils';
 import {
   boundLockWaits,
   findErasedSubjects,
   SUBJECT_LOCK_WAIT_MS,
+  WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
 import {
@@ -2243,17 +2244,21 @@ export class OrchestrationEngine {
     const { executionId, token } = lease;
     const contextPatchData = drainContextPatch(ctx);
     try {
-      const result = await prisma.aiWorkflowExecution.updateMany({
-        where: { id: executionId, leaseToken: token },
-        data: {
-          executionTrace: trace as unknown as Prisma.InputJsonValue,
-          totalTokensUsed: ctx.totalTokensUsed,
-          totalCostUsd: ctx.totalCostUsd,
-          leaseExpiresAt: leaseExpiry(),
-          lastHeartbeatAt: new Date(),
-          ...contextPatchData,
-        },
-      });
+      const result = await prisma.$transaction(async (tx) => {
+        const written = await tx.aiWorkflowExecution.updateMany({
+          where: { id: executionId, leaseToken: token },
+          data: {
+            executionTrace: trace as unknown as Prisma.InputJsonValue,
+            totalTokensUsed: ctx.totalTokensUsed,
+            totalCostUsd: ctx.totalCostUsd,
+            leaseExpiresAt: leaseExpiry(),
+            lastHeartbeatAt: new Date(),
+            ...contextPatchData,
+          },
+        });
+        if (written.count > 0) await leaveOutErasedSinceStart(tx, executionId, ctx, trace, null);
+        return written;
+      }, RUN_WRITE_TRANSACTION_OPTIONS);
       if (result.count === 0) {
         // Lease lost — another host has claimed this run. The orphan sweep handed it off
         // because our heartbeat lapsed. Future writes from this run will keep no-opping;
@@ -2313,33 +2318,47 @@ export class OrchestrationEngine {
       // lock, anyone with a receipt is taken out of the payload and the trace
       // entry, by the rule erasure applies to a run (`redactErased`), before the
       // paused row is written.
+      //
+      // The subject locks come before the row, the order erasure takes them in,
+      // so the two cannot deadlock. The rest of the trace is then checked as
+      // every write of the run is (t-843, `leaveOutErasedSinceStart`).
       const named = approvalPayload ? approvalRecipients(approvalPayload) : null;
-      const result =
-        named && (named.addresses.length > 0 || named.userIds.length > 0)
-          ? await prisma.$transaction(
-              async (tx) => {
-                await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
-                // Shared: other pauses and sends naming the same people need not
-                // wait for this one; only an erasure must.
-                const erased = await findErasedSubjects(tx, named, { shared: true });
-                // The bound is for the subject locks only; the row write below
-                // waits as it always has (review round 3).
-                await boundLockWaits(tx, 0);
-                if (erased.addresses.length > 0 || erased.userIds.length > 0) {
-                  approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased);
-                  // Never the address or the id: they are what was erased.
-                  ctx.logger.warn('pauseForApproval: left out people whose data was erased', {
-                    executionId,
-                    stepId,
-                    addresses: erased.addresses.length,
-                    userIds: erased.userIds.length,
-                  });
-                }
-                return pause(tx);
-              },
-              { timeout: SUBJECT_LOCK_WAIT_MS + 10_000, maxWait: 10_000 }
-            )
-          : await pause(prisma);
+      const namesAnyone =
+        named !== null && (named.addresses.length > 0 || named.userIds.length > 0);
+      const result = await prisma.$transaction(
+        async (tx) => {
+          if (named && namesAnyone) {
+            await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
+            // Shared: other pauses and sends naming the same people need not
+            // wait for this one; only an erasure must.
+            const erased = await findErasedSubjects(tx, named, { shared: true });
+            // The bound is for the subject locks only; the row write below
+            // waits as it always has (review round 3).
+            await boundLockWaits(tx, 0);
+            if (erased.addresses.length > 0 || erased.userIds.length > 0) {
+              approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased);
+              // Never the address or the id: they are what was erased.
+              ctx.logger.warn('pauseForApproval: left out people whose data was erased', {
+                executionId,
+                stepId,
+                addresses: erased.addresses.length,
+                userIds: erased.userIds.length,
+              });
+            }
+          }
+          const written = await pause(tx);
+          if (written.count > 0) {
+            const erased = await leaveOutErasedSinceStart(tx, executionId, ctx, trace, null);
+            if (erased && approvalPayload) {
+              approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased.erased);
+            }
+          }
+          return written;
+        },
+        namesAnyone
+          ? { timeout: SUBJECT_LOCK_WAIT_MS + 10_000, maxWait: 10_000 }
+          : RUN_WRITE_TRANSACTION_OPTIONS
+      );
       if (result.count === 0) {
         // Lease lost — the orphan sweep handed this row to a new owner who is now the
         // source of truth. Suppress notification + hook + webhook + approvalRequired event
@@ -2431,23 +2450,30 @@ export class OrchestrationEngine {
   ): Promise<boolean> {
     const { executionId, token } = lease;
     const contextPatchData = drainContextPatch(ctx);
+    const outputData = () =>
+      status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull;
     try {
-      const result = await prisma.aiWorkflowExecution.updateMany({
-        where: { id: executionId, leaseToken: token },
-        data: {
-          status,
-          executionTrace: trace as unknown as Prisma.InputJsonValue,
-          totalTokensUsed: ctx.totalTokensUsed,
-          totalCostUsd: ctx.totalCostUsd,
-          completedAt: new Date(),
-          errorMessage,
-          outputData:
-            status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull,
-          ...contextPatchData,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
-      });
+      const result = await prisma.$transaction(async (tx) => {
+        const written = await tx.aiWorkflowExecution.updateMany({
+          where: { id: executionId, leaseToken: token },
+          data: {
+            status,
+            executionTrace: trace as unknown as Prisma.InputJsonValue,
+            totalTokensUsed: ctx.totalTokensUsed,
+            totalCostUsd: ctx.totalCostUsd,
+            completedAt: new Date(),
+            errorMessage,
+            outputData: outputData(),
+            ...contextPatchData,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        if (written.count > 0) {
+          await leaveOutErasedSinceStart(tx, executionId, ctx, trace, errorMessage, outputData);
+        }
+        return written;
+      }, RUN_WRITE_TRANSACTION_OPTIONS);
       if (result.count === 0) {
         ctx.logger.warn('finalize: lease lost before terminal write — another host owns this run', {
           executionId,
@@ -2574,6 +2600,73 @@ function withoutErasedInPause(
   if (!payload) return payload;
   const redacted = redactErased(toJson(payload), erased);
   return isRecord(redacted) ? redacted : payload;
+}
+
+/**
+ * How a write of a run waits. Its row may be held by an erasure redacting it,
+ * for up to that erasure's 60 s, and the plain write this replaced (t-843)
+ * waited that long without a bound: Prisma's 5 s default would fail it
+ * instead. Waits for a connection as a plain query does.
+ */
+const RUN_WRITE_TRANSACTION_OPTIONS = { ...WRITER_TRANSACTION_OPTIONS, maxWait: 10_000 } as const;
+
+/**
+ * Take anyone erased since the run started out of what it holds, and out of
+ * the row just written, in the transaction that wrote it (t-843).
+ *
+ * A run holds its input, step outputs and trace in memory and writes the trace
+ * whole at every step, so a write after an erasure would restore what the
+ * erasure removed. Call it after the write: the write has locked the row, so
+ * an erasure that held the row first has committed and its receipt is seen,
+ * and one that comes after waits for this transaction and reads what it wrote.
+ * When anyone is found the trace, `ctx.inputData` and `ctx.stepOutputs` are
+ * redacted in place by the rule erasure applies to a run (`redactErased`), so
+ * later steps and writes carry the redacted values, and the row is written
+ * again with them. Null when nobody was erased: the one indexed query in
+ * `findErasedSinceRunStarted` is then the whole cost.
+ */
+async function leaveOutErasedSinceStart(
+  tx: Prisma.TransactionClient,
+  executionId: string,
+  ctx: ExecutionContext,
+  trace: ExecutionTraceEntry[],
+  errorMessage: string | null,
+  outputData?: () => object
+): Promise<{ erased: ErasedSubjects } | null> {
+  const erased = await findErasedSinceRunStarted(tx, executionId, [
+    ctx.inputData,
+    ctx.stepOutputs,
+    trace,
+    errorMessage,
+  ]);
+  if (!erased) return null;
+
+  for (const entry of trace) {
+    const redacted = redactErased(toJson(entry), erased);
+    if (isRecord(redacted)) Object.assign(entry, redacted);
+  }
+  const outputs = redactErased(toJson(ctx.stepOutputs), erased);
+  if (isRecord(outputs)) Object.assign(ctx.stepOutputs, outputs);
+  const input = redactErased(toJson(ctx.inputData), erased);
+  if (isRecord(input)) ctx.inputData = input;
+  const error = errorMessage === null ? null : redactErased(errorMessage, erased);
+
+  await tx.aiWorkflowExecution.updateMany({
+    where: { id: executionId },
+    data: {
+      executionTrace: trace as unknown as Prisma.InputJsonValue,
+      inputData: ctx.inputData as Prisma.InputJsonValue,
+      ...(typeof error === 'string' ? { errorMessage: error } : {}),
+      ...(outputData ? { outputData: outputData() } : {}),
+    },
+  });
+  // Never the address or the id: they are what was erased.
+  ctx.logger.warn('Run write: left out people whose data was erased', {
+    executionId,
+    addresses: erased.addresses.length,
+    userIds: erased.userIds.length,
+  });
+  return { erased };
 }
 
 const jsonValueSchema = z.json();

@@ -156,13 +156,15 @@ vi.mock('@/lib/privacy/config-recipients', () => ({
   eraseFromConfigRecipients: mockEraseConfig,
 }));
 // Likewise schedules and runs (run-recipients.test.ts).
-const { mockEraseRuns, mockPreRedactRuns } = vi.hoisted(() => ({
+const { mockEraseRuns, mockPreRedactRuns, mockRedactRunsAfter } = vi.hoisted(() => ({
   mockEraseRuns: vi.fn(),
   mockPreRedactRuns: vi.fn(),
+  mockRedactRunsAfter: vi.fn(),
 }));
 vi.mock('@/lib/privacy/run-recipients', () => ({
   eraseFromRunInputs: mockEraseRuns,
   preRedactSubjectFromRuns: mockPreRedactRuns,
+  redactSubjectFromRunsSince: mockRedactRunsAfter,
 }));
 /** The database time the run pre-pass reports it started at. */
 const PRE_PASS_STARTED = new Date('2026-10-17T12:00:00.000Z');
@@ -240,6 +242,7 @@ describe('eraseUser', () => {
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 0 });
     mockPreRedactRuns.mockResolvedValue(PRE_PASS_STARTED);
+    mockRedactRunsAfter.mockResolvedValue(0);
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -1698,6 +1701,55 @@ describe('eraseUser', () => {
       await eraseUser(BASE_PARAMS);
 
       expect(callOrder).toEqual(['config', 'runs', 'user.delete']);
+    });
+
+    it('passes over the runs once more after the commit, from before the transaction, and counts them (t-843)', async () => {
+      const callOrder: string[] = [];
+      mockReceiptCreate.mockImplementation(async () => {
+        callOrder.push('receipt');
+        return { id: 'receipt-1', erasedAt: new Date() };
+      });
+      mockRedactRunsAfter.mockImplementation(async () => {
+        callOrder.push('after');
+        return 2;
+      });
+      mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 1 });
+      const before = Date.now();
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(callOrder).toEqual(['receipt', 'after']);
+      const [, subject, since] = mockRedactRunsAfter.mock.calls[0] as [unknown, unknown, Date];
+      expect(subject).toEqual({ userId: BASE_PARAMS.userId, address: 'foo@bar.com' });
+      // Taken before the transaction opened, so a run written while it was
+      // open is read.
+      expect(since.getTime()).toBeLessThanOrEqual(before + 1_000);
+      expect(since.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ executionsRedacted: 3 })
+      );
+    });
+
+    it('still erases when the pass after the commit fails, and says so', async () => {
+      mockRedactRunsAfter.mockRejectedValue(new Error('after-pass down'));
+
+      await expect(eraseUser(BASE_PARAMS)).resolves.toMatchObject({
+        receiptId: expect.any(String),
+      });
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Erasure run pass after the commit failed',
+        expect.objectContaining({ userId: BASE_PARAMS.userId, error: 'after-pass down' })
+      );
+    });
+
+    it('makes no pass after a transaction that failed', async () => {
+      mockEraseRuns.mockRejectedValue(new Error('run redaction failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('run redaction failed');
+
+      expect(mockRedactRunsAfter).not.toHaveBeenCalled();
     });
 
     it('logs both counts', async () => {
