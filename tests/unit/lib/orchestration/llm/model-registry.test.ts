@@ -106,6 +106,12 @@ describe('refreshFromOpenRouter', () => {
             supported_parameters: ['tools'],
           },
           {
+            id: 'anthropic/claude-3.7-sonnet:thinking',
+            name: 'Anthropic: Claude 3.7 Sonnet (thinking)',
+            context_length: 200_000,
+            pricing: { prompt: '0.000003', completion: '0.000015' },
+          },
+          {
             id: 'openai/gpt-4.1',
             name: 'GPT-4.1',
             context_length: 1_000_000,
@@ -132,6 +138,9 @@ describe('refreshFromOpenRouter', () => {
     expect(
       registry.getModelsByProvider('anthropic').filter((m) => m.name.includes('Haiku 5.5'))
     ).toHaveLength(1);
+    // OpenRouter's variants keep their own id: the API has none for them.
+    expect(registry.getModel('claude-3.7-sonnet:thinking')?.id).toBe('claude-3.7-sonnet:thinking');
+    expect(registry.getModel('claude-3-7-sonnet:thinking')).toBeUndefined();
     // Only Anthropic ids are rewritten: OpenAI's API id has the dot.
     expect(registry.getModel('gpt-4.1')?.provider).toBe('openai');
     expect(registry.getModel('gpt-4-1')).toBeUndefined();

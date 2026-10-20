@@ -564,11 +564,13 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
  * the version with a dot (`claude-haiku-5.5`) where the API uses a dash
  * (`claude-haiku-5-5`), so filed under OpenRouter's id the entry's price
  * never reaches a turn on that model, and it never matches the vendor's
- * own listing. `undefined` for every other provider, and for an id with
- * no dotted version.
+ * own listing. `undefined` for every other provider, for an OpenRouter
+ * variant (`claude-3.7-sonnet:thinking`), and for an id with no dotted
+ * version.
  */
 function anthropicApiId(info: ModelInfo): string | undefined {
-  if (info.provider !== 'anthropic') return undefined;
+  // A `:thinking` / `:beta` variant is OpenRouter's own; the API has no id for it.
+  if (info.provider !== 'anthropic' || info.id.includes(':')) return undefined;
   const apiId = info.id.replace(/(\d)\.(?=\d)/g, '$1-');
   return apiId === info.id ? undefined : apiId;
 }
