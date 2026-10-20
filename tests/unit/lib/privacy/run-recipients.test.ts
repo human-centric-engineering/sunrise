@@ -453,9 +453,9 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
       },
     });
 
-    const redacted = await redactSubjectFromRunsSince(client as never, subject, since);
+    const result = await redactSubjectFromRunsSince(client as never, subject, since);
 
-    expect(redacted).toBe(1);
+    expect(result).toEqual({ redacted: 1, failed: 0, lastError: null });
     expect(client.$transaction).toHaveBeenCalledTimes(2);
     const rowRead = tx.$queryRaw.mock.calls[0];
     expect(sqlOf(rowRead)).toContain('FOR NO KEY UPDATE');
@@ -465,6 +465,28 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
       where: { id: 'exec-1' },
       data: { executionTrace: [{ output: { to: ERASED_VALUE } }] },
     });
+  });
+
+  it('carries on past a run it cannot lock, and says how many it missed', async () => {
+    const { client, tx } = makeClient([['exec-1', 'exec-2']], {
+      'exec-2': { id: 'exec-2', inputData: {}, executionTrace: [{ output: { to: ADDRESS } }] },
+    });
+    const run = client.$transaction.getMockImplementation();
+    client.$transaction
+      .mockRejectedValueOnce(new Error('lock timeout'))
+      .mockImplementation((fn) => run!(fn));
+
+    const result = await redactSubjectFromRunsSince(client as never, subject, since);
+
+    expect(result).toEqual({ redacted: 1, failed: 1, lastError: 'lock timeout' });
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'exec-2' } })
+    );
+    // Waits for a connection as the engine's writes do, not Prisma's 2 s.
+    expect(client.$transaction).toHaveBeenLastCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ maxWait: 10_000 })
+    );
   });
 
   it('pages on by id', async () => {

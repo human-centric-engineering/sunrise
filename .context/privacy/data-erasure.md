@@ -661,10 +661,13 @@ transaction):
    before it waits for the row's lock, so a run's write still open would be
    passed over, and a page holding every run it locked would keep the
    engine's writes waiting until it filled. The subject is the one the
-   transaction matched on. The pass is best-effort: if it fails it is
-   logged, and the run's next write, if it has one, takes the person out
-   instead. The completion event and the `workflow.failed` hook sent after the
-   final write carry what it wrote, without them. Measured on a local
+   transaction matched on. The pass is best-effort: a run it cannot lock or
+   write is skipped and counted in an error log, and that run's next write,
+   if it has one, takes the person out instead. The completion event and the
+   `workflow.failed` hook sent after the final write carry what it wrote,
+   without them. **Not reached:** the `workflow_failed` event, and the
+   webhook it sends, go out before the final write, with the failure reason
+   as the run held it. Measured on a local
    Postgres, the check adds about 2 ms to a checkpoint's median when nobody
    was erased (500 interleaved pairs). `npm run smoke:erasure-running` proves
    all three orders against the real engine.

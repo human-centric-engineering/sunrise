@@ -316,7 +316,15 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // lookup does not skip this. Best-effort: the erasure has committed.
       let runsRedactedAfter = 0;
       try {
-        runsRedactedAfter = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
+        const after = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
+        runsRedactedAfter = after.redacted;
+        if (after.failed > 0) {
+          logger.error('Erasure run pass after the commit could not reach every run', {
+            userId,
+            runsNotReached: after.failed,
+            error: after.lastError,
+          });
+        }
       } catch (error) {
         logger.error('Erasure run pass after the commit failed', {
           userId,

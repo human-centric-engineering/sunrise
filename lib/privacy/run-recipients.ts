@@ -446,6 +446,13 @@ async function eraseFromExecutions(
   return redacted;
 }
 
+/**
+ * How the pass after the commit waits for one run: behind an engine write
+ * (`RUN_WRITE_TRANSACTION_OPTIONS` in the engine) or another writer, and for a
+ * connection as a plain query does.
+ */
+const RUN_ROW_TRANSACTION_OPTIONS = { ...WRITER_TRANSACTION_OPTIONS, maxWait: 10_000 } as const;
+
 /** A client the pre-pass can open its own short transactions on. */
 type PrePassClient = Pick<PrismaClient, '$queryRaw' | '$transaction'>;
 
@@ -500,15 +507,18 @@ export async function preRedactSubjectFromRuns(
  * holding every run it locked until it filled would keep the engine's writes
  * waiting meanwhile. Paused runs not written since are left: no engine write
  * of them is open, and the transaction's pass reached them.
- * Returns how many runs it redacted.
+ * Returns how many runs it redacted, and how many it could not (with the last
+ * error), so the caller can say so.
  */
 export async function redactSubjectFromRunsSince(
   client: PrePassClient,
   subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
   since: Date
-): Promise<number> {
+): Promise<{ redacted: number; failed: number; lastError: string | null }> {
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
   let redacted = 0;
+  let failed = 0;
+  let lastError: string | null = null;
   let after = '';
   for (;;) {
     // `updatedAt` is the app host's clock and `since` too, but the cut-off
@@ -521,16 +531,23 @@ export async function redactSubjectFromRunsSince(
            OR e."updatedAt" >= ((${since}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond') AT TIME ZONE 'UTC'))
        ORDER BY e.id LIMIT ${RUN_PAGE_SIZE}`;
     for (const { id } of ids) {
-      const changed = await client.$transaction(async (tx) => {
-        const [row] = await tx.$queryRaw<RunRow[]>`SELECT e.id, e."inputData", e."executionTrace",
-             e."outputData", e."errorMessage"
-           FROM ai_workflow_execution e WHERE e.id = ${id} FOR NO KEY UPDATE`;
-        return row ? redactRunRow(tx, row, full) : false;
-      }, WRITER_TRANSACTION_OPTIONS);
-      if (changed) redacted += 1;
+      // One run that cannot be locked or written does not end the pass for the
+      // rest (review round 3); the caller hears how many there were.
+      try {
+        const changed = await client.$transaction(async (tx) => {
+          const [row] = await tx.$queryRaw<RunRow[]>`SELECT e.id, e."inputData", e."executionTrace",
+               e."outputData", e."errorMessage"
+             FROM ai_workflow_execution e WHERE e.id = ${id} FOR NO KEY UPDATE`;
+          return row ? redactRunRow(tx, row, full) : false;
+        }, RUN_ROW_TRANSACTION_OPTIONS);
+        if (changed) redacted += 1;
+      } catch (error) {
+        failed += 1;
+        lastError = error instanceof Error ? error.message : String(error);
+      }
     }
     if (ids.length < RUN_PAGE_SIZE) break;
     after = ids[ids.length - 1].id;
   }
-  return redacted;
+  return { redacted, failed, lastError };
 }

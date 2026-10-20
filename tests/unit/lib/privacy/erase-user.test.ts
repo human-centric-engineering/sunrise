@@ -242,7 +242,7 @@ describe('eraseUser', () => {
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 0 });
     mockPreRedactRuns.mockResolvedValue(PRE_PASS_STARTED);
-    mockRedactRunsAfter.mockResolvedValue(0);
+    mockRedactRunsAfter.mockResolvedValue({ redacted: 0, failed: 0, lastError: null });
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -1711,7 +1711,7 @@ describe('eraseUser', () => {
       });
       mockRedactRunsAfter.mockImplementation(async () => {
         callOrder.push('after');
-        return 2;
+        return { redacted: 2, failed: 0, lastError: null };
       });
       mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 1 });
       // The clock moves on once the transaction opens, so a `since` taken
@@ -1765,6 +1765,17 @@ describe('eraseUser', () => {
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Erasure run pass after the commit failed',
         expect.objectContaining({ userId: BASE_PARAMS.userId, error: 'after-pass down' })
+      );
+    });
+
+    it('says how many runs the pass after the commit could not reach', async () => {
+      mockRedactRunsAfter.mockResolvedValue({ redacted: 1, failed: 2, lastError: 'lock timeout' });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Erasure run pass after the commit could not reach every run',
+        expect.objectContaining({ runsNotReached: 2, error: 'lock timeout' })
       );
     });
 
