@@ -157,6 +157,8 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
     (next) => {
       const resolved =
         typeof next === 'function' ? (next as (prev: T) => T)(valueRef.current) : next;
+      // Same value (an updater returning `prev`): nothing to write or broadcast.
+      if (Object.is(resolved, valueRef.current)) return;
 
       setInternalValue(resolved);
       valueRef.current = resolved;

@@ -318,4 +318,33 @@ describe('useLocalStorage', () => {
     // Assert: state unchanged — key mismatch filters out the event
     expect(result.current[0]).toBe('initial');
   });
+
+  it('skips the write and same-tab broadcast when an updater returns prev', () => {
+    const state = { open: true };
+    const { result } = renderHook(() => useLocalStorage('k.noop', state));
+    const setItem = vi.spyOn(window.localStorage, 'setItem');
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+
+    try {
+      act(() => {
+        result.current[1]((prev) => prev);
+      });
+
+      expect(setItem).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(result.current[0]).toBe(state);
+
+      // A real change on the same hook still writes and broadcasts, so the
+      // assertions above are not passing because the spies never see calls.
+      act(() => {
+        result.current[1]((prev) => ({ ...prev, open: false }));
+      });
+
+      expect(setItem).toHaveBeenCalledWith('k.noop', JSON.stringify({ open: false }));
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    } finally {
+      setItem.mockRestore();
+      dispatch.mockRestore();
+    }
+  });
 });
