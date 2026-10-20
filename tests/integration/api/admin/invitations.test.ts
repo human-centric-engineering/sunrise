@@ -625,6 +625,35 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
     });
   });
 
+  describe('malformed address (#954)', () => {
+    // `foo%` is what Next hands the route for `/invitations/foo%25`.
+    it.each([
+      ['a malformed percent-escape', 'foo%'],
+      ['a truncated escape inside an address', 'alice%4@example.com'],
+      ['a segment that is not an email address', 'not-an-email'],
+    ])('returns 400 for %s, without touching the store', async (_label, segment) => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await DELETE(createMockRequest(), createRouteContext(segment));
+      const body = await parseResponse<ErrorResponse>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+
+    it('looks up a valid address exactly as given, without changing its case', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
+
+      const response = await DELETE(createMockRequest(), createRouteContext('Alice@Example.com'));
+
+      expect(response.status).toBe(404);
+      expect(getValidInvitation).toHaveBeenCalledWith('Alice@Example.com');
+    });
+  });
+
   describe('error cases', () => {
     it('should return 404 when invitation not found', async () => {
       // Arrange

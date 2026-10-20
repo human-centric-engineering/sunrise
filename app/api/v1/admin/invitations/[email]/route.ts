@@ -6,11 +6,16 @@
  * Authentication: Required (Admin role only)
  */
 
+import { z } from 'zod';
+
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { validatePathParam } from '@/lib/api/validation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { deleteInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
+
+const invitationEmailSchema = z.string().email('Invalid email address').max(255);
 
 /**
  * DELETE /api/v1/admin/invitations/:email
@@ -23,6 +28,7 @@ import { getRouteLogger } from '@/lib/api/context';
  * @returns Success message
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
+ * @throws ValidationError if the path segment is not a well-formed email address
  * @throws NotFoundError if invitation not found
  */
 export const DELETE = withAdminAuth<{ email: string }>(async (request, session, { params }) => {
@@ -33,7 +39,23 @@ export const DELETE = withAdminAuth<{ email: string }>(async (request, session, 
 
   // Get email from URL params
   const { email } = await params;
-  const decodedEmail = decodeURIComponent(email);
+
+  // Next has already decoded the segment once; this second decode keeps a
+  // client that double-encodes working. A stray `%` makes it throw, and that
+  // is a bad address, not a server fault (#954).
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(email);
+  } catch {
+    throw new ValidationError('Invalid email address', {
+      email: ['The address contains a malformed percent-escape'],
+    });
+  }
+  // No trim or lowercase: the lookup must match the address exactly as stored.
+  const decodedEmail = validatePathParam(decoded, invitationEmailSchema, {
+    label: 'email address',
+    field: 'email',
+  });
 
   log.info('Deleting invitation', { email: decodedEmail });
 
