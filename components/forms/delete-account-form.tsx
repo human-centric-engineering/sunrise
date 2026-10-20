@@ -168,7 +168,12 @@ export function DeleteAccountForm() {
                   <AlertDialogFooter>
                     <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
                     <AlertDialogAction
-                      onClick={() => void handleDelete()}
+                      onClick={(e) => {
+                        // Keep the dialog open while the request runs: it
+                        // shows the answer (an error, or a pending deletion).
+                        e.preventDefault();
+                        void handleDelete();
+                      }}
                       disabled={!isConfirmed || isLoading}
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     >
