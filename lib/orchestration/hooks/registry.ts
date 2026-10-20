@@ -24,6 +24,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
@@ -219,7 +220,8 @@ function matchesFilter(filter: HookFilter | null, payload: HookEventPayload): bo
 
 /**
  * Emit a hook event. All matching enabled hooks are dispatched
- * asynchronously — this function returns immediately.
+ * asynchronously — this function returns immediately. The dispatch, and every
+ * delivery it starts, is kept alive past the response (t-903).
  *
  * @param eventType - The event type to emit
  * @param data - Event-specific payload data
@@ -231,25 +233,34 @@ export function emitHookEvent(eventType: HookEventType, data: Record<string, unk
     data,
   };
 
-  void dispatchToHooks(payload).catch((err: unknown) => {
-    logger.warn('Hook dispatch error', {
-      eventType,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  keepRunningAfterResponse(
+    dispatchToHooks(payload).catch((err: unknown) => {
+      logger.warn('Hook dispatch error', {
+        eventType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }),
+    'Hook dispatch',
+    { eventType }
+  );
 }
 
 async function dispatchToHooks(payload: HookEventPayload): Promise<void> {
   const byType = await loadHooks();
   const hooks = byType.get(payload.eventType) ?? [];
 
+  // Settles once every first attempt has, so the hold `emitHookEvent` takes
+  // covers the deliveries too. Retries run on their own timers, and the tick
+  // picks them up if the process is gone (`processPendingHookRetries`).
+  const deliveries: Promise<void>[] = [];
   for (const hook of hooks) {
     if (!matchesFilter(hook.filter, payload)) continue;
 
     if (hook.action.type === 'webhook') {
-      void dispatchWebhook(hook.id, hook.action, hook.secret, payload);
+      deliveries.push(dispatchWebhook(hook.id, hook.action, hook.secret, payload));
     }
   }
+  await Promise.allSettled(deliveries);
 }
 
 async function dispatchWebhook(
@@ -683,12 +694,16 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
   const payload = await sendablePayload(current);
   if (!payload) return false;
 
-  void attemptDelivery(
-    current,
-    parsed.action.url,
-    parsed.action.headers ?? null,
-    parsed.secret,
-    payload
+  keepRunningAfterResponse(
+    attemptDelivery(
+      current,
+      parsed.action.url,
+      parsed.action.headers ?? null,
+      parsed.secret,
+      payload
+    ),
+    'Hook delivery retry',
+    { deliveryId: current.id }
   );
   return true;
 }

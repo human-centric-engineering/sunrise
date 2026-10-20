@@ -15,6 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── module mocks ────────────────────────────────────────────────────────────
 // Must come before any import of the modules under test.
 
+// `after()` records what it was handed (t-903); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
@@ -937,6 +945,30 @@ describe('recordForceFailEvent', () => {
 describe('recordReleaseEvent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('keeps the event write alive past the response, without the caller awaiting it (t-903)', async () => {
+    let written!: (value: unknown) => void;
+    mockLeaseEventCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        written = resolve;
+      }) as never
+    );
+
+    void recordReleaseEvent('exec-rel-0', null, 'crash-repair');
+
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    let settled = false;
+    void handed.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    written({ id: 'evt-1' });
+    await handed;
+    expect(settled).toBe(true);
   });
 
   it('writes a "released" event with the redacted prior token and the passed reason', async () => {

@@ -225,25 +225,30 @@ async function runDrain(
     // requirements. Both payloads carry the sanitised error.
     emitHookEvent('workflow.execution.failed', crashPayload);
     // Webhook payload also carries display names (workflow + actor) so
-    // receivers don't need to resolve IDs themselves. Lookups are
-    // fire-and-forget and tolerate DB errors by omitting the field.
-    void (async () => {
-      const [actorUserName, workflowDisplay] = await Promise.all([
-        resolveUserDisplayName(userId),
-        resolveWorkflowDisplay(workflow.id),
-      ]);
-      await dispatchWebhookEvent('execution_crashed', {
-        ...crashPayload,
-        workflowName: workflowDisplay.name,
-        actorUserId: userId,
-        actorUserName,
-      });
-    })().catch((dispatchErr) => {
-      logger.warn('Webhook dispatch failed for execution_crashed', {
-        executionId,
-        error: dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr),
-      });
-    });
+    // receivers don't need to resolve IDs themselves. Lookups run in the
+    // background, kept alive past the response (t-903), and tolerate DB errors
+    // by omitting the field.
+    keepRunningAfterResponse(
+      (async () => {
+        const [actorUserName, workflowDisplay] = await Promise.all([
+          resolveUserDisplayName(userId),
+          resolveWorkflowDisplay(workflow.id),
+        ]);
+        await dispatchWebhookEvent('execution_crashed', {
+          ...crashPayload,
+          workflowName: workflowDisplay.name,
+          actorUserId: userId,
+          actorUserName,
+        });
+      })().catch((dispatchErr) => {
+        logger.warn('Webhook dispatch failed for execution_crashed', {
+          executionId,
+          error: dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr),
+        });
+      }),
+      'Webhook dispatch for execution_crashed',
+      { executionId }
+    );
   }
 }
 
@@ -898,24 +903,29 @@ export async function processOrphanedExecutions(): Promise<OrphanSweepResult> {
         // Fire-and-forget: dispatchWebhookEvent records the delivery attempt to its retry
         // queue BEFORE the network call, so a rejection here means the delivery is already
         // queued for retry. Awaiting would couple sweep latency to webhook-receiver health,
-        // which is wrong — the receiver retry loop is decoupled by design.
-        void (async () => {
-          const [actorUserName, workflowDisplay] = await Promise.all([
-            resolveUserDisplayName(execution.userId),
-            resolveWorkflowDisplay(execution.workflow.id),
-          ]);
-          await dispatchWebhookEvent('execution_crashed', {
-            ...crashPayload,
-            workflowName: workflowDisplay.name,
-            actorUserId: execution.userId,
-            actorUserName,
-          });
-        })().catch((err: unknown) => {
-          logger.warn('Webhook dispatch failed for execution_crashed (recovery exhausted)', {
-            executionId: execution.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
+        // which is wrong — the receiver retry loop is decoupled by design. Kept
+        // alive past the tick's response (t-903).
+        keepRunningAfterResponse(
+          (async () => {
+            const [actorUserName, workflowDisplay] = await Promise.all([
+              resolveUserDisplayName(execution.userId),
+              resolveWorkflowDisplay(execution.workflow.id),
+            ]);
+            await dispatchWebhookEvent('execution_crashed', {
+              ...crashPayload,
+              workflowName: workflowDisplay.name,
+              actorUserId: execution.userId,
+              actorUserName,
+            });
+          })().catch((err: unknown) => {
+            logger.warn('Webhook dispatch failed for execution_crashed (recovery exhausted)', {
+              executionId: execution.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }),
+          'Webhook dispatch for execution_crashed (recovery exhausted)',
+          { executionId: execution.id }
+        );
         result.exhausted++;
         continue;
       }

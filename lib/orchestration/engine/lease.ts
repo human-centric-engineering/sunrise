@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { WorkflowStatus } from '@/types/orchestration';
 
 /**
@@ -62,8 +63,18 @@ export function redactLeaseToken(token: string | null | undefined): string | nul
  * Append a row to `AiWorkflowExecutionLeaseEvent`. Fire-and-forget —
  * lease-event writes must never block the engine's critical path. A
  * dropped event is a missed inspector entry, not a correctness issue.
+ *
+ * Kept alive past the response (t-903): the write registers itself with
+ * `keepRunningAfterResponse`, so a caller's `void recordLeaseEvent(...)` is
+ * not frozen part-way on a serverless host.
  */
-async function recordLeaseEvent(
+function recordLeaseEvent(...args: Parameters<typeof writeLeaseEvent>): Promise<void> {
+  const write = writeLeaseEvent(...args);
+  keepRunningAfterResponse(write, 'Lease event write', { executionId: args[0] });
+  return write;
+}
+
+async function writeLeaseEvent(
   executionId: string,
   event: LeaseEventName,
   token: string | null,

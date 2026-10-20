@@ -22,6 +22,7 @@ import { createHash, createHmac } from 'crypto';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
@@ -128,8 +129,21 @@ function buildEmailSubject(eventType: string, data: Record<string, unknown>): st
  *
  * Creates a delivery record for each subscription, attempts delivery, and
  * schedules retries on failure. Errors are logged but never thrown.
+ *
+ * Kept alive past the response (t-903): the dispatch registers itself with
+ * `keepRunningAfterResponse`, so a caller that does not await it is not frozen
+ * before the delivery rows are written. Awaiting it is unchanged.
  */
-export async function dispatchWebhookEvent(
+export function dispatchWebhookEvent(
+  eventType: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const dispatch = dispatchToSubscriptions(eventType, payload);
+  keepRunningAfterResponse(dispatch, 'Webhook dispatch', { eventType });
+  return dispatch;
+}
+
+async function dispatchToSubscriptions(
   eventType: string,
   payload: Record<string, unknown>
 ): Promise<void> {
@@ -253,8 +267,9 @@ export async function retryDelivery(
   if (options?.awaitDelivery) {
     await attempt;
   } else {
-    // Fire-and-forget — the attempt will update the delivery record
-    void attempt;
+    // In the background — the attempt will update the delivery record. Kept
+    // alive past the retry route's response (t-903).
+    keepRunningAfterResponse(attempt, 'Webhook delivery retry', { deliveryId: current.id });
   }
 
   return true;

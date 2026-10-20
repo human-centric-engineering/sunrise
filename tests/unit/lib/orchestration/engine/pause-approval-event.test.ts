@@ -38,6 +38,14 @@ vi.mock('@/lib/db/client', () => {
   };
 });
 
+// `after()` records what it was handed (t-903); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
 }));
@@ -190,6 +198,35 @@ describe('pauseForApproval event emission', () => {
         tokenExpiresAt: expect.any(String),
       })
     );
+  });
+
+  it('keeps the approval_required dispatch alive past the run: after() holds it until it settles (t-903)', async () => {
+    registerStepType('human_approval', async (step) => {
+      throw new PausedForApproval(step.id, { prompt: 'Please approve' });
+    });
+    let finishDispatch!: () => void;
+    vi.mocked(dispatchWebhookEvent).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishDispatch = resolve;
+      })
+    );
+
+    // The run pauses and its event stream ends while the dispatch is still open.
+    await collect(new OrchestrationEngine(), makeWorkflow(approvalDefinition()));
+
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    let settled = false;
+    void handed.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(dispatchWebhookEvent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    finishDispatch();
+    await handed;
+    expect(settled).toBe(true);
   });
 
   it('dispatches approval_required webhook event with correct payload', async () => {

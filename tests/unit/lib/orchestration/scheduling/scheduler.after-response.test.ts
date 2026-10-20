@@ -99,6 +99,7 @@ import {
   resumeApprovedExecution,
 } from '@/lib/orchestration/scheduling/scheduler';
 import { prisma } from '@/lib/db/client';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -250,6 +251,41 @@ describe('scheduler drains are kept alive past the response (t-846)', () => {
     await expectDrainKeptAlive(release);
     await resume;
     expect(resumed).toBe(true);
+  });
+
+  it('a crashed run’s execution_crashed webhook outlives the drain (t-903)', async () => {
+    mockExecute.mockReturnValue(
+      (async function* () {
+        await Promise.resolve();
+        throw new Error('engine blew up');
+        yield { type: 'never' };
+      })()
+    );
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    let finishDispatch!: () => void;
+    vi.mocked(dispatchWebhookEvent).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishDispatch = resolve;
+      })
+    );
+
+    await drainEngine('exec_1', WORKFLOW, DEFINITION as never, {}, null, 'wfv_1');
+
+    // The drain has settled; the crash notification it started has not.
+    await vi.waitFor(() => expect(dispatchWebhookEvent).toHaveBeenCalled());
+    const handed = mockAfter.mock.calls.map((call) => call[0] as Promise<unknown>);
+    const states = await Promise.all(
+      handed.map(async (promise) => {
+        let settled = false;
+        void promise.then(() => (settled = true));
+        await flush();
+        return settled;
+      })
+    );
+    expect(states.filter((settled) => !settled)).toHaveLength(1);
+
+    finishDispatch();
+    await Promise.all(handed);
   });
 
   it('a direct caller that writes `void drainEngine(...)`, as the inbound route does', async () => {
