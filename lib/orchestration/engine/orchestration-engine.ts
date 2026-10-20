@@ -2349,8 +2349,10 @@ export class OrchestrationEngine {
           const written = await pause(tx);
           if (written.count > 0) {
             const erased = await leaveOutErasedSinceStart(tx, executionId, ctx, trace, null);
+            // The trace entry is already redacted; the events carry the payload.
             if (erased && approvalPayload) {
-              approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased.erased);
+              const redacted = redactErased(toJson(approvalPayload), erased.erased);
+              if (isRecord(redacted)) approvalPayload = redacted;
             }
           }
           return written;

@@ -267,7 +267,6 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // transaction's pass reads every run instead.
   let runsChangedSince: Date | null = null;
   let runsPreRedacted = 0;
-  let runSubject: { userId: string; address: string | null } | null = null;
   try {
     const subjectRow = await prisma.user.findUnique({
       where: { id: userId },
@@ -277,8 +276,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const address = webhookDeliveriesAddressedTo(subjectRow)
         ? normaliseAddress(subjectRow.email)
         : null;
-      runSubject = { userId, address };
-      runsChangedSince = await preRedactSubjectFromRuns(prisma, runSubject, (n) => {
+      runsChangedSince = await preRedactSubjectFromRuns(prisma, { userId, address }, (n) => {
         runsPreRedacted += n;
       });
     }
@@ -303,7 +301,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
   for (let attempt = 1; ; attempt += 1) {
     const lastTry = attempt >= SUBJECT_LOCK_TRIES;
     try {
-      const receipt = await prisma.$transaction(
+      const { runSubject, ...receipt } = await prisma.$transaction(
         (tx) => eraseInTransaction(tx, params, runsChangedSince, lastTry),
         // The delivery match scales with the person's history — every chat event
         // a hook received — so Prisma's 5s default is too short for a heavy user,
@@ -313,18 +311,17 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // 3. A running workflow that wrote while the transaction was open, from
       // what it held in memory, to a run the transaction's pass did not lock,
       // found no receipt then (t-843). One more pass over the runs written
-      // since, now the receipt is visible to their next writes too.
-      // Best-effort: the erasure has committed.
+      // since, now the receipt is visible to their next writes too. The
+      // subject is the one the transaction matched on, so a failed pre-pass
+      // lookup does not skip this. Best-effort: the erasure has committed.
       let runsRedactedAfter = 0;
-      if (runSubject) {
-        try {
-          runsRedactedAfter = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
-        } catch (error) {
-          logger.error('Erasure run pass after the commit failed', {
-            userId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+      try {
+        runsRedactedAfter = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
+      } catch (error) {
+        logger.error('Erasure run pass after the commit failed', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
       return {
         ...receipt,
@@ -631,5 +628,7 @@ async function eraseInTransaction(
     subscriptionsDeactivated,
     ...configRecipients,
     ...runRecipients,
+    // For the run pass after the commit: who this transaction matched on.
+    runSubject: { userId, address },
   };
 }

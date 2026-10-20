@@ -655,6 +655,10 @@ transaction):
    finds no receipt yet; erasure makes **one more pass after it commits**
    (`redactSubjectFromRunsSince`) over the runs written since its
    transaction began or not finished, and counts them in `executionsRedacted`.
+   It locks every one of those runs rather than only those whose text names
+   the person, since a row's text is tested against its committed version
+   before its lock is waited for: a run's write still open is waited for, and
+   what it wrote is then read.
    That pass is best-effort: if it fails it is logged, and the run's next
    write, if it has one, takes the person out instead. Measured on a local
    Postgres, the check adds about 2 ms to a checkpoint's median when nobody

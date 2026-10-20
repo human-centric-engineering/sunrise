@@ -406,6 +406,9 @@ describe('preRedactSubjectFromRuns', () => {
       timeout: PRE_PASS_PAGE_TIMEOUT_MS,
     });
     expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
+    // The pre-pass narrows by the person's text (the flag the post-commit
+    // pass sets is off).
+    expect(tx.$queryRaw.mock.calls[0].slice(1)[5]).toBe(false);
   });
 });
 
@@ -431,6 +434,12 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
     const call = tx.$queryRaw.mock.calls[0];
     expect(sqlOf(call)).toContain('"updatedAt" >=');
     expect(call).toContain(since);
+    // Every candidate is locked, not only rows whose committed text names
+    // them: a running workflow's write still open is waited for (review round 1).
+    // The values in order: after, userId, since, since, skew, then the
+    // read-every-candidate flag the text test is OR-ed with.
+    expect(sqlOf(call)).toMatch(/AND \(\?\s+OR strpos/);
+    expect(call.slice(1)[5]).toBe(true);
     expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
       where: { id: 'exec-1' },
       data: { executionTrace: [{ output: { to: ERASED_VALUE } }] },
@@ -486,6 +495,16 @@ describe('findErasedSinceRunStarted (t-843)', () => {
     const erased = await findErasedSinceRunStarted(tx as never, 'exec-1', [
       { to: 'keep@bar.com' },
       'cmuser00000000000000other',
+    ]);
+
+    expect(erased).toBeNull();
+  });
+
+  it('is null when their id is only a key, which redaction does not rewrite', async () => {
+    const tx = makeWriterTx([{ subjectUserId: USER_ID, subjectEmailHash: null }]);
+
+    const erased = await findErasedSinceRunStarted(tx as never, 'exec-1', [
+      { scores: { [USER_ID]: 3 } },
     ]);
 
     expect(erased).toBeNull();

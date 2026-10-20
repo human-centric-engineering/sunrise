@@ -227,16 +227,20 @@ export async function findErasedSinceRunStarted(
        - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
   if (receipts.length === 0) return null;
 
-  // An id is matched in the text, as erasure's own pass narrows by it.
-  const text = JSON.stringify(values);
+  // An id is matched in the strings, which is where redaction can take it out
+  // of: a key naming it is left, as erasure's own pass leaves it (review
+  // round 1).
+  const strings = stringsIn(values);
   const hashes = new Set(receipts.flatMap((r) => (r.subjectEmailHash ? [r.subjectEmailHash] : [])));
   const addresses = new Set<string>();
-  for (const value of stringsIn(values)) {
+  for (const value of strings) {
     if (value.includes('@') && hashes.has(subjectEmailHash(value))) addresses.add(value);
   }
   const erased = await matchErasedSubjects(tx, {
     addresses,
-    userIds: receipts.map((r) => r.subjectUserId).filter((id) => text.includes(id)),
+    userIds: receipts
+      .map((r) => r.subjectUserId)
+      .filter((id) => strings.some((value) => value.includes(id))),
   });
   return erased.addresses.length > 0 || erased.userIds.length > 0 ? erased : null;
 }
@@ -351,10 +355,20 @@ async function redactExecutionsPage(
   tx: RunClient,
   subject: RunRecipientsSubject,
   after: string,
-  since: Date | null
+  since: Date | null,
+  /**
+   * Read every run `since` admits, not only those whose committed text names
+   * the person (t-843, review round 1). A row's text is tested against its
+   * committed version before its lock is waited for, so a running workflow's
+   * write still open would otherwise be passed over: locking every candidate
+   * waits for it, and the match below then reads what it wrote.
+   */
+  lockEveryCandidate = false
 ): Promise<{ lastId: string | null; size: number; redacted: number }> {
   const { userId } = subject;
-  const { term, scanAll } = searchTermFor(subject.address);
+  const search = searchTermFor(subject.address);
+  const { term } = search;
+  const scanAll = search.scanAll || lockEveryCandidate;
   // The id is a cuid, so already lower-case in the folded text. `updatedAt` is
   // stamped by the app process's clock (Prisma's @updatedAt) while `since` is
   // the database's, so the cut-off is moved back by RUN_CLOCK_SKEW_MS (review
@@ -465,9 +479,10 @@ export async function redactSubjectFromRunsSince(
   since: Date
 ): Promise<number> {
   let redacted = 0;
-  await redactRunsInPages(client, subject, since, (n) => {
+  const onCommitted = (n: number): void => {
     redacted += n;
-  });
+  };
+  await redactRunsInPages(client, subject, since, onCommitted, true);
   return redacted;
 }
 
@@ -475,7 +490,8 @@ async function redactRunsInPages(
   client: PrePassClient,
   subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
   since: Date | null,
-  onCommitted: (redacted: number) => void
+  onCommitted: (redacted: number) => void,
+  lockEveryCandidate = false
 ): Promise<void> {
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
   let after = '';
@@ -483,9 +499,12 @@ async function redactRunsInPages(
     // A page may scan the whole table to fill itself when the person is named
     // in few runs, so it is not held to Prisma's 5 s default (review round 3);
     // each page commits on its own, outside the erasure's 60 s.
-    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, since), {
-      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
-    });
+    const page = await client.$transaction(
+      (tx) => redactExecutionsPage(tx, full, after, since, lockEveryCandidate),
+      {
+        timeout: PRE_PASS_PAGE_TIMEOUT_MS,
+      }
+    );
     onCommitted(page.redacted);
     if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
     after = page.lastId;

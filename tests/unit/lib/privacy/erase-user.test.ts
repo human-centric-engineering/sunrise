@@ -1714,7 +1714,16 @@ describe('eraseUser', () => {
         return 2;
       });
       mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 1 });
-      const before = Date.now();
+      // The clock moves on once the transaction opens, so a `since` taken
+      // inside or after it is told apart from one taken before.
+      let transactionOpenedAt = 0;
+      mockPrisma.$transaction.mockImplementation(
+        async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+          transactionOpenedAt = Date.now();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return callback(mockPrisma);
+        }
+      );
 
       await eraseUser(BASE_PARAMS);
 
@@ -1723,11 +1732,26 @@ describe('eraseUser', () => {
       expect(subject).toEqual({ userId: BASE_PARAMS.userId, address: 'foo@bar.com' });
       // Taken before the transaction opened, so a run written while it was
       // open is read.
-      expect(since.getTime()).toBeLessThanOrEqual(before + 1_000);
-      expect(since.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+      expect(transactionOpenedAt).toBeGreaterThan(0);
+      expect(since.getTime()).toBeLessThanOrEqual(transactionOpenedAt);
       expect(mockLogger.info).toHaveBeenCalledWith(
         'User erased',
         expect.objectContaining({ executionsRedacted: 3 })
+      );
+    });
+
+    it('still makes the pass after the commit when the pre-pass could not read the person', async () => {
+      mockUserFind
+        .mockRejectedValueOnce(new Error('lookup down'))
+        .mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockPreRedactRuns).not.toHaveBeenCalled();
+      expect(mockRedactRunsAfter).toHaveBeenCalledWith(
+        expect.anything(),
+        { userId: BASE_PARAMS.userId, address: 'foo@bar.com' },
+        expect.any(Date)
       );
     });
 
