@@ -78,8 +78,6 @@ import {
   ERASURE_LEASE_MS,
   ERASURE_MAX_BACKOFF_MS,
   ERASURE_REQUEST_BUDGET_MS,
-  ERASURE_MIN_RETRY_MS,
-  ERASURE_RETRY_BUDGET_MS,
   erasureRequestBudgetMs,
   ERASURES_PER_RUN,
   erasureBackoffMs,
@@ -95,9 +93,6 @@ const RECEIPT = { receiptId: 'receipt-1', erasedAt: new Date('2026-10-19T12:00:0
 const LEASE_UNTIL = new Date(NOW.getTime() + ERASURE_LEASE_MS);
 /** What a request, and a retrier attempt, hand `eraseUser()` as its deadline (t-845). */
 const REQUEST_DEADLINE = new Date(NOW.getTime() + ERASURE_REQUEST_BUDGET_MS);
-const RETRY_DEADLINE = new Date(NOW.getTime() + ERASURE_RETRY_BUDGET_MS);
-/** The retrier's pre-passes stop here, leaving the transaction its 60 s. */
-const RETRY_PRE_PASS_DEADLINE = new Date(RETRY_DEADLINE.getTime() - 60_000);
 
 /** A user with no erasure pending: what the first request reads. */
 const NO_ERASURE_PENDING = {
@@ -682,12 +677,12 @@ describe('processPendingErasures', () => {
           userId: 'user-a',
           actorUserId: ADMIN_ID,
           reason: 'admin_action',
-          deadline: RETRY_DEADLINE,
-          prePassDeadline: RETRY_PRE_PASS_DEADLINE,
+          // No deadline: the retrier runs an attempt to the end.
+          deadline: undefined,
         },
       ],
     ]);
-    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, deferred: 0, pending: 0 });
+    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 0 });
     // Disabled again on this claim, not only on the first request.
     expect(tx.session.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-a' } });
   });
@@ -703,7 +698,7 @@ describe('processPendingErasures', () => {
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, deferred: 0, pending: 2 });
+    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 2 });
     expect(ids()).toEqual(['user-a']);
     expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
   });
@@ -814,7 +809,7 @@ describe('processPendingErasures', () => {
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 0 });
+    expect(result).toEqual({ claimed: 0, erased: 0, failed: 0, pending: 0 });
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(mocks.eraseUser).not.toHaveBeenCalled();
   });
@@ -839,7 +834,7 @@ describe('processPendingErasures', () => {
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 1, erased: 0, failed: 1, deferred: 0, pending: 1 });
+    expect(result).toEqual({ claimed: 1, erased: 0, failed: 1, pending: 1 });
     // Second attempt (one already made): two minutes, from now.
     expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
@@ -859,7 +854,7 @@ describe('processPendingErasures', () => {
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, deferred: 0, pending: 0 });
+    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 0 });
     expect(ids()).toEqual(['user-b']);
     // a was not disabled by a claim it did not win.
     expect(tx.session.deleteMany).not.toHaveBeenCalledWith({ where: { userId: 'user-a' } });
@@ -898,8 +893,7 @@ describe('processPendingErasures', () => {
       userId: 'user-a',
       actorUserId: 'user-a',
       reason: 'self_service',
-      deadline: RETRY_DEADLINE,
-      prePassDeadline: RETRY_PRE_PASS_DEADLINE,
+      deadline: undefined,
     });
   });
 
@@ -921,9 +915,8 @@ describe('the request budget (t-845)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('is eight seconds by default, and a retrier attempt gets three minutes', () => {
+  it('is eight seconds by default', () => {
     expect(ERASURE_REQUEST_BUDGET_MS).toBe(8_000);
-    expect(ERASURE_RETRY_BUDGET_MS).toBe(3 * MINUTE);
   });
 
   describe('erasureRequestBudgetMs', () => {
@@ -1102,7 +1095,7 @@ describe('requestUserErasure — when the budget runs out (t-845)', () => {
 
     expect(result.status).toBe('pending');
     expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Pending erasure: could not set the next attempt after running out of time; the lease will expire',
+      'Pending erasure: could not make the next attempt due; the lease will expire',
       { userId: USER_ID, error: 'connection reset' }
     );
     expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
@@ -1120,123 +1113,5 @@ describe('requestUserErasure — when the budget runs out (t-845)', () => {
       where: { id: USER_ID, erasureNextAttemptAt: LEASE_UNTIL },
       data: { erasureNextAttemptAt: new Date(NOW.getTime() + MINUTE) },
     });
-  });
-});
-
-describe('processPendingErasures — when an attempt runs out of time (t-845)', () => {
-  function queueOne(): void {
-    prisma.user.findFirst.mockImplementation(
-      async (args: { where: { id: { notIn: string[] } } }) =>
-        args.where.id.notIn.includes('user-a') ? null : { id: 'user-a' }
-    );
-    tx.user.findUnique.mockImplementation(async () => ({
-      erasureRequestedAt: new Date(NOW.getTime() - 30 * MINUTE),
-      erasureRequestedBy: 'user-a',
-      erasureReason: 'self_service',
-      erasureAttempts: 2,
-      erasureNextAttemptAt: new Date(NOW.getTime() - MINUTE),
-    }));
-  }
-
-  it('counts a deferral as deferred, not failed, and does not throw', async () => {
-    queueOne();
-    mocks.eraseUser.mockRejectedValue(new ErasureDeferredError('the erasure transaction'));
-    prisma.user.count.mockResolvedValue(1);
-
-    const result = await processPendingErasures();
-
-    expect(result).toEqual({ claimed: 1, erased: 0, failed: 0, deferred: 1, pending: 1 });
-  });
-
-  it('backs the person off as a failure would, keeping the attempt counted', async () => {
-    // The retrier had minutes and the transaction its share: running out
-    // again means something keeps taking the time, and retrying at once
-    // every tick would neither help nor show.
-    queueOne();
-    mocks.eraseUser.mockRejectedValue(new ErasureDeferredError('the erasure transaction'));
-
-    await processPendingErasures();
-
-    // The third attempt: a four-minute backoff, with no decrement.
-    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
-    expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: 'user-a', erasureNextAttemptAt: LEASE_UNTIL },
-      data: { erasureNextAttemptAt: new Date(NOW.getTime() + 4 * MINUTE) },
-    });
-  });
-
-  it('logs it as a warning naming where it stopped, so a stuck erasure shows', async () => {
-    queueOne();
-    mocks.eraseUser.mockRejectedValue(new ErasureDeferredError('the stripe cleanup hook'));
-
-    await processPendingErasures();
-
-    expect(mocks.logger.warn).toHaveBeenCalledWith(
-      'Erasure attempt by the maintenance tick ran out of time; retried after a backoff',
-      {
-        userId: 'user-a',
-        attempts: 3,
-        stoppedBefore: 'the stripe cleanup hook',
-        nextAttemptAt: new Date(NOW.getTime() + 4 * MINUTE).toISOString(),
-      }
-    );
-    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
-  });
-
-  it('still counts any other failure as failed', async () => {
-    queueOne();
-    mocks.eraseUser.mockRejectedValue(new Error('stuck'));
-
-    const result = await processPendingErasures();
-
-    expect(result).toMatchObject({ claimed: 1, erased: 0, failed: 1, deferred: 0 });
-  });
-
-  it('gives the attempt a deadline of the retry budget from the claim, not the request budget', async () => {
-    queueOne();
-
-    await processPendingErasures();
-
-    expect(mocks.eraseUser).toHaveBeenCalledWith(
-      expect.objectContaining({ deadline: new Date(NOW.getTime() + 3 * MINUTE) })
-    );
-  });
-
-  it('stops the pre-passes 60 s before the deadline, so the transaction always has its time', async () => {
-    queueOne();
-
-    await processPendingErasures();
-
-    expect(mocks.eraseUser).toHaveBeenCalledWith(
-      expect.objectContaining({ prePassDeadline: new Date(NOW.getTime() + 2 * MINUTE) })
-    );
-  });
-
-  it('ends the attempt by `stopBy` when the tick has less left than the retry budget', async () => {
-    queueOne();
-    const stopBy = new Date(NOW.getTime() + 2 * MINUTE);
-
-    await processPendingErasures(NOW, { stopBy });
-
-    expect(mocks.eraseUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        deadline: stopBy,
-        prePassDeadline: new Date(stopBy.getTime() - 60_000),
-      })
-    );
-  });
-
-  it('claims nothing when too little of the tick is left for the transaction, and still reports what is pending', async () => {
-    queueOne();
-    prisma.user.count.mockResolvedValue(1);
-    const stopBy = new Date(NOW.getTime() + ERASURE_MIN_RETRY_MS - 1);
-
-    const result = await processPendingErasures(NOW, { stopBy });
-
-    expect(prisma.user.findFirst).not.toHaveBeenCalled();
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(mocks.eraseUser).not.toHaveBeenCalled();
-    expect(result).toEqual({ claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 1 });
-    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
   });
 });

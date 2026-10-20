@@ -52,8 +52,7 @@ import {
  * watchdog's budget: the watchdog (`BACKGROUND_TASK_MAX_MS` in `run-tick.ts`)
  * gives the sweep and the chain five minutes each, so a slow sweep leaves the
  * chain less than the watchdog allows. A Pro host with many orgs can raise this
- * to 800. Keep `TICK_MAX_DURATION_MS` in `platform-jobs.ts` equal to it (its
- * test checks): the erasure retrier stops inside it (t-845).
+ * to 800.
  */
 export const maxDuration = 300;
 

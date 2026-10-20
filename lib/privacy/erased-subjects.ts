@@ -229,7 +229,10 @@ export async function waitForSubjectLocks(
     if (waitMs <= 0) return;
     await client.$transaction(
       async (tx) => {
-        await boundLockWaits(tx, waitMs);
+        // The time left now: waiting for a connection spent some of it.
+        const leftMs = Math.min(waitMs, until - Date.now());
+        if (leftMs <= 0) return;
+        await boundLockWaits(tx, leftMs);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
       },
       { timeout: waitMs + 5_000 }

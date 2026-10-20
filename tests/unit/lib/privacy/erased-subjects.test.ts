@@ -266,6 +266,35 @@ describe('waitForSubjectLocks with maxWaitMs (t-845)', () => {
     ]);
   });
 
+  it('caps the lock wait at the time left once it has a connection, not before', async () => {
+    const { client, opened, $transaction } = makeWaitingClient();
+    const run = $transaction.getMockImplementation();
+    $transaction.mockImplementation(async (callback, options) => {
+      // Waiting 1.5s for a connection.
+      vi.setSystemTime(Date.now() + 1_500);
+      return run!(callback, options);
+    });
+
+    await waitForSubjectLocks(client, { userIds: ['user-1'] }, { maxWaitMs: 10_000 });
+
+    expect(opened[0].lockTimeout).toBe('8500ms');
+  });
+
+  it('takes no lock when the connection wait used up the time', async () => {
+    const { client, opened, $transaction } = makeWaitingClient();
+    const run = $transaction.getMockImplementation();
+    $transaction.mockImplementation(async (callback, options) => {
+      vi.setSystemTime(Date.now() + 10_000);
+      return run!(callback, options);
+    });
+
+    await waitForSubjectLocks(client, { userIds: ['user-1'] }, { maxWaitMs: 10_000 });
+
+    // Neither a bound of 0 (no limit at all) nor the lock itself.
+    expect(opened[0].lockTimeout).toBeUndefined();
+    expect(opened[0].key).toBeUndefined();
+  });
+
   it('never waits longer than the per-lock wait, however much time is given', async () => {
     const { client, opened } = makeWaitingClient();
 

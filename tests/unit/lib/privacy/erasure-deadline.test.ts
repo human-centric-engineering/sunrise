@@ -229,6 +229,21 @@ describe('erasure-deadline', () => {
       });
     });
 
+    it('bounds the statements by the time left once it has a connection, not before', async () => {
+      // Prisma's timeout starts after the connection wait; a bound taken
+      // before it would let the work run past the deadline.
+      const { $transaction, client, tx } = makeClient();
+      const run = $transaction.getMockImplementation();
+      $transaction.mockImplementation(async (callback, options) => {
+        vi.setSystemTime(Date.now() + 1_500);
+        return run!(callback, options);
+      });
+
+      await inBoundedTransaction(client, deadlineIn(8_000), 'a page', async () => 'ok');
+
+      expect(sqlOf(tx.$executeRaw.mock.calls[0]).values).toEqual(['6500ms', '6500ms']);
+    });
+
     it('lets the connection wait be shorter than 2s when less time than that is left', async () => {
       const { $transaction, client } = makeClient();
 

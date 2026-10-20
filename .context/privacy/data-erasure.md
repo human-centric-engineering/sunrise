@@ -73,50 +73,35 @@ recorded before any of that work starts (t-842; design on f-gdpr-erasure,
 3. **Finish what did not.** The `pendingErasures` platform job
    (`processPendingErasures()`, every maintenance tick, system scope, one
    erasure per run) erases every person whose intent is still there once their
-   next attempt is due, with the actor and reason the request stored. Each
-   attempt has `ERASURE_RETRY_BUDGET_MS` (3 minutes), and less when the tick
-   has less left: the tick passes `stopBy`, 30 s before its own 5-minute limit,
-   so an attempt is never killed by the host holding its 20-minute lease. With
-   under `ERASURE_MIN_RETRY_MS` (90 s) of the tick left, nothing is claimed
-   and the next tick takes it.
+   next attempt is due, with the actor and reason the request stored. With
+   no deadline: an attempt runs to the end, as every erasure did before
+   t-845, so a heavy erasure finishes on a host that lets it. One killed by
+   its host (the tick route's `maxDuration` on serverless) is retried once its
+   lease runs out.
 
-**The deadline** (`lib/privacy/erasure-deadline.ts`). `eraseUser()` checks it
-before the avatars, each `cleanupExternal` hook, each delivery pre-pass chunk,
-each run pre-pass page and each try of the transaction. Work already running is
-capped at the time left: a lock wait outside the transaction
-(`waitForSubjectLocks`'s `maxWaitMs`), and each pre-pass statement and the
-transaction itself through `statement_timeout`, `lock_timeout` and Prisma's
-timeout. When it runs out, `eraseUser()` throws `ErasureDeferredError`. What
+**The deadline** (`lib/privacy/erasure-deadline.ts`) is the request's alone.
+`eraseUser()` checks it before the avatars, each `cleanupExternal` hook, each
+delivery pre-pass chunk, each run pre-pass page and each try of the
+transaction. Work already running is capped at the time left: a lock wait
+outside the transaction (`waitForSubjectLocks`'s `maxWaitMs`), and each
+pre-pass statement and the transaction itself through `statement_timeout`,
+`lock_timeout` and Prisma's timeout. The statement cap is measured once the
+transaction has its connection, since Prisma's timeout only starts then. When
+the deadline runs out, `eraseUser()` throws `ErasureDeferredError`. What
 committed before then stays done (the pre-passes write in committed chunks, and
 redaction is idempotent); the transaction rolls back whole, so the account is
-still there. The next attempt writes only what is left. A request's deferral
-is not a failure: its 8 s is short by design, so the next attempt is due at
-once and the deferral does not count toward `erasureAttempts` (a later
-failure's backoff starts from the failures alone). A deferral by the retrier
-is different: it had minutes, and the transaction its share, so something
-keeps taking the time (a slow `cleanupExternal` hook, a lock held throughout).
-It is counted and backed off like a failure, logged as a warning naming where
-it stopped, and reported as `deferred`. Only a timeout that arrives after the deadline (Postgres's
-statement or lock timeout, Prisma's transaction or pool timeout) is a deferral;
-any other error is a failure, however late, so it is logged and backed off.
-An attempt that finds the account already erased, whatever it threw, answers
-with the receipt.
+still there. A deferral is not a failure: the next attempt is due at once, and
+the deferral does not count toward `erasureAttempts`, so a later failure's
+backoff starts from the failures alone. Only a timeout that arrives after the
+deadline (Postgres's statement or lock timeout, Prisma's transaction or pool
+timeout; `isTimeoutError()`) is a deferral. Any other error is a failure,
+however late, so it is logged and backed off. An attempt that finds the account
+already erased, whatever it threw, answers with the receipt.
 
-**The retrier keeps time for the transaction.** The pre-passes re-scan from
-the start on every attempt; only their writes carry over. So the retrier sets
-`prePassDeadline`, 60 s before its deadline: a pre-pass that runs out of that
-time stops and leaves the rest to the transaction (as a failed pre-pass
-always has), rather than deferring, and a transaction that then times out is a
-failure, not a deferral. An erasure whose scans take longer than the budget
-then finishes, or fails and is backed off, instead of deferring at the same
-scan every attempt. The request path sets no `prePassDeadline`: its
-8 s defers, and the tick carries on.
-
-**The pass after the commit keeps to the deadline too.** Once the transaction
-has committed, the run pass over runs written while it was open
-(`redactSubjectFromRunsSince`, t-843) starts no run past the deadline, so a
-request is not killed by its host after the account is gone. Runs it did not
-reach are logged as an error, with the time the transaction began.
+The run pass after the commit (`redactSubjectFromRunsSince`, t-843) is not held
+to the deadline. The account is gone by then and nothing would redo the pass,
+so it always runs in full. A request whose transaction commits near the end of
+its budget can therefore take longer than the budget to answer.
 
 `erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
 claims the row by moving it 20 minutes ahead (`ERASURE_LEASE_MS`, longer than an

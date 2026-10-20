@@ -71,7 +71,9 @@ export async function inBoundedTransaction<T>(
   try {
     return await client.$transaction(
       async (tx) => {
-        await boundLockWaits(tx, ms, { statementsToo: true });
+        // The time left now, not `ms`: Prisma starts its timeout once it has
+        // a connection, so a wait for one would otherwise run past the deadline.
+        await boundLockWaits(tx, Math.min(ms, msLeft(deadline)), { statementsToo: true });
         return fn(tx);
       },
       // Waiting for a connection counts against the deadline too.

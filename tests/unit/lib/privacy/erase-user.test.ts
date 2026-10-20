@@ -244,12 +244,7 @@ describe('eraseUser', () => {
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 0 });
     mockPreRedactRuns.mockResolvedValue(PRE_PASS_STARTED);
-    mockRedactRunsAfter.mockResolvedValue({
-      redacted: 0,
-      failed: 0,
-      lastError: null,
-      stoppedEarly: false,
-    });
+    mockRedactRunsAfter.mockResolvedValue({ redacted: 0, failed: 0, lastError: null });
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -1673,6 +1668,33 @@ describe('eraseUser', () => {
         expect(bound[0].values).toEqual(['8000ms', '8000ms']);
       });
 
+      it('measures the bound when the transaction starts, so a wait for a connection is not added to it', async () => {
+        // Prisma starts its timeout once it has a connection; a bound taken
+        // before the wait would let the transaction run past the deadline.
+        mockPrisma.$transaction.mockImplementation(
+          (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+            advance(1_500);
+            return callback(mockPrisma);
+          }
+        );
+
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        const bound = mockExecuteRaw.mock.calls
+          .map(sqlOf)
+          .filter((sql) => sql.text.includes('set_config'));
+        expect(bound[0].values).toEqual(['6500ms', '6500ms']);
+      });
+
+      it('runs the pass after the commit to the end, not held to the deadline', async () => {
+        // The account is gone by then and nothing would redo it: a pass cut
+        // short would leave runs naming the person for good.
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        expect(mockRedactRunsAfter).toHaveBeenCalledTimes(1);
+        expect(mockRedactRunsAfter.mock.calls[0]).toHaveLength(3);
+      });
+
       it('hands the run pre-pass the deadline', async () => {
         const deadline = new Date(Date.now() + 8_000);
 
@@ -1828,114 +1850,6 @@ describe('eraseUser', () => {
         expect(mockLogger.error).toHaveBeenCalledWith(
           'Erasure run pre-pass failed; the transaction redacts instead',
           expect.objectContaining({ userId: BASE_PARAMS.userId })
-        );
-      });
-    });
-
-    describe('with time set aside for the transaction (prePassDeadline)', () => {
-      /** The retrier's shape: pre-passes stop 60 s before the deadline. */
-      function retrierParams() {
-        const deadline = new Date(Date.now() + 180_000);
-        return {
-          ...BASE_PARAMS,
-          deadline,
-          prePassDeadline: new Date(deadline.getTime() - 60_000),
-        };
-      }
-
-      it('hands the run pre-pass the pre-pass deadline, not the overall one', async () => {
-        const params = retrierParams();
-
-        await eraseUser(params);
-
-        expect(mockPreRedactRuns.mock.calls[0][3]).toBe(params.prePassDeadline);
-      });
-
-      it('lets the transaction redact what a delivery pre-pass left when it runs out, rather than deferring', async () => {
-        // The retrier re-scans from the start each attempt; deferring here
-        // would stop at the same scan every time and never erase the person.
-        mockPreRedact.mockRejectedValueOnce(
-          new ErasureDeferredError('the webhook delivery pre-pass')
-        );
-
-        const result = await eraseUser(retrierParams());
-
-        expect(result.receiptId).toBe('receipt-1');
-        expect(mockUserDelete).toHaveBeenCalledTimes(1);
-        // The other table's pre-pass still ran.
-        expect(mockPreRedact).toHaveBeenCalledTimes(2);
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          'Erasure delivery pre-pass ran out of its time; the transaction redacts the rest',
-          { userId: BASE_PARAMS.userId, table: 'webhook' }
-        );
-        expect(mockLogger.error).not.toHaveBeenCalled();
-      });
-
-      it('has the transaction read every run when the run pre-pass runs out, rather than deferring', async () => {
-        mockPreRedactRuns.mockRejectedValue(new ErasureDeferredError('a run pre-pass page'));
-
-        const result = await eraseUser(retrierParams());
-
-        expect(result.receiptId).toBe('receipt-1');
-        expect(mockEraseRuns).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          'Erasure run pre-pass ran out of its time; the transaction redacts the rest',
-          { userId: BASE_PARAMS.userId }
-        );
-        expect(mockLogger.error).not.toHaveBeenCalled();
-      });
-
-      it('still defers when the overall deadline has passed before a pre-pass', async () => {
-        const params = retrierParams();
-        mockPreRedact.mockImplementationOnce(async () => {
-          advance(181_000);
-          return 0;
-        });
-
-        const error = await eraseUser(params).catch((e: unknown) => e);
-
-        expect((error as ErasureDeferredError).stage).toBe('the hook delivery pre-pass');
-        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-      });
-
-      it('lets a transaction timeout through as a failure, not a deferral, even after the deadline', async () => {
-        // It had its 60 s set aside, so it timed out on its own; a deferral
-        // would retry the same work without a backoff or an error line.
-        const failure = new Error('canceling statement due to statement timeout');
-        mockPrisma.$transaction.mockImplementation(async () => {
-          advance(181_000);
-          throw failure;
-        });
-
-        const error = await eraseUser(retrierParams()).catch((e: unknown) => e);
-
-        expect(error).toBe(failure);
-      });
-    });
-
-    describe('the run pass after the commit', () => {
-      it('is held to the deadline', async () => {
-        const deadline = new Date(Date.now() + 8_000);
-
-        await eraseUser({ ...BASE_PARAMS, deadline });
-
-        expect(mockRedactRunsAfter.mock.calls[0][3]).toBe(deadline);
-      });
-
-      it('still answers with the receipt when it runs out, and logs what it left as an error', async () => {
-        mockRedactRunsAfter.mockResolvedValue({
-          redacted: 2,
-          failed: 0,
-          lastError: null,
-          stoppedEarly: true,
-        });
-
-        const result = await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
-
-        expect(result.receiptId).toBe('receipt-1');
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          'Erasure run pass after the commit ran out of time; runs written while the transaction was open may still name the person',
-          { userId: BASE_PARAMS.userId, since: expect.any(String) }
         );
       });
     });
@@ -2318,8 +2232,7 @@ describe('eraseUser', () => {
       expect(mockRedactRunsAfter).toHaveBeenCalledWith(
         expect.anything(),
         { userId: BASE_PARAMS.userId, address: 'foo@bar.com' },
-        expect.any(Date),
-        undefined
+        expect.any(Date)
       );
     });
 

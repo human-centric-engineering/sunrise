@@ -106,7 +106,7 @@ const RETENTION_IDLE = {
 
 const SYSTEM_RETENTION_IDLE = { auditLogsDeleted: 0, mcpAuditLogsDeleted: 0 };
 
-const ERASURES_IDLE = { claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 0 };
+const ERASURES_IDLE = { claimed: 0, erased: 0, failed: 0, pending: 0 };
 
 const ORG_A = 'org_a';
 const ORG_B = 'org_b';
@@ -242,16 +242,6 @@ describe('runDuePlatformJobs', () => {
     expect(processOrphanedExecutions).toHaveBeenCalledWith();
     expect(backfillMissingEmbeddings).toHaveBeenCalledWith();
     expect(enforceRetentionPolicies).toHaveBeenCalledWith();
-  });
-
-  it('tells the erasure retrier to be done 30 s before the tick’s 5-minute limit, counted from the tick start', async () => {
-    // An attempt killed by the host's limit on the tick would hold its lease,
-    // and the erasure, for 20 minutes (t-845).
-    await runDuePlatformJobs(T0);
-
-    expect(processPendingErasures).toHaveBeenCalledWith(expect.any(Date), {
-      stopBy: new Date(T0 + 5 * MINUTE - 30_000),
-    });
   });
 
   it('on the very next tick runs only the retry drains and the eval worker', async () => {
@@ -458,14 +448,14 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(processPendingErasures)
-          .mockResolvedValue({ claimed: 1, erased: 1, failed: 0, deferred: 0, pending: 0 }),
+          .mockResolvedValue({ claimed: 1, erased: 1, failed: 0, pending: 0 }),
     ],
     [
       'pendingErasures — one is still waiting out its backoff',
       () =>
         vi
           .mocked(processPendingErasures)
-          .mockResolvedValue({ claimed: 0, erased: 0, failed: 0, deferred: 0, pending: 2 }),
+          .mockResolvedValue({ claimed: 0, erased: 0, failed: 0, pending: 2 }),
     ],
     [
       'evaluationRuns — a claimed run needs the next time-slice',

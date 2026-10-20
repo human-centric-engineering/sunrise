@@ -563,12 +563,11 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
         const id = call[1] as string;
         return rows[id] ? [{ outputData: null, errorMessage: null, ...rows[id] }] : [];
       }),
-      $executeRaw: vi.fn(async () => 1),
       aiWorkflowExecution: { update: vi.fn() },
     };
     const client = {
       $queryRaw: vi.fn(async () => (pages.shift() ?? []).map((id) => ({ id }))),
-      $transaction: vi.fn((fn: (t: typeof tx) => Promise<unknown>, _options?: unknown) => fn(tx)),
+      $transaction: vi.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     };
     return { client, tx };
   }
@@ -600,7 +599,7 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
 
     const result = await redactSubjectFromRunsSince(client as never, subject, since);
 
-    expect(result).toEqual({ redacted: 1, failed: 0, lastError: null, stoppedEarly: false });
+    expect(result).toEqual({ redacted: 1, failed: 0, lastError: null });
     expect(client.$transaction).toHaveBeenCalledTimes(2);
     const rowRead = tx.$queryRaw.mock.calls[0];
     expect(sqlOf(rowRead)).toContain('FOR NO KEY UPDATE');
@@ -623,12 +622,7 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
 
     const result = await redactSubjectFromRunsSince(client as never, subject, since);
 
-    expect(result).toEqual({
-      redacted: 1,
-      failed: 1,
-      lastError: 'lock timeout',
-      stoppedEarly: false,
-    });
+    expect(result).toEqual({ redacted: 1, failed: 1, lastError: 'lock timeout' });
     expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'exec-2' } })
     );
@@ -637,74 +631,6 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
       expect.any(Function),
       expect.objectContaining({ maxWait: 10_000 })
     );
-  });
-
-  describe('with `until` (t-845)', () => {
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it('reads nothing once `until` has passed, and says it stopped early', async () => {
-      const { client } = makeClient([['exec-1']], {});
-
-      const result = await redactSubjectFromRunsSince(
-        client as never,
-        subject,
-        since,
-        new Date(Date.now() - 1)
-      );
-
-      expect(result).toEqual({ redacted: 0, failed: 0, lastError: null, stoppedEarly: true });
-      expect(client.$queryRaw).not.toHaveBeenCalled();
-      expect(client.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('starts no further run once a run has used up the time', async () => {
-      const { client, tx } = makeClient([['exec-1', 'exec-2']], {
-        'exec-1': { id: 'exec-1', inputData: {}, executionTrace: [{ output: { to: ADDRESS } }] },
-      });
-      const run = client.$transaction.getMockImplementation();
-      client.$transaction.mockImplementation(async (fn) => {
-        const out = await run!(fn);
-        vi.setSystemTime(Date.now() + 5_000);
-        return out;
-      });
-
-      const result = await redactSubjectFromRunsSince(
-        client as never,
-        subject,
-        since,
-        new Date(Date.now() + 2_000)
-      );
-
-      expect(result).toEqual({ redacted: 1, failed: 0, lastError: null, stoppedEarly: true });
-      expect(client.$transaction).toHaveBeenCalledTimes(1);
-      expect(tx.aiWorkflowExecution.update).toHaveBeenCalledOnce();
-    });
-
-    it('caps each run’s transaction, connection wait and statements at the time left', async () => {
-      const { client, tx } = makeClient([['exec-1']], {});
-
-      await redactSubjectFromRunsSince(
-        client as never,
-        subject,
-        since,
-        new Date(Date.now() + 3_000)
-      );
-
-      expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-        timeout: 3_000,
-        maxWait: 3_000,
-      });
-      const bound = sqlOf(tx.$executeRaw.mock.calls[0]);
-      expect(bound).toContain("set_config('statement_timeout'");
-      expect(bound).toContain("set_config('lock_timeout'");
-    });
   });
 
   it('pages on by id', async () => {

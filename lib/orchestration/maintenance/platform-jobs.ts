@@ -56,18 +56,7 @@ import { requireOrgId } from '@/lib/tenancy/context';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 
 const MINUTE = 60 * 1000;
-
 const HOUR = 60 * MINUTE;
-
-/**
- * How long the host lets a tick run: the tick route's `maxDuration`, in ms.
- * The route's value has to be a literal (Next.js reads it statically), so the
- * route test holds the two equal; a fork that raises one raises both. A job
- * that must not be killed part-way keeps inside it, less
- * {@link TICK_MARGIN_MS}.
- */
-export const TICK_MAX_DURATION_MS = 300_000;
-const TICK_MARGIN_MS = 30_000;
 
 /** What one task run reports back: its own summary value, plus "did it find anything". */
 export interface PlatformJobOutcome {
@@ -93,11 +82,8 @@ export interface PlatformJob {
    * platform task with no declared scope is the state §108 removed.
    */
   scope: JobScope;
-  /**
-   * Run the task inside its scope and classify its outcome. `tickStartMs` is
-   * when the tick began.
-   */
-  run: (orgIds?: readonly string[], tickStartMs?: number) => Promise<PlatformJobOutcome>;
+  /** Run the task inside its scope and classify its outcome. */
+  run: (orgIds?: readonly string[]) => Promise<PlatformJobOutcome>;
 }
 
 /**
@@ -110,18 +96,18 @@ function job<T>(spec: {
   name: string;
   intervalMs: number;
   scope: JobScope;
-  run: (tick: { startMs: number }) => Promise<T>;
+  run: () => Promise<T>;
   foundWork: (result: T) => boolean;
 }): PlatformJob {
   return {
     name: spec.name,
     intervalMs: spec.intervalMs,
     scope: spec.scope,
-    run: (orgIds, tickStartMs = Date.now()) =>
+    run: (orgIds) =>
       runScopedJob({
         name: spec.name,
         scope: spec.scope,
-        run: () => spec.run({ startMs: tickStartMs }),
+        run: spec.run,
         foundWork: spec.foundWork,
         orgIds,
       }),
@@ -258,12 +244,7 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // enters the system scope itself at `multi`; per org it would erase the
     // same person once per org.
     scope: { system: 'pendingErasures: finish account deletions a request left pending (t-842)' },
-    // Done before the tick's own limit: an attempt killed there would hold
-    // its lease, and the erasure, for 20 minutes.
-    run: (tick) =>
-      processPendingErasures(new Date(), {
-        stopBy: new Date(tick.startMs + TICK_MAX_DURATION_MS - TICK_MARGIN_MS),
-      }),
+    run: () => processPendingErasures(),
     // Any pending erasure counts, due or not: one waiting out its backoff must
     // keep the idle gate from skipping past its next attempt.
     foundWork: (r) => r.claimed > 0 || r.pending > 0,
@@ -326,7 +307,7 @@ export async function runDuePlatformJobs(
       }
       clock.markStarted(entry.name, now);
       try {
-        const outcome = await entry.run(orgIds, now);
+        const outcome = await entry.run(orgIds);
         return [entry.name, outcome.result, outcome.foundWork] as const;
       } catch (err) {
         // Contained here rather than in `run-tick.ts` so one failing sweep can
