@@ -222,8 +222,8 @@ export async function findErasedSinceRunStarted(
     Array<{ subjectUserId: string; subjectEmailHash: string | null }>
   >`SELECT r."subjectUserId", r."subjectEmailHash"
      FROM data_erasure_receipt r
-     JOIN ai_workflow_execution e ON e.id = ${executionId}
-     WHERE r."erasedAt" >= coalesce(e."startedAt", e."createdAt")
+     WHERE r."erasedAt" >= (SELECT coalesce(e."startedAt", e."createdAt")
+         FROM ai_workflow_execution e WHERE e.id = ${executionId})
        - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
   if (receipts.length === 0) return null;
 

@@ -636,15 +636,40 @@ transaction):
      (`dispatchApprovalNotification`), since the application log is beyond
      erasure.
 
+   **And what it writes back** (t-843). The engine writes the trace whole
+   after each step, and the input, step outputs and error message at the
+   end, from what it holds in memory, so a write after the erasure could
+   restore what the erasure removed. Every write of a run — a checkpoint,
+   the approval pause, the final write — therefore runs in a transaction:
+   the write locks the row, then the run asks for erasure receipts since it
+   started (`findErasedSinceRunStarted`: one query on the indexed `erasedAt`,
+   from the run's `startedAt` less `RUN_CLOCK_SKEW_MS`). When there are any,
+   whoever the run names among them is taken out of its trace, `inputData`,
+   step outputs (so later steps read the redacted copy) and error message by
+   `redactErased`, and the row is written again before the transaction
+   commits. Holding the row orders the two: erasure locks a run naming the
+   person before it redacts it, so a write queued behind it sees the receipt
+   once it commits, and an erasure queued behind a write reads what the write
+   left. A write that lands while the erasure's transaction is open, on a row
+   its pass did not lock — the run named the person only in memory then —
+   finds no receipt yet; erasure makes **one more pass after it commits**
+   (`redactSubjectFromRunsSince`) over the runs written since its
+   transaction began or not finished, and counts them in `executionsRedacted`.
+   That pass is best-effort: if it fails it is logged, and the run's next
+   write, if it has one, takes the person out instead. Measured on a local
+   Postgres, the check adds about 2 ms to a checkpoint's median when nobody
+   was erased (500 interleaved pairs). `npm run smoke:erasure-running` proves
+   all three orders against the real engine.
+
    **Not reached:** the approval events are sent after the pause commits
    and its locks are let go, so an erasure that ran from start to finish in
-   that gap of milliseconds would not see the delivery they create. And the
-   rest of the trace. The engine writes it whole after
-   each step, so a checkpoint written after the transaction commits can
-   restore what was removed from an earlier step's entry. Runs are minutes
-   long and retention prunes them; t-843 is the fix. A tick that read a
-   schedule before the erasure and creates its run after it is a writer like
-   any other (t-839, see "Writers that read before an erasure" below).
+   that gap of milliseconds would not see the delivery they create. A run's
+   multi-turn step state (`ai_workflow_running_step.turns`) is not redacted
+   by erasure at all. The engine deletes the row when its step ends, but it
+   is kept while the run is paused at an approval (resume reads its turns
+   back) and when the host running it dies mid-step. A tick that read a schedule before the erasure and creates
+   its run after it is a writer like any other (t-839, see "Writers that read
+   before an erasure" below).
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes

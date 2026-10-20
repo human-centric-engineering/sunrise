@@ -189,12 +189,17 @@ async function main(): Promise<void> {
         JSON.stringify([colleague.id]),
       'the paused row names the colleague as the only approver'
     );
-    // The approval step's entry only: earlier steps' entries keep their config
-    // as the run held it, which is t-843's (a running workflow's trace).
     const gateText = JSON.stringify(gate).toLowerCase();
     check(
       !gateText.includes(gone.id) && !gateText.includes(gone.email.toLowerCase()),
       "the approval step's entry does not name them, in its config or its payload"
+    );
+    // Nor do the earlier steps' entries, whose config the run held from
+    // before the erasure (t-843).
+    const traceText = JSON.stringify(trace).toLowerCase();
+    check(
+      !traceText.includes(gone.id) && !traceText.includes(gone.email.toLowerCase()),
+      'no entry in the trace names them'
     );
 
     // ── 2. Send first: an erasure waits for the step's send ─────────────
