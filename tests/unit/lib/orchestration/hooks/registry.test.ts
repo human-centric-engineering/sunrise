@@ -413,6 +413,32 @@ describe('retryHookDelivery', () => {
     expect(result).toBe(false);
   });
 
+  it('keeps the attempt alive past the retry route’s response (t-903)', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ status: 'exhausted', attempts: 3 }),
+      hook: makeHook(),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ status: 'pending', attempts: 0 }),
+    ] as never);
+    let answer!: (value: unknown) => void;
+    mockFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+
+    expect(await retryHookDelivery('del-1')).toBe(true);
+
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    expect(await settledYet(handed)).toBe(false);
+
+    answer({ ok: true, status: 200 });
+    await handed;
+  });
+
   it('resets delivery state and re-attempts', async () => {
     // The read: the exhausted row. The reset returns the row it wrote.
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({

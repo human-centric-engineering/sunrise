@@ -23,6 +23,7 @@
 import type { AiAgent, AiAgentProfile, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import type {
   ChatEvent,
   Citation,
@@ -3511,21 +3512,27 @@ function notifyBudgetExceeded(args: {
   conversationId: string | null;
 }): void {
   const { agent, budget, cap, request, conversationId } = args;
-  void (async () => {
-    const actorUserId = userIdForUserRef(request.userId);
-    const actorUserName = await resolveUserDisplayName(actorUserId);
-    await dispatchWebhookEvent('budget_exceeded', {
-      agentId: agent.id,
-      agentSlug: agent.slug,
-      agentName: agent.name,
-      ...(actorUserId ? { actorUserId } : { embedVisitorId: request.userId }),
-      actorUserName,
-      conversationId,
-      usedUsd: budget.spent,
-      limitUsd: budget.limit,
-      cap,
-    });
-  })();
+  // Kept alive past the response (t-903): the refused turn's stream closes at
+  // once, while the name lookup is still in flight.
+  keepRunningAfterResponse(
+    (async () => {
+      const actorUserId = userIdForUserRef(request.userId);
+      const actorUserName = await resolveUserDisplayName(actorUserId);
+      await dispatchWebhookEvent('budget_exceeded', {
+        agentId: agent.id,
+        agentSlug: agent.slug,
+        agentName: agent.name,
+        ...(actorUserId ? { actorUserId } : { embedVisitorId: request.userId }),
+        actorUserName,
+        conversationId,
+        usedUsd: budget.spent,
+        limitUsd: budget.limit,
+        cap,
+      });
+    })(),
+    'Webhook dispatch for budget_exceeded',
+    { agentId: agent.id }
+  );
 }
 
 /**

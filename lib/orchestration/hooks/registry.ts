@@ -220,8 +220,9 @@ function matchesFilter(filter: HookFilter | null, payload: HookEventPayload): bo
 
 /**
  * Emit a hook event. All matching enabled hooks are dispatched
- * asynchronously — this function returns immediately. The dispatch, and every
- * delivery it starts, is kept alive past the response (t-903).
+ * asynchronously — this function returns immediately. The dispatch, and each
+ * hook's first delivery attempt, is kept alive past the response (t-903).
+ * In-process retries are not; the tick's `processPendingHookRetries` sends them.
  *
  * @param eventType - The event type to emit
  * @param data - Event-specific payload data

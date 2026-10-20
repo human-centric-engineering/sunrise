@@ -14,6 +14,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
+// `after()` records what it was handed (t-903); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -182,6 +190,33 @@ describe('Event factory helpers', () => {
   });
 
   describe('workflowFailed', () => {
+    it('keeps the workflow_failed dispatch, name lookups included, alive past the response (t-903)', async () => {
+      mockAfter.mockClear();
+      let finishDispatch!: () => void;
+      vi.mocked(dispatchWebhookEvent).mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          finishDispatch = resolve;
+        })
+      );
+
+      workflowFailed('step exploded', 'step-1', { executionId: 'exec-1' });
+
+      // Registered at once, before the lookups, so nothing runs unheld.
+      expect(mockAfter).toHaveBeenCalledTimes(1);
+      const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+      let settled = false;
+      void handed.then(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => expect(dispatchWebhookEvent).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+
+      finishDispatch();
+      await handed;
+      expect(settled).toBe(true);
+    });
+
     it('returns a workflow_failed event and dispatches webhook', async () => {
       const event = workflowFailed('Budget exceeded', 'step-4');
 

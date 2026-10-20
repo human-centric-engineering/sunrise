@@ -8,6 +8,7 @@
 
 import type { ExecutionEvent, WorkflowStepType } from '@/types/orchestration';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import {
   resolveUserDisplayName,
@@ -160,31 +161,37 @@ export function workflowFailed(
   // Run name lookups + dispatch inside an async IIFE so the synchronous
   // factory can still return the ExecutionEvent immediately. Errors are
   // swallowed with a logger.warn — a webhook failure must never block
-  // the engine's terminal event sequence.
-  void (async () => {
-    try {
-      const [workflow, actorUserName] = await Promise.all([
-        resolveWorkflowDisplay(meta?.workflowId),
-        resolveUserDisplayName(meta?.userId),
-      ]);
-      await dispatchWebhookEvent('workflow_failed', {
-        error,
-        failedStepId,
-        executionId: meta?.executionId,
-        workflowId: meta?.workflowId,
-        workflowSlug: workflow.slug,
-        workflowName: workflow.name,
-        actorUserId: meta?.userId,
-        actorUserName,
-        totalCostUsd: meta?.totalCostUsd,
-        totalTokensUsed: meta?.totalTokensUsed,
-      });
-    } catch (err) {
-      logger.warn('Webhook dispatch failed for workflow_failed', {
-        failedStepId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  })();
+  // the engine's terminal event sequence. Kept alive past the response
+  // (t-903): the run ends here, so the drain's hold ends next, and the name
+  // lookups would otherwise run with nothing holding the invocation open.
+  keepRunningAfterResponse(
+    (async () => {
+      try {
+        const [workflow, actorUserName] = await Promise.all([
+          resolveWorkflowDisplay(meta?.workflowId),
+          resolveUserDisplayName(meta?.userId),
+        ]);
+        await dispatchWebhookEvent('workflow_failed', {
+          error,
+          failedStepId,
+          executionId: meta?.executionId,
+          workflowId: meta?.workflowId,
+          workflowSlug: workflow.slug,
+          workflowName: workflow.name,
+          actorUserId: meta?.userId,
+          actorUserName,
+          totalCostUsd: meta?.totalCostUsd,
+          totalTokensUsed: meta?.totalTokensUsed,
+        });
+      } catch (err) {
+        logger.warn('Webhook dispatch failed for workflow_failed', {
+          failedStepId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })(),
+    'Webhook dispatch for workflow_failed',
+    { executionId: meta?.executionId }
+  );
   return { type: 'workflow_failed', error, failedStepId };
 }
