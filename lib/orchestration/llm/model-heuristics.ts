@@ -387,6 +387,34 @@ export function acceptsSamplingTemperature(modelId: string): boolean {
 }
 
 /**
+ * Does this Claude model take a fixed thinking budget
+ * (`thinking: { type: 'enabled', budget_tokens: N }`)?
+ *
+ * Anthropic removed `budget_tokens` from its newer models: Opus 4.7+,
+ * Sonnet 5+, Haiku 5+ and Fable 400 on it, and take adaptive thinking
+ * (`thinking: { type: 'adaptive' }` with depth set by
+ * `output_config.effort`) instead. Only the older families still take a
+ * budget: Haiku 4.x and Opus / Sonnet 4.0–4.6 (deprecated on 4.6, still
+ * accepted).
+ *
+ * An allow-list of those older families, as with
+ * `acceptsSamplingTemperature`, so a model this function doesn't
+ * recognise is sent adaptive thinking — every Claude release since 4.6
+ * has taken it. Ids go through `normalizeClaudeId`; a date stamp in the
+ * minor's place reads as 4.0.
+ */
+export function acceptsThinkingBudget(modelId: string): boolean {
+  const id = normalizeClaudeId(modelId);
+  if (/^claude-haiku-[1-4](?:\b|[-.])/.test(id)) return true;
+  const four = /^claude-(?:opus|sonnet)-4(?:[-.](\d{1,2})(?!\d))?(?:\b|[-.]|$)/.exec(id);
+  if (four) {
+    const minor = four[1] === undefined ? 0 : Number(four[1]);
+    return minor <= 6;
+  }
+  return false;
+}
+
+/**
  * Which `ReasoningEffort` values does this OpenAI-compatible model
  * actually accept?
  *
@@ -478,4 +506,20 @@ export function anthropicThinkingBudget(
     case 'high':
       return 16384;
   }
+}
+
+/**
+ * Map a {@link ReasoningEffort} value to Anthropic's `output_config.effort`
+ * for models on adaptive thinking (see `acceptsThinkingBudget`).
+ *
+ *   - `minimal` — `low`. Several of these models can't turn thinking off
+ *                 (Opus 5.5 and Sonnet 5.5 400 on `{ type: 'disabled' }`),
+ *                 so the lowest effort is the nearest they get. The
+ *                 provider sends it without a `thinking` field.
+ *   - `low` / `medium` / `high` — the same name.
+ *
+ * `xhigh` and `max` have no bucket of their own, so they are never sent.
+ */
+export function anthropicAdaptiveEffort(effort: ReasoningEffort): 'low' | 'medium' | 'high' {
+  return effort === 'minimal' ? 'low' : effort;
 }

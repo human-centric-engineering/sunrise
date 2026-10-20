@@ -13,6 +13,8 @@ import { describe, it, expect } from 'vitest';
 
 import {
   acceptsSamplingTemperature,
+  acceptsThinkingBudget,
+  anthropicAdaptiveEffort,
   anthropicThinkingBudget,
   deriveBestRole,
   deriveContextLength,
@@ -532,6 +534,46 @@ describe('anthropicThinkingBudget', () => {
     expect(anthropicThinkingBudget('low')).toBe(1024);
     expect(anthropicThinkingBudget('medium')).toBe(4096);
     expect(anthropicThinkingBudget('high')).toBe(16384);
+  });
+});
+
+describe('acceptsThinkingBudget', () => {
+  it.each([
+    'claude-opus-5-5',
+    'claude-opus-5',
+    'claude-opus-4-8',
+    'claude-opus-4-7',
+    'claude-sonnet-5-5',
+    'claude-sonnet-5',
+    'claude-haiku-5-5',
+    'claude-fable-5-1',
+    'anthropic/claude-opus-4.7',
+    'global.anthropic.claude-sonnet-5-5',
+  ])('refuses a budget on %s (adaptive only)', (id) => {
+    expect(acceptsThinkingBudget(id)).toBe(false);
+  });
+
+  it.each([
+    'claude-opus-4-6',
+    'claude-opus-4-1-20250805',
+    'claude-opus-4',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4.5',
+    'claude-haiku-4-5',
+    'anthropic/claude-opus-4.6',
+    'anthropic.claude-opus-4-20250514-v1:0',
+  ])('takes a budget on %s (4.6 or older)', (id) => {
+    expect(acceptsThinkingBudget(id)).toBe(true);
+  });
+});
+
+describe('anthropicAdaptiveEffort', () => {
+  it('maps minimal to the lowest effort and keeps the other buckets by name', () => {
+    expect(anthropicAdaptiveEffort('minimal')).toBe('low');
+    expect(anthropicAdaptiveEffort('low')).toBe('low');
+    expect(anthropicAdaptiveEffort('medium')).toBe('medium');
+    expect(anthropicAdaptiveEffort('high')).toBe('high');
   });
 });
 

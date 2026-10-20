@@ -550,6 +550,98 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
 
     expect(response.content).toBe('The answer is 42.');
   });
+
+  // Opus 4.7+ / Sonnet 5+ return a 400 for `budget_tokens`; they take
+  // adaptive thinking with depth set through `output_config.effort`.
+  it.each([
+    ['claude-opus-5-5', 'low', 'low'],
+    ['claude-opus-4-7', 'medium', 'medium'],
+    ['claude-sonnet-5', 'high', 'high'],
+    ['claude-sonnet-5-5', 'high', 'high'],
+  ] as const)(
+    'sends adaptive thinking, not a budget, on %s at %s effort',
+    async (model, reasoningEffort, effort) => {
+      createMock.mockResolvedValue({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+        model,
+        stop_reason: 'end_turn',
+      });
+
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'hi' }], {
+        model,
+        // Below the 2048 floor the budget path needs — adaptive has none.
+        maxTokens: 1024,
+        temperature: 0.5,
+        reasoningEffort,
+      });
+
+      const callArgs = createMock.mock.calls[0][0];
+      expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+      expect(callArgs.output_config).toEqual({ effort });
+      expect(callArgs.temperature).toBeUndefined();
+    }
+  );
+
+  it("sends the lowest effort and no thinking field for 'minimal' on a model that can't disable thinking", async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 10, output_tokens: 3 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      maxTokens: 8192,
+      reasoningEffort: 'minimal',
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('thinking');
+    expect(callArgs.output_config).toEqual({ effort: 'low' });
+  });
+
+  it('keeps the token budget, and sends no effort, on Opus 4.6', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 10, output_tokens: 3 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-4-6',
+      maxTokens: 8192,
+      reasoningEffort: 'medium',
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
+    expect(callArgs).not.toHaveProperty('output_config');
+  });
+
+  it('sends no effort when no reasoning effort is set on an adaptive model', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 10, output_tokens: 3 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      maxTokens: 8192,
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('thinking');
+    expect(callArgs).not.toHaveProperty('output_config');
+  });
 });
 
 describe('AnthropicProvider.chatStream', () => {
