@@ -91,9 +91,13 @@ export const POST = withAdminAuth<{ id: string }>(
       // `approval-route-helpers.ts`. The admin approvals UI already promises
       // "The workflow will resume" — this makes that promise true without
       // requiring an external cron caller.
-      keepRunningAfterResponse(resumeApprovedExecution(id), 'admin approve: resume', {
-        executionId: id,
-      });
+      keepRunningAfterResponse(
+        resumeApprovedExecution(id),
+        'admin approve: resumeApprovedExecution',
+        {
+          executionId: id,
+        }
+      );
       return successResponse(result);
     } catch (err) {
       const error = err as Error & { code?: string; currentStatus?: string };

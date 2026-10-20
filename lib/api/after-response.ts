@@ -25,8 +25,8 @@ import { logger } from '@/lib/logging';
 
 /**
  * Run `task` to completion even after the response is sent. Never throws, and
- * the promise handed to `after()` never rejects: a rejection is logged under
- * `label` instead.
+ * the promise handed to `after()` never rejects: a rejection is logged as
+ * "`label` failed" instead.
  */
 export function keepRunningAfterResponse(
   task: Promise<unknown>,
@@ -36,7 +36,7 @@ export function keepRunningAfterResponse(
   const settled = task.then(
     () => undefined,
     (err: unknown) => {
-      logger.error(`${label}: background work failed`, err, meta);
+      logger.error(`${label} failed`, err, meta);
     }
   );
   try {

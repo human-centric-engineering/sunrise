@@ -49,6 +49,14 @@ vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: (): unknown => mockGetSettings(),
 }));
 
+// `after()` records what it was handed (t-846); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 const mockResumeApprovedExecution = vi.fn();
 vi.mock('@/lib/orchestration/scheduling', () => ({
   resumeApprovedExecution: (id: string): unknown => mockResumeApprovedExecution(id),
@@ -208,6 +216,8 @@ describe('chat sub-routes (same-origin CORS)', () => {
     // Microtask may not have fired yet — flush.
     await Promise.resolve();
     expect(mockResumeApprovedExecution).toHaveBeenCalledWith(VALID_ID);
+    // Kept alive past the response, not left floating (t-846).
+    expect(mockAfter).toHaveBeenCalledTimes(1);
     // Both the action and the detached resume ran in the org the row named.
     expect(scopes).toHaveLength(2);
     for (const scope of scopes) {
@@ -244,6 +254,7 @@ describe('chat sub-routes (same-origin CORS)', () => {
     expect(res.status).toBe(200);
     await Promise.resolve();
     expect(mockResumeApprovedExecution).not.toHaveBeenCalled();
+    expect(mockAfter).not.toHaveBeenCalled();
     expect(mockExecuteApproval).toHaveBeenCalledWith(
       VALID_ID,
       expect.objectContaining({ actorLabel: 'token:external' })
@@ -303,6 +314,36 @@ describe('embed sub-routes (allowlist CORS)', () => {
       })
     );
     expect(res.status).toBe(403);
+  });
+
+  it('POST /approve/embed hands the resume to after(), which holds it until it settles (t-846)', async () => {
+    let finishResume!: () => void;
+    mockResumeApprovedExecution.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishResume = resolve;
+      })
+    );
+    const res = await embedApproveModule.POST(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/embed?token=t`, {
+        method: 'POST',
+        origin: 'https://partner.com',
+        body: {},
+      }),
+      { params: Promise.resolve({ id: VALID_ID }) }
+    );
+    expect(res.status).toBe(200);
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    let settled = false;
+    void handed.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    finishResume();
+    await handed;
+    expect(settled).toBe(true);
   });
 
   it('POST /approve/embed fire-and-forget triggers engine resumption', async () => {

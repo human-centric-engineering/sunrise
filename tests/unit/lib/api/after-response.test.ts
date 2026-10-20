@@ -72,7 +72,7 @@ describe('keepRunningAfterResponse', () => {
     task.reject(failure);
 
     await expect(handed).resolves.toBeUndefined();
-    expect(logger.error).toHaveBeenCalledWith('Inbound: drain: background work failed', failure, {
+    expect(logger.error).toHaveBeenCalledWith('Inbound: drain failed', failure, {
       executionId: 'exec_1',
     });
   });
@@ -119,6 +119,6 @@ describe('keepRunningAfterResponse', () => {
     keepRunningAfterResponse(Promise.reject(failure), 'test');
     await flush();
 
-    expect(logger.error).toHaveBeenCalledWith('test: background work failed', failure, {});
+    expect(logger.error).toHaveBeenCalledWith('test failed', failure, {});
   });
 });

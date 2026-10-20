@@ -20,6 +20,14 @@ import {
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
+// `after()` records what it was handed (t-846); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
@@ -205,6 +213,10 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     // Channel routes already do this; the admin route used to skip it,
     // which left runs sitting in PENDING after approval.
     expect(resumeApprovedExecution).toHaveBeenCalledWith(EXECUTION_ID);
+    // ...and keep it alive past the response rather than leave it floating
+    // (t-846).
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    expect(mockAfter.mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
   it('swallows resumeApprovedExecution rejections — 200 response + logged error, no unhandled promise', async () => {
