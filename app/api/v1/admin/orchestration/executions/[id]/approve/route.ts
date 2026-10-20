@@ -22,7 +22,6 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
-import { logger } from '@/lib/logging';
 import { approveExecutionBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { executeApproval } from '@/lib/orchestration/approval-actions';
@@ -32,6 +31,14 @@ import {
   adminCanViewExecution,
 } from '@/lib/orchestration/access/execution-access';
 import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
+
+/**
+ * The invocation's budget, including the resumed run drained after the
+ * response (t-846). 300 s as on the maintenance tick; a run still going when it
+ * ends is picked up by the orphan sweep once its lease lapses.
+ */
+export const maxDuration = 300;
 
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
@@ -77,14 +84,15 @@ export const POST = withAdminAuth<{ id: string }>(
           actorLabel: `admin:${session.user.id}`,
         });
       const result = await (isApprover ? acrossOwnersForApproval(approve) : approve());
-      // Fire-and-forget drain so the run continues immediately after approval
+      // Background drain so the run continues immediately after approval
       // instead of waiting for the maintenance tick's `processPendingExecutions`
-      // sweep (~2 min stale threshold + ~60s cron interval). Matches the
-      // chat/embed approval routes in `approval-route-helpers.ts`. The admin
-      // approvals UI already promises "The workflow will resume" — this makes
-      // that promise true without requiring an external cron caller.
-      void resumeApprovedExecution(id).catch((err: unknown) => {
-        logger.error('admin approve: resumeApprovedExecution failed', err, { executionId: id });
+      // sweep (~2 min stale threshold + ~60s cron interval), kept alive past
+      // the response (t-846). Matches the chat/embed approval routes in
+      // `approval-route-helpers.ts`. The admin approvals UI already promises
+      // "The workflow will resume" — this makes that promise true without
+      // requiring an external cron caller.
+      keepRunningAfterResponse(resumeApprovedExecution(id), 'admin approve: resume', {
+        executionId: id,
       });
       return successResponse(result);
     } catch (err) {

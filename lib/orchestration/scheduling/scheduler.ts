@@ -17,6 +17,7 @@ import { CronExpressionParser } from 'cron-parser';
 import type { AiWorkflowExecution, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
@@ -132,7 +133,8 @@ export interface ScheduleProcessResult {
  * Drain the orchestration engine's async iterator, consuming all events
  * for side-effects only (DB checkpoints, status transitions).
  *
- * Runs fire-and-forget — callers use `void drainEngine(...)`.
+ * Runs in the background: callers hand it to `keepRunningAfterResponse`, so a
+ * drain started inside a request outlives the response (t-846).
  *
  * On uncaught engine errors, the row is marked FAILED and the
  * `workflow.execution.failed` hook is emitted. The engine's own
@@ -526,16 +528,21 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         continue;
       }
 
-      // Fire-and-forget — drain the engine events without blocking the tick.
-      // User context matches the row: `null`, so the run's capabilities see a
-      // system context rather than impersonating the schedule's author.
-      void drainEngine(
-        execution.id,
-        schedule.workflow,
-        withoutErasedRecipients(defParsed.data, erased),
-        (execution.inputData ?? {}) as Record<string, unknown>,
-        null,
-        publishedVersion.id
+      // Drained in the background, without blocking the tick, and kept alive
+      // past the tick's response. User context matches the row: `null`, so the
+      // run's capabilities see a system context rather than impersonating the
+      // schedule's author.
+      keepRunningAfterResponse(
+        drainEngine(
+          execution.id,
+          schedule.workflow,
+          withoutErasedRecipients(defParsed.data, erased),
+          (execution.inputData ?? {}) as Record<string, unknown>,
+          null,
+          publishedVersion.id
+        ),
+        'Scheduler: due schedule drain',
+        { executionId: execution.id }
       );
 
       result.succeeded++;
@@ -668,13 +675,17 @@ async function resumeApproved(executionId: string): Promise<void> {
     return;
   }
 
-  void drainEngine(
-    executionId,
-    execution.workflow,
-    defParsed.data,
-    (execution.inputData ?? {}) as Record<string, unknown>,
-    execution.userId,
-    pinnedVersionId
+  keepRunningAfterResponse(
+    drainEngine(
+      executionId,
+      execution.workflow,
+      defParsed.data,
+      (execution.inputData ?? {}) as Record<string, unknown>,
+      execution.userId,
+      pinnedVersionId
+    ),
+    'resumeApprovedExecution: drain',
+    { executionId }
   );
 }
 
@@ -763,13 +774,17 @@ export async function processPendingExecutions(
         workflowSlug: execution.workflow.slug,
       });
 
-      void drainEngine(
-        execution.id,
-        execution.workflow,
-        defParsed.data,
-        (execution.inputData ?? {}) as Record<string, unknown>,
-        execution.userId,
-        pinnedVersionId
+      keepRunningAfterResponse(
+        drainEngine(
+          execution.id,
+          execution.workflow,
+          defParsed.data,
+          (execution.inputData ?? {}) as Record<string, unknown>,
+          execution.userId,
+          pinnedVersionId
+        ),
+        'Scheduler: pending recovery drain',
+        { executionId: execution.id }
       );
 
       result.recovered++;
@@ -967,16 +982,20 @@ export async function processOrphanedExecutions(): Promise<OrphanSweepResult> {
         priorRecoveryAttempts: execution.recoveryAttempts,
       });
 
-      // Fire-and-forget drain. `initRun`'s resume branch claims the lease and
+      // Background drain. `initRun`'s resume branch claims the lease and
       // increments `recoveryAttempts` atomically; if another sweep beat us to the
       // claim, drainEngine's catch logs and the row stays running under the new owner.
-      void drainEngine(
-        execution.id,
-        execution.workflow,
-        defParsed.data,
-        (execution.inputData ?? {}) as Record<string, unknown>,
-        execution.userId,
-        pinnedVersionId
+      keepRunningAfterResponse(
+        drainEngine(
+          execution.id,
+          execution.workflow,
+          defParsed.data,
+          (execution.inputData ?? {}) as Record<string, unknown>,
+          execution.userId,
+          pinnedVersionId
+        ),
+        'Scheduler: orphan re-drive drain',
+        { executionId: execution.id }
       );
 
       result.recovered++;

@@ -34,6 +34,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { verifyApprovalToken } from '@/lib/orchestration/approval-tokens';
 import { executeApproval, executeRejection } from '@/lib/orchestration/approval-actions';
 import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { cuidSchema } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
@@ -55,8 +56,8 @@ export interface ApprovalRouteOptions {
   /** Optional CORS headers to apply to every response (success + error). */
   corsHeaders?: Record<string, string>;
   /**
-   * When true, fire-and-forget kick off the engine to resume the run
-   * after `executeApproval` succeeds. Channel routes where the user
+   * When true, kick off the engine in the background to resume the run
+   * after `executeApproval` succeeds, kept alive past the response. Channel routes where the user
    * is actively waiting (chat, embed) set this — without it, the
    * workflow stays in `pending` until the maintenance tick picks it
    * up (~2 minute stale threshold + ~60s tick interval). The default
@@ -140,12 +141,13 @@ export async function handleApproveRequest(
     const result = await runAsExecutionOrg(id, async () => {
       const outcome = await executeApproval(id, { notes, actorLabel: opts.actorLabel });
       if (opts.triggerResume) {
-        // Fire-and-forget — the engine drives the resumed run independently;
+        // In the background — the engine drives the resumed run independently;
         // any error logs through the engine's own paths. We do NOT await,
-        // because the response should land before the workflow restarts.
-        // Started inside the org scope, so the resumed run keeps it.
-        void resumeApprovedExecution(id).catch((err: unknown) => {
-          logger.error('resumeApprovedExecution failed', err, { executionId: id });
+        // because the response should land before the workflow restarts, but
+        // the run is kept alive past it (t-846). Started inside the org scope,
+        // so the resumed run keeps it.
+        keepRunningAfterResponse(resumeApprovedExecution(id), 'resumeApprovedExecution', {
+          executionId: id,
         });
       }
       return outcome;

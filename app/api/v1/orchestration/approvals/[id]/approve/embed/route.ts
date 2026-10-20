@@ -22,6 +22,13 @@ import {
   allowlistCorsHeaders,
 } from '@/lib/orchestration/approval-route-helpers';
 
+/**
+ * The invocation's budget, including the resumed run drained after the
+ * response (t-846). 300 s as on the maintenance tick; a run still going when it
+ * ends is picked up by the orphan sweep once its lease lapses.
+ */
+export const maxDuration = 300;
+
 export async function OPTIONS(request: NextRequest): Promise<Response> {
   const origin = request.headers.get('origin');
   const settings = await getOrchestrationSettings();
