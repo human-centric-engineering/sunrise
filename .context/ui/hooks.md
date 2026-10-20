@@ -19,6 +19,7 @@ export function useLocalStorage<T>(
 - **SSR-safe:** on the server, returns `initial` and makes the setter a no-op. A post-mount effect hydrates from storage on the client.
 - **JSON round-trip:** values are stringified on write, parsed on read. Invalid JSON falls back to `initial` and logs a warning.
 - **Cross-tab sync:** listens for `storage` events so two tabs stay in sync. A null `newValue` (another tab called `removeItem`) resets to `initial`.
+- **Unchanged values are skipped:** setting a value that is `Object.is`-equal to the current one (e.g. an updater that returns `prev`) writes nothing to storage and notifies no other instance.
 
 ### Caveats
 
