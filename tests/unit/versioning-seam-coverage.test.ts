@@ -65,76 +65,17 @@
  * @see VERSIONING.md · CUSTOMIZATION.md §4 · .context/architecture/fork-init-seams.md
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { classifyEntries, NOT_A_SEAM, scaffoldsOnDisk } from '@/tests/helpers/app-scaffolds';
 
 const VERSIONING_MD = path.join(process.cwd(), 'VERSIONING.md');
 const CUSTOMIZATION_MD = path.join(process.cwd(), 'CUSTOMIZATION.md');
-const APP_DIR = path.join(process.cwd(), 'lib/app');
 
-/**
- * Names that are not a seam. **Everything else in `lib/app/` is**, whatever its
- * extension.
- *
- * A deny-list, deliberately, and this is the whole design of the function
- * below. The first version of it allowed five extensions —
- * `ts|tsx|mjs|cjs|js` — which is the same enumerating shape this file exists to
- * replace, moved one item along: `lib/app/theme.mts` passed it silently, and by
- * `VERSIONING.md`'s own rule that file would then be owed no breaking-change
- * announcement. An allowlist of extensions can only be as complete as whoever
- * last thought about it. A deny-list fails the other way — a new kind of
- * scaffold is loud, and the answer to a false positive is one line here with a
- * reason attached.
- */
-const NOT_A_SEAM = [
-  /^\./, //         dotfiles — tooling, not surface
-  /\.d\.ts$/, //    ambient declarations, not a scaffold a fork fills
-  /\.md$/, //       documentation that happens to sit beside the seams
-];
-
-/**
- * The scaffolds on disk, as the contract names them.
- *
- * **A directory counts as one scaffold**, listed with a trailing slash, rather
- * than as each file inside it. `lib/app/` is not flat: the root ESLint config
- * scopes the app-boundary rule to `lib/app/**` and its own violation message
- * names `lib/app/<name>/server/` as the supported shape for a Node-only seam.
- * A version that read only the top-level *files* could not see a nested seam at
- * all — verified against `lib/app/zz-sub/seam.ts`, which it passed green.
- *
- * Naming the directory rather than its files is what keeps the contract at one
- * row per seam: a fork's `lib/app/orders/server/{index,handlers,types}.ts` is
- * one extension point, and three rows describing its internals would be a list
- * about implementation rather than surface.
- */
-function scaffoldsOnDisk(): string[] {
-  return classifyEntries(readdirSync(APP_DIR, { withFileTypes: true }));
-}
-
-/** The minimal shape {@link classifyEntries} needs — what `withFileTypes` gives back. */
-interface DirEntryLike {
-  name: string;
-  isDirectory: () => boolean;
-}
-
-/**
- * The classifier itself, split from the `readdirSync` call so a test can drive
- * it with entries this directory does not currently contain.
- *
- * That split is the whole reason it exists. The nested-directory case has no
- * example upstream — `lib/app/` is flat today — so the test for it originally
- * re-implemented this filter/map inline, which meant it asserted a copy of the
- * logic rather than the logic: adding `.filter(e => e.isFile())` here would
- * have left all five tests green while nested seams dropped out of the
- * contract. A verification that cannot fail is not one.
- */
-function classifyEntries(entries: readonly DirEntryLike[]): string[] {
-  return entries
-    .filter((e) => !NOT_A_SEAM.some((rx) => rx.test(e.name)))
-    .map((e) => (e.isDirectory() ? `lib/app/${e.name}/` : `lib/app/${e.name}`))
-    .sort();
-}
+// The classifier lives in tests/helpers/app-scaffolds.ts, shared with the
+// ships-empty rows and the fork-init-seams guard, so all three agree on what a
+// scaffold is (#734). Its deny-list and directory rule are documented there.
 
 /**
  * The `lib/app/` paths named in VERSIONING.md's Covered section.

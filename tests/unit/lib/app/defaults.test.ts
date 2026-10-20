@@ -29,6 +29,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { scaffoldsOnDisk } from '@/tests/helpers/app-scaffolds';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
 import { hasTenantResolver } from '@/lib/tenancy/resolver';
@@ -588,11 +589,10 @@ describe('lib/app/ seams ship empty', () => {
   it('has a row for every seam file in lib/app/', () => {
     // Drift guard: adding a `lib/app/*` seam without adding a row above would
     // leave it silently unprotected. Reads the directory rather than trusting
-    // the table to be complete.
-    const dir = path.join(process.cwd(), 'lib/app');
-    const onDisk = readdirSync(dir)
-      .filter((f) => /\.(ts|mjs)$/.test(f) && !f.endsWith('.d.ts'))
-      .map((f) => `lib/app/${f}`);
+    // the table to be complete, through the classifier the VERSIONING.md guard
+    // uses (#734): a nested `lib/app/<name>/` seam is owed a row keyed
+    // `lib/app/<name>/`, and a file of any extension is owed one too.
+    const onDisk = scaffoldsOnDisk();
 
     const covered = new Set(SEAM_DEFAULTS.map((s) => s.seam));
     const missing = onDisk.filter((f) => !covered.has(f) && !UNASSERTED_SEAMS.has(f));

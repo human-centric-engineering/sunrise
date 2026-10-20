@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { scaffoldSourceFiles } from '@/tests/helpers/app-scaffolds';
 
 const APP_DIR = join(process.cwd(), 'lib', 'app');
 const DOC = join(process.cwd(), '.context', 'architecture', 'fork-init-seams.md');
@@ -57,9 +58,8 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
 /** `initApp*` functions exported by the fork-owned scaffolds, at column 0. */
 function declaredSeams(): string[] {
   const names = new Set<string>();
-  for (const file of readdirSync(APP_DIR)) {
-    if (!file.endsWith('.ts')) continue;
-    const src = readFileSync(join(APP_DIR, file), 'utf8');
+  for (const file of scaffoldSourceFiles()) {
+    const src = readFileSync(file, 'utf8');
     // Column-anchored: `lib/app/*` scaffolds carry the same signature inside a
     // JSDoc example block, indented. Matching those would double-count.
     //
@@ -94,9 +94,8 @@ function declaredSeams(): string[] {
  */
 function declaredRegistrars(): string[] {
   const names = new Set<string>();
-  for (const file of readdirSync(APP_DIR)) {
-    if (!file.endsWith('.ts')) continue;
-    const src = readFileSync(join(APP_DIR, file), 'utf8');
+  for (const file of scaffoldSourceFiles()) {
+    const src = readFileSync(file, 'utf8');
     for (const m of src.matchAll(/^export (?:async )?function (registerApp\w*)\s*\(/gm)) {
       names.add(m[1]);
     }
