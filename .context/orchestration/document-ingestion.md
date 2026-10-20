@@ -130,7 +130,7 @@ Confirms a `pending_review` document and proceeds with chunking + embedding.
 
 `GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks`
 
-Returns every chunk for a document ordered by `chunkKey` (creation order). Used by the admin `DocumentChunksModal` and by the review flow for `pending_review` PDFs.
+Returns every chunk for a document ordered by `chunkKey` (creation order). Used by the admin `DocumentChunksModal`. (The **Review** action on a `pending_review` PDF reopens the preview from the document's stored metadata instead, #807.)
 
 Response shape (each chunk):
 

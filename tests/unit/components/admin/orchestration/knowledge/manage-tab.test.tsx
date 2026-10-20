@@ -896,21 +896,103 @@ describe('ManageTab', () => {
     });
   });
 
-  it('opens the chunks modal when the Review button on a pending_review document is clicked', async () => {
+  // ── Review a pending_review document (#807) ───────────────────────────────
+  // Closing the PDF preview leaves the document in pending_review. Review must
+  // reopen that preview from the stored extraction, not the (empty) chunks view.
+
+  function storedDocResponse(metadata: Record<string, unknown> | null) {
+    return {
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            document: {
+              id: 'doc-review',
+              name: 'Pending PDF',
+              fileName: 'pending.pdf',
+              status: 'pending_review',
+              metadata,
+            },
+          },
+        }),
+    };
+  }
+
+  function routeDocFetch(response: unknown) {
+    mockFetch.mockImplementation((url: string) =>
+      typeof url === 'string' && url.endsWith('/knowledge/documents/doc-review')
+        ? Promise.resolve(response)
+        : Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    );
+  }
+
+  it('reopens the PDF preview with the stored text when Review is clicked', async () => {
     const user = userEvent.setup();
+    routeDocFetch(
+      storedDocResponse({
+        extractedText: 'Chapter one: the stored extraction.',
+        parsedTitle: 'Pending',
+        parsedAuthor: null,
+        sectionCount: 2,
+        warnings: ['Page 3 has little text'],
+        pages: null,
+      })
+    );
     const reviewDoc = makeDocument({
       id: 'doc-review',
       name: 'Pending PDF',
       status: 'pending_review',
-      chunkCount: 3,
     });
     render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /review/i }));
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    expect(await screen.findByText('Review PDF Extraction')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Chapter one: the stored extraction.')).toBeInTheDocument();
+    expect(screen.getByText('Page 3 has little text')).toBeInTheDocument();
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/knowledge\/documents\/doc-review$/)
+    );
+  });
+
+  it('says the preview cannot be rebuilt when the stored text is missing', async () => {
+    const user = userEvent.setup();
+    routeDocFetch(storedDocResponse(null));
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'Pending PDF',
+      status: 'pending_review',
     });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /review/i }));
+
+    expect(
+      await screen.findByText(/extracted text for this document is not available/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Review PDF Extraction')).not.toBeInTheDocument();
+  });
+
+  it('shows the server message when the document cannot be read', async () => {
+    const user = userEvent.setup();
+    routeDocFetch({
+      ok: false,
+      status: 404,
+      json: () =>
+        Promise.resolve({ success: false, error: { code: 'NOT_FOUND', message: 'Document gone' } }),
+    });
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'Pending PDF',
+      status: 'pending_review',
+    });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /review/i }));
+
+    expect(await screen.findByText('Document gone')).toBeInTheDocument();
   });
 
   // ── Upload dialog callbacks ───────────────────────────────────────────────

@@ -98,6 +98,7 @@ import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/d
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
 import { PdfPreviewModal } from '@/components/admin/orchestration/knowledge/pdf-preview-modal';
+import { pdfPreviewFromStoredDocument } from '@/components/admin/orchestration/knowledge/stored-pdf-preview';
 
 const STATUS_STYLES: Record<
   string,
@@ -262,6 +263,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -412,6 +415,38 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     setUploadOpen(false);
     setPdfPreview(data);
     setPdfPreviewOpen(true);
+  }, []);
+
+  // Reopen the preview for a document left in pending_review, rebuilt from the
+  // text the upload already stored (#807).
+  const handleReviewPending = useCallback(async (docId: string) => {
+    setReviewingId(docId);
+    setReviewError(null);
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId));
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const raw = errorBodySchema.safeParse(body);
+        setReviewError(
+          (raw.success ? raw.data?.error?.message : null) ??
+            `Could not open the review (${res.status})`
+        );
+        return;
+      }
+      const data = pdfPreviewFromStoredDocument(body);
+      if (!data) {
+        setReviewError(
+          'The extracted text for this document is not available. Delete it and upload the file again.'
+        );
+        return;
+      }
+      setPdfPreview(data);
+      setPdfPreviewOpen(true);
+    } catch {
+      setReviewError('Network error — could not reach the server.');
+    } finally {
+      setReviewingId(null);
+    }
   }, []);
 
   const handleUploadComplete = useCallback(() => {
@@ -754,6 +789,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           <>
             {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
             {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
+            {reviewError && <p className="text-destructive text-sm">{reviewError}</p>}
             <div className={`overflow-x-auto rounded-lg border ${listLoading ? 'opacity-60' : ''}`}>
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
@@ -1140,10 +1176,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => {
-                                      setViewChunksId(doc.id);
-                                      setViewChunksName(doc.name);
-                                    }}
+                                    disabled={reviewingId === doc.id}
+                                    onClick={() => void handleReviewPending(doc.id)}
                                   >
                                     <Eye className="mr-1 h-3 w-3" />
                                     Review
