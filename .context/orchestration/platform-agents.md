@@ -300,8 +300,8 @@ init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
 init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
 definition in every org, and that is logged at warn.
 
-Core's tests that read the registry hold this seam empty, so they measure
-core's registry alone, and the two-org smoke (`smoke:tenancy-isolation`,
+Core's tests whose assertions a fork's agents would change hold this seam
+empty, so they measure core's registry alone, and the two-org smoke (`smoke:tenancy-isolation`,
 section [11]) takes its counts from the registry and finds the install org's
 agents by registered slug, so a system agent you seed there outside the
 registry is not counted. Adding an agent of your own needs no edit to either.
