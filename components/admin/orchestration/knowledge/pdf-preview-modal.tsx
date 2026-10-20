@@ -25,9 +25,17 @@ interface PdfPreviewModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirmed: () => void;
+  /** Called after the document is discarded, so the caller can drop its row. */
+  onDiscarded?: () => void;
 }
 
-export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPreviewModalProps) {
+export function PdfPreviewModal({
+  data,
+  open,
+  onOpenChange,
+  onConfirmed,
+  onDiscarded,
+}: PdfPreviewModalProps) {
   const router = useRouter();
   const [correctedContent, setCorrectedContent] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -101,12 +109,13 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
       }
       setCorrectedContent('');
       onOpenChange(false);
+      onDiscarded?.();
     } catch {
       setDiscardError('Network error — could not reach the server.');
     } finally {
       setDiscarding(false);
     }
-  }, [data, onOpenChange]);
+  }, [data, onOpenChange, onDiscarded]);
 
   if (!data) return null;
 

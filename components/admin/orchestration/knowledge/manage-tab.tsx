@@ -264,6 +264,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  // Bumped on every open so the modal remounts: reopening the same document
+  // must show its stored text, not edits abandoned in the last session.
+  const [pdfPreviewKey, setPdfPreviewKey] = useState(0);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -414,6 +417,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     // preview overlay) rather than the upload zone behind the preview.
     setUploadOpen(false);
     setPdfPreview(data);
+    setPdfPreviewKey((k) => k + 1);
     setPdfPreviewOpen(true);
   }, []);
 
@@ -441,6 +445,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
         return;
       }
       setPdfPreview(data);
+      setPdfPreviewKey((k) => k + 1);
       setPdfPreviewOpen(true);
     } catch {
       setReviewError('Network error — could not reach the server.');
@@ -1176,7 +1181,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    disabled={reviewingId === doc.id}
+                                    // One review loads at a time, so a slower earlier
+                                    // response cannot replace the preview just opened.
+                                    disabled={reviewingId !== null}
                                     onClick={() => void handleReviewPending(doc.id)}
                                   >
                                     <Eye className="mr-1 h-3 w-3" />
@@ -1366,6 +1373,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
       <CompareProvidersModal open={compareOpen} onOpenChange={setCompareOpen} />
       <PdfPreviewModal
+        key={pdfPreviewKey}
         data={pdfPreview}
         open={pdfPreviewOpen}
         onOpenChange={setPdfPreviewOpen}
@@ -1373,6 +1381,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           refreshAll();
           void fetchEmbeddingStatus();
         }}
+        onDiscarded={refreshAll}
       />
       <DocumentChunksModal
         documentId={viewChunksId}

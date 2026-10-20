@@ -206,6 +206,38 @@ describe('PdfPreviewModal', () => {
     });
   });
 
+  it('calls onDiscarded after a successful Discard, and not when it fails', async () => {
+    const user = userEvent.setup();
+    const onDiscarded = vi.fn();
+    const { unmount } = render(
+      <PdfPreviewModal
+        data={mockPreviewData}
+        open={true}
+        onOpenChange={onOpenChange}
+        onConfirmed={onConfirmed}
+        onDiscarded={onDiscarded}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /discard/i }));
+    await waitFor(() => expect(onDiscarded).toHaveBeenCalledTimes(1));
+    unmount();
+
+    onDiscarded.mockClear();
+    mockFetch.mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) });
+    render(
+      <PdfPreviewModal
+        data={mockPreviewData}
+        open={true}
+        onOpenChange={onOpenChange}
+        onConfirmed={onConfirmed}
+        onDiscarded={onDiscarded}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /discard/i }));
+    expect(await screen.findByText(/Failed to discard document/)).toBeInTheDocument();
+    expect(onDiscarded).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+  });
+
   it('shows error message when confirm fails', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

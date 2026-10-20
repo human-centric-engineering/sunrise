@@ -957,6 +957,57 @@ describe('ManageTab', () => {
     );
   });
 
+  it('shows the stored text, not abandoned edits, when the same document is reviewed again', async () => {
+    const user = userEvent.setup();
+    routeDocFetch(storedDocResponse({ extractedText: 'Stored text.' }));
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'Pending PDF',
+      status: 'pending_review',
+    });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /review/i }));
+    const textarea = await screen.findByDisplayValue('Stored text.');
+    await user.clear(textarea);
+    await user.type(textarea, 'Abandoned edit');
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByText('Review PDF Extraction')).not.toBeInTheDocument()
+    );
+
+    await user.click(screen.getByRole('button', { name: /review/i }));
+
+    expect(await screen.findByDisplayValue('Stored text.')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Abandoned edit')).not.toBeInTheDocument();
+  });
+
+  it('disables every Review button while one review is loading', async () => {
+    const user = userEvent.setup();
+    let release: (value: unknown) => void = () => undefined;
+    mockFetch.mockImplementation((url: string) =>
+      typeof url === 'string' && url.endsWith('/knowledge/documents/doc-a')
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    );
+    const docs = [
+      makeDocument({ id: 'doc-a', name: 'PDF A', status: 'pending_review' }),
+      makeDocument({ id: 'doc-b', name: 'PDF B', status: 'pending_review' }),
+    ];
+    render(<ManageTab documents={docs} onRefresh={vi.fn()} />);
+
+    const [reviewA, reviewB] = screen.getAllByRole('button', { name: /review/i });
+    await user.click(reviewA);
+
+    await waitFor(() => expect(reviewB).toBeDisabled());
+    expect(reviewA).toBeDisabled();
+
+    release({ ok: false, status: 404, json: () => Promise.resolve(null) });
+    await waitFor(() => expect(reviewB).not.toBeDisabled());
+  });
+
   it('says the preview cannot be rebuilt when the stored text is missing', async () => {
     const user = userEvent.setup();
     routeDocFetch(storedDocResponse(null));
