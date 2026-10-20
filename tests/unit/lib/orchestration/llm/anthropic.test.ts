@@ -211,6 +211,27 @@ describe('AnthropicProvider.chat', () => {
     expect(response.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
   });
 
+  it('leaves temperature out for a model that refuses it (Claude Haiku 5.5, #986)', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'cool' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-haiku-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    // Act: an agent's default temperature with thinking off — the shape that 400'd
+    const response = await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-haiku-5-5',
+      temperature: 0.7,
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('temperature');
+    expect(callArgs.thinking).toBeUndefined();
+    expect(response.content).toBe('cool');
+  });
+
   it('throws truncated_no_output when a json_object response is cut off mid-JSON (#594)', async () => {
     // Anthropic has no native JSON mode — `json_object` is only an
     // instruction, so the output arrives as ordinary text. A cut-off response

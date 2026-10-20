@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  acceptsSamplingTemperature,
   anthropicThinkingBudget,
   deriveBestRole,
   deriveContextLength,
@@ -386,6 +387,50 @@ describe('supportsReasoningEffort', () => {
     expect(supportsReasoningEffort('gpt-4.1', 'openai', 'openai-legacy')).toBe(false);
     expect(supportsReasoningEffort('llama-3.3-70b', 'groq', 'openai-legacy')).toBe(false);
     expect(supportsReasoningEffort('gemini-2.5-pro', 'gemini', 'gemini')).toBe(false);
+  });
+});
+
+describe('acceptsSamplingTemperature', () => {
+  it.each([
+    'claude-haiku-5-5',
+    'claude-sonnet-5-5',
+    'claude-sonnet-5',
+    'claude-opus-5-5',
+    'claude-opus-5',
+    'claude-opus-4-8',
+    'claude-opus-4-7',
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-sonnet-4-10',
+  ])('refuses a temperature on %s (newer than 4.6)', (id) => {
+    expect(acceptsSamplingTemperature(id)).toBe(false);
+  });
+
+  it.each([
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4.5',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-6',
+    'claude-opus-4-1-20250805',
+    'claude-opus-4',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-haiku-20240307',
+  ])('accepts a temperature on %s (4.6 or older)', (id) => {
+    expect(acceptsSamplingTemperature(id)).toBe(true);
+  });
+
+  it('strips Bedrock and OpenRouter prefixes before matching', () => {
+    expect(acceptsSamplingTemperature('anthropic.claude-opus-4-20250514-v1:0')).toBe(true);
+    expect(acceptsSamplingTemperature('anthropic/claude-haiku-4.5')).toBe(true);
+    expect(acceptsSamplingTemperature('anthropic/claude-haiku-5.5')).toBe(false);
+  });
+
+  it('leaves the temperature out for an id it does not recognise', () => {
+    expect(acceptsSamplingTemperature('claude-something-new')).toBe(false);
+    expect(acceptsSamplingTemperature('claude-opus-40')).toBe(false);
   });
 });
 

@@ -341,6 +341,46 @@ export function supportsReasoningEffort(
 }
 
 /**
+ * Does this Claude model accept a sampling `temperature`?
+ *
+ * Anthropic removed the sampling parameters (`temperature`, `top_p`,
+ * `top_k`) from its newer models: Opus 4.7+, Sonnet 5+, Haiku 5+, Fable
+ * and Mythos all 400 on a non-default value. Only the older families
+ * still honour one: Claude 2 / 3.x, Haiku 4.x, and Opus / Sonnet 4.0–4.6.
+ *
+ * This is an allow-list of those older families, so a model this
+ * function doesn't recognise has its temperature left out rather than
+ * sent. A dropped temperature loses a setting; a sent one fails the
+ * whole call — and every Claude model released since 4.6 refuses it.
+ * The caller's intent is still recorded on the trace's
+ * `requestParams.temperature`.
+ *
+ * Prefixes are stripped as in `supportsReasoningEffort`, so Bedrock
+ * (`anthropic.claude-…`) and OpenRouter (`anthropic/claude-…`) ids
+ * classify the same way. The minor version must be one or two digits,
+ * so a date stamp (`claude-sonnet-4-20250514`) reads as Sonnet 4.0.
+ */
+export function acceptsSamplingTemperature(modelId: string): boolean {
+  const id = modelId
+    .toLowerCase()
+    .replace(/^(anthropic[./])/, '')
+    .replace(/^(.*\/)/, '');
+  // Claude 2 / 3.x — every family accepts it (`claude-3-5-sonnet`,
+  // `claude-3-haiku`, `claude-instant-1.2`, `claude-2.1`).
+  if (/^claude-(?:instant|[23])(?:\b|[-.])/.test(id)) return true;
+  // Haiku 4.x and earlier under the family-first naming.
+  if (/^claude-haiku-[1-4](?:\b|[-.])/.test(id)) return true;
+  // Opus / Sonnet 4.0–4.6. A missing minor, or a date stamp in its
+  // place, is 4.0.
+  const four = /^claude-(?:opus|sonnet)-4(?:[-.](\d{1,2})(?!\d))?(?:\b|[-.]|$)/.exec(id);
+  if (four) {
+    const minor = four[1] === undefined ? 0 : Number(four[1]);
+    return minor <= 6;
+  }
+  return false;
+}
+
+/**
  * Which `ReasoningEffort` values does this OpenAI-compatible model
  * actually accept?
  *

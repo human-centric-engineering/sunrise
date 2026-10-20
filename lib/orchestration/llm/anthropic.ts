@@ -36,6 +36,7 @@ import type { Stream } from '@anthropic-ai/sdk/core/streaming';
 
 import { logger } from '@/lib/logging';
 import {
+  acceptsSamplingTemperature,
   anthropicThinkingBudget,
   supportsReasoningEffort,
 } from '@/lib/orchestration/llm/model-heuristics';
@@ -517,7 +518,14 @@ export class AnthropicProvider implements LlmProvider {
       // rawBudget === undefined → reasoningEffort === 'minimal' on
       // Anthropic, which deliberately means "no extended thinking".
     }
-    if (!thinkingEnabled && options.temperature !== undefined) {
+    // Claude models from Opus 4.7 / Sonnet 5 / Haiku 5 on refuse any
+    // temperature (400), so it is sent only to the older families that
+    // honour one. The caller's value stays on the trace's requestParams.
+    if (
+      !thinkingEnabled &&
+      options.temperature !== undefined &&
+      acceptsSamplingTemperature(options.model)
+    ) {
       params.temperature = options.temperature;
     }
     if (options.tools?.length) {
