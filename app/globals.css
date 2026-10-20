@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* The animate-in / fade / zoom / slide utilities used by components/ui/ overlays */
+@import 'tw-animate-css';
 @plugin '@tailwindcss/typography';
 
 @variant dark (&:is(.dark *));

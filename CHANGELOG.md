@@ -867,6 +867,14 @@ release process.
 
 ### Fixed
 
+- **Dialogs, menus, popovers, selects and tooltips animate again** (t-875,
+  #682). The `components/ui/` overlays use `animate-in`, `fade-in-0`,
+  `zoom-in-95` and `slide-in-from-*` classes, but the library that defines
+  them was never installed, so every overlay appeared and vanished instantly.
+  `tw-animate-css` is now a dev dependency, imported from `app/globals.css`;
+  no component changed. **Forks:** your overlays will start animating after
+  this merge. If you had worked around the missing animations, or want them
+  off, remove the classes from your copies or override them.
 - **Correction to v0.11.2's coverage note: the widening covers `.js`, `.jsx`,
   `.cjs` and `.mjs`, not only `.mjs`** (t-870, #698). Item 3 of the v0.11.2
   notes and its `### Fixed` bullet said `.mjs` files had joined the per-file 80%
