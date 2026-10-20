@@ -222,6 +222,18 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       }>(response);
       expect(data.data.agents.map((a) => a.slug)).toEqual(['agent-one']);
       expect(data.data.agents[0].isSystem).toBe(false);
+      expect(response.headers.get('X-Skipped-System-Agents')).toBe('1');
+    });
+
+    it('reports zero skipped when no built-in agent was selected', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        makeDbAgent(AGENT_ID_1, 'agent-one'),
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+
+      expect(response.headers.get('X-Skipped-System-Agents')).toBe('0');
     });
 
     it('returns 400 when every selected agent is built-in (#721)', async () => {

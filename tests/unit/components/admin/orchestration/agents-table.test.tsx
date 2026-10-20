@@ -502,6 +502,55 @@ describe('AgentsTable', () => {
       expect(screen.queryByText('Export failed. Try again in a moment.')).not.toBeInTheDocument();
     });
 
+    it('tells the admin when built-in agents were left out of the export (#721)', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        if (toUrlString(url).includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(
+            new Response('{}', {
+              status: 200,
+              headers: {
+                'Content-Disposition': 'attachment; filename="x.json"',
+                'X-Skipped-System-Agents': '2',
+              },
+            })
+          );
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      await user.click(screen.getAllByRole('checkbox')[1]);
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+
+      expect(
+        await screen.findByText(/2 built-in agents were left out of the export/)
+      ).toBeInTheDocument();
+    });
+
+    it('shows no notice when nothing was left out', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        if (toUrlString(url).includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(
+            new Response('{}', { status: 200, headers: { 'X-Skipped-System-Agents': '0' } })
+          );
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      await user.click(screen.getAllByRole('checkbox')[1]);
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+
+      await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
+      expect(screen.queryByText(/left out of the export/)).not.toBeInTheDocument();
+    });
+
     it('keeps the generic message when an export fails for another reason', async () => {
       const user = userEvent.setup();
       mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {

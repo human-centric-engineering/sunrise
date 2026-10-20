@@ -13,7 +13,9 @@
  *   Built-in (system) agents are left out, as the backup export leaves them
  *   out: every install already has its own, they start with an empty
  *   provider and model the bundle schema rejects, and the import would skip
- *   them anyway (#721). A selection of only built-in agents is a 400.
+ *   them anyway (#721). A selection of only built-in agents is a 400; a mixed
+ *   one says how many it left out in `X-Skipped-System-Agents`, so the admin
+ *   is told rather than finding out at import.
  *
  *   The response sets `Content-Disposition: attachment` so hitting the
  *   route directly from a browser triggers a "Save As" dialog.
@@ -165,7 +167,10 @@ export const POST = withAdminAuth(
 
     const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
     return successResponse(bundle, undefined, {
-      headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
+      headers: {
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Skipped-System-Agents': String(agents.length - exportable.length),
+      },
     });
   },
   {

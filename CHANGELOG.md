@@ -883,7 +883,9 @@ release process.
   system agents (`isSystem: true`), as the backup export already does. Before,
   a built-in agent's empty `provider`/`model` made the whole bundle fail
   import validation. The import would have skipped those agents anyway. A
-  selection of only built-in agents now returns `400`. **Forks:** an export
+  selection of only built-in agents now returns `400`, and a mixed one reports
+  how many it left out in a new `X-Skipped-System-Agents` response header,
+  which the agents table shows. **Forks:** an export
   file made before this change that contains a built-in agent still fails to
   import; delete that agent's entry from the file and import again.
 - **Dialogs, menus, popovers, selects and tooltips animate again** (t-875,
