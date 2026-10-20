@@ -167,8 +167,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/privacy/run-recipients.ts',
-    calls: 3,
-    why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read",
+    calls: 4,
+    why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under",
   },
 ];
 
