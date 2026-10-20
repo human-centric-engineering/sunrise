@@ -148,16 +148,9 @@ export interface ScheduleProcessResult {
  * (rather than waiting for the next maintenance tick) — the crash-handling
  * and hook-emission semantics are identical for both entry points.
  */
-export function drainEngine(
-  executionId: string,
-  workflow: { id: string; slug: string },
-  definition: WorkflowDefinition,
-  inputData: Record<string, unknown>,
-  userId: string | null,
-  versionId: string | null
-): Promise<void> {
-  const drain = runDrain(executionId, workflow, definition, inputData, userId, versionId);
-  keepRunningAfterResponse(drain, 'Scheduler: engine drain', { executionId });
+export function drainEngine(...args: Parameters<typeof runDrain>): Promise<void> {
+  const drain = runDrain(...args);
+  keepRunningAfterResponse(drain, 'Scheduler: engine drain', { executionId: args[0] });
   return drain;
 }
 

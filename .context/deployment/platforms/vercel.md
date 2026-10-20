@@ -253,7 +253,9 @@ the setup is:
   a recovered or orphaned run, an inbound trigger and a resumed approval each
   hand their engine drain to `after()`. The schedules tick, the inbound route
   and the approve routes that resume a run set `maxDuration = 300` as well. A run still going
-  when that ends is picked up by the orphan sweep once its lease lapses.
+  when that ends is recovered by a later tick. A run cut off past its first
+  step uses one of its three recovery attempts each time, so a step that
+  needs longer than the budget fails as recovery exhausted.
 - **A `HEAD` request is refused with `405`**, so an uptime probe that holds the
   key cannot fire a tick.
 - **Rotating the key.** Mint a new key, update `CRON_SECRET`, redeploy, then

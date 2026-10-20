@@ -23,9 +23,10 @@ import {
 } from '@/lib/orchestration/approval-route-helpers';
 
 /**
- * The invocation's budget, including the resumed run drained after the
- * response (t-846). 300 s as on the maintenance tick; a run still going when it
- * ends is picked up by the orphan sweep once its lease lapses.
+ * The invocation's budget, including the run drained after the response
+ * (t-846). 300 s as on the maintenance tick. A run cut off by it is recovered
+ * by a later tick: a `pending` row by the pending sweep, a `running` one by the
+ * orphan sweep once its lease lapses, which uses one of its recovery attempts.
  */
 export const maxDuration = 300;
 

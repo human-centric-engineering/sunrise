@@ -34,10 +34,11 @@
  * the API key only).
  */
 
-import { after, type NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { withAdminAuth, type AuthenticatedSession } from '@/lib/auth/guards';
 import { isApiKeySession } from '@/lib/auth/api-keys';
 import { successResponse } from '@/lib/api/responses';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { ForbiddenError } from '@/lib/api/errors';
 import {
   BACKGROUND_TASK_NAMES,
@@ -73,7 +74,9 @@ async function tick(request: NextRequest): Promise<Response> {
     });
   }
 
-  if (result.background) after(result.background);
+  if (result.background) {
+    keepRunningAfterResponse(result.background, 'Maintenance tick: background chain');
+  }
 
   return successResponse(
     {
