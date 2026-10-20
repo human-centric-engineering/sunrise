@@ -25,14 +25,17 @@ vi.mock('@/lib/api/client', () => ({
   apiClient: {
     delete: vi.fn(),
   },
+  // The real class's constructor shape: the form branches on `status`.
   APIClientError: class APIClientError extends Error {
     code?: string;
+    status?: number;
     details?: unknown;
 
-    constructor(message: string, code?: string, details?: unknown) {
+    constructor(message: string, code?: string, status?: number, details?: unknown) {
       super(message);
       this.name = 'APIClientError';
       this.code = code;
+      this.status = status;
       this.details = details;
     }
   },
@@ -542,6 +545,25 @@ describe('components/forms/delete-account-form', () => {
       await screen.findByText('Deletion in progress');
 
       expect(mockReset).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the same message when another attempt already holds the deletion (409)', async () => {
+      // The route has signed the person out either way: an error left in an
+      // open dialog would strand them on a page with a dead session.
+      const user = userEvent.setup({ delay: null });
+      const { APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('This account is already being deleted.', 'CONFLICT', 409)
+      );
+
+      await confirmDeletion(user);
+
+      expect(await screen.findByText('Deletion in progress')).toBeInTheDocument();
+      expect(screen.queryByText('This account is already being deleted.')).not.toBeInTheDocument();
+      expect(mockReset).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      expect(window.location.href).toBe('/');
     });
 
     it('leaves for the home page with a hard redirect when Continue is pressed', async () => {

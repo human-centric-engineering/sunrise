@@ -72,6 +72,14 @@ export function DeleteAccountForm() {
       // session state (better-auth nanostore, cookie cache) is fully cleared.
       window.location.href = '/';
     } catch (err) {
+      // Another attempt already holds the deletion. The route has signed the
+      // person out all the same, so this is the pending answer, not an error.
+      if (err instanceof APIClientError && err.status === 409) {
+        void reset();
+        setIsPending(true);
+        setIsLoading(false);
+        return;
+      }
       if (err instanceof APIClientError) {
         setError(err.message || 'Failed to delete account');
       } else {
