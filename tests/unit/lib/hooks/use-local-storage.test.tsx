@@ -320,8 +320,10 @@ describe('useLocalStorage', () => {
   });
 
   it('skips the write and same-tab broadcast when an updater returns prev', () => {
-    const state = { open: true };
-    const { result } = renderHook(() => useLocalStorage('k.noop', state));
+    window.localStorage.setItem('k.noop', JSON.stringify({ open: true }));
+    const { result } = renderHook(() => useLocalStorage('k.noop', { open: false }));
+    const hydrated = result.current[0];
+    expect(hydrated).toEqual({ open: true });
     const setItem = vi.spyOn(window.localStorage, 'setItem');
     const dispatch = vi.spyOn(window, 'dispatchEvent');
 
@@ -332,7 +334,7 @@ describe('useLocalStorage', () => {
 
       expect(setItem).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
-      expect(result.current[0]).toBe(state);
+      expect(result.current[0]).toBe(hydrated);
 
       // A real change on the same hook still writes and broadcasts, so the
       // assertions above are not passing because the spies never see calls.
@@ -346,5 +348,59 @@ describe('useLocalStorage', () => {
       setItem.mockRestore();
       dispatch.mockRestore();
     }
+  });
+
+  it('persists and broadcasts the in-memory default when the key was never stored', () => {
+    // Setting the value the hook already shows is not a no-op when storage is
+    // empty: the caller is persisting the choice, and another instance with a
+    // different default must hear about it.
+    const { result: a } = renderHook(() => useLocalStorage('k.default', true));
+    const { result: b } = renderHook(() => useLocalStorage('k.default', false));
+
+    act(() => {
+      a.current[1](true);
+    });
+
+    expect(window.localStorage.getItem('k.default')).toBe('true');
+    expect(b.current[0]).toBe(true);
+  });
+
+  it('retries a value whose earlier write failed', () => {
+    const { result } = renderHook(() => useLocalStorage<number>('k.retry', 0));
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('QuotaExceededError');
+    });
+
+    try {
+      act(() => {
+        result.current[1](7);
+      });
+      expect(window.localStorage.getItem('k.retry')).toBeNull();
+
+      act(() => {
+        result.current[1](7);
+      });
+
+      expect(setItem).toHaveBeenCalledTimes(2);
+      expect(window.localStorage.getItem('k.retry')).toBe('7');
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it('writes an updater that mutated prev in place', () => {
+    const { result } = renderHook(() => useLocalStorage('k.mutate', { open: true }));
+    act(() => {
+      result.current[1]({ open: true });
+    });
+
+    act(() => {
+      result.current[1]((prev) => {
+        prev.open = false;
+        return prev;
+      });
+    });
+
+    expect(window.localStorage.getItem('k.mutate')).toBe(JSON.stringify({ open: false }));
   });
 });
