@@ -682,9 +682,21 @@ export class OrchestrationEngine {
       // the orphan-handoff race the lease design exists to close.
       // --------------------------------------------------------------
       if (!failed) {
-        const wrote = await this.finalize(lease, ctx, trace, WorkflowStatus.COMPLETED, null);
+        const wrote = await this.finalize(
+          lease,
+          ctx,
+          trace,
+          WorkflowStatus.COMPLETED,
+          null,
+          finalOutput
+        );
         if (wrote) {
-          yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
+          // Without anyone the final write left out (t-843): the event reaches
+          // callers and subscribers after the erasure committed.
+          const output = wrote.erased
+            ? redactErased(toJson(finalOutput), wrote.erased)
+            : finalOutput;
+          yield workflowCompleted(output, ctx.totalTokensUsed, ctx.totalCostUsd);
           emitHookEvent('workflow.completed', {
             executionId,
             workflowId: workflow.id,
@@ -694,19 +706,15 @@ export class OrchestrationEngine {
           });
         }
       } else {
-        const wrote = await this.finalize(
-          lease,
-          ctx,
-          trace,
-          WorkflowStatus.FAILED,
-          failureReason ?? 'Execution did not complete'
-        );
+        const reason = failureReason ?? 'Execution did not complete';
+        const wrote = await this.finalize(lease, ctx, trace, WorkflowStatus.FAILED, reason);
         if (wrote) {
+          const left = wrote.erased ? redactErased(reason, wrote.erased) : reason;
           emitHookEvent('workflow.failed', {
             executionId,
             workflowId: workflow.id,
             userId: options.userId,
-            reason: failureReason ?? 'Execution did not complete',
+            reason: typeof left === 'string' ? left : reason,
           });
         }
       }
@@ -2436,8 +2444,10 @@ export class OrchestrationEngine {
   }
 
   /**
-   * Apply the terminal-state write atomically with the lease clear. Returns `true` when the
-   * UPDATE landed (we owned the lease and the row tipped to its terminal state) and `false`
+   * Apply the terminal-state write atomically with the lease clear. Returns the people the
+   * write left out because they were erased since the run started (t-843; `erased: null`
+   * when nobody was) when the UPDATE landed (we owned the lease and the row tipped to its
+   * terminal state) — the terminal event and hook must leave them out too — and `false`
    * when `updateMany` returned `count: 0` — i.e. the orphan sweep handed this row to a new
    * owner before we got here. Callers MUST honour the return value: yielding the terminal
    * event or emitting the completion hook on a `false` return would produce duplicate
@@ -2448,10 +2458,13 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     status: WorkflowStatus,
-    errorMessage: string | null
-  ): Promise<boolean> {
+    errorMessage: string | null,
+    /** What the terminal event will carry, checked with the row (t-843). */
+    finalOutput?: unknown
+  ): Promise<false | { erased: ErasedSubjects | null }> {
     const { executionId, token } = lease;
     const contextPatchData = drainContextPatch(ctx);
+    let erased: ErasedSubjects | null = null;
     const outputData = () =>
       status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull;
     try {
@@ -2472,7 +2485,16 @@ export class OrchestrationEngine {
           },
         });
         if (written.count > 0) {
-          await leaveOutErasedSinceStart(tx, executionId, ctx, trace, errorMessage, outputData);
+          const left = await leaveOutErasedSinceStart(
+            tx,
+            executionId,
+            ctx,
+            trace,
+            errorMessage,
+            outputData,
+            [finalOutput]
+          );
+          erased = left?.erased ?? null;
         }
         return written;
       }, RUN_WRITE_TRANSACTION_OPTIONS);
@@ -2501,7 +2523,7 @@ export class OrchestrationEngine {
       // every normal terminal. Fire-and-forget; failures logged inside
       // the helper, never block the engine.
       void recordReleaseEvent(executionId, token, 'engine-terminal', { status });
-      return true;
+      return { erased };
     } catch (err) {
       ctx.logger.error('finalize: DB update failed — execution row is stale', err, {
         executionId,
@@ -2633,13 +2655,20 @@ async function leaveOutErasedSinceStart(
   ctx: ExecutionContext,
   trace: ExecutionTraceEntry[],
   errorMessage: string | null,
-  outputData?: () => object
+  outputData?: () => object,
+  /**
+   * Values the caller sends on after the write and redacts itself from the
+   * result — the completion event's output, which holds the last step's
+   * output as it was before any redaction.
+   */
+  alsoSent: unknown[] = []
 ): Promise<{ erased: ErasedSubjects } | null> {
   const erased = await findErasedSinceRunStarted(tx, executionId, [
     ctx.inputData,
     ctx.stepOutputs,
     trace,
     errorMessage,
+    ...alsoSent,
   ]);
   if (!erased) return null;
 

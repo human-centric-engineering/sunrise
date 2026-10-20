@@ -64,6 +64,7 @@ import {
   matchErasedSubjects,
   stringsIn,
   subjectEmailHash,
+  WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
 
@@ -345,6 +346,42 @@ async function eraseFromSchedules(tx: RunClient, subject: RunRecipientsSubject):
   return changed;
 }
 
+type RunRow = {
+  id: string;
+  inputData: Prisma.JsonValue;
+  executionTrace: Prisma.JsonValue;
+  outputData: Prisma.JsonValue | null;
+  errorMessage: string | null;
+};
+
+/** Write `row` without the person, inside `tx`; false when it does not name them. */
+async function redactRunRow(
+  tx: RunClient,
+  row: RunRow,
+  subject: RunRecipientsSubject
+): Promise<boolean> {
+  // Every column a run copies them into: its input, its trace, the step
+  // outputs the engine writes to `outputData` on completion (an approval's
+  // `actor` among them), and an error message (review round 3).
+  const input = redactPerson(row.inputData, subject, ERASED_VALUE);
+  const trace = redactPerson(row.executionTrace, subject, ERASED_VALUE);
+  const output =
+    row.outputData === null ? null : redactPerson(row.outputData, subject, ERASED_VALUE);
+  const error =
+    row.errorMessage === null ? null : redactPerson(row.errorMessage, subject, ERASED_VALUE);
+  if (!input && !trace && !output && !error) return false;
+  await tx.aiWorkflowExecution.update({
+    where: { id: row.id },
+    data: {
+      ...(input ? { inputData: input.value ?? {} } : {}),
+      ...(trace ? { executionTrace: trace.value ?? [] } : {}),
+      ...(output ? { outputData: output.value ?? Prisma.DbNull } : {}),
+      ...(error && typeof error.value === 'string' ? { errorMessage: error.value } : {}),
+    },
+  });
+  return true;
+}
+
 /**
  * One page of other people's runs naming the person, redacted, inside `tx`.
  * `since` narrows to the runs the pre-pass may have missed: those written
@@ -355,20 +392,10 @@ async function redactExecutionsPage(
   tx: RunClient,
   subject: RunRecipientsSubject,
   after: string,
-  since: Date | null,
-  /**
-   * Read every run `since` admits, not only those whose committed text names
-   * the person (t-843, review round 1). A row's text is tested against its
-   * committed version before its lock is waited for, so a running workflow's
-   * write still open would otherwise be passed over: locking every candidate
-   * waits for it, and the match below then reads what it wrote.
-   */
-  lockEveryCandidate = false
+  since: Date | null
 ): Promise<{ lastId: string | null; size: number; redacted: number }> {
   const { userId } = subject;
-  const search = searchTermFor(subject.address);
-  const { term } = search;
-  const scanAll = search.scanAll || lockEveryCandidate;
+  const { term, scanAll } = searchTermFor(subject.address);
   // The id is a cuid, so already lower-case in the folded text. `updatedAt` is
   // stamped by the app process's clock (Prisma's @updatedAt) while `since` is
   // the database's, so the cut-off is moved back by RUN_CLOCK_SKEW_MS (review
@@ -398,26 +425,7 @@ async function redactExecutionsPage(
      ORDER BY e.id LIMIT ${RUN_PAGE_SIZE} FOR NO KEY UPDATE OF e`;
   let redacted = 0;
   for (const row of rows) {
-    // Every column a run copies them into: its input, its trace, the step
-    // outputs the engine writes to `outputData` on completion (an approval's
-    // `actor` among them), and an error message (review round 3).
-    const input = redactPerson(row.inputData, subject, ERASED_VALUE);
-    const trace = redactPerson(row.executionTrace, subject, ERASED_VALUE);
-    const output =
-      row.outputData === null ? null : redactPerson(row.outputData, subject, ERASED_VALUE);
-    const error =
-      row.errorMessage === null ? null : redactPerson(row.errorMessage, subject, ERASED_VALUE);
-    if (!input && !trace && !output && !error) continue;
-    await tx.aiWorkflowExecution.update({
-      where: { id: row.id },
-      data: {
-        ...(input ? { inputData: input.value ?? {} } : {}),
-        ...(trace ? { executionTrace: trace.value ?? [] } : {}),
-        ...(output ? { outputData: output.value ?? Prisma.DbNull } : {}),
-        ...(error && typeof error.value === 'string' ? { errorMessage: error.value } : {}),
-      },
-    });
-    redacted += 1;
+    if (await redactRunRow(tx, row, subject)) redacted += 1;
   }
   return { lastId: rows.length ? rows[rows.length - 1].id : null, size: rows.length, redacted };
 }
@@ -460,17 +468,38 @@ export async function preRedactSubjectFromRuns(
   onCommitted: (redacted: number) => void
 ): Promise<Date> {
   const [{ now }] = await client.$queryRaw<Array<{ now: Date }>>`SELECT now() AS now`;
-  await redactRunsInPages(client, subject, null, onCommitted);
+  const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
+  let after = '';
+  for (;;) {
+    // A page may scan the whole table to fill itself when the person is named
+    // in few runs, so it is not held to Prisma's 5 s default (review round 3);
+    // each page commits on its own, outside the erasure's 60 s.
+    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, null), {
+      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
+    });
+    onCommitted(page.redacted);
+    if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
+    after = page.lastId;
+  }
   return now;
 }
 
 /**
- * The run redaction once more, after the erasure has committed, over the runs
- * written since `since` or not yet finished (t-843). A running workflow's
- * write that committed while the erasure was open, to a row the erasure's pass
- * had not locked, names the person from what the run held in memory; nothing
- * else reaches it, since the engine found no receipt then. Writes after the
- * commit find the receipt themselves ({@link findErasedSinceRunStarted}).
+ * The run redaction once more, after the erasure has committed (t-843), over
+ * every other person's run not yet finished or written since `since`. A
+ * running workflow's write that committed while the erasure was open, to a
+ * row the erasure's pass had not locked, names the person from what the run
+ * held in memory; nothing else reaches it, since the engine found no receipt
+ * then. Writes after the commit find the receipt themselves
+ * ({@link findErasedSinceRunStarted}).
+ *
+ * Each run is locked and read in a transaction of its own, rather than
+ * narrowed by its text as the other passes are (review rounds 1 and 2):
+ * Postgres tests a row's text against its committed version before it waits
+ * for the row's lock, so a write still open would be passed over, and a page
+ * holding every run it locked until it filled would keep the engine's writes
+ * waiting meanwhile. Paused runs not written since are left: no engine write
+ * of them is open, and the transaction's pass reached them.
  * Returns how many runs it redacted.
  */
 export async function redactSubjectFromRunsSince(
@@ -478,35 +507,30 @@ export async function redactSubjectFromRunsSince(
   subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
   since: Date
 ): Promise<number> {
-  let redacted = 0;
-  const onCommitted = (n: number): void => {
-    redacted += n;
-  };
-  await redactRunsInPages(client, subject, since, onCommitted, true);
-  return redacted;
-}
-
-async function redactRunsInPages(
-  client: PrePassClient,
-  subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
-  since: Date | null,
-  onCommitted: (redacted: number) => void,
-  lockEveryCandidate = false
-): Promise<void> {
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
+  let redacted = 0;
   let after = '';
   for (;;) {
-    // A page may scan the whole table to fill itself when the person is named
-    // in few runs, so it is not held to Prisma's 5 s default (review round 3);
-    // each page commits on its own, outside the erasure's 60 s.
-    const page = await client.$transaction(
-      (tx) => redactExecutionsPage(tx, full, after, since, lockEveryCandidate),
-      {
-        timeout: PRE_PASS_PAGE_TIMEOUT_MS,
-      }
-    );
-    onCommitted(page.redacted);
-    if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
-    after = page.lastId;
+    // `updatedAt` is the app host's clock and `since` too, but the cut-off
+    // is moved back as `redactExecutionsPage`'s is, for hosts that disagree.
+    const ids = await client.$queryRaw<Array<{ id: string }>>`SELECT e.id
+       FROM ai_workflow_execution e
+       WHERE e.id > ${after}
+         AND e."userId" IS DISTINCT FROM ${subject.userId}
+         AND (e.status IN ('pending', 'running')
+           OR e."updatedAt" >= ((${since}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond') AT TIME ZONE 'UTC'))
+       ORDER BY e.id LIMIT ${RUN_PAGE_SIZE}`;
+    for (const { id } of ids) {
+      const changed = await client.$transaction(async (tx) => {
+        const [row] = await tx.$queryRaw<RunRow[]>`SELECT e.id, e."inputData", e."executionTrace",
+             e."outputData", e."errorMessage"
+           FROM ai_workflow_execution e WHERE e.id = ${id} FOR NO KEY UPDATE`;
+        return row ? redactRunRow(tx, row, full) : false;
+      }, WRITER_TRANSACTION_OPTIONS);
+      if (changed) redacted += 1;
+    }
+    if (ids.length < RUN_PAGE_SIZE) break;
+    after = ids[ids.length - 1].id;
   }
+  return redacted;
 }

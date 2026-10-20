@@ -406,44 +406,78 @@ describe('preRedactSubjectFromRuns', () => {
       timeout: PRE_PASS_PAGE_TIMEOUT_MS,
     });
     expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
-    // The pre-pass narrows by the person's text (the flag the post-commit
-    // pass sets is off).
-    expect(tx.$queryRaw.mock.calls[0].slice(1)[5]).toBe(false);
   });
 });
 
 describe('redactSubjectFromRunsSince (t-843)', () => {
-  it('pages over the runs written since, or not yet finished, and returns how many it redacted', async () => {
-    const since = new Date('2026-10-20T10:00:00.000Z');
-    const tx = makeTx(
-      [],
-      [[{ id: 'exec-1', inputData: {}, executionTrace: [{ output: { to: ADDRESS } }] }]]
-    );
+  const since = new Date('2026-10-20T10:00:00.000Z');
+
+  /** A client whose id reads page through `pages`, and whose row reads come from `rows`. */
+  function makeClient(pages: string[][], rows: Record<string, ExecutionRow>) {
+    const tx = {
+      $queryRaw: vi.fn(async (...call: unknown[]) => {
+        const id = call[1] as string;
+        return rows[id] ? [{ outputData: null, errorMessage: null, ...rows[id] }] : [];
+      }),
+      aiWorkflowExecution: { update: vi.fn() },
+    };
     const client = {
-      $queryRaw: vi.fn(),
+      $queryRaw: vi.fn(async () => (pages.shift() ?? []).map((id) => ({ id }))),
       $transaction: vi.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     };
+    return { client, tx };
+  }
 
-    const redacted = await redactSubjectFromRunsSince(
-      client as never,
-      { userId: USER_ID, address: ADDRESS },
-      since
-    );
+  it('reads the runs not finished or written since, without narrowing by their text', async () => {
+    const { client } = makeClient([[]], {});
+
+    await redactSubjectFromRunsSince(client as never, subject, since);
+
+    const call = client.$queryRaw.mock.calls[0] as unknown[];
+    const sql = sqlOf(call);
+    expect(sql).toContain("e.status IN ('pending', 'running')");
+    expect(sql).toContain('"updatedAt" >=');
+    expect(sql).not.toContain('strpos');
+    expect(sql).not.toContain('FOR NO KEY UPDATE');
+    expect(call).toContain(since);
+    expect(call).toContain(RUN_CLOCK_SKEW_MS);
+  });
+
+  it('locks and redacts each run in a transaction of its own, and counts the ones that named them', async () => {
+    const { client, tx } = makeClient([['exec-1', 'exec-2']], {
+      'exec-1': { id: 'exec-1', inputData: {}, executionTrace: [{ output: { to: ADDRESS } }] },
+      'exec-2': {
+        id: 'exec-2',
+        inputData: {},
+        executionTrace: [{ output: { to: 'keep@bar.com' } }],
+      },
+    });
+
+    const redacted = await redactSubjectFromRunsSince(client as never, subject, since);
 
     expect(redacted).toBe(1);
-    const call = tx.$queryRaw.mock.calls[0];
-    expect(sqlOf(call)).toContain('"updatedAt" >=');
-    expect(call).toContain(since);
-    // Every candidate is locked, not only rows whose committed text names
-    // them: a running workflow's write still open is waited for (review round 1).
-    // The values in order: after, userId, since, since, skew, then the
-    // read-every-candidate flag the text test is OR-ed with.
-    expect(sqlOf(call)).toMatch(/AND \(\?\s+OR strpos/);
-    expect(call.slice(1)[5]).toBe(true);
+    expect(client.$transaction).toHaveBeenCalledTimes(2);
+    const rowRead = tx.$queryRaw.mock.calls[0];
+    expect(sqlOf(rowRead)).toContain('FOR NO KEY UPDATE');
+    expect(rowRead).toContain('exec-1');
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledOnce();
     expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
       where: { id: 'exec-1' },
       data: { executionTrace: [{ output: { to: ERASED_VALUE } }] },
     });
+  });
+
+  it('pages on by id', async () => {
+    const first = Array.from(
+      { length: RUN_PAGE_SIZE },
+      (_, i) => `exec-${String(i).padStart(5, '0')}`
+    );
+    const { client } = makeClient([first, []], {});
+
+    await redactSubjectFromRunsSince(client as never, subject, since);
+
+    expect(client.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(client.$queryRaw.mock.calls[1]).toContain(first.at(-1));
   });
 });
 

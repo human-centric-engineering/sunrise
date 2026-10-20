@@ -84,7 +84,8 @@ import {
 } from '@/lib/orchestration/engine/executor-registry';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { prisma } from '@/lib/db/client';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
 function erase(): void {
   db.receipts.push({
@@ -106,14 +107,16 @@ function twoSteps(): WorkflowDefinition {
 
 const INPUT = { to: GONE, cc: [KEPT], approverUserIds: [GONE_ID] };
 
-async function run(definition: WorkflowDefinition = twoSteps()): Promise<void> {
-  for await (const _event of new OrchestrationEngine().execute(
+async function run(definition: WorkflowDefinition = twoSteps()): Promise<ExecutionEvent[]> {
+  const events: ExecutionEvent[] = [];
+  for await (const event of new OrchestrationEngine().execute(
     { id: 'wf_test', definition },
     INPUT,
     { userId: 'cmuser00000000000000owner' }
   )) {
-    // drain
+    events.push(event);
   }
+  return events;
 }
 
 type Write = { where: Record<string, unknown>; data: Record<string, unknown> };
@@ -198,6 +201,33 @@ describe('a run executing while a person it names is erased (t-843)', () => {
     const failed = writes().find((w) => w.data.status === 'failed');
     expect(failed?.data.errorMessage).toContain(GONE_ID);
     expect(rowAfter().errorMessage).toBe('no reply from [erased]');
+  });
+
+  it('leaves them out of the completion event the final write is followed by', async () => {
+    registerStepType('llm_call', async (step) => {
+      // Erased while the last step runs: only the final write sees it.
+      if (step.id === 'b') erase();
+      return { output: { to: GONE, step: step.id }, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const events = await run();
+
+    const completed = events.find((e) => e.type === 'workflow_completed');
+    expect(completed).toMatchObject({ output: { to: '[erased]', step: 'b' } });
+  });
+
+  it('leaves them out of the failure hook the final write is followed by', async () => {
+    registerStepType('llm_call', async (step) => {
+      erase();
+      throw new ExecutorError(step.id, 'bad_input', `no reply from ${GONE_ID}`);
+    });
+
+    await run();
+
+    expect(emitHookEvent).toHaveBeenCalledWith(
+      'workflow.failed',
+      expect.objectContaining({ reason: 'no reply from [erased]' })
+    );
   });
 
   it('costs one query per write, and no rewrite, when nobody was erased', async () => {
