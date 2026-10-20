@@ -115,13 +115,22 @@ export async function refreshFromOpenRouter(options: { force?: boolean } = {}): 
       const body = parsed.data;
 
       const merged = new Map<string, ModelInfo>(buildFallbackMap());
+      const listed = new Set<string>();
+      const aliases: Array<[string, ModelInfo]> = [];
       let added = 0;
       for (const entry of body.data) {
         const info = parseOpenRouterEntry(entry);
         if (!info) continue;
         merged.set(info.id, info);
+        listed.add(info.id);
         if (entry.id !== info.id) merged.set(entry.id, info);
+        const apiId = anthropicApiId(info);
+        if (apiId) aliases.push([apiId, info]);
         added += 1;
+      }
+      // An entry OpenRouter lists under the API id itself beats the alias.
+      for (const [apiId, info] of aliases) {
+        if (!listed.has(apiId)) merged.set(apiId, info);
       }
 
       // Successful refresh — clear the failure timestamp so the next
@@ -546,6 +555,20 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
     maxContext: entry.context_length ?? 0,
     supportsTools,
   };
+}
+
+/**
+ * The id Anthropic's API (and so every agent) uses for an OpenRouter
+ * Anthropic entry, when it differs from OpenRouter's. OpenRouter writes
+ * the version with a dot (`claude-haiku-5.5`) where the API uses a dash
+ * (`claude-haiku-5-5`), so without this alias the entry's price never
+ * reaches a turn on that model. `undefined` for every other provider,
+ * and for an id with no dotted version.
+ */
+function anthropicApiId(info: ModelInfo): string | undefined {
+  if (info.provider !== 'anthropic') return undefined;
+  const apiId = info.id.replace(/(\d)\.(?=\d)/g, '$1-');
+  return apiId === info.id ? undefined : apiId;
 }
 
 function classifyTier(inputCostPerMillion: number): ModelTier {

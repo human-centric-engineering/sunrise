@@ -92,6 +92,120 @@ describe('refreshFromOpenRouter', () => {
     expect(registry.getModel('budget-model')?.tier).toBe('budget');
   });
 
+  it("prices a dotted Anthropic entry under the API's dashed id (#987)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/claude-haiku-5.5',
+            name: 'Anthropic: Claude Haiku 5.5',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.0000001', completion: '0.0000005' },
+            supported_parameters: ['tools'],
+          },
+          {
+            id: 'openai/gpt-4.1',
+            name: 'GPT-4.1',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.000002', completion: '0.000008' },
+          },
+        ],
+      }),
+    });
+
+    // The agent's id was unknown before the refresh — no fallback entry.
+    expect(registry.getModel('claude-haiku-5-5')).toBeUndefined();
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const haiku = registry.getModel('claude-haiku-5-5');
+    expect(haiku?.provider).toBe('anthropic');
+    expect(haiku?.inputCostPerMillion).toBeCloseTo(0.1);
+    expect(haiku?.outputCostPerMillion).toBeCloseTo(0.5);
+    // OpenRouter's own ids still resolve, to the same entry.
+    expect(registry.getModel('claude-haiku-5.5')).toBe(haiku);
+    expect(registry.getModel('anthropic/claude-haiku-5.5')).toBe(haiku);
+    // Listed once, not once per key.
+    expect(
+      registry.getModelsByProvider('anthropic').filter((m) => m.name.includes('Haiku 5.5'))
+    ).toHaveLength(1);
+    // Only Anthropic ids are rewritten: OpenAI's API id has the dot.
+    expect(registry.getModel('gpt-4.1')?.provider).toBe('openai');
+    expect(registry.getModel('gpt-4-1')).toBeUndefined();
+  });
+
+  it('keeps an entry OpenRouter lists under the dashed id over the dotted alias', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/claude-sonnet-5-5',
+            name: 'Exact',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.000002', completion: '0.00001' },
+          },
+          {
+            id: 'anthropic/claude-sonnet-5.5',
+            name: 'Dotted',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.000009', completion: '0.00009' },
+          },
+        ],
+      }),
+    });
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    expect(registry.getModel('claude-sonnet-5-5')?.name).toBe('Exact');
+    expect(registry.getModel('claude-sonnet-5-5')?.inputCostPerMillion).toBeCloseTo(2);
+    expect(registry.getModel('claude-sonnet-5.5')?.name).toBe('Dotted');
+  });
+
+  it("keeps OpenRouter's aliased price over a matrix row's hand-entered one, as for any listed model", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/claude-haiku-5.5',
+            name: 'Anthropic: Claude Haiku 5.5',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.0000001', completion: '0.0000005' },
+          },
+        ],
+      }),
+    });
+    // The matrix row arrives first, with one blended rate for both sides.
+    registry.registerModels([
+      {
+        id: 'claude-haiku-5-5',
+        name: 'Claude Haiku 5.5',
+        provider: 'anthropic',
+        tier: 'budget',
+        inputCostPerMillion: 0.3,
+        outputCostPerMillion: 0.3,
+        maxContext: 200_000,
+        supportsTools: true,
+      },
+    ]);
+    expect(registry.getModel('claude-haiku-5-5')?.inputCostPerMillion).toBeCloseTo(0.3);
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const haiku = registry.getModel('claude-haiku-5-5');
+    // The row is re-applied over the rebuilt catalogue: its descriptive
+    // fields stand, OpenRouter's published split wins on price.
+    expect(haiku?.name).toBe('Claude Haiku 5.5');
+    expect(haiku?.inputCostPerMillion).toBeCloseTo(0.1);
+    expect(haiku?.outputCostPerMillion).toBeCloseTo(0.5);
+    expect(registry.isMatrixOwnedFigure('claude-haiku-5-5', 'input')).toBe(false);
+  });
+
   it('deduplicates concurrent refresh calls', async () => {
     let resolveFetch: ((value: unknown) => void) | null = null;
     const pending = new Promise((resolve) => {
