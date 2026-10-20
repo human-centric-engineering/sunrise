@@ -874,8 +874,9 @@ release process.
   /api/v1/admin/orchestration/settings` now accepts it (a positive integer up
   to 365, or `null` to use `webhookRetentionDays`), `GET` and
   `OrchestrationSettings` return it, the Settings → Retention card has a
-  "Failed webhook retention" field, and backup export / import carry it. A
-  backup made before this imports it as `null`.
+  "Failed webhook retention" field, and backup export / import carry it,
+  held to the same 1–365 bound. Restoring a backup made before this leaves
+  the current value as it is.
 - **The API response helpers no longer invite a `public` `Cache-Control`
   override** (t-881, #751). The `successResponse()` docblock and
   `.context/api/headers.md` said a route could replace `private, no-cache`

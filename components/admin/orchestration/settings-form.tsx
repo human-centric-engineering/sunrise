@@ -69,7 +69,7 @@ export interface OrchestrationSettings {
     bm25Weight?: number;
   } | null;
   webhookRetentionDays: number | null;
-  webhookDlqRetentionDays?: number | null;
+  webhookDlqRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
   executionRetentionDays: number | null;

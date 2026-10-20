@@ -75,6 +75,7 @@ function makeRow(
     outputGuardMode: string | null;
     citationGuardMode: string | null;
     webhookRetentionDays: number | null;
+    webhookDlqRetentionDays: number | null;
     costLogRetentionDays: number | null;
     auditLogRetentionDays: number | null;
     executionRetentionDays: number | null;
@@ -103,6 +104,7 @@ function makeRow(
     outputGuardMode: 'log_only' as string | null,
     citationGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
+    webhookDlqRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
     auditLogRetentionDays: null as number | null,
     executionRetentionDays: null as number | null,

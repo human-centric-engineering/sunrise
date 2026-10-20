@@ -95,7 +95,7 @@ export function hydrateSettings(row: {
   outputGuardMode: string | null;
   citationGuardMode: string | null;
   webhookRetentionDays: number | null;
-  webhookDlqRetentionDays?: number | null;
+  webhookDlqRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
   executionRetentionDays: number | null;
@@ -170,7 +170,7 @@ export function hydrateSettings(row: {
           ? row.citationGuardMode
           : null,
     webhookRetentionDays: row.webhookRetentionDays,
-    webhookDlqRetentionDays: row.webhookDlqRetentionDays ?? null,
+    webhookDlqRetentionDays: row.webhookDlqRetentionDays,
     costLogRetentionDays: row.costLogRetentionDays,
     auditLogRetentionDays: row.auditLogRetentionDays,
     executionRetentionDays: row.executionRetentionDays,
