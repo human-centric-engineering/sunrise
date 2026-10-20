@@ -479,17 +479,17 @@ export class AnthropicProvider implements LlmProvider {
     //      We omit the temperature send entirely in that case, mirroring
     //      how openai-compatible drops temperature on reasoning models.
     let thinkingEnabled = false;
-    const thinks =
-      options.reasoningEffort !== undefined &&
-      supportsReasoningEffort(options.model, this.name, 'anthropic');
-    if (thinks && !acceptsThinkingBudget(options.model)) {
-      if (options.reasoningEffort !== 'minimal') {
+    const effort = supportsReasoningEffort(options.model, this.name, 'anthropic')
+      ? options.reasoningEffort
+      : undefined;
+    if (effort !== undefined && !acceptsThinkingBudget(options.model)) {
+      if (effort !== 'minimal') {
         params.thinking = { type: 'adaptive' };
         thinkingEnabled = true;
       }
-      params.output_config = { effort: anthropicAdaptiveEffort(options.reasoningEffort) };
-    } else if (thinks) {
-      const rawBudget = anthropicThinkingBudget(options.reasoningEffort);
+      params.output_config = { effort: anthropicAdaptiveEffort(effort) };
+    } else if (effort !== undefined) {
+      const rawBudget = anthropicThinkingBudget(effort);
       if (rawBudget !== undefined) {
         // Anthropic constraints:
         //   - `budget_tokens` MUST be ≥ 1024 (Anthropic API minimum).
