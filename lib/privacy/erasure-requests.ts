@@ -43,7 +43,12 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
-import { eraseUser, ErasureDeferredError, type ErasureReason } from '@/lib/privacy/erase-user';
+import {
+  eraseUser,
+  ERASURE_TRANSACTION_TIMEOUT_MS,
+  ErasureDeferredError,
+  type ErasureReason,
+} from '@/lib/privacy/erase-user';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 
 const MINUTE = 60 * 1000;
@@ -76,12 +81,21 @@ export const ERASURES_PER_RUN = 1;
 export const ERASURE_REQUEST_BUDGET_MS = 8_000;
 
 /**
- * How long one retrier attempt may spend erasing (t-845). Inside the tick's
- * five minutes with room for the jobs before it, and past the erasure
- * transaction's 60 s, so an attempt whose pre-passes are done always has time
- * for the transaction.
+ * How long one retrier attempt may spend erasing (t-845), and less when the
+ * tick has less left (`stopBy`). Its last {@link ERASURE_TRANSACTION_TIMEOUT_MS}
+ * is kept for the transaction: the pre-passes stop before it and leave the
+ * rest to the transaction, so an erasure whose pre-passes take longer than
+ * this still finishes, or fails and is backed off, rather than deferring at
+ * the same scan every attempt.
  */
 export const ERASURE_RETRY_BUDGET_MS = 3 * MINUTE;
+
+/**
+ * The least time a retrier attempt starts with: the transaction's share and
+ * a little for the pre-passes. With less of the tick left, the attempt waits
+ * for the next tick.
+ */
+export const ERASURE_MIN_RETRY_MS = ERASURE_TRANSACTION_TIMEOUT_MS + 30_000;
 
 /**
  * The request budget: `ERASURE_REQUEST_BUDGET_MS` when it is a positive
@@ -292,15 +306,17 @@ async function finishedErasure(
 }
 
 /**
- * Run one claimed attempt, stopping at `deadline`. On failure, set the backoff
- * and rethrow. When the deadline stops it ({@link ErasureDeferredError}), make
- * the next attempt due at once and rethrow: the erasure made progress, and
- * nothing failed that a backoff would help with.
+ * Run one claimed attempt, stopping at `deadline` (and its pre-passes at
+ * `prePassDeadline`, when given). On failure, set the backoff and rethrow.
+ * When the deadline stops it ({@link ErasureDeferredError}), make the next
+ * attempt due at once, uncount this one, and rethrow: the erasure made
+ * progress, and nothing failed that a backoff would help with.
  */
 async function attemptErasure(
   userId: string,
   claim: Extract<Claim, { kind: 'claimed' }>,
-  deadline: Date
+  deadline: Date,
+  prePassDeadline?: Date
 ): Promise<{ receiptId: string; erasedAt: Date }> {
   try {
     return await eraseUser({
@@ -308,14 +324,27 @@ async function attemptErasure(
       actorUserId: claim.actorUserId,
       reason: claim.reason,
       deadline,
+      prePassDeadline,
     });
   } catch (error) {
+    // Another attempt may have finished it while this one ran (an expired
+    // lease taken over), or this one did and its error surfaced after the
+    // commit: either way it is erased, whatever this attempt threw.
+    try {
+      const finished = await finishedErasure(userId);
+      if (finished) return finished;
+    } catch {
+      // Unknown: treat it as what it looks like.
+    }
+
     if (error instanceof ErasureDeferredError) {
       try {
-        // Conditional on this attempt's lease, as the backoff below.
+        // Conditional on this attempt's lease, as the backoff below. The
+        // claim counted this attempt; a deferral is not a failure, so it is
+        // taken back, or a later failure's backoff would start long.
         await prisma.user.updateMany({
           where: { id: userId, erasureNextAttemptAt: claim.leaseUntil },
-          data: { erasureNextAttemptAt: new Date() },
+          data: { erasureNextAttemptAt: new Date(), erasureAttempts: { decrement: 1 } },
         });
       } catch (dueError) {
         logger.error(
@@ -333,15 +362,6 @@ async function attemptErasure(
         stoppedBefore: error.stage,
       });
       throw error;
-    }
-
-    // Another attempt may have finished it while this one ran (an expired
-    // lease taken over): its delete is what this one tripped on.
-    try {
-      const finished = await finishedErasure(userId);
-      if (finished) return finished;
-    } catch {
-      // Unknown: treat it as the failure it most likely is.
     }
 
     const nextAttemptAt = new Date(Date.now() + erasureBackoffMs(claim.attempts));
@@ -447,10 +467,17 @@ export interface ProcessPendingErasuresResult {
  * {@link ERASURES_PER_RUN} per run. Runs on the maintenance tick under the
  * system scope. Never throws for one person's failure; that person is retried
  * after their backoff.
+ *
+ * `stopBy` is when the run must be done: the tick passes the end of its own
+ * time, so an attempt never outlasts the host's limit on the tick and is
+ * killed holding its lease (t-845). With less than
+ * {@link ERASURE_MIN_RETRY_MS} of it left, nothing is claimed.
  */
 export async function processPendingErasures(
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: { stopBy?: Date } = {}
 ): Promise<ProcessPendingErasuresResult> {
+  const { stopBy } = options;
   const result: ProcessPendingErasuresResult = {
     claimed: 0,
     erased: 0,
@@ -461,6 +488,15 @@ export async function processPendingErasures(
   const tried = new Set<string>();
 
   while (result.claimed < ERASURES_PER_RUN) {
+    if (stopBy && stopBy.getTime() - Date.now() < ERASURE_MIN_RETRY_MS) {
+      logger.info(
+        'Pending erasures: too little of the tick left to start one; the next tick does',
+        {
+          msLeft: Math.max(0, stopBy.getTime() - Date.now()),
+        }
+      );
+      break;
+    }
     const due = await prisma.user.findFirst({
       where: {
         erasureRequestedAt: { not: null },
@@ -479,9 +515,14 @@ export async function processPendingErasures(
     if (claim.kind !== 'claimed') continue;
 
     result.claimed += 1;
+    // The budget runs from the claim, so it is never partly spent, and ends
+    // by `stopBy`. Checked above, so the transaction's share always fits.
+    let end = Date.now() + ERASURE_RETRY_BUDGET_MS;
+    if (stopBy) end = Math.min(end, stopBy.getTime());
+    const deadline = new Date(end);
+    const prePassDeadline = new Date(end - ERASURE_TRANSACTION_TIMEOUT_MS);
     try {
-      // The budget runs from the claim, so it is never partly spent.
-      await attemptErasure(due.id, claim, new Date(Date.now() + ERASURE_RETRY_BUDGET_MS));
+      await attemptErasure(due.id, claim, deadline, prePassDeadline);
       result.erased += 1;
     } catch (error) {
       // Logged, with its next attempt set, by `attemptErasure`.

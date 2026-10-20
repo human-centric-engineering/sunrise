@@ -244,6 +244,16 @@ describe('runDuePlatformJobs', () => {
     expect(enforceRetentionPolicies).toHaveBeenCalledWith();
   });
 
+  it('tells the erasure retrier to be done 30 s before the tick’s 5-minute limit, counted from the tick start', async () => {
+    // An attempt killed by the host's limit on the tick would hold its lease,
+    // and the erasure, for 20 minutes (t-845).
+    await runDuePlatformJobs(T0);
+
+    expect(processPendingErasures).toHaveBeenCalledWith(expect.any(Date), {
+      stopBy: new Date(T0 + 5 * MINUTE - 30_000),
+    });
+  });
+
   it('on the very next tick runs only the retry drains and the eval worker', async () => {
     // This is the #442 fix: one minute later, an idle deployment must not
     // re-run the retention sweep or full-scan the message table.

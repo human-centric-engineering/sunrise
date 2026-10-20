@@ -50,8 +50,17 @@ release process.
   `requestUserErasure()` erases within `ERASURE_REQUEST_BUDGET_MS` (8 s,
   overridable with the `ERASURE_REQUEST_BUDGET_MS` env var) and otherwise
   returns `{ status: 'pending', requestedAt }`, leaving the maintenance tick to
-  finish it; the retrier gives each attempt `ERASURE_RETRY_BUDGET_MS` and
-  reports `deferred` separately from `failed`. Both `DELETE` user routes answer
+  finish it; the retrier gives each attempt `ERASURE_RETRY_BUDGET_MS`, ends
+  it by the tick's own limit (`processPendingErasures()` takes an optional
+  `{ stopBy }`), keeps the last 60 s for the transaction through
+  `EraseUserParams.prePassDeadline` (optional; a pre-pass that runs out of it
+  hands the rest to the transaction instead of deferring), and reports
+  `deferred` separately from `failed`. Only a timeout after the deadline is a
+  deferral (`isTimeoutError()` decides); any other error is a failure.
+  `ERASURE_MIN_RETRY_MS` is the least of the tick an attempt starts with. A
+  deferral does not count toward
+  `erasureAttempts`. `boundLockWaits()` takes an optional `{ statementsToo }`
+  that caps `statement_timeout` as well. Both `DELETE` user routes answer
   `202` with `{ pending: true, requestedAt }` in that case. `GET /api/v1/users`
   and `UserListItem` gain `erasureRequestedAt` (optional on the type).
   `waitForSubjectLocks()` takes `{ maxWaitMs }`,

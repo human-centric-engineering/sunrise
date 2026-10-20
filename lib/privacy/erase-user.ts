@@ -72,7 +72,6 @@ import {
   waitForSubjectLocks,
 } from '@/lib/privacy/erased-subjects';
 import {
-  boundStatements,
   checkDeadline,
   deferredIfLate,
   ErasureDeferredError,
@@ -133,6 +132,16 @@ export interface EraseUserParams {
    * cut short.
    */
   deadline?: Date;
+  /**
+   * When the pre-passes stop, earlier than `deadline` (t-845). A pre-pass
+   * that runs out of this time is not a deferral: it stops, and the
+   * transaction redacts what it left, in the time between this and
+   * `deadline`. The retrier sets it so an erasure whose pre-passes take
+   * longer than its budget still finishes, rather than deferring at the same
+   * scan every attempt. Without it, the pre-passes run to `deadline` and a
+   * pre-pass that runs out of time defers.
+   */
+  prePassDeadline?: Date;
 }
 
 export interface EraseUserResult {
@@ -240,7 +249,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
   /** Other people's runs whose input or trace named the user (t-804). */
   executionsRedacted: number;
 }> {
-  const { userId, deadline } = params;
+  const { userId, deadline, prePassDeadline } = params;
+  // The pre-passes' own bound; see `prePassDeadline`.
+  const prePassUntil = prePassDeadline ?? deadline;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
   // Best-effort like the avatar cleanup above: a hook failure is logged and
@@ -284,14 +295,25 @@ async function eraseRows(params: EraseUserParams): Promise<{
         },
         // With a deadline, each statement in a transaction of its own capped
         // at the time left; each chunk still commits as it goes.
-        deadline
-          ? (statement) => inBoundedTransaction(prisma, deadline, stage, (tx) => statement(tx))
+        prePassUntil
+          ? (statement) => inBoundedTransaction(prisma, prePassUntil, stage, (tx) => statement(tx))
           : undefined
       );
     } catch (error) {
-      // Out of time is not a failure to fall back from: the next attempt
-      // carries on from the chunks this one committed.
-      if (error instanceof ErasureDeferredError) throw error;
+      if (error instanceof ErasureDeferredError) {
+        // Out of time is not a failure. Without time set aside for the
+        // transaction, the next attempt carries on from the chunks this one
+        // committed; with it, the transaction redacts the rest now.
+        if (!prePassDeadline) throw error;
+        logger.warn(
+          'Erasure delivery pre-pass ran out of its time; the transaction redacts the rest',
+          {
+            userId,
+            table,
+          }
+        );
+        continue;
+      }
       logger.error('Erasure delivery pre-pass failed; the transaction redacts instead', {
         userId,
         table,
@@ -324,16 +346,23 @@ async function eraseRows(params: EraseUserParams): Promise<{
         (n) => {
           runsPreRedacted += n;
         },
-        deadline
+        prePassUntil
       );
     }
   } catch (error) {
-    if (error instanceof ErasureDeferredError) throw error;
+    // As for the deliveries above.
+    if (error instanceof ErasureDeferredError && !prePassDeadline) throw error;
     runsChangedSince = null;
-    logger.error('Erasure run pre-pass failed; the transaction redacts instead', {
-      userId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (error instanceof ErasureDeferredError) {
+      logger.warn('Erasure run pre-pass ran out of its time; the transaction redacts the rest', {
+        userId,
+      });
+    } else {
+      logger.error('Erasure run pre-pass failed; the transaction redacts instead', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // 2. Scrub residual PII, write the receipt, and delete — atomically.
@@ -442,11 +471,7 @@ async function eraseInTransaction(
   // would leave a waiting statement running past it (review round 3). With a
   // deadline every statement does too (t-845), or one still running would
   // keep the request waiting past it.
-  if (deadline) {
-    await boundStatements(tx, budgetMs);
-  } else {
-    await boundLockWaits(tx, budgetMs);
-  }
+  await boundLockWaits(tx, budgetMs, { statementsToo: deadline !== undefined });
 
   // The address is read from the user row, as the export reads it, not taken
   // from `userEmail`: a caller's copy can be stale (a cached session that

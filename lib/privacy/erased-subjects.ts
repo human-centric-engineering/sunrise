@@ -177,8 +177,23 @@ export async function tryLockSubjects(
  * timeout does not cancel a statement already waiting on a lock (review
  * round 2), so a transaction that may wait sets this to stay within its
  * budget. `0` lifts the bound again for what follows.
+ *
+ * `statementsToo` caps every statement at `ms` as well, through
+ * `statement_timeout` (t-845): an erasure with a deadline, which cannot let a
+ * statement already running carry on past it.
  */
-export async function boundLockWaits(tx: LockClient, ms: number): Promise<void> {
+export async function boundLockWaits(
+  tx: LockClient,
+  ms: number,
+  options: { statementsToo?: boolean } = {}
+): Promise<void> {
+  if (options.statementsToo) {
+    // Never 0 here: that lifts the cap, the opposite of a deadline run out.
+    const value = `${Math.max(1, Math.floor(ms))}ms`;
+    await tx.$executeRaw`SELECT set_config('statement_timeout', ${value}, true),
+                                set_config('lock_timeout', ${value}, true)`;
+    return;
+  }
   await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${ms}ms`}, true)`;
 }
 

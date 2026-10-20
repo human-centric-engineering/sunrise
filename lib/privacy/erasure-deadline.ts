@@ -21,7 +21,8 @@
  * @see lib/privacy/erasure-requests.ts — who sets the deadline
  */
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
+import { boundLockWaits } from '@/lib/privacy/erased-subjects';
 
 /**
  * Thrown by `eraseUser()` when its deadline runs out before it finishes. What
@@ -51,26 +52,11 @@ export function checkDeadline(deadline: Date | undefined, stage: string): void {
 }
 
 /**
- * Cap every statement, and every lock wait, for the rest of this transaction
- * at `ms`: Postgres's `statement_timeout` and `lock_timeout`, transaction-local.
- * Prisma's own transaction timeout does not cancel a statement already running.
- */
-export async function boundStatements(
-  tx: Pick<Prisma.TransactionClient, '$executeRaw'>,
-  ms: number
-): Promise<void> {
-  const value = `${Math.max(1, Math.floor(ms))}ms`;
-  await tx.$executeRaw`SELECT set_config('statement_timeout', ${value}, true),
-                              set_config('lock_timeout', ${value}, true)`;
-}
-
-/**
  * Run `fn` in a transaction of its own, capped at the time left before
  * `deadline` (and at `capMs`, when that is shorter). Throws
  * {@link ErasureDeferredError} without starting when no time is left, and in
- * place of whatever `fn` threw when the deadline has passed by the time it
- * failed: the cap is then the likeliest cause, and a deferral is retried
- * straight away rather than after a backoff.
+ * place of a timeout `fn` hit once the deadline has passed (see
+ * {@link deferredIfLate}).
  */
 export async function inBoundedTransaction<T>(
   client: Pick<PrismaClient, '$transaction'>,
@@ -84,7 +70,7 @@ export async function inBoundedTransaction<T>(
   try {
     return await client.$transaction(
       async (tx) => {
-        await boundStatements(tx, ms);
+        await boundLockWaits(tx, ms, { statementsToo: true });
         return fn(tx);
       },
       // Waiting for a connection counts against the deadline too.
@@ -95,9 +81,55 @@ export async function inBoundedTransaction<T>(
   }
 }
 
-/** `error`, or an {@link ErasureDeferredError} in its place when `deadline` has passed. */
+/** Postgres's `query_canceled` (a `statement_timeout`) and `lock_not_available` (a `lock_timeout`). */
+const TIMEOUT_SQLSTATES = new Set(['57014', '55P03']);
+
+/**
+ * Prisma's own time limits: a transaction past its timeout (P2028, which also
+ * covers one that could not start within `maxWait`) and a connection-pool
+ * wait (P2024).
+ */
+const TIMEOUT_PRISMA_CODES = new Set(['P2028', 'P2024']);
+
+function sqlStateOf(meta: unknown): string | undefined {
+  if (typeof meta !== 'object' || meta === null) return undefined;
+  const adapterError = (meta as Record<string, unknown>).driverAdapterError;
+  if (typeof adapterError !== 'object' || adapterError === null) return undefined;
+  const cause = (adapterError as Record<string, unknown>).cause;
+  if (typeof cause !== 'object' || cause === null) return undefined;
+  const code = (cause as Record<string, unknown>).originalCode;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Whether `error` is one of the time limits a deadline sets: Postgres's
+ * statement or lock timeout, or Prisma's transaction or pool timeout. Anything
+ * else is a real failure, whenever it happens.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (TIMEOUT_PRISMA_CODES.has(error.code)) return true;
+    const sqlState = sqlStateOf(error.meta);
+    if (sqlState !== undefined) return TIMEOUT_SQLSTATES.has(sqlState);
+  }
+  // Raised another way (a fork's hook, a test double): Postgres's own words.
+  return (
+    error instanceof Error &&
+    /canceling statement due to (statement|lock) timeout/.test(error.message)
+  );
+}
+
+/**
+ * `error`, or an {@link ErasureDeferredError} in its place when `deadline`
+ * has passed and `error` is a timeout: the deadline's cap is then what stopped
+ * the work, and a deferral is retried straight away rather than after a
+ * backoff. Any other error is a failure, even after the deadline, so it is
+ * logged as one and backed off.
+ */
 export function deferredIfLate(error: unknown, deadline: Date | undefined, stage: string): unknown {
   if (error instanceof ErasureDeferredError) return error;
-  if (deadline && msLeft(deadline) <= 0) return new ErasureDeferredError(stage, { cause: error });
+  if (deadline && msLeft(deadline) <= 0 && isTimeoutError(error)) {
+    return new ErasureDeferredError(stage, { cause: error });
+  }
   return error;
 }

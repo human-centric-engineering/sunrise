@@ -56,6 +56,14 @@ import { requireOrgId } from '@/lib/tenancy/context';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 
 const MINUTE = 60 * 1000;
+
+/**
+ * How long a tick may run: the tick route's `maxDuration` (300 s), which is
+ * also `run-tick.ts`'s watchdog. A job that must not be killed part-way keeps
+ * inside it, less {@link TICK_MARGIN_MS}.
+ */
+const TICK_LIMIT_MS = 5 * MINUTE;
+const TICK_MARGIN_MS = 30_000;
 const HOUR = 60 * MINUTE;
 
 /** What one task run reports back: its own summary value, plus "did it find anything". */
@@ -82,8 +90,11 @@ export interface PlatformJob {
    * platform task with no declared scope is the state §108 removed.
    */
   scope: JobScope;
-  /** Run the task inside its scope and classify its outcome. */
-  run: (orgIds?: readonly string[]) => Promise<PlatformJobOutcome>;
+  /**
+   * Run the task inside its scope and classify its outcome. `tickStartMs` is
+   * when the tick began.
+   */
+  run: (orgIds?: readonly string[], tickStartMs?: number) => Promise<PlatformJobOutcome>;
 }
 
 /**
@@ -96,18 +107,18 @@ function job<T>(spec: {
   name: string;
   intervalMs: number;
   scope: JobScope;
-  run: () => Promise<T>;
+  run: (tick: { startMs: number }) => Promise<T>;
   foundWork: (result: T) => boolean;
 }): PlatformJob {
   return {
     name: spec.name,
     intervalMs: spec.intervalMs,
     scope: spec.scope,
-    run: (orgIds) =>
+    run: (orgIds, tickStartMs = Date.now()) =>
       runScopedJob({
         name: spec.name,
         scope: spec.scope,
-        run: spec.run,
+        run: () => spec.run({ startMs: tickStartMs }),
         foundWork: spec.foundWork,
         orgIds,
       }),
@@ -244,7 +255,12 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // enters the system scope itself at `multi`; per org it would erase the
     // same person once per org.
     scope: { system: 'pendingErasures: finish account deletions a request left pending (t-842)' },
-    run: () => processPendingErasures(),
+    // Done before the tick's own limit: an attempt killed there would hold
+    // its lease, and the erasure, for 20 minutes.
+    run: (tick) =>
+      processPendingErasures(new Date(), {
+        stopBy: new Date(tick.startMs + TICK_LIMIT_MS - TICK_MARGIN_MS),
+      }),
     // Any pending erasure counts, due or not: one waiting out its backoff must
     // keep the idle gate from skipping past its next attempt.
     foundWork: (r) => r.claimed > 0 || r.pending > 0,
@@ -307,7 +323,7 @@ export async function runDuePlatformJobs(
       }
       clock.markStarted(entry.name, now);
       try {
-        const outcome = await entry.run(orgIds);
+        const outcome = await entry.run(orgIds, now);
         return [entry.name, outcome.result, outcome.foundWork] as const;
       } catch (err) {
         // Contained here rather than in `run-tick.ts` so one failing sweep can

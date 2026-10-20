@@ -74,7 +74,11 @@ recorded before any of that work starts (t-842; design on f-gdpr-erasure,
    (`processPendingErasures()`, every maintenance tick, system scope, one
    erasure per run) erases every person whose intent is still there once their
    next attempt is due, with the actor and reason the request stored. Each
-   attempt has `ERASURE_RETRY_BUDGET_MS` (3 minutes), inside the tick's five.
+   attempt has `ERASURE_RETRY_BUDGET_MS` (3 minutes), and less when the tick
+   has less left: the tick passes `stopBy`, 30 s before its own 5-minute limit,
+   so an attempt is never killed by the host holding its 20-minute lease. With
+   under `ERASURE_MIN_RETRY_MS` (90 s) of the tick left, nothing is claimed
+   and the next tick takes it.
 
 **The deadline** (`lib/privacy/erasure-deadline.ts`). `eraseUser()` checks it
 before the avatars, each `cleanupExternal` hook, each delivery pre-pass chunk,
@@ -85,11 +89,23 @@ transaction itself through `statement_timeout`, `lock_timeout` and Prisma's
 timeout. When it runs out, `eraseUser()` throws `ErasureDeferredError`. What
 committed before then stays done (the pre-passes write in committed chunks, and
 redaction is idempotent); the transaction rolls back whole, so the account is
-still there. The next attempt does only what is left, so each deferral makes
-progress, and an attempt whose pre-passes are done has the full 60 s for the
-transaction. A deferral is not a failure: it sets no backoff, and the retrier
-counts it as `deferred`. A failure that arrives after the deadline is counted
-as a deferral too, since the cap is the likeliest cause.
+still there. The next attempt writes only what is left. A deferral is not a
+failure: it sets no backoff, does not count toward `erasureAttempts` (so a
+later failure's backoff starts from the failures alone), and the retrier counts
+it as `deferred`. Only a timeout that arrives after the deadline (Postgres's
+statement or lock timeout, Prisma's transaction or pool timeout) is a deferral;
+any other error is a failure, however late, so it is logged and backed off.
+An attempt that finds the account already erased, whatever it threw, answers
+with the receipt.
+
+**The retrier keeps time for the transaction.** The pre-passes re-scan from
+the start on every attempt; only their writes carry over. So the retrier sets
+`prePassDeadline`, 60 s before its deadline: a pre-pass that runs out of that
+time stops and leaves the rest to the transaction (as a failed pre-pass
+always has), rather than deferring. An erasure whose scans take longer than
+the budget then finishes, or fails and is backed off, instead of deferring at
+the same scan every attempt. The request path sets no `prePassDeadline`: its
+8 s defers, and the tick carries on.
 
 `erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
 claims the row by moving it 20 minutes ahead (`ERASURE_LEASE_MS`, longer than an
@@ -108,7 +124,8 @@ What a caller sees: `200` when the erasure finishes within the budget; `202`
 `409 CONFLICT` when another attempt holds it or a failed one is waiting out
 its backoff; and the original error when it fails. After a `202` or an error
 the account is already disabled. The delete-account form shows "Deletion in
-progress" on a `202`, and the admin users table shows a pending deletion as a
+progress" on a `202` and on a `409` (the route has signed the person out
+either way), and the admin users table shows a pending deletion as a
 **Deletion pending** badge with no Delete action.
 
 **Erasure hooks run again.** A deferred or failed attempt is finished by the

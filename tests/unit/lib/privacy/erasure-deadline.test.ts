@@ -10,15 +10,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import {
-  boundStatements,
   checkDeadline,
   deferredIfLate,
   ErasureDeferredError,
   inBoundedTransaction,
+  isTimeoutError,
   msLeft,
 } from '@/lib/privacy/erasure-deadline';
+import { boundLockWaits } from '@/lib/privacy/erased-subjects';
 
 const NOW = new Date('2026-10-20T12:00:00.000Z');
 
@@ -101,11 +102,11 @@ describe('erasure-deadline', () => {
     });
   });
 
-  describe('boundStatements', () => {
+  describe('boundLockWaits with statementsToo', () => {
     it('sets statement_timeout and lock_timeout, transaction-locally, to the same millisecond value', async () => {
       const { tx } = makeClient();
 
-      await boundStatements(tx, 2_500);
+      await boundLockWaits(tx, 2_500, { statementsToo: true });
 
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       const { text, values } = sqlOf(tx.$executeRaw.mock.calls[0]);
@@ -119,8 +120,8 @@ describe('erasure-deadline', () => {
     it('rounds a fractional budget down and never sends a zero (Postgres reads 0 as no limit)', async () => {
       const { tx } = makeClient();
 
-      await boundStatements(tx, 0);
-      await boundStatements(tx, 99.9);
+      await boundLockWaits(tx, 0, { statementsToo: true });
+      await boundLockWaits(tx, 99.9, { statementsToo: true });
 
       expect(sqlOf(tx.$executeRaw.mock.calls[0]).values).toEqual(['1ms', '1ms']);
       expect(sqlOf(tx.$executeRaw.mock.calls[1]).values).toEqual(['99ms', '99ms']);
@@ -144,6 +145,14 @@ describe('erasure-deadline', () => {
       expect((result as ErasureDeferredError).cause).toBe(failure);
     });
 
+    it('returns a failure after the deadline as it was when it is not a timeout', () => {
+      // A real failure that happens to surface late is still a failure: it is
+      // logged as one and backed off, not retried at once for ever.
+      const failure = new Error('insert or update violates foreign key constraint');
+
+      expect(deferredIfLate(failure, deadlineIn(-1), 'the erasure transaction')).toBe(failure);
+    });
+
     it('returns a failure before the deadline as it was', () => {
       const failure = new Error('constraint violated');
 
@@ -154,6 +163,45 @@ describe('erasure-deadline', () => {
       const failure = new Error('constraint violated');
 
       expect(deferredIfLate(failure, undefined, 'x')).toBe(failure);
+    });
+  });
+
+  describe('isTimeoutError', () => {
+    /** A Prisma known-request error as Prisma 7's pg adapter raises it. */
+    function prismaError(code: string, meta?: Record<string, unknown>) {
+      return new Prisma.PrismaClientKnownRequestError('failed', {
+        code,
+        clientVersion: '7.10.0',
+        meta,
+      });
+    }
+    /** A raw query's Postgres error, carried in the adapter's meta. */
+    function postgresError(sqlState: string) {
+      return prismaError('P2010', {
+        driverAdapterError: {
+          name: 'DriverAdapterError',
+          cause: { originalCode: sqlState, kind: 'postgres', code: sqlState },
+        },
+      });
+    }
+
+    it.each([
+      ['a statement timeout (57014)', postgresError('57014')],
+      ['a lock timeout (55P03)', postgresError('55P03')],
+      ["Prisma's transaction timeout (P2028)", prismaError('P2028')],
+      ["Prisma's pool timeout (P2024)", prismaError('P2024')],
+      ['an error in Postgres’s own words', new Error('canceling statement due to lock timeout')],
+    ])('is true for %s', (_label, error) => {
+      expect(isTimeoutError(error)).toBe(true);
+    });
+
+    it.each([
+      ['a foreign-key violation (23503)', postgresError('23503')],
+      ['a unique violation (P2002)', prismaError('P2002')],
+      ['a plain error', new Error('constraint violated')],
+      ['a non-error', 'timeout'],
+    ])('is false for %s', (_label, error) => {
+      expect(isTimeoutError(error)).toBe(false);
     });
   });
 

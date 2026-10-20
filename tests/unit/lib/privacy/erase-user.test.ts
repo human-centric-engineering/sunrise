@@ -1827,6 +1827,73 @@ describe('eraseUser', () => {
       });
     });
 
+    describe('with time set aside for the transaction (prePassDeadline)', () => {
+      /** The retrier's shape: pre-passes stop 60 s before the deadline. */
+      function retrierParams() {
+        const deadline = new Date(Date.now() + 180_000);
+        return {
+          ...BASE_PARAMS,
+          deadline,
+          prePassDeadline: new Date(deadline.getTime() - 60_000),
+        };
+      }
+
+      it('hands the run pre-pass the pre-pass deadline, not the overall one', async () => {
+        const params = retrierParams();
+
+        await eraseUser(params);
+
+        expect(mockPreRedactRuns.mock.calls[0][3]).toBe(params.prePassDeadline);
+      });
+
+      it('lets the transaction redact what a delivery pre-pass left when it runs out, rather than deferring', async () => {
+        // The retrier re-scans from the start each attempt; deferring here
+        // would stop at the same scan every time and never erase the person.
+        mockPreRedact.mockRejectedValueOnce(
+          new ErasureDeferredError('the webhook delivery pre-pass')
+        );
+
+        const result = await eraseUser(retrierParams());
+
+        expect(result.receiptId).toBe('receipt-1');
+        expect(mockUserDelete).toHaveBeenCalledTimes(1);
+        // The other table's pre-pass still ran.
+        expect(mockPreRedact).toHaveBeenCalledTimes(2);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          'Erasure delivery pre-pass ran out of its time; the transaction redacts the rest',
+          { userId: BASE_PARAMS.userId, table: 'webhook' }
+        );
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+
+      it('has the transaction read every run when the run pre-pass runs out, rather than deferring', async () => {
+        mockPreRedactRuns.mockRejectedValue(new ErasureDeferredError('a run pre-pass page'));
+
+        const result = await eraseUser(retrierParams());
+
+        expect(result.receiptId).toBe('receipt-1');
+        expect(mockEraseRuns).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          'Erasure run pre-pass ran out of its time; the transaction redacts the rest',
+          { userId: BASE_PARAMS.userId }
+        );
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+
+      it('still defers when the overall deadline has passed before a pre-pass', async () => {
+        const params = retrierParams();
+        mockPreRedact.mockImplementationOnce(async () => {
+          advance(181_000);
+          return 0;
+        });
+
+        const error = await eraseUser(params).catch((e: unknown) => e);
+
+        expect((error as ErasureDeferredError).stage).toBe('the hook delivery pre-pass');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
     describe('running out between the cleanup hooks', () => {
       it('stops before the next hook, naming it, once an earlier one used the time', async () => {
         const first = vi.fn(async () => {
@@ -1866,6 +1933,23 @@ describe('eraseUser', () => {
         expect((error as ErasureDeferredError).stage).toBe('the erasure transaction');
         expect((error as ErasureDeferredError).cause).toBe(failure);
         expect(mockUserDelete).not.toHaveBeenCalled();
+      });
+
+      it('propagates a failure that is not a timeout as it was, even after the deadline', async () => {
+        // A real failure must be logged and backed off, not retried at once
+        // for ever as if the deadline had stopped it.
+        const failure = new Error('insert or update violates foreign key constraint');
+        mockPrisma.$transaction.mockImplementation(async () => {
+          advance(9_000);
+          throw failure;
+        });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBe(failure);
       });
 
       it('propagates the original error when the deadline has not passed', async () => {

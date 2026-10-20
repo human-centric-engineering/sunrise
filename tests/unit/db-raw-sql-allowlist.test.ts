@@ -162,13 +162,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/privacy/erased-subjects.ts',
-    calls: 5,
-    why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken by a writer and by erasure’s wait outside its transaction, which first sets `lock_timeout` with `set_config` (a bound parameter, transaction-local); its `_shared` form, which a notification send and an approval pause take so they exclude only an erasure, not each other (t-841); and `pg_try_advisory_xact_lock`, which erasure and the scheduler tick try (t-839, t-840). Prisma has no call for any of them, and they touch no table, so RLS has nothing to filter',
-  },
-  {
-    file: 'lib/privacy/erasure-deadline.ts',
-    calls: 1,
-    why: 'an erasure with a deadline (t-845) caps its own transaction: `set_config` of `statement_timeout` and `lock_timeout`, transaction-local, with a bound parameter. Prisma has no call for it, and it touches no table, so RLS has nothing to filter',
+    calls: 6,
+    why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken by a writer and by erasure’s wait outside its transaction, which first sets `lock_timeout` with `set_config` (a bound parameter, transaction-local; with `statement_timeout` too when an erasure with a deadline caps its own transaction, t-845); its `_shared` form, which a notification send and an approval pause take so they exclude only an erasure, not each other (t-841); and `pg_try_advisory_xact_lock`, which erasure and the scheduler tick try (t-839, t-840). Prisma has no call for any of them, and they touch no table, so RLS has nothing to filter',
   },
   {
     file: 'lib/privacy/run-recipients.ts',

@@ -204,7 +204,7 @@ The account is already disabled and the person signed out. The maintenance tick 
 - **400 Validation Error**: Missing or incorrect confirmation
 - **409 Conflict**: The account is already being deleted
 
-**Note**: The deletion is recorded and the account disabled (sessions, API keys, sign-in) before the erasure starts. If the erasure fails, the request returns the error, but the maintenance tick finishes the deletion. See [Pending erasures](../privacy/data-erasure.md#pending-erasures). Session cookie is cleared automatically on a 200 or a 202.
+**Note**: The deletion is recorded and the account disabled (sessions, API keys, sign-in) before the erasure starts. If the erasure fails, the request returns the error, but the maintenance tick finishes the deletion. See [Pending erasures](../privacy/data-erasure.md#pending-erasures). Session cookie is cleared automatically on a 200, a 202 or a 409.
 
 ## Export Current User's Data (Subject Access)
 
