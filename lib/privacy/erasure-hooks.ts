@@ -68,6 +68,13 @@ export interface ErasureCleanupHook {
    * keyed to the user. Runs BEFORE the erasure transaction. A throw is logged
    * and swallowed so it can never block erasure — mirrors Sunrise's own
    * avatar-blob cleanup.
+   *
+   * **May run more than once, in another process.** An erasure that fails, or
+   * runs out of its request's time (t-845), is finished by the maintenance
+   * tick, which runs every hook again from the start. Make it idempotent:
+   * cleaning up what is already gone must succeed. It is not cut short once
+   * started, so keep it to seconds; a slow one spends the request's budget,
+   * and the rest of the erasure moves to the tick.
    */
   cleanupExternal?: (ctx: ErasureExternalContext) => Promise<void>;
   /**

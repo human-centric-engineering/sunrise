@@ -42,6 +42,25 @@ release process.
   than `eraseUser()`. Your erasure hooks may now run again in a later
   attempt, so make them idempotent.
 
+- **An account deletion answers within a request budget, and `202 pending`
+  when the erasure needs longer** (t-845). `eraseUser()` takes an optional
+  `deadline`: it stops at the next safe point once that passes and throws the
+  new `ErasureDeferredError` (exported from `lib/privacy/erase-user.ts` and
+  `lib/privacy/erasure-deadline.ts`); without one it behaves as before.
+  `requestUserErasure()` erases within `ERASURE_REQUEST_BUDGET_MS` (8 s,
+  overridable with the `ERASURE_REQUEST_BUDGET_MS` env var) and otherwise
+  returns `{ status: 'pending', requestedAt }`, leaving the maintenance tick to
+  finish it; the retrier gives each attempt `ERASURE_RETRY_BUDGET_MS` and
+  reports `deferred` separately from `failed`. Both `DELETE` user routes answer
+  `202` with `{ pending: true, requestedAt }` in that case. `GET /api/v1/users`
+  and `UserListItem` gain `erasureRequestedAt` (optional on the type).
+  `waitForSubjectLocks()` takes `{ maxWaitMs }`,
+  `preRedactSubjectFromDeliveries()` a statement runner and
+  `preRedactSubjectFromRuns()` a deadline, all optional. See
+  `.context/privacy/data-erasure.md` → "Pending erasures". **Forks:** a client
+  of the delete routes should treat `202` as success. Your `cleanupExternal`
+  hooks may run more than once, in another process, so make them idempotent.
+
 - **`lib/api/server-load.ts`: `requireServerData()` and `loadServerData()`,
   for reading internal API routes from a server component** (t-861, #518).
   `requireServerData()` returns a page's main data or throws a

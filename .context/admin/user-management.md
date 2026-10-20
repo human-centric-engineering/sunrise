@@ -15,7 +15,9 @@ The `UserTable` component displays users with:
 - **Role badge** (USER or ADMIN)
 - **Email verification status** (checkmark or X icon)
 - **Creation date**
-- **Action menu** (Edit, Delete)
+- **Deletion pending badge** beside the name while a deletion is still being
+  finished by the maintenance tick (`erasureRequestedAt` from the list endpoint)
+- **Action menu** (Edit, Delete; no Delete while a deletion is pending)
 
 ### Search
 
@@ -70,11 +72,15 @@ const isCurrentUser = user.id === currentUserId;
 
 ## User Deletion
 
-Deletion requires confirmation dialog and removes:
+Deletion requires a confirmation dialog, then goes through
+`requestUserErasure()`: the account is disabled first, then erased (see
+[Data erasure](../privacy/data-erasure.md#pending-erasures)).
 
-- User record
-- All associated sessions
-- All linked accounts (OAuth)
+The API answers `200` when the erasure finishes within the request's budget
+(about 8 s), and `202` when it does not. On a `202` the account is already
+disabled and the maintenance tick finishes the erasure, usually within a few
+minutes; the refreshed list shows the user with a **Deletion pending** badge and
+no Delete action until then.
 
 ```mermaid
 sequenceDiagram
@@ -82,10 +88,10 @@ sequenceDiagram
     UserTable->>AlertDialog: Show confirmation
     Admin->>AlertDialog: Confirm
     AlertDialog->>API: DELETE /api/v1/users/{id}
-    API->>Database: Cascade delete
-    Database-->>API: Success
-    API-->>UserTable: 200 OK
-    UserTable->>UserTable: Refresh list
+    API->>Database: Record the deletion, disable the account
+    API->>Database: Erase (within the budget)
+    API-->>UserTable: 200 OK, or 202 pending
+    UserTable->>UserTable: Refresh list (pending → badge)
 ```
 
 ## Components

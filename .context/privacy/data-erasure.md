@@ -39,11 +39,14 @@ const result = await requestUserErasure({
   actorUserId: session.user.id, // who initiated (self or an admin)
   reason: 'self_service', // 'self_service' | 'admin_action'
 });
-// result.status: 'erased' (with receiptId) | 'in_progress' (another attempt holds it)
+// result.status: 'erased' (with receiptId)
+//   | 'pending' (out of time; the maintenance tick finishes it)
+//   | 'in_progress' (another attempt holds it)
 ```
 
 `eraseUser()` with the same arguments is the erasure itself, for callers that
-need no durability, such as the seed and the smoke scripts.
+need no durability, such as the seed and the smoke scripts. Without a
+`deadline` it runs to the end, however long that takes.
 
 ## Pending erasures
 
@@ -61,12 +64,32 @@ recorded before any of that work starts (t-842; design on f-gdpr-erasure,
    their `AiApiKey`s. From then on `sessionCreateBeforeHook` refuses sign-in
    (`refuseIfErasurePending`), and fails closed: if it can't read the row, the
    sign-in is refused.
-2. **Erase.** `eraseUser()`, unchanged. Its delete removes the intent columns
-   with the row, and the `DataErasureReceipt` is the record that it finished.
+2. **Erase, within a budget.** `eraseUser()` with a deadline
+   `ERASURE_REQUEST_BUDGET_MS` (8 s; env `ERASURE_REQUEST_BUDGET_MS`) after the
+   request began (t-845). Its delete removes the intent columns with the row,
+   and the `DataErasureReceipt` is the record that it finished. If the budget
+   runs out first, the request answers `pending` and the attempt is left due
+   at once for the tick.
 3. **Finish what did not.** The `pendingErasures` platform job
    (`processPendingErasures()`, every maintenance tick, system scope, one
    erasure per run) erases every person whose intent is still there once their
-   next attempt is due, with the actor and reason the request stored.
+   next attempt is due, with the actor and reason the request stored. Each
+   attempt has `ERASURE_RETRY_BUDGET_MS` (3 minutes), inside the tick's five.
+
+**The deadline** (`lib/privacy/erasure-deadline.ts`). `eraseUser()` checks it
+before the avatars, each `cleanupExternal` hook, each delivery pre-pass chunk,
+each run pre-pass page and each try of the transaction. Work already running is
+capped at the time left: a lock wait outside the transaction
+(`waitForSubjectLocks`'s `maxWaitMs`), and each pre-pass statement and the
+transaction itself through `statement_timeout`, `lock_timeout` and Prisma's
+timeout. When it runs out, `eraseUser()` throws `ErasureDeferredError`. What
+committed before then stays done (the pre-passes write in committed chunks, and
+redaction is idempotent); the transaction rolls back whole, so the account is
+still there. The next attempt does only what is left, so each deferral makes
+progress, and an attempt whose pre-passes are done has the full 60 s for the
+transaction. A deferral is not a failure: it sets no backoff, and the retrier
+counts it as `deferred`. A failure that arrives after the deadline is counted
+as a deferral too, since the cap is the likeliest cause.
 
 `erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
 claims the row by moving it 20 minutes ahead (`ERASURE_LEASE_MS`, longer than an
@@ -80,10 +103,19 @@ the idle gate never skips past its next attempt. The cost: one that keeps
 failing keeps the gate awake, and the tick sweeps every minute until it is
 fixed.
 
-What a caller sees today: `200` when the erasure finishes within the request,
+What a caller sees: `200` when the erasure finishes within the budget; `202`
+`{ pending: true, requestedAt }` when it does not, and the tick finishes it;
 `409 CONFLICT` when another attempt holds it or a failed one is waiting out
-its backoff, and the original error when it fails. In that last case the account is already disabled and the tick
-finishes the job. t-845 adds a request budget and a `202 pending` answer.
+its backoff; and the original error when it fails. After a `202` or an error
+the account is already disabled. The delete-account form shows "Deletion in
+progress" on a `202`, and the admin users table shows a pending deletion as a
+**Deletion pending** badge with no Delete action.
+
+**Erasure hooks run again.** A deferred or failed attempt is finished by the
+tick, which runs every hook from the start, in whichever process runs the tick.
+`cleanupExternal` must be idempotent, and is not cut short once started, so keep
+it to seconds. `scrubInTransaction` runs inside the transaction, so a deferral
+rolls it back with everything else.
 
 **Limits:**
 
@@ -861,7 +893,8 @@ export function initAppErasureHooks(): void {
   registerErasureCleanupHook({
     name: 'app-hub',
     // Best-effort, BEFORE the transaction (like avatar cleanup). A throw is
-    // logged and swallowed — it can never block the user's erasure.
+    // logged and swallowed — it can never block the user's erasure. May run
+    // again in a later attempt, in another process: make it idempotent.
     async cleanupExternal({ userId }) {
       await deleteAppBlobsFor(userId);
     },
