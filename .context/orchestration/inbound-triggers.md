@@ -159,7 +159,7 @@ POST /api/v1/inbound/:channel/:slug
   ↓                                              → 200 {deduped: true} if P2002 on dedupKey
   ↓ trigger.lastFiredAt update (best-effort)
   ↓ logAdminAction(workflow_trigger.fire)         # userId: null — the upstream system fired it
-  ↓ void drainEngine(...)                        # fire-and-forget; identical crash handling to schedule path
+  ↓ keepRunningAfterResponse(drainEngine(...))  # background, kept alive past the 202 (t-846); identical crash handling to schedule path
   ↓ 202 {executionId, channel, workflowSlug, status: 'pending'}
 ```
 
@@ -173,7 +173,7 @@ workflow's `orgId` and its org's status through the same
 `resolveCredentialOrg` rule a credential's does, and runs everything after
 the lookup inside `runAsOrg(orgId, …, { source: 'inbound-trigger' })`: the
 execution row, the conversation the resolver creates, the audit entry and
-the fire-and-forget `drainEngine` are all stamped with, and scoped to, the
+the background `drainEngine` are all stamped with, and scoped to, the
 workflow's org. A workflow whose org is suspended, or that carries none at
 `TENANCY_MODE=multi`, is the same 404 as no trigger — a refusal names
 nothing. `AiWorkflow.slug` stays globally unique for exactly this reason: it

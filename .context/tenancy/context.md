@@ -234,7 +234,7 @@ them from `runAsSystem` to the quieter scope), and the row's `orgId` with its or
 `resolveCredentialOrg` rule a credential's does before the rest of the
 request runs inside `runAsOrg(orgId, …, { source: 'inbound-trigger' |
 'approval-token' })`. A refusal — no org at `multi`, a suspended org — is
-the route's usual 404. The fire-and-forget engine drain and resume start
+the route's usual 404. The background engine drain and resume start
 inside that scope and keep it.
 **The credential resolvers read their row the same way** (t-709):
 `resolveApiKey` (`lib/auth/api-keys.ts`), `resolveEmbedToken`

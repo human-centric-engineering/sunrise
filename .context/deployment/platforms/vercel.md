@@ -249,6 +249,11 @@ the setup is:
   With many orgs, a slow sweep leaves the background tasks less time, and a
   task cut off mid-run finishes on a later tick. On Pro you can raise it to 800
   in `app/api/v1/admin/orchestration/maintenance/tick/route.ts`.
+- **The runs a request starts are kept alive too (t-846).** A fired schedule,
+  a recovered or orphaned run, an inbound trigger and a resumed approval each
+  hand their engine drain to `after()`. The inbound route and the approve
+  routes that resume a run set `maxDuration = 300` as well. A run still going
+  when that ends is picked up by the orphan sweep once its lease lapses.
 - **A `HEAD` request is refused with `405`**, so an uptime probe that holds the
   key cannot fire a tick.
 - **Rotating the key.** Mint a new key, update `CRON_SECRET`, redeploy, then
