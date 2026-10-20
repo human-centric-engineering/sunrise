@@ -159,7 +159,7 @@ POST /api/v1/inbound/:channel/:slug
   ↓                                              → 200 {deduped: true} if P2002 on dedupKey
   ↓ trigger.lastFiredAt update (best-effort)
   ↓ logAdminAction(workflow_trigger.fire)         # userId: null — the upstream system fired it
-  ↓ keepRunningAfterResponse(drainEngine(...))  # background, kept alive past the 202 (t-846); identical crash handling to schedule path
+  ↓ void drainEngine(...)                        # background, keeps itself alive past the 202 (t-846); identical crash handling to schedule path
   ↓ 202 {executionId, channel, workflowSlug, status: 'pending'}
 ```
 
