@@ -589,6 +589,24 @@ describe('components/forms/delete-account-form', () => {
       });
     });
 
+    it('cannot be closed while the request runs, so a pending answer is still shown', async () => {
+      const user = userEvent.setup({ delay: null });
+      let answer: (value: unknown) => void = () => undefined;
+      vi.mocked(apiClient.delete).mockReturnValue(
+        new Promise((resolve) => {
+          answer = resolve;
+        })
+      );
+      await confirmDeletion(user);
+      await screen.findByText(/deleting/i);
+
+      await user.keyboard('{Escape}');
+      expect(screen.getByText(/are you absolutely sure/i)).toBeInTheDocument();
+
+      answer(PENDING);
+      expect(await screen.findByText('Deletion in progress')).toBeInTheDocument();
+    });
+
     it('redirects at once, with no message, when the deletion finished', async () => {
       const user = userEvent.setup({ delay: null });
       vi.mocked(apiClient.delete).mockResolvedValue({ deleted: true, message: 'Account deleted' });

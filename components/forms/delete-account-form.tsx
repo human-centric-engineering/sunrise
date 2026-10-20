@@ -95,6 +95,9 @@ export function DeleteAccountForm() {
   };
 
   const handleOpenChange = (open: boolean) => {
+    // Not while the request runs: its answer may be a pending deletion,
+    // which needs the dialog to say so and to leave the page.
+    if (!open && isLoading) return;
     // The account is already disabled: closing the dialog leaves the page.
     if (!open && isPending) {
       leave();
