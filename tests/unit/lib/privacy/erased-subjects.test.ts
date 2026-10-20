@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Prisma } from '@prisma/client';
 
 import { ValidationError } from '@/lib/api/errors';
@@ -208,6 +208,119 @@ describe('waitForSubjectLocks (t-840)', () => {
     await expect(waitForSubjectLocks(client, { userIds: ['user-1'] })).rejects.toThrow(
       'Transaction already closed'
     );
+  });
+});
+
+describe('waitForSubjectLocks with maxWaitMs (t-845)', () => {
+  const NOW = new Date('2026-10-20T12:00:00.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * A client that records, per transaction, the Prisma timeout and the
+   * `lock_timeout` it set, and moves the clock on by `takes[i]` ms as the
+   * i-th wait "waits".
+   */
+  function makeWaitingClient(takes: number[] = []) {
+    const opened: Array<{ timeout: number; lockTimeout: unknown; key: unknown }> = [];
+    const $transaction = vi.fn(
+      async (
+        callback: (client: { $executeRaw: ReturnType<typeof vi.fn> }) => Promise<unknown>,
+        options: { timeout: number }
+      ) => {
+        const entry: { timeout: number; lockTimeout: unknown; key: unknown } = {
+          timeout: options.timeout,
+          lockTimeout: undefined,
+          key: undefined,
+        };
+        const executeRaw = vi.fn(async (strings: TemplateStringsArray, value: unknown) => {
+          if (strings.join('?').includes('lock_timeout')) entry.lockTimeout = value;
+          else entry.key = value;
+          return 1;
+        });
+        opened.push(entry);
+        await callback({ $executeRaw: executeRaw });
+        vi.setSystemTime(Date.now() + (takes[opened.length - 1] ?? 0));
+      }
+    );
+    const client = { $transaction } as unknown as Parameters<typeof waitForSubjectLocks>[0];
+    return { client, opened, $transaction };
+  }
+
+  const TWO_LOCKS = { addresses: ['gone@example.com'], userIds: ['user-1'] };
+
+  it('caps the wait for a lock at the time given, and Prisma’s timeout just above it', async () => {
+    const { client, opened } = makeWaitingClient();
+
+    await waitForSubjectLocks(client, { userIds: ['user-1'] }, { maxWaitMs: 10_000 });
+
+    expect(opened).toEqual([
+      { timeout: 10_000 + 5_000, lockTimeout: '10000ms', key: 'sunrise:erased-user:user-1' },
+    ]);
+  });
+
+  it('never waits longer than the per-lock wait, however much time is given', async () => {
+    const { client, opened } = makeWaitingClient();
+
+    await waitForSubjectLocks(
+      client,
+      { userIds: ['user-1'] },
+      { maxWaitMs: SUBJECT_LOCK_WAIT_MS * 10 }
+    );
+
+    expect(opened[0].lockTimeout).toBe(`${SUBJECT_LOCK_WAIT_MS}ms`);
+    expect(opened[0].timeout).toBe(SUBJECT_LOCK_WAIT_MS + 5_000);
+  });
+
+  it('shares the time across the locks: the next lock gets what the earlier ones left', async () => {
+    // The first wait takes 7s of the 10s.
+    const { client, opened } = makeWaitingClient([7_000]);
+
+    await waitForSubjectLocks(client, TWO_LOCKS, { maxWaitMs: 10_000 });
+
+    expect(opened.map((o) => o.lockTimeout)).toEqual(['10000ms', '3000ms']);
+    expect(opened.map((o) => o.key)).toEqual([
+      'sunrise:erased-address:gone@example.com',
+      'sunrise:erased-user:user-1',
+    ]);
+  });
+
+  it('returns early, without waiting for the locks left, once the time is spent', async () => {
+    // The first wait takes all of the time.
+    const { client, opened, $transaction } = makeWaitingClient([10_000]);
+
+    await expect(
+      waitForSubjectLocks(client, TWO_LOCKS, { maxWaitMs: 10_000 })
+    ).resolves.toBeUndefined();
+
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(opened.map((o) => o.key)).toEqual(['sunrise:erased-address:gone@example.com']);
+  });
+
+  it('opens no transaction at all when given no time', async () => {
+    const { client, $transaction } = makeWaitingClient();
+
+    await waitForSubjectLocks(client, TWO_LOCKS, { maxWaitMs: 0 });
+
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it('without maxWaitMs, still waits the full per-lock wait for every lock', async () => {
+    const { client, opened } = makeWaitingClient([SUBJECT_LOCK_WAIT_MS, SUBJECT_LOCK_WAIT_MS]);
+
+    await waitForSubjectLocks(client, TWO_LOCKS);
+
+    expect(opened.map((o) => o.lockTimeout)).toEqual([
+      `${SUBJECT_LOCK_WAIT_MS}ms`,
+      `${SUBJECT_LOCK_WAIT_MS}ms`,
+    ]);
   });
 });
 

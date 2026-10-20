@@ -774,6 +774,81 @@ describe('components/admin/user-table', () => {
     });
   });
 
+  describe('a user whose deletion is pending (t-845)', () => {
+    const REQUESTED_AT = new Date('2026-10-20T11:59:55.000Z');
+    const withPendingBob: UserListItem[] = [
+      mockUsers[0],
+      { ...mockUsers[1], erasureRequestedAt: REQUESTED_AT },
+      { ...mockUsers[2], erasureRequestedAt: null },
+    ];
+
+    it('shows a "Deletion pending" badge beside only the user whose deletion was asked for', () => {
+      render(<UserTable initialUsers={withPendingBob} initialMeta={mockMeta} />);
+
+      const badges = screen.getAllByText('Deletion pending');
+      expect(badges).toHaveLength(1);
+      // Beside Bob's name, in the same cell.
+      const bobCell = screen.getByRole('link', { name: 'Bob Smith' }).closest('td');
+      expect(bobCell).toContainElement(badges[0]);
+    });
+
+    it('shows no badge when no user has a deletion pending', () => {
+      render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
+
+      expect(screen.queryByText('Deletion pending')).not.toBeInTheDocument();
+    });
+
+    it('leaves the Delete action out of the menu for that user, and keeps View Profile and Edit', async () => {
+      const user = userEvent.setup();
+      render(<UserTable initialUsers={withPendingBob} initialMeta={mockMeta} />);
+
+      // Bob (pending) is the second row.
+      await user.click(screen.getAllByRole('button', { name: /open menu/i })[1]);
+
+      expect(screen.getByRole('menuitem', { name: /view profile/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /edit/i })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: /delete/i })).not.toBeInTheDocument();
+    });
+
+    it('still offers Delete for a user whose deletion is not pending', async () => {
+      const user = userEvent.setup();
+      render(<UserTable initialUsers={withPendingBob} initialMeta={mockMeta} />);
+
+      // Charlie (erasureRequestedAt null) is the third row.
+      await user.click(screen.getAllByRole('button', { name: /open menu/i })[2]);
+
+      expect(screen.getByRole('menuitem', { name: /delete/i })).toBeInTheDocument();
+    });
+
+    it('shows the badge on a refreshed list too, reading the ISO date the API sends', async () => {
+      const user = userEvent.setup({ delay: null });
+      mockFetch.mockResolvedValue(
+        createMockFetchResponse({
+          success: true,
+          data: [
+            {
+              ...mockUsers[1],
+              createdAt: mockUsers[1].createdAt.toISOString(),
+              erasureRequestedAt: REQUESTED_AT.toISOString(),
+            },
+          ],
+          meta: mockMeta,
+        })
+      );
+      render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
+      expect(screen.queryByText('Deletion pending')).not.toBeInTheDocument();
+
+      await user.type(screen.getByPlaceholderText('Search users...'), 'bob');
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(await screen.findByText('Deletion pending')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /open menu/i }));
+      expect(screen.queryByRole('menuitem', { name: /delete/i })).not.toBeInTheDocument();
+    });
+  });
+
   describe('initial state', () => {
     it('should initialize with provided search value', () => {
       // Arrange & Act

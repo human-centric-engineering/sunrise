@@ -268,6 +268,7 @@ describe('GET /api/v1/users', () => {
           role: true,
           emailVerified: true,
           createdAt: true,
+          erasureRequestedAt: true,
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -313,6 +314,7 @@ describe('GET /api/v1/users', () => {
           role: true,
           emailVerified: true,
           createdAt: true,
+          erasureRequestedAt: true,
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -343,6 +345,7 @@ describe('GET /api/v1/users', () => {
           role: true,
           emailVerified: true,
           createdAt: true,
+          erasureRequestedAt: true,
         },
         orderBy: { email: 'asc' },
       });

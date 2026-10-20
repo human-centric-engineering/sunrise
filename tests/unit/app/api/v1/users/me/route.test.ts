@@ -438,6 +438,64 @@ describe('DELETE /api/v1/users/me', () => {
     expect(serverTrack).not.toHaveBeenCalled();
   });
 
+  // ── Case 4c: Erasure did not finish within the request budget (t-845) ────
+
+  it('returns 202 { pending: true, requestedAt } instead of the deleted body when the erasure is still pending', async () => {
+    const session = buildUserSession('USER');
+    vi.mocked(requestUserErasure).mockResolvedValue({
+      status: 'pending',
+      requestedAt: new Date('2026-10-20T11:59:55.000Z'),
+    });
+
+    const request = createMockRequest({
+      method: 'DELETE',
+      url: 'http://localhost:3000/api/v1/users/me',
+      body: { confirmation: 'DELETE' },
+    });
+
+    const response = await DELETE(request, session);
+    const body = await parseJSON<SuccessBody>(response);
+
+    expect(response.status).toBe(202);
+    expect(body).toEqual({
+      success: true,
+      data: { pending: true, requestedAt: '2026-10-20T11:59:55.000Z' },
+    });
+    // Not reported as done: the client tells the two apart by these keys.
+    expect(body.data).not.toHaveProperty('deleted');
+    expect(requestUserErasure).toHaveBeenCalledTimes(1);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      'User account deletion pending; the maintenance tick finishes it'
+    );
+    expect(mockLog.info).not.toHaveBeenCalledWith('User account deleted successfully');
+  });
+
+  it('still clears all the auth cookies on a pending answer, since the account’s sessions are gone', async () => {
+    const session = buildUserSession('USER');
+    vi.mocked(requestUserErasure).mockResolvedValue({
+      status: 'pending',
+      requestedAt: new Date('2026-10-20T11:59:55.000Z'),
+    });
+
+    const request = createMockRequest({
+      method: 'DELETE',
+      url: 'http://localhost:3000/api/v1/users/me',
+      body: { confirmation: 'DELETE' },
+    });
+
+    const response = await DELETE(request, session);
+
+    expect(response.status).toBe(202);
+    expect(mockCookieStore.delete).toHaveBeenCalledTimes(4);
+    expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');
+    expect(mockCookieStore.set).toHaveBeenCalledTimes(4);
+    expect(mockCookieStore.set).toHaveBeenCalledWith(
+      '__Secure-better-auth.session_token',
+      '',
+      expect.objectContaining({ maxAge: 0 })
+    );
+  });
+
   // ── Case 5: Cookie teardown ──────────────────────────────────────────────
 
   it('deletes and expires all better-auth cookies after a successful erase', async () => {

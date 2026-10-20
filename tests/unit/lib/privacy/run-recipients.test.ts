@@ -10,8 +10,9 @@
  * @see lib/privacy/run-recipients.ts
  */
 import { createHash } from 'node:crypto';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Prisma } from '@prisma/client';
+import { ErasureDeferredError } from '@/lib/privacy/erasure-deadline';
 import {
   ERASED_VALUE,
   PRE_PASS_PAGE_TIMEOUT_MS,
@@ -406,6 +407,149 @@ describe('preRedactSubjectFromRuns', () => {
       timeout: PRE_PASS_PAGE_TIMEOUT_MS,
     });
     expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
+  });
+});
+
+describe('preRedactSubjectFromRuns with a deadline (t-845)', () => {
+  const started = new Date('2026-10-17T12:00:00.000Z');
+  const NOW = new Date('2026-10-20T12:00:00.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const page = (start: number, n: number): ExecutionRow[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `exec-${String(start + i).padStart(5, '0')}`,
+      inputData: {},
+      executionTrace: [{ output: { approverUserIds: [USER_ID] } }],
+    }));
+
+  /** A client that runs each page against `tx`, which also takes the statement bounds. */
+  function makeClient(pages: ExecutionRow[][], onTransaction?: () => void) {
+    const tx = { ...makeTx([], pages), $executeRaw: vi.fn(async (..._call: unknown[]) => 1) };
+    const client = {
+      $queryRaw: vi.fn(async () => [{ now: started }]),
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _options?: unknown) => {
+        onTransaction?.();
+        return fn(tx);
+      }),
+    };
+    return { client, tx };
+  }
+
+  it('caps each page at the time left, with a 2s connection wait, and bounds its statements to it', async () => {
+    const { client, tx } = makeClient([page(0, 2)]);
+
+    await preRedactSubjectFromRuns(
+      client as never,
+      subject,
+      () => undefined,
+      new Date(NOW.getTime() + 20_000)
+    );
+
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 20_000,
+      maxWait: 2_000,
+    });
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(strings.join('?')).toContain('statement_timeout');
+    expect(values).toEqual(['20000ms', '20000ms']);
+  });
+
+  it('keeps the page timeout as the cap when much more time than that is left', async () => {
+    const { client } = makeClient([page(0, 2)]);
+
+    await preRedactSubjectFromRuns(
+      client as never,
+      subject,
+      () => undefined,
+      new Date(NOW.getTime() + 60 * 60_000)
+    );
+
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
+      maxWait: 2_000,
+    });
+  });
+
+  it('opens no page and throws a deferral when the deadline has already passed', async () => {
+    const { client } = makeClient([page(0, 2)]);
+    const committed: number[] = [];
+
+    const error = await preRedactSubjectFromRuns(
+      client as never,
+      subject,
+      (n) => committed.push(n),
+      new Date(NOW.getTime() - 1)
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ErasureDeferredError);
+    expect((error as ErasureDeferredError).stage).toBe('a run pre-pass page');
+    expect(client.$transaction).not.toHaveBeenCalled();
+    expect(committed).toEqual([]);
+  });
+
+  it('stops between pages once time runs out, keeping what the earlier pages committed', async () => {
+    // The first (full) page takes the rest of the time.
+    const { client } = makeClient([page(0, RUN_PAGE_SIZE), page(RUN_PAGE_SIZE, 2)], () => {
+      if (client.$transaction.mock.calls.length === 1) {
+        vi.setSystemTime(new Date(NOW.getTime() + 11_000));
+      }
+    });
+    const committed: number[] = [];
+
+    const error = await preRedactSubjectFromRuns(
+      client as never,
+      subject,
+      (n) => committed.push(n),
+      new Date(NOW.getTime() + 10_000)
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ErasureDeferredError);
+    expect(client.$transaction).toHaveBeenCalledTimes(1);
+    expect(committed).toEqual([RUN_PAGE_SIZE]);
+  });
+
+  it('turns a page that fails after the deadline into a deferral, keeping the failure as the cause', async () => {
+    const { client } = makeClient([]);
+    const failure = new Error('canceling statement due to statement timeout');
+    client.$transaction.mockImplementation(async () => {
+      vi.setSystemTime(new Date(NOW.getTime() + 11_000));
+      throw failure;
+    });
+
+    const error = await preRedactSubjectFromRuns(
+      client as never,
+      subject,
+      () => undefined,
+      new Date(NOW.getTime() + 10_000)
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ErasureDeferredError);
+    expect((error as ErasureDeferredError).cause).toBe(failure);
+  });
+
+  it('rethrows a page failure unchanged while time remains', async () => {
+    const { client } = makeClient([]);
+    client.$transaction.mockRejectedValue(new Error('deadlock detected'));
+
+    await expect(
+      preRedactSubjectFromRuns(
+        client as never,
+        subject,
+        () => undefined,
+        new Date(NOW.getTime() + 10_000)
+      )
+    ).rejects.toThrow('deadlock detected');
   });
 });
 

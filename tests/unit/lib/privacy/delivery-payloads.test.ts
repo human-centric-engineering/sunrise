@@ -866,6 +866,83 @@ describe('preRedactSubjectFromDeliveries', () => {
   });
 });
 
+describe('preRedactSubjectFromDeliveries with a statement runner (t-845)', () => {
+  function matchedIds(n: number) {
+    return Array.from({ length: n }, (_, i) => ({ id: `r${i}`, activity: i % 2 === 0 }));
+  }
+
+  it('runs the match and every chunk through the runner, on the client it hands over, never on `client`', async () => {
+    const outer = makeClient([]);
+    const inner = makeClient([]);
+    inner.queryRaw.mockResolvedValueOnce(matchedIds(10_001) as unknown as RawRow[]);
+    inner.executeRaw
+      .mockResolvedValueOnce(5_000)
+      .mockResolvedValueOnce(5_000)
+      .mockResolvedValueOnce(1);
+    let statements = 0;
+    const runStatement = <T>(statement: (c: RawClient) => Promise<T>) => {
+      statements += 1;
+      return statement(inner.client);
+    };
+
+    const changed = await preRedactSubjectFromDeliveries(
+      outer.client,
+      'webhook',
+      SUBJECT,
+      undefined,
+      runStatement
+    );
+
+    // One match plus three chunks, each its own statement.
+    expect(statements).toBe(4);
+    expect(inner.queryRaw).toHaveBeenCalledTimes(1);
+    expect(inner.executeRaw).toHaveBeenCalledTimes(3);
+    expect(outer.queryRaw).not.toHaveBeenCalled();
+    expect(outer.executeRaw).not.toHaveBeenCalled();
+    expect(changed).toBe(10_001);
+    expect(renderCall(inner.queryRaw).values).toContain(SUBJECT);
+  });
+
+  it('runs a statement per chunk, so a chunk that the runner refuses stops the pass after the ones before it', async () => {
+    const outer = makeClient([]);
+    const inner = makeClient([]);
+    inner.queryRaw.mockResolvedValueOnce(matchedIds(12_000) as unknown as RawRow[]);
+    inner.executeRaw.mockResolvedValue(5_000);
+    const heard: number[] = [];
+    let statements = 0;
+    const runStatement = async <T>(statement: (c: RawClient) => Promise<T>) => {
+      statements += 1;
+      // The match and the first chunk run; the second chunk is out of time.
+      if (statements === 3) throw new Error('out of time');
+      return statement(inner.client);
+    };
+
+    await expect(
+      preRedactSubjectFromDeliveries(
+        outer.client,
+        'hook',
+        SUBJECT,
+        (n) => heard.push(n),
+        runStatement
+      )
+    ).rejects.toThrow('out of time');
+
+    expect(heard).toEqual([5_000]);
+    expect(inner.executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs on `client` itself when no runner is given', async () => {
+    const outer = makeClient([]);
+    outer.queryRaw.mockResolvedValueOnce(matchedIds(1) as unknown as RawRow[]);
+    outer.executeRaw.mockResolvedValueOnce(1);
+
+    await preRedactSubjectFromDeliveries(outer.client, 'webhook', SUBJECT);
+
+    expect(outer.queryRaw).toHaveBeenCalledTimes(1);
+    expect(outer.executeRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('byCreatedAtThenId', () => {
   const at = (ms: number, id: string) => ({ createdAt: new Date(ms), id });
 

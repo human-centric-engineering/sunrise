@@ -1872,6 +1872,40 @@ describe('DELETE /api/v1/users/[id]', () => {
     expect(mockLogger.info).not.toHaveBeenCalledWith('User deleted by admin', expect.anything());
   });
 
+  it('returns 202 { id, pending: true, requestedAt } when the erasure did not finish within the request budget (t-845)', async () => {
+    const adminUser = mockAdminUser();
+    const adminId = adminUser.user.id;
+    vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+    const targetUserId = 'cmjbv4i3x00055wsloputgwag';
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: targetUserId,
+      name: 'Slow User',
+      email: 'slow@example.com',
+      role: 'USER',
+    } as never);
+    vi.mocked(requestUserErasure).mockResolvedValue({
+      status: 'pending',
+      requestedAt: new Date('2026-10-20T11:59:55.000Z'),
+    });
+
+    const response = await DELETE({} as NextRequest, { params: createMockParams(targetUserId) });
+    const data = await parseResponse<SuccessResponse>(response);
+
+    expect(response.status).toBe(202);
+    expect(data).toEqual({
+      success: true,
+      data: { id: targetUserId, pending: true, requestedAt: '2026-10-20T11:59:55.000Z' },
+    });
+    expect(data.data).not.toHaveProperty('deleted');
+    expect(requestUserErasure).toHaveBeenCalledOnce();
+    // Logged as pending, not as done.
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'User deletion pending; the maintenance tick finishes it',
+      { deletedUserId: targetUserId, adminId }
+    );
+    expect(mockLogger.info).not.toHaveBeenCalledWith('User deleted by admin', expect.anything());
+  });
+
   it('should hit CANNOT_DELETE_SELF before the role check when the caller is both self and an ADMIN account', async () => {
     // Arrange — the caller IS an ADMIN, and the target ID is their own ID.
     // If guard order were reversed (role first, then self), this test would return the

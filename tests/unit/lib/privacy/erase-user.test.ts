@@ -190,10 +190,12 @@ vi.mock('@/lib/storage/upload', () => ({
 
 import {
   eraseUser,
+  ErasureDeferredError,
   ERASURE_TRANSACTION_TIMEOUT_MS,
   SUBJECT_LOCK_TRIES,
 } from '@/lib/privacy/erase-user';
-import { SubjectLocksBusyError } from '@/lib/privacy/erased-subjects';
+import { SubjectLocksBusyError, SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
+import { ErasureDeferredError as DeadlineModuleError } from '@/lib/privacy/erasure-deadline';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 
 // ---------------------------------------------------------------------------
@@ -1527,6 +1529,439 @@ describe('eraseUser', () => {
   });
 
   // -------------------------------------------------------------------------
+  // t-845: a deadline for one erasure attempt
+  // -------------------------------------------------------------------------
+
+  describe('deadline (t-845)', () => {
+    const ADDRESS_KEY = 'sunrise:erased-address:foo@bar.com';
+
+    /** The SQL text and bound values of a tagged-template `$executeRaw` call. */
+    function sqlOf(call: unknown[]): { text: string; values: unknown[] } {
+      const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+      return { text: strings.join('?'), values };
+    }
+
+    /** Move the faked clock forward by `ms`. */
+    function advance(ms: number): void {
+      vi.setSystemTime(Date.now() + ms);
+    }
+
+    /** Every `$transaction` call's options, in order. */
+    function transactionOptions(): Array<{ timeout: number; maxWait?: number }> {
+      return mockPrisma.$transaction.mock.calls.map(
+        (call) => call[1] as { timeout: number; maxWait?: number }
+      );
+    }
+
+    beforeEach(() => {
+      // Only the clock: promises and the mocks' own scheduling stay real.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-exports the deadline module’s ErasureDeferredError, so callers can catch it from here', () => {
+      expect(ErasureDeferredError).toBe(DeadlineModuleError);
+    });
+
+    describe('without a deadline, nothing changes', () => {
+      it('runs the erasure transaction at the 60s timeout with no connection-wait cap', async () => {
+        await eraseUser(BASE_PARAMS);
+
+        expect(transactionOptions()).toEqual([{ timeout: 60_000 }]);
+      });
+
+      it('bounds only lock waits, to 60s, and sets no statement_timeout', async () => {
+        await eraseUser(BASE_PARAMS);
+
+        const bound = mockExecuteRaw.mock.calls
+          .map(sqlOf)
+          .filter((sql) => sql.text.includes('set_config'));
+        expect(bound).toHaveLength(1);
+        expect(bound[0].text).toContain("set_config('lock_timeout'");
+        expect(bound[0].text).not.toContain('statement_timeout');
+        expect(bound[0].values).toEqual(['60000ms']);
+      });
+
+      it('runs the delivery and run pre-passes unbounded: no statement runner, no deadline', async () => {
+        await eraseUser(BASE_PARAMS);
+
+        expect(mockPreRedact).toHaveBeenCalledTimes(2);
+        for (const call of mockPreRedact.mock.calls) {
+          expect(call[4]).toBeUndefined();
+        }
+        expect(mockPreRedactRuns).toHaveBeenCalledTimes(1);
+        expect(mockPreRedactRuns.mock.calls[0][3]).toBeUndefined();
+      });
+
+      it('waits for a held lock for up to the full per-lock wait, with no total cap', async () => {
+        mockQueryRaw.mockResolvedValueOnce([{ locked: false }]);
+
+        await eraseUser(BASE_PARAMS);
+
+        // The first transaction is the erasure's, the second the wait for the
+        // address lock, the third the retried erasure.
+        const options = transactionOptions();
+        expect(options[1].timeout).toBe(SUBJECT_LOCK_WAIT_MS + 5_000);
+        expect(mockExecuteRaw.mock.calls.map(sqlOf)).toContainEqual(
+          expect.objectContaining({ values: [`${SUBJECT_LOCK_WAIT_MS}ms`] })
+        );
+      });
+    });
+
+    describe('already past', () => {
+      it('throws a deferral naming the avatars, before any storage call, pre-pass or DB write', async () => {
+        mockIsStorageEnabled.mockReturnValue(true);
+        const hook = vi.fn();
+        registerErasureCleanupHook({ name: 'late-hook', cleanupExternal: hook });
+
+        const error = await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() - 1) }).catch(
+          (e: unknown) => e
+        );
+
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('the avatars');
+        expect(mockDeleteByPrefix).not.toHaveBeenCalled();
+        expect(hook).not.toHaveBeenCalled();
+        expect(mockPreRedact).not.toHaveBeenCalled();
+        expect(mockPreRedactRuns).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(mockUpdateMany).not.toHaveBeenCalled();
+        expect(mockContactDeleteMany).not.toHaveBeenCalled();
+        expect(mockReceiptCreate).not.toHaveBeenCalled();
+        expect(mockUserDelete).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('with time to spare', () => {
+      it('erases normally and returns the receipt', async () => {
+        const result = await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        expect(result.receiptId).toBe('receipt-1');
+        expect(mockUserDelete).toHaveBeenCalledTimes(1);
+      });
+
+      it('caps the transaction at the time left, with a 2s connection wait', async () => {
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        expect(transactionOptions()).toEqual([{ timeout: 8_000, maxWait: 2_000 }]);
+      });
+
+      it('keeps the 60s cap when much more time than that is left', async () => {
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 180_000) });
+
+        expect(transactionOptions()).toEqual([{ timeout: 60_000, maxWait: 2_000 }]);
+      });
+
+      it('bounds every statement and lock wait to the time left, not just lock waits', async () => {
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        const bound = mockExecuteRaw.mock.calls
+          .map(sqlOf)
+          .filter((sql) => sql.text.includes('set_config'));
+        expect(bound).toHaveLength(1);
+        expect(bound[0].text).toContain("set_config('statement_timeout'");
+        expect(bound[0].text).toContain("set_config('lock_timeout'");
+        expect(bound[0].values).toEqual(['8000ms', '8000ms']);
+      });
+
+      it('hands the run pre-pass the deadline', async () => {
+        const deadline = new Date(Date.now() + 8_000);
+
+        await eraseUser({ ...BASE_PARAMS, deadline });
+
+        expect(mockPreRedactRuns.mock.calls[0][3]).toBe(deadline);
+      });
+
+      it('runs each delivery pre-pass statement in a transaction capped at the time left', async () => {
+        const seen: Array<{ table: string; ran: unknown }> = [];
+        mockPreRedact.mockImplementation(
+          async (
+            _client: unknown,
+            table: string,
+            _userId: string,
+            _onCommitted: unknown,
+            runStatement: (statement: (c: unknown) => Promise<unknown>) => Promise<unknown>
+          ) => {
+            seen.push({ table, ran: await runStatement(async (c) => c) });
+            return 0;
+          }
+        );
+
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) });
+
+        // The statement ran with the transaction's client, inside a capped transaction.
+        expect(seen).toEqual([
+          { table: 'webhook', ran: mockPrisma },
+          { table: 'hook', ran: mockPrisma },
+        ]);
+        expect(transactionOptions().slice(0, 2)).toEqual([
+          { timeout: 8_000, maxWait: 2_000 },
+          { timeout: 8_000, maxWait: 2_000 },
+        ]);
+      });
+
+      it('defers a pre-pass statement started after the deadline, naming that table’s pre-pass', async () => {
+        mockPreRedact.mockImplementation(
+          async (
+            _client: unknown,
+            _table: string,
+            _userId: string,
+            _onCommitted: unknown,
+            runStatement: (statement: (c: unknown) => Promise<unknown>) => Promise<unknown>
+          ) => {
+            advance(9_000);
+            return runStatement(async () => 0);
+          }
+        );
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('the webhook delivery pre-pass');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('running out during the pre-passes', () => {
+      it('rethrows a delivery pre-pass deferral instead of swallowing it, and never opens the transaction', async () => {
+        mockPreRedact.mockRejectedValueOnce(
+          new ErasureDeferredError('the webhook delivery pre-pass')
+        );
+
+        await expect(
+          eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 8_000) })
+        ).rejects.toBeInstanceOf(ErasureDeferredError);
+
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(mockUserDelete).not.toHaveBeenCalled();
+        // A deferral is not a failure: no "redacts instead" error line.
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+
+      it('still swallows an ordinary delivery pre-pass failure, with a deadline set', async () => {
+        mockPreRedact.mockRejectedValueOnce(new Error('pre-pass broke'));
+
+        const result = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        });
+
+        expect(result.receiptId).toBe('receipt-1');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          'Erasure delivery pre-pass failed; the transaction redacts instead',
+          expect.objectContaining({ table: 'webhook', error: 'pre-pass broke' })
+        );
+      });
+
+      it('checks the deadline before the second delivery pre-pass', async () => {
+        mockPreRedact.mockImplementationOnce(async () => {
+          advance(9_000);
+          return 0;
+        });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect((error as ErasureDeferredError).stage).toBe('the hook delivery pre-pass');
+        expect(mockPreRedact).toHaveBeenCalledTimes(1);
+        expect(mockPreRedactRuns).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('checks the deadline before the run pre-pass reads anything', async () => {
+        // The first table's pass is quick; the second uses up the time.
+        mockPreRedact.mockImplementationOnce(async () => 0);
+        mockPreRedact.mockImplementationOnce(async () => {
+          advance(9_000);
+          return 0;
+        });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect((error as ErasureDeferredError).stage).toBe('the run pre-pass');
+        expect(mockUserFind).not.toHaveBeenCalled();
+        expect(mockPreRedactRuns).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('rethrows a run pre-pass deferral instead of swallowing it, and never opens the transaction', async () => {
+        mockPreRedactRuns.mockRejectedValue(new ErasureDeferredError('a run pre-pass page'));
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('a run pre-pass page');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(mockUserDelete).not.toHaveBeenCalled();
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+
+      it('still swallows an ordinary run pre-pass failure, with a deadline set', async () => {
+        mockPreRedactRuns.mockRejectedValue(new Error('pre-pass down'));
+
+        const result = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        });
+
+        expect(result.receiptId).toBe('receipt-1');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          'Erasure run pre-pass failed; the transaction redacts instead',
+          expect.objectContaining({ userId: BASE_PARAMS.userId })
+        );
+      });
+    });
+
+    describe('running out between the cleanup hooks', () => {
+      it('stops before the next hook, naming it, once an earlier one used the time', async () => {
+        const first = vi.fn(async () => {
+          advance(9_000);
+        });
+        const second = vi.fn();
+        registerErasureCleanupHook({ name: 'first-hook', cleanupExternal: first });
+        registerErasureCleanupHook({ name: 'second-hook', cleanupExternal: second });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(second).not.toHaveBeenCalled();
+        expect((error as ErasureDeferredError).stage).toBe('the second-hook cleanup hook');
+        expect(mockPreRedact).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('a transaction that fails', () => {
+      it('becomes ErasureDeferredError, with the failure as its cause, when the deadline has passed', async () => {
+        const failure = new Error('canceling statement due to statement timeout');
+        mockPrisma.$transaction.mockImplementation(async () => {
+          advance(9_000);
+          throw failure;
+        });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('the erasure transaction');
+        expect((error as ErasureDeferredError).cause).toBe(failure);
+        expect(mockUserDelete).not.toHaveBeenCalled();
+      });
+
+      it('propagates the original error when the deadline has not passed', async () => {
+        const failure = new Error('config pass failed');
+        mockEraseConfig.mockRejectedValueOnce(failure);
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBe(failure);
+        expect(error).not.toBeInstanceOf(ErasureDeferredError);
+      });
+
+      it('propagates the original error without a deadline, however late it is', async () => {
+        const failure = new Error('config pass failed');
+        mockEraseConfig.mockRejectedValueOnce(failure);
+
+        await expect(eraseUser(BASE_PARAMS)).rejects.toBe(failure);
+      });
+
+      it('defers rather than retrying a busy-lock failure once the deadline has passed', async () => {
+        registerErasureCleanupHook({
+          name: 'busy-hook',
+          scrubInTransaction: async () => {
+            advance(9_000);
+            throw new SubjectLocksBusyError({ userIds: ['someone-else'] });
+          },
+        });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        // The first try's busy error is retried, but no second try starts past the deadline.
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('the erasure transaction');
+        expect(mockUserDelete).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('a writer holding the person’s lock', () => {
+      it('waits only for the time left, in total, not the full per-lock wait', async () => {
+        mockQueryRaw.mockResolvedValueOnce([{ locked: false }]);
+
+        await eraseUser({ ...BASE_PARAMS, deadline: new Date(Date.now() + 10_000) });
+
+        // Erasure try 1, one wait per lock (address, user id), erasure try 2.
+        const options = transactionOptions();
+        expect(options).toHaveLength(4);
+        expect(options[1].timeout).toBe(10_000 + 5_000);
+        expect(options[2].timeout).toBe(10_000 + 5_000);
+        const waitBound = mockExecuteRaw.mock.calls
+          .map(sqlOf)
+          .find((sql) => sql.values.includes(ADDRESS_KEY));
+        expect(waitBound).toBeDefined();
+        expect(mockExecuteRaw.mock.calls.map(sqlOf)).toContainEqual(
+          expect.objectContaining({
+            text: expect.stringContaining('lock_timeout'),
+            values: ['10000ms'],
+          })
+        );
+      });
+
+      it('defers on the next try, without logging an error, when the wait itself ran out of time', async () => {
+        mockQueryRaw.mockResolvedValueOnce([{ locked: false }]);
+        mockPrisma.$transaction.mockImplementation(
+          async (
+            callback: (tx: typeof mockPrisma) => Promise<unknown>,
+            options: { timeout: number; maxWait?: number }
+          ) => {
+            // The wait transaction has no maxWait; it uses up the time and fails.
+            if (options.maxWait === undefined) {
+              advance(11_000);
+              throw new Error('canceling statement due to lock timeout');
+            }
+            return callback(mockPrisma);
+          }
+        );
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 10_000),
+        }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ErasureDeferredError);
+        expect((error as ErasureDeferredError).stage).toBe('the erasure transaction');
+        expect(mockLogger.error).not.toHaveBeenCalled();
+        expect(mockUserDelete).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // t-783: delivery payloads that name the person
   // -------------------------------------------------------------------------
 
@@ -1648,7 +2083,9 @@ describe('eraseUser', () => {
       expect(mockPreRedactRuns).toHaveBeenCalledWith(
         expect.anything(),
         { userId: BASE_PARAMS.userId, address: 'run@bar.com' },
-        expect.any(Function)
+        expect.any(Function),
+        // No deadline (t-845): the pre-pass is not bounded.
+        undefined
       );
     });
 
@@ -1889,14 +2326,18 @@ describe('eraseUser', () => {
         mockPrisma,
         'webhook',
         BASE_PARAMS.userId,
-        expect.any(Function)
+        expect.any(Function),
+        // No deadline (t-845): no statement runner, so each runs on the client.
+        undefined
       );
       expect(mockPreRedact).toHaveBeenNthCalledWith(
         2,
         mockPrisma,
         'hook',
         BASE_PARAMS.userId,
-        expect.any(Function)
+        expect.any(Function),
+        // No deadline (t-845): no statement runner, so each runs on the client.
+        undefined
       );
       expect(callOrder).toEqual([
         'pre:webhook:prisma',

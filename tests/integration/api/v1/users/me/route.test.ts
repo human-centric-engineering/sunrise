@@ -352,10 +352,12 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(body.success).toBe(true);
       expect(body.data.deleted).toBe(true);
 
-      // Two transactions: requestUserErasure's claim, then the real eraseUser's
-      // erase chain. Its run pass after the commit (t-843) lists no run here,
-      // so opens none.
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      // Four transactions: requestUserErasure's claim, the two delivery
+      // pre-pass matches (each statement runs in a transaction of its own
+      // under the request's deadline, t-845), then the real eraseUser's erase
+      // chain. Its run pass after the commit (t-843) lists no run here, so
+      // opens none.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(4);
 
       // The claim recorded the intent (conditional on the values it read) and
       // disabled the account BEFORE the erasure deleted the user row.
@@ -664,9 +666,11 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Admin gate skipped — count not consulted for non-admins
       expect(prisma.user.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
 
-      // The claim and the real eraseUser each ran a transaction (its run pass
-      // after the commit, t-843, lists no run here, so opens none)
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      // The claim, the two delivery pre-pass matches (each in a transaction of
+      // its own under the request's deadline, t-845) and the real eraseUser's
+      // erase chain (its run pass after the commit, t-843, lists no run here,
+      // so opens none)
+      expect(prisma.$transaction).toHaveBeenCalledTimes(4);
 
       // eraseUser called user.delete with the session's user ID
       expect(prisma.user.delete).toHaveBeenCalledWith({
