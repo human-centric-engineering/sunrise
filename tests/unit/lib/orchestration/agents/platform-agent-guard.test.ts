@@ -14,7 +14,7 @@
  * @see lib/orchestration/agents/platform-agent-guard.ts
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
@@ -37,6 +37,11 @@ import {
   __resetPlatformAgentsForTests,
   registerPlatformAgent,
 } from '@/lib/orchestration/agents/platform-agents';
+
+// The registry these cases read is core's plus the registrations they make:
+// the fork's seam is held empty, so a fork's own agents (the docs' example is
+// `intake-triage`) do not change what they assert (#974).
+vi.mock('@/lib/app/platform-agents', () => ({ initAppPlatformAgents: () => undefined }));
 
 afterEach(() => {
   __resetPlatformAgentsForTests();

@@ -300,20 +300,23 @@ init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
 init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
 definition in every org, and that is logged at warn.
 
-Two core checks read the registry and take a fork's registrations in their
-stride. The reconcile test holds this seam empty, so it measures core's
-registry alone. The two-org smoke (`smoke:tenancy-isolation`, section [11])
-requires each of `CORE_PLATFORM_AGENTS` to be registered and derives every
-count from the registry, finding the install org's agents by registered slug,
-so a system agent a fork seeds outside the registry is not counted. Neither
-needs an edit when you add or replace an agent. Two things still notice:
+Core's tests that read the registry hold this seam empty, so they measure
+core's registry alone, and the two-org smoke (`smoke:tenancy-isolation`,
+section [11]) takes its counts from the registry and finds the install org's
+agents by registered slug, so a system agent you seed there outside the
+registry is not counted. Adding an agent of your own needs no edit to either.
+What still notices:
 
 - `tests/unit/lib/app/defaults.test.ts` asserts this seam ships empty, so
   filling it fails that row by design. Pin your definitions there, as its
   header says, rather than deleting the row.
-- The smoke runs a few core agents by slug (the clean-up agent, an evaluation
-  judge and the case generator). If you replace one of those, the smoke runs
-  your definition in those steps.
+- The smoke runs `cleanup-agent`, `eval-judge-relevance`,
+  `eval-case-generator` and `mcp-system` in a second org by slug. Replacing
+  one runs your definition there, and moving one to the install org fails
+  those steps.
+- The patterns knowledge is the install org's only. An every-org agent that
+  declares its tag puts a copy in every org, and the smoke's check that a new
+  org holds none fails.
 
 An agent seeded once as the install org's content is still the right shape
 for an app's own agent. Register a platform agent only when every org needs

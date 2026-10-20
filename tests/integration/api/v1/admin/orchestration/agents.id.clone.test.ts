@@ -78,6 +78,10 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
+// Reserved slugs are core's plus what a case registers: the fork's seam is held
+// empty so a fork's own platform agents cannot collide with them (#974).
+vi.mock('@/lib/app/platform-agents', () => ({ initAppPlatformAgents: () => undefined }));
+
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
   computeChanges: vi.fn(),
