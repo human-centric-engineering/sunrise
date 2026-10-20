@@ -10,6 +10,11 @@
  *   bundle is portable across environments. Document grants use
  *   `AiKnowledgeDocument.slug` (the stable cross-environment key — #338).
  *
+ *   Built-in (system) agents are left out, as the backup export leaves them
+ *   out: every install already has its own, they start with an empty
+ *   provider and model the bundle schema rejects, and the import would skip
+ *   them anyway (#721). A selection of only built-in agents is a 400.
+ *
  *   The response sets `Content-Disposition: attachment` so hitting the
  *   route directly from a browser triggers a "Save As" dialog.
  *
@@ -19,7 +24,7 @@
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -70,10 +75,18 @@ export const POST = withAdminAuth(
       throw new NotFoundError(`Agents not found: ${missing.join(', ')}`);
     }
 
+    const exportable = agents.filter((agent) => !agent.isSystem);
+    if (exportable.length === 0) {
+      throw new ValidationError(
+        'Built-in agents cannot be exported: every install already has its own. Select at least one of your own agents.',
+        { agentIds: ['Every selected agent is a built-in agent'] }
+      );
+    }
+
     const bundle: AgentBundle = {
       version: '1',
       exportedAt: new Date().toISOString(),
-      agents: agents.map((agent) => {
+      agents: exportable.map((agent) => {
         const historyParse = systemInstructionsHistorySchema.safeParse(
           agent.systemInstructionsHistory
         );
@@ -146,6 +159,7 @@ export const POST = withAdminAuth(
 
     log.info('Agents exported', {
       count: bundle.agents.length,
+      skippedSystemAgents: agents.length - exportable.length,
       adminId: session.user.id,
     });
 

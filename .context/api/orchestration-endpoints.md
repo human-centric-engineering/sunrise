@@ -273,6 +273,8 @@ Response: `{ usage: { "search_knowledge_base": 12, "get_pattern_detail": 3 } }`
 
 Versioned bundle format. Import runs in a single transaction with `conflictMode: 'skip' | 'overwrite'`. Cross-environment relations travel by stable slug: capabilities (warn-skip on miss), and profile / knowledge tags / knowledge documents (fail-clear on miss — a missing reference fails the whole import with an actionable message). Document grants use `AiKnowledgeDocument.slug` (#338).
 
+The export leaves out system agents (`isSystem: true`), as the backup export does: every install has its own, and their empty `provider`/`model` would fail the bundle schema on import (#721). A selection of only system agents returns `400`.
+
 ---
 
 ## Agent Profiles

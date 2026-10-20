@@ -220,6 +220,41 @@ describe('Agent Export → Import Round-Trip', () => {
     ] as never);
   });
 
+  it('a selection that includes a built-in agent exports a bundle the import accepts (#721)', async () => {
+    // A platform agent as the reconcile creates it: no provider or model, which
+    // the bundle schema rejects. Before #721 its presence failed the whole import.
+    const systemAgent = {
+      ...makeDbAgent(),
+      id: 'cmjbv4i3x00003wsloputgwu9',
+      slug: 'pattern-advisor',
+      isSystem: true,
+      provider: '',
+      model: '',
+    };
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeDbAgent(), systemAgent] as never);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+      { id: CAPABILITY_ID, slug: CAPABILITY_SLUG },
+    ] as never);
+
+    const exportResponse = await ExportPOST(makeExportRequest([AGENT_ID, systemAgent.id]));
+    expect(exportResponse.status).toBe(200);
+    const { data: bundle } = JSON.parse(await exportResponse.text()) as {
+      data: { agents: Array<{ slug: string }> };
+    };
+
+    const importResponse = await ImportPOST(makeImportRequest({ bundle }));
+    expect(importResponse.status).toBe(200);
+    const importData = JSON.parse(await importResponse.text()) as {
+      data: { imported: number; skipped: number };
+    };
+    expect(importData.data.imported).toBe(1);
+    expect(importData.data.skipped).toBe(0);
+    expect(txMock.aiAgent.create).toHaveBeenCalledOnce();
+    const created = (txMock.aiAgent.create.mock.calls[0][0] as { data: Record<string, unknown> })
+      .data;
+    expect(created.slug).toBe('research-assistant');
+  });
+
   it('re-imported agent matches the original (name, slug, instructions, model, capabilities)', async () => {
     // Step 1: Export an agent with a capability
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeDbAgent()] as never);

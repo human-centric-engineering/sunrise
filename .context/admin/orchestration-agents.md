@@ -73,7 +73,7 @@ Judges are created via the agent form with `?kind=judge` in the URL (the "Create
 
 ### Bulk export
 
-Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent).
+Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent). Built-in (system) agents in the selection are left out of the file; if every selected agent is built-in, the server's `400` message is shown in the list's error banner (#721).
 
 The bundle carries the full agent configuration plus, **by slug**, the attached capabilities, the linked **profile** (`profileSlug`), and granted **knowledge tags** (`knowledgeTagSlugs`). Server-owned fields (`id`, `createdBy`, timestamps) are stripped for portability. Agent→**document** grants are intentionally not carried — documents have no stable cross-environment key (tracked in #338).
 

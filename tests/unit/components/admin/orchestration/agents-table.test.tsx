@@ -477,6 +477,46 @@ describe('AgentsTable', () => {
         expect(body.agentIds).toContain('agent-1');
       });
     });
+
+    it('shows the server reason when an export is refused with a 400 (#721)', async () => {
+      const user = userEvent.setup();
+      const message =
+        'Built-in agents cannot be exported: every install already has its own. Select at least one of your own agents.';
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        if (toUrlString(url).includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ success: false, error: { code: 'VALIDATION_ERROR', message } }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      await user.click(screen.getAllByRole('checkbox')[1]);
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.queryByText('Export failed. Try again in a moment.')).not.toBeInTheDocument();
+    });
+
+    it('keeps the generic message when an export fails for another reason', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        if (toUrlString(url).includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(new Response('boom', { status: 500 }));
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      await user.click(screen.getAllByRole('checkbox')[1]);
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+
+      expect(await screen.findByText('Export failed. Try again in a moment.')).toBeInTheDocument();
+    });
   });
 
   // ── Delete ─────────────────────────────────────────────────────────────────

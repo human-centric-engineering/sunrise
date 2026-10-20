@@ -206,19 +206,36 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       expect(exportedAgent).not.toHaveProperty('createdBy');
     });
 
-    it('includes isSystem field in exported agents', async () => {
+    it('leaves built-in agents out of a mixed selection (#721)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
-        { ...makeDbAgent(AGENT_ID_1, 'agent-one'), isSystem: true },
+        { ...makeDbAgent(AGENT_ID_1, 'agent-one'), isSystem: false },
+        // A platform agent as the reconcile creates it: no provider or model yet.
+        { ...makeDbAgent(AGENT_ID_2, 'pattern-advisor'), isSystem: true, provider: '', model: '' },
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1, AGENT_ID_2] }));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { agents: Array<{ slug: string; isSystem: boolean }> };
+      }>(response);
+      expect(data.data.agents.map((a) => a.slug)).toEqual(['agent-one']);
+      expect(data.data.agents[0].isSystem).toBe(false);
+    });
+
+    it('returns 400 when every selected agent is built-in (#721)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        { ...makeDbAgent(AGENT_ID_1, 'pattern-advisor'), isSystem: true, provider: '', model: '' },
       ] as never);
 
       const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
 
-      const data = await parseJson<{
-        data: { agents: Array<{ isSystem: boolean }> };
-      }>(response);
-      // test-review:accept tobe_true — structural boolean assertion on API response field
-      expect(data.data.agents[0].isSystem).toBe(true);
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string; message: string } }>(response);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toMatch(/Built-in agents cannot be exported/);
     });
 
     it('exports empty history array when stored systemInstructionsHistory is malformed', async () => {

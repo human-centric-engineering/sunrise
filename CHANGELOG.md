@@ -867,6 +867,14 @@ release process.
 
 ### Fixed
 
+- **An agent export that includes built-in agents imports again** (t-879,
+  #721). `POST /api/v1/admin/orchestration/agents/export` now leaves out
+  system agents (`isSystem: true`), as the backup export already does. Before,
+  a built-in agent's empty `provider`/`model` made the whole bundle fail
+  import validation. The import would have skipped those agents anyway. A
+  selection of only built-in agents now returns `400`. **Forks:** an export
+  file made before this change that contains a built-in agent still fails to
+  import; delete that agent's entry from the file and import again.
 - **Dialogs, menus, popovers, selects and tooltips animate again** (t-875,
   #682). The `components/ui/` overlays use `animate-in`, `fade-in-0`,
   `zoom-in-95` and `slide-in-from-*` classes, but the library that defines

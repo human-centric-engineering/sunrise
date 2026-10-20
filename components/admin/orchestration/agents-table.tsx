@@ -379,7 +379,17 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentIds: [...selected] }),
       });
-      if (!res.ok) throw new Error('export failed');
+      if (!res.ok) {
+        // A 400 explains itself (e.g. a selection of only built-in agents, #721).
+        if (res.status === 400) {
+          const body = await parseApiResponse<unknown>(res).catch(() => null);
+          if (body && !body.success) {
+            setListError(body.error.message);
+            return;
+          }
+        }
+        throw new Error('export failed');
+      }
 
       // Prefer the server-supplied filename, fall back to a timestamped default.
       const disposition = res.headers.get('Content-Disposition') ?? '';
