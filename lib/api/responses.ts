@@ -22,10 +22,16 @@ import type { PaginationMeta } from '@/types/api';
  * ETags. `no-cache` lets the browser store and revalidate, so the 304 path keeps
  * working. `private` keeps shared caches out of it entirely.
  *
- * This is a default, not a mandate — it is spread *before* `options.headers`, so
- * a route that genuinely serves public, cacheable data can override it. Routes
- * returning a raw `Response` (the embed widget, SSE streams, the Markdown
- * exports) never pass through here and keep whatever they set.
+ * It is spread *before* `options.headers`, so a route can tighten it (to
+ * `no-store`, say). **Do not loosen it to `public` or add `s-maxage`**: that is
+ * not supported on these helpers, for two reasons (#751). `checkConditional()`
+ * in `lib/api/etag.ts` sends this constant on its 304, so the first
+ * revalidation reverts a shared cache's entry to `private`. And `proxy.ts` can
+ * attach a per-visitor `Set-Cookie` to any response, API responses included,
+ * which a shared cache would replay to every other visitor. Supporting public
+ * caching needs both fixed together. Routes returning a raw `Response` (the
+ * embed widget, SSE streams, the Markdown exports) never pass through here and
+ * keep whatever they set.
  *
  * See #487.
  */

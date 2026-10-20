@@ -243,21 +243,12 @@ const total = await prisma.user.count(); // Waits for first query
 
 ### Response Caching
 
-```typescript
-// Add cache headers for static data
-export async function GET(request: NextRequest) {
-  const data = await fetchStaticData();
-
-  return Response.json(
-    { success: true, data },
-    {
-      headers: {
-        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate',
-      },
-    }
-  );
-}
-```
+API responses are `private, no-cache` by default, and making one publicly
+cacheable is not supported (#751). A shared cache could replay the proxy's
+per-visitor cookie, and the 304 path reverts the directive. Use the ETag helpers
+in `lib/api/etag.ts` so a client can revalidate cheaply. Serve data that is the
+same for every caller from a page or a static asset. See
+[API Headers → Caching Guidelines](./headers.md#caching-guidelines).
 
 ## Related Documentation
 

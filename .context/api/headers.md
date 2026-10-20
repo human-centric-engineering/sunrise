@@ -270,21 +270,31 @@ out of it entirely.
 Routes that return a raw `Response` — SSE streams, file downloads, the Markdown
 exports — never pass through the envelope and set their own headers.
 
-### Overriding it
+### Tightening it, never loosening it
 
-The default is spread _before_ caller headers, so a route serving genuinely
-public data can replace it:
+The default is spread _before_ caller headers, so a route can make it stricter.
+Note the arity: `headers` goes in the **third** argument, because the second is
+`meta`.
 
 ```typescript
-// Static, non-user-specific data. Note the arity: `headers` is in the THIRD
-// argument — the second is `meta`.
+// A response the browser must not keep at all.
 return successResponse(data, undefined, {
-  headers: { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400' },
+  headers: { 'Cache-Control': 'no-store' },
 });
 ```
 
-Only do this when the payload is identical for every caller. If the response
-varies by session, leave the default alone.
+**A `public` directive (or `s-maxage`) on an API response is not supported**
+(#751), even for data that is the same for every caller. Two things make it
+unsafe today:
+
+- `checkConditional()` sends `DEFAULT_CACHE_CONTROL` on its 304, so the first
+  revalidation turns a shared cache's entry back to `private`.
+- `proxy.ts` sets the anonymous visitor cookie on a first visit's response,
+  whatever the path. A shared cache that stored that response would replay the
+  `Set-Cookie`, giving every later visitor the same visitor id.
+
+Supporting public caching needs both changed together. Until then, serve
+shared, cacheable data from a page or a static asset, not from `/api`.
 
 ## Related Documentation
 
