@@ -44,6 +44,11 @@ vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
   invalidateAgentAccess: mockInvalidateAccess,
 }));
 
+// "The real one" below is core's registry: the fork's seam is held empty, so a
+// fork that registers its own platform agents does not change the counts the
+// real-registry case pins, or run its definitions against the stand-in (#974).
+vi.mock('@/lib/app/platform-agents', () => ({ initAppPlatformAgents: () => undefined }));
+
 /** The registry the reconcile sees; `null` means "the real one". */
 const registry = vi.hoisted(() => ({ definitions: null as PlatformAgentDefinition[] | null }));
 vi.mock('@/lib/orchestration/agents/platform-agents', async (importOriginal) => {
@@ -955,7 +960,7 @@ describe('reconcilePlatformAgents', () => {
     });
   });
 
-  it('materialises the real registry: 12 agents per org, 16 in the install org', async () => {
+  it('materialises core’s real registry: 12 agents per org, 16 in the install org', async () => {
     mockEnv.TENANCY_MODE = 'multi';
     registry.definitions = null;
     fake.state.capabilities = [];
