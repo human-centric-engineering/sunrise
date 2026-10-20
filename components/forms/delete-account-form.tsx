@@ -141,7 +141,8 @@ export function DeleteAccountForm() {
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogAction onClick={leave}>Continue</AlertDialogAction>
+                    {/* Closing the dialog leaves the page (`handleOpenChange`). */}
+                    <AlertDialogAction>Continue</AlertDialogAction>
                   </AlertDialogFooter>
                 </>
               ) : (
