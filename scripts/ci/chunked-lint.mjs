@@ -139,21 +139,22 @@ export const LINTABLE = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '
 export const DEFAULT_CHUNKS = 1;
 
 /**
- * The raw chunk count from the environment: `LINT_CHUNKS`, else
+ * The chunk count from the environment: `LINT_CHUNKS`, else
  * `CI_LINT_CHUNKS`. CI sets `LINT_CHUNKS` from the `CI_LINT_CHUNKS` repo
  * variable, but every doc tells a developer to set `CI_LINT_CHUNKS`, so a local
  * `CI_LINT_CHUNKS=4 npm run lint:ci` has to take effect too (#699).
  *
- * Returns the variable it read as well, so a bad value is reported under the
- * name that supplied it: a stale `LINT_CHUNKS` in a shell silently overriding
- * the documented `CI_LINT_CHUNKS` is otherwise invisible.
+ * A bad value is reported under the name that supplied it: a stale
+ * `LINT_CHUNKS` in a shell silently overriding the documented `CI_LINT_CHUNKS`
+ * is otherwise invisible.
  *
  * @param {Record<string, string | undefined>} env
- * @returns {{ name: string, raw: string | undefined }}
+ * @param {(message: string) => void} [warn]
+ * @returns {number}
  */
-export function chunksFromEnv(env) {
-  if (env.LINT_CHUNKS) return { name: 'LINT_CHUNKS', raw: env.LINT_CHUNKS };
-  return { name: 'CI_LINT_CHUNKS', raw: env.CI_LINT_CHUNKS };
+export function chunksFromEnv(env, warn = console.error) {
+  if (env.LINT_CHUNKS) return parseChunks(env.LINT_CHUNKS, warn, 'LINT_CHUNKS');
+  return parseChunks(env.CI_LINT_CHUNKS, warn, 'CI_LINT_CHUNKS');
 }
 
 /**
@@ -172,7 +173,7 @@ export function chunksFromEnv(env) {
  * @param {string} [name] the variable `raw` came from, for the warning.
  * @returns {number}
  */
-export function parseChunks(raw, warn = console.error, name = 'LINT_CHUNKS') {
+export function parseChunks(raw, warn = console.error, name = 'LINT_CHUNKS / CI_LINT_CHUNKS') {
   if (raw === undefined || raw === '') return DEFAULT_CHUNKS;
   const value = Number(raw);
   if (Number.isInteger(value) && value > 0) return value;
@@ -509,10 +510,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     log = console.log,
     warn = console.error,
     targets = await lintTargets(),
+    chunks = chunksFromEnv(env, warn),
     run = runChunk,
   } = deps;
-  const source = chunksFromEnv(env);
-  const { chunks = parseChunks(source.raw, warn, source.name) } = deps;
 
   if (targets.length === 0) {
     // Loud and FAILING, unlike every other fallback in this file. An empty
