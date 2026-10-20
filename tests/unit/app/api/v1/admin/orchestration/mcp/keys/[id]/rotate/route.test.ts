@@ -177,7 +177,8 @@ describe('POST /api/v1/admin/orchestration/mcp/keys/:id/rotate', () => {
   });
 
   it('updates expiresAt when provided in body', async () => {
-    const expiry = '2027-01-01T00:00:00.000Z';
+    // Relative to now: the schema rejects an expiry that is not in the future.
+    const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
     const response = await POST(makeRequest({ expiresAt: expiry }), {
       params: Promise.resolve({ id: VALID_ID }),
     });
