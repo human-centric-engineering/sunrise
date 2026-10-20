@@ -97,6 +97,14 @@ export type LlmResponseFormat =
  *
  * Anthropic's `budget_tokens` is clamped below `max_tokens` by the
  * provider class — if `maxTokens` is small, the budget is reduced to fit.
+ *
+ * Claude models from Opus 4.7 / Sonnet 5 on refuse `budget_tokens`
+ * (`acceptsThinkingBudget()` in `model-heuristics`). There `low` /
+ * `medium` / `high` send `thinking: { type: 'adaptive' }` with
+ * `output_config.effort` of the same name, and `minimal` sends
+ * `output_config.effort: 'low'` with no `thinking` field — some of those
+ * models can't turn thinking off, so they still think, at their lowest
+ * effort.
  */
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 
