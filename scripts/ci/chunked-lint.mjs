@@ -144,11 +144,16 @@ export const DEFAULT_CHUNKS = 1;
  * variable, but every doc tells a developer to set `CI_LINT_CHUNKS`, so a local
  * `CI_LINT_CHUNKS=4 npm run lint:ci` has to take effect too (#699).
  *
+ * Returns the variable it read as well, so a bad value is reported under the
+ * name that supplied it: a stale `LINT_CHUNKS` in a shell silently overriding
+ * the documented `CI_LINT_CHUNKS` is otherwise invisible.
+ *
  * @param {Record<string, string | undefined>} env
- * @returns {string | undefined}
+ * @returns {{ name: string, raw: string | undefined }}
  */
 export function chunksFromEnv(env) {
-  return env.LINT_CHUNKS || env.CI_LINT_CHUNKS;
+  if (env.LINT_CHUNKS) return { name: 'LINT_CHUNKS', raw: env.LINT_CHUNKS };
+  return { name: 'CI_LINT_CHUNKS', raw: env.CI_LINT_CHUNKS };
 }
 
 /**
@@ -164,14 +169,15 @@ export function chunksFromEnv(env) {
  *
  * @param {string | undefined} raw
  * @param {(message: string) => void} [warn]
+ * @param {string} [name] the variable `raw` came from, for the warning.
  * @returns {number}
  */
-export function parseChunks(raw, warn = console.error) {
+export function parseChunks(raw, warn = console.error, name = 'LINT_CHUNKS') {
   if (raw === undefined || raw === '') return DEFAULT_CHUNKS;
   const value = Number(raw);
   if (Number.isInteger(value) && value > 0) return value;
   warn(
-    `chunked-lint: chunk count "${raw}" (LINT_CHUNKS / CI_LINT_CHUNKS) is not a positive integer — falling back to ${DEFAULT_CHUNKS} chunk(s). ` +
+    `chunked-lint: ${name}="${raw}" is not a positive integer — falling back to ${DEFAULT_CHUNKS} chunk(s). ` +
       `If you set this to fix a lint OOM, it has NOT taken effect.`
   );
   return DEFAULT_CHUNKS;
@@ -405,15 +411,22 @@ export function resolveEslintCommand() {
  * kill, which is the trade `run-capped.mjs` documents and refuses.
  *
  * @param {Record<string, string | undefined>} env
- * @param {{ heapMb?: number }} [deps] `heapMb` injected so a test can assert an
- *   exact value without depending on the machine it runs on.
+ * @param {{ heapMb?: number, totalMemBytes?: number, defaultLimitMb?: number }} [deps]
+ *   `heapMb` injected so a test can assert an exact value without depending on
+ *   the machine it runs on; `totalMemBytes` / `defaultLimitMb` pin the machine
+ *   facts `resolveHeapMb` clamps against, for a test of the request itself.
  * @returns {Record<string, string | undefined>}
  */
 export function withHeapCap(env, deps = {}) {
   // `NODE_HEAP_MB` is honoured exactly as `run-capped.mjs` honours it, so
   // `lint` and `lint:ci` agree when it is set (#699). Unset, it is the default.
+  const { totalMemBytes, defaultLimitMb } = deps;
   const {
-    heapMb = resolveHeapMb({ requestedMb: parseRequestedMb(env.NODE_HEAP_MB) ?? DEFAULT_HEAP_MB }),
+    heapMb = resolveHeapMb({
+      requestedMb: parseRequestedMb(env.NODE_HEAP_MB) ?? DEFAULT_HEAP_MB,
+      totalMemBytes,
+      defaultLimitMb,
+    }),
   } = deps;
   return buildEnv(env, heapMb);
 }
@@ -496,9 +509,10 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     log = console.log,
     warn = console.error,
     targets = await lintTargets(),
-    chunks = parseChunks(chunksFromEnv(env), warn),
     run = runChunk,
   } = deps;
+  const source = chunksFromEnv(env);
+  const { chunks = parseChunks(source.raw, warn, source.name) } = deps;
 
   if (targets.length === 0) {
     // Loud and FAILING, unlike every other fallback in this file. An empty

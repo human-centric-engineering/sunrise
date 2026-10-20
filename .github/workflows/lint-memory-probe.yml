@@ -114,7 +114,7 @@ jobs:
           # meant to be read.
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "heap cap: ${HEAP_MB} MB" | tee -a "$GITHUB_STEP_SUMMARY"
-          printf '%-8s %-12s %-7s %s\n' "chunks" "peak" "result" "seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '%-8s %-12s %-12s %s\n' "chunks" "peak" "result" "seconds" | tee -a "$GITHUB_STEP_SUMMARY"
           for n in "${ARMS[@]}"; do
             start=$(date +%s)
             # `|| rc=$?` — a lint ERROR is not a probe failure. We are measuring
@@ -149,7 +149,7 @@ jobs:
             else
               peak="n/a"
             fi
-            printf '%-8s %-12s %-7s %s\n' \
+            printf '%-8s %-12s %-12s %s\n' \
               "$n" \
               "$peak" \
               "$verdict" \
