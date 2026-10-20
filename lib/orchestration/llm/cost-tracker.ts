@@ -21,6 +21,7 @@
 import type { AiCostLog, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { getAvailableModels, getModel } from '@/lib/orchestration/llm/model-registry';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
 import {
@@ -343,8 +344,19 @@ export function calculateCost(
  * Persist an `AiCostLog` row. Returns the created row on success, or
  * `null` if the Prisma write failed (error is logged, not thrown, so
  * the caller can continue serving the user-facing response).
+ *
+ * Kept alive past the response (t-903): most callers write `void logCost(...)`,
+ * and a cost row frozen part-way on a serverless host is spend the budget caps
+ * and the costs dashboard never see. The write registers itself with
+ * `keepRunningAfterResponse`.
  */
-export async function logCost(params: LogCostParams): Promise<AiCostLog | null> {
+export function logCost(params: LogCostParams): Promise<AiCostLog | null> {
+  const write = writeCostLog(params);
+  keepRunningAfterResponse(write, 'Cost log write', { operation: params.operation });
+  return write;
+}
+
+async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
   const isTranscription = params.operation === 'transcription';
   const isVision = params.operation === 'vision';
   const isEmbedding = params.operation === 'embedding';

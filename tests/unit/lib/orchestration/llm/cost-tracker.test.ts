@@ -6,6 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import { forgetSpendCaps } from '@/lib/orchestration/llm/spend-caps';
 
+// `after()` records what it was handed (t-903); the real one throws outside a
+// request scope.
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiCostLog: {
@@ -317,6 +325,37 @@ describe('calculateEmbeddingCost — rate sources (t-775)', () => {
 });
 
 describe('logCost', () => {
+  it('keeps a write nobody awaits alive past the response (t-903)', async () => {
+    mockAfter.mockClear();
+    let written!: (value: unknown) => void;
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((resolve) => {
+        written = resolve;
+      })
+    );
+
+    void logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+    });
+
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    let settled = false;
+    void handed.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    written({ id: 'row-1', orgId: null, totalCostUsd: 0, createdAt: new Date() });
+    await handed;
+    expect(settled).toBe(true);
+  });
+
   it('persists a row with computed costs and returns it', async () => {
     const created = { id: 'row-1' };
     (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue(created);

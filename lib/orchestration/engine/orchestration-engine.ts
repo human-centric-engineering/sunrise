@@ -1411,9 +1411,7 @@ export class OrchestrationEngine {
     // indicator will track whichever branch the engine most recently
     // entered. Documented caveat.
     for (const step of steps) {
-      keepRunningAfterResponse(this.markCurrentStep(lease, step, baseLogger), 'Mark current step', {
-        executionId: lease.executionId,
-      });
+      void this.markCurrentStep(lease, step, baseLogger);
     }
 
     // Run all steps concurrently. Each step runs its full strategy
