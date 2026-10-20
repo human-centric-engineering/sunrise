@@ -300,6 +300,12 @@ init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
 init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
 definition in every org, and that is logged at warn.
 
+Core's checks pin only core's own agents: the reconcile test holds this seam
+empty, and the two-org smoke (`smoke:tenancy-isolation`, section [11]) pins its
+12/4 split on `CORE_PLATFORM_AGENTS` and counts the install org by registered
+slug. A fork's registrations, and a system agent it seeds outside the registry,
+leave both green without an edit.
+
 An agent seeded once as the install org's content is still the right shape
 for an app's own agent. Register a platform agent only when every org needs
 its own instance.
