@@ -57,14 +57,17 @@ import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 
 const MINUTE = 60 * 1000;
 
-/**
- * How long a tick may run: the tick route's `maxDuration` (300 s), which is
- * also `run-tick.ts`'s watchdog. A job that must not be killed part-way keeps
- * inside it, less {@link TICK_MARGIN_MS}.
- */
-const TICK_LIMIT_MS = 5 * MINUTE;
-const TICK_MARGIN_MS = 30_000;
 const HOUR = 60 * MINUTE;
+
+/**
+ * How long the host lets a tick run: the tick route's `maxDuration`, in ms.
+ * The route's value has to be a literal (Next.js reads it statically), so the
+ * route test holds the two equal; a fork that raises one raises both. A job
+ * that must not be killed part-way keeps inside it, less
+ * {@link TICK_MARGIN_MS}.
+ */
+export const TICK_MAX_DURATION_MS = 300_000;
+const TICK_MARGIN_MS = 30_000;
 
 /** What one task run reports back: its own summary value, plus "did it find anything". */
 export interface PlatformJobOutcome {
@@ -259,7 +262,7 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // its lease, and the erasure, for 20 minutes.
     run: (tick) =>
       processPendingErasures(new Date(), {
-        stopBy: new Date(tick.startMs + TICK_LIMIT_MS - TICK_MARGIN_MS),
+        stopBy: new Date(tick.startMs + TICK_MAX_DURATION_MS - TICK_MARGIN_MS),
       }),
     // Any pending erasure counts, due or not: one waiting out its backoff must
     // keep the idle gate from skipping past its next attempt.

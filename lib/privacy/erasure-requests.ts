@@ -307,17 +307,23 @@ async function finishedErasure(
 
 /**
  * Run one claimed attempt, stopping at `deadline` (and its pre-passes at
- * `prePassDeadline`, when given). On failure, set the backoff and rethrow.
- * When the deadline stops it ({@link ErasureDeferredError}), make the next
- * attempt due at once, uncount this one, and rethrow: the erasure made
- * progress, and nothing failed that a backoff would help with.
+ * `prePassDeadline`, the retrier's). On failure, set the backoff and rethrow.
+ *
+ * When the deadline stops it ({@link ErasureDeferredError}), rethrow after
+ * setting the next attempt. A request's deferral makes it due at once and
+ * uncounts this attempt: the request's budget is short by design, the
+ * erasure made progress, and nothing failed. The retrier's is counted and
+ * backed off like a failure, and logged as a warning: it had minutes, and the
+ * transaction its share of them, so something keeps taking the time (a slow
+ * hook, a lock held throughout), and retrying it at once every tick would
+ * neither help nor show.
  */
 async function attemptErasure(
   userId: string,
   claim: Extract<Claim, { kind: 'claimed' }>,
-  deadline: Date,
-  prePassDeadline?: Date
+  budget: { by: 'request' | 'retrier'; deadline: Date; prePassDeadline?: Date }
 ): Promise<{ receiptId: string; erasedAt: Date }> {
+  const { by, deadline, prePassDeadline } = budget;
   try {
     return await eraseUser({
       userId,
@@ -338,17 +344,23 @@ async function attemptErasure(
     }
 
     if (error instanceof ErasureDeferredError) {
+      const backOff = by === 'retrier';
+      const nextAttemptAt = backOff
+        ? new Date(Date.now() + erasureBackoffMs(claim.attempts))
+        : new Date();
       try {
-        // Conditional on this attempt's lease, as the backoff below. The
-        // claim counted this attempt; a deferral is not a failure, so it is
+        // Conditional on this attempt's lease, as the backoff below. A
+        // request's deferral is not a failure, so the claim's count of it is
         // taken back, or a later failure's backoff would start long.
         await prisma.user.updateMany({
           where: { id: userId, erasureNextAttemptAt: claim.leaseUntil },
-          data: { erasureNextAttemptAt: new Date(), erasureAttempts: { decrement: 1 } },
+          data: backOff
+            ? { erasureNextAttemptAt: nextAttemptAt }
+            : { erasureNextAttemptAt: nextAttemptAt, erasureAttempts: { decrement: 1 } },
         });
       } catch (dueError) {
         logger.error(
-          'Pending erasure: could not make the next attempt due; the lease will expire',
+          'Pending erasure: could not set the next attempt after running out of time; the lease will expire',
           {
             userId,
             error: dueError instanceof Error ? dueError.message : String(dueError),
@@ -356,11 +368,23 @@ async function attemptErasure(
         );
       }
       noteMaintenanceWork('pending-erasure');
-      logger.info('Erasure attempt ran out of time; the maintenance tick continues it', {
-        userId,
-        attempts: claim.attempts,
-        stoppedBefore: error.stage,
-      });
+      if (backOff) {
+        logger.warn(
+          'Erasure attempt by the maintenance tick ran out of time; retried after a backoff',
+          {
+            userId,
+            attempts: claim.attempts,
+            stoppedBefore: error.stage,
+            nextAttemptAt: nextAttemptAt.toISOString(),
+          }
+        );
+      } else {
+        logger.info('Erasure attempt ran out of time; the maintenance tick continues it', {
+          userId,
+          attempts: claim.attempts,
+          stoppedBefore: error.stage,
+        });
+      }
       throw error;
     }
 
@@ -440,7 +464,10 @@ export async function requestUserErasure(
   });
 
   try {
-    return { status: 'erased', ...(await attemptErasure(userId, claim, deadline)) };
+    return {
+      status: 'erased',
+      ...(await attemptErasure(userId, claim, { by: 'request', deadline })),
+    };
   } catch (error) {
     if (error instanceof ErasureDeferredError) {
       return { status: 'pending', requestedAt: claim.requestedAt };
@@ -456,7 +483,7 @@ export interface ProcessPendingErasuresResult {
   erased: number;
   /** Of those, failed; each is retried after its backoff. */
   failed: number;
-  /** Of those, out of time; each is due again at once (t-845). */
+  /** Of those, out of time; each is retried after a backoff, as a failure is (t-845). */
   deferred: number;
   /** Pending erasures still waiting after this run, due or not. */
   pending: number;
@@ -516,13 +543,15 @@ export async function processPendingErasures(
 
     result.claimed += 1;
     // The budget runs from the claim, so it is never partly spent, and ends
-    // by `stopBy`. Checked above, so the transaction's share always fits.
+    // by `stopBy`, checked above before the claim. A claim that took long
+    // leaves the transaction less than its share; if it then runs out, the
+    // attempt is backed off like any retrier deferral.
     let end = Date.now() + ERASURE_RETRY_BUDGET_MS;
     if (stopBy) end = Math.min(end, stopBy.getTime());
     const deadline = new Date(end);
     const prePassDeadline = new Date(end - ERASURE_TRANSACTION_TIMEOUT_MS);
     try {
-      await attemptErasure(due.id, claim, deadline, prePassDeadline);
+      await attemptErasure(due.id, claim, { by: 'retrier', deadline, prePassDeadline });
       result.erased += 1;
     } catch (error) {
       // Logged, with its next attempt set, by `attemptErasure`.

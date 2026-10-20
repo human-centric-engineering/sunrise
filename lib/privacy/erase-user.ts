@@ -138,8 +138,9 @@ export interface EraseUserParams {
    * transaction redacts what it left, in the time between this and
    * `deadline`. The retrier sets it so an erasure whose pre-passes take
    * longer than its budget still finishes, rather than deferring at the same
-   * scan every attempt. Without it, the pre-passes run to `deadline` and a
-   * pre-pass that runs out of time defers.
+   * scan every attempt. With it, a transaction that times out is a failure,
+   * not a deferral: it had its time. Without it, the pre-passes run to
+   * `deadline` and a pre-pass that runs out of time defers.
    */
   prePassDeadline?: Date;
 }
@@ -402,8 +403,21 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // lookup does not skip this. Best-effort: the erasure has committed.
       let runsRedactedAfter = 0;
       try {
-        const after = await redactSubjectFromRunsSince(prisma, runSubject, transactionFrom);
+        // Within the deadline too (t-845): the erasure has committed, and a
+        // request killed by its host now would answer an error for it.
+        const after = await redactSubjectFromRunsSince(
+          prisma,
+          runSubject,
+          transactionFrom,
+          deadline
+        );
         runsRedactedAfter = after.redacted;
+        if (after.stoppedEarly) {
+          logger.error(
+            'Erasure run pass after the commit ran out of time; runs written while the transaction was open may still name the person',
+            { userId, since: transactionFrom.toISOString() }
+          );
+        }
         if (after.failed > 0) {
           logger.error('Erasure run pass after the commit could not reach every run', {
             userId,
@@ -426,10 +440,12 @@ async function eraseRows(params: EraseUserParams): Promise<{
     } catch (error) {
       // The last try waited for the locks, so a busy error from it is not
       // ours (a fork's hook can throw one): never retried, or this would not
-      // end. Past the deadline, whatever stopped the try is most likely the
-      // cap on it, so it is a deferral rather than a failure.
+      // end. A timeout past the deadline is the cap on it, so a deferral —
+      // unless the transaction had its time set aside (`prePassDeadline`):
+      // then it timed out on its own, as without a deadline, and that is a
+      // failure, logged as one.
       if (lastTry || !(error instanceof SubjectLocksBusyError)) {
-        throw deferredIfLate(error, deadline, 'the erasure transaction');
+        throw prePassDeadline ? error : deferredIfLate(error, deadline, 'the erasure transaction');
       }
       // Best-effort, like the pre-passes: if the wait fails, the next try
       // finds out for itself. With a deadline, it waits only for the time

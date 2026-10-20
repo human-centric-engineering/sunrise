@@ -57,9 +57,13 @@ release process.
   hands the rest to the transaction instead of deferring), and reports
   `deferred` separately from `failed`. Only a timeout after the deadline is a
   deferral (`isTimeoutError()` decides); any other error is a failure.
-  `ERASURE_MIN_RETRY_MS` is the least of the tick an attempt starts with. A
-  deferral does not count toward
-  `erasureAttempts`. `boundLockWaits()` takes an optional `{ statementsToo }`
+  `ERASURE_MIN_RETRY_MS` is the least of the tick an attempt starts with,
+  and `TICK_MAX_DURATION_MS` (`lib/orchestration/maintenance/platform-jobs.ts`)
+  the tick limit it keeps inside, held equal to the tick route's
+  `maxDuration` by its test. A request's deferral does not count toward
+  `erasureAttempts`; the retrier's is counted and backed off like a failure.
+  `redactSubjectFromRunsSince()` takes an optional `until` and reports
+  `stoppedEarly`. `boundLockWaits()` takes an optional `{ statementsToo }`
   that caps `statement_timeout` as well. Both `DELETE` user routes answer
   `202` with `{ pending: true, requestedAt }` in that case. `GET /api/v1/users`
   and `UserListItem` gain `erasureRequestedAt` (optional on the type).

@@ -136,7 +136,10 @@ import {
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 import { runDueAppJobs } from '@/lib/orchestration/maintenance/app-jobs';
-import { __resetPlatformJobsForTests } from '@/lib/orchestration/maintenance/platform-jobs';
+import {
+  __resetPlatformJobsForTests,
+  TICK_MAX_DURATION_MS,
+} from '@/lib/orchestration/maintenance/platform-jobs';
 import { __resetIdleGateForTests } from '@/lib/orchestration/maintenance/idle-gate';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import {
@@ -144,6 +147,7 @@ import {
   HEAD,
   POST,
   __test_setTickRunning,
+  maxDuration,
 } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
 import { API_KEY_SESSION_ID_PREFIX } from '@/lib/auth/api-keys';
 
@@ -218,6 +222,15 @@ const DEFAULT_ORPHAN_RESULT = { recovered: 0, exhausted: 0, errors: [] };
 const DEFAULT_EVAL_RUN_RESULT = { claimed: 0, completed: 0, released: 0, failed: 0, cancelled: 0 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('maxDuration', () => {
+  it('equals the tick limit the platform jobs keep inside', () => {
+    // The erasure retrier stops 30 s before TICK_MAX_DURATION_MS (t-845). If
+    // the host's limit were shorter, an attempt killed there would hold its
+    // lease, and the erasure, for 20 minutes.
+    expect(maxDuration * 1000).toBe(TICK_MAX_DURATION_MS);
+  });
+});
 
 describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
   afterEach(() => {

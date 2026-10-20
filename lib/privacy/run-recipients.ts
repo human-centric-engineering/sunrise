@@ -60,8 +60,9 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
-import { inBoundedTransaction } from '@/lib/privacy/erasure-deadline';
+import { inBoundedTransaction, msLeft } from '@/lib/privacy/erasure-deadline';
 import {
+  boundLockWaits,
   matchErasedSubjects,
   stringsIn,
   subjectEmailHash,
@@ -522,18 +523,25 @@ export async function preRedactSubjectFromRuns(
  * of them is open, and the transaction's pass reached them.
  * Returns how many runs it redacted, and how many it could not (with the last
  * error), so the caller can say so.
+ *
+ * With `until` (t-845), it starts no run once that has passed, and caps each
+ * run's wait at the time left; `stoppedEarly` then says some runs were not
+ * looked at. The erasure has committed by now, so this is the request's own
+ * time limit, not a deferral.
  */
 export async function redactSubjectFromRunsSince(
   client: PrePassClient,
   subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
-  since: Date
-): Promise<{ redacted: number; failed: number; lastError: string | null }> {
+  since: Date,
+  until?: Date
+): Promise<{ redacted: number; failed: number; lastError: string | null; stoppedEarly: boolean }> {
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
   let redacted = 0;
   let failed = 0;
   let lastError: string | null = null;
   let after = '';
   for (;;) {
+    if (until && msLeft(until) <= 0) return { redacted, failed, lastError, stoppedEarly: true };
     // `updatedAt` is the app host's clock and `since` too, but the cut-off
     // is moved back as `redactExecutionsPage`'s is, for hosts that disagree.
     const ids = await client.$queryRaw<Array<{ id: string }>>`SELECT e.id
@@ -544,15 +552,28 @@ export async function redactSubjectFromRunsSince(
            OR e."updatedAt" >= ((${since}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond') AT TIME ZONE 'UTC'))
        ORDER BY e.id LIMIT ${RUN_PAGE_SIZE}`;
     for (const { id } of ids) {
+      const ms = until ? msLeft(until) : undefined;
+      if (ms !== undefined && ms <= 0) return { redacted, failed, lastError, stoppedEarly: true };
       // One run that cannot be locked or written does not end the pass for the
       // rest (review round 3); the caller hears how many there were.
       try {
-        const changed = await client.$transaction(async (tx) => {
-          const [row] = await tx.$queryRaw<RunRow[]>`SELECT e.id, e."inputData", e."executionTrace",
+        const changed = await client.$transaction(
+          async (tx) => {
+            if (ms !== undefined) await boundLockWaits(tx, ms, { statementsToo: true });
+            const [row] = await tx.$queryRaw<
+              RunRow[]
+            >`SELECT e.id, e."inputData", e."executionTrace",
                e."outputData", e."errorMessage"
              FROM ai_workflow_execution e WHERE e.id = ${id} FOR NO KEY UPDATE`;
-          return row ? redactRunRow(tx, row, full) : false;
-        }, RUN_ROW_TRANSACTION_OPTIONS);
+            return row ? redactRunRow(tx, row, full) : false;
+          },
+          ms === undefined
+            ? RUN_ROW_TRANSACTION_OPTIONS
+            : {
+                timeout: Math.min(RUN_ROW_TRANSACTION_OPTIONS.timeout, ms),
+                maxWait: Math.min(RUN_ROW_TRANSACTION_OPTIONS.maxWait, ms),
+              }
+        );
         if (changed) redacted += 1;
       } catch (error) {
         failed += 1;
@@ -562,5 +583,5 @@ export async function redactSubjectFromRunsSince(
     if (ids.length < RUN_PAGE_SIZE) break;
     after = ids[ids.length - 1].id;
   }
-  return { redacted, failed, lastError };
+  return { redacted, failed, lastError, stoppedEarly: false };
 }

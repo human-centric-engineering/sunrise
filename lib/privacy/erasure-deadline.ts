@@ -22,6 +22,7 @@
  */
 
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { z } from 'zod';
 import { boundLockWaits } from '@/lib/privacy/erased-subjects';
 
 /**
@@ -91,14 +92,14 @@ const TIMEOUT_SQLSTATES = new Set(['57014', '55P03']);
  */
 const TIMEOUT_PRISMA_CODES = new Set(['P2028', 'P2024']);
 
+/** Where Prisma 7's pg adapter puts a raw query's Postgres SQLSTATE. */
+const adapterErrorMetaSchema = z.object({
+  driverAdapterError: z.object({ cause: z.object({ originalCode: z.string() }) }),
+});
+
 function sqlStateOf(meta: unknown): string | undefined {
-  if (typeof meta !== 'object' || meta === null) return undefined;
-  const adapterError = (meta as Record<string, unknown>).driverAdapterError;
-  if (typeof adapterError !== 'object' || adapterError === null) return undefined;
-  const cause = (adapterError as Record<string, unknown>).cause;
-  if (typeof cause !== 'object' || cause === null) return undefined;
-  const code = (cause as Record<string, unknown>).originalCode;
-  return typeof code === 'string' ? code : undefined;
+  const parsed = adapterErrorMetaSchema.safeParse(meta);
+  return parsed.success ? parsed.data.driverAdapterError.cause.originalCode : undefined;
 }
 
 /**
@@ -122,8 +123,7 @@ export function isTimeoutError(error: unknown): boolean {
 /**
  * `error`, or an {@link ErasureDeferredError} in its place when `deadline`
  * has passed and `error` is a timeout: the deadline's cap is then what stopped
- * the work, and a deferral is retried straight away rather than after a
- * backoff. Any other error is a failure, even after the deadline, so it is
+ * the work. Any other error is a failure, even after the deadline, so it is
  * logged as one and backed off.
  */
 export function deferredIfLate(error: unknown, deadline: Date | undefined, stage: string): unknown {

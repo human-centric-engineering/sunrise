@@ -1102,7 +1102,7 @@ describe('requestUserErasure — when the budget runs out (t-845)', () => {
 
     expect(result.status).toBe('pending');
     expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Pending erasure: could not make the next attempt due; the lease will expire',
+      'Pending erasure: could not set the next attempt after running out of time; the lease will expire',
       { userId: USER_ID, error: 'connection reset' }
     );
     expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
@@ -1148,18 +1148,39 @@ describe('processPendingErasures — when an attempt runs out of time (t-845)', 
     expect(result).toEqual({ claimed: 1, erased: 0, failed: 0, deferred: 1, pending: 1 });
   });
 
-  it('makes the person due again at once instead of backing them off', async () => {
+  it('backs the person off as a failure would, keeping the attempt counted', async () => {
+    // The retrier had minutes and the transaction its share: running out
+    // again means something keeps taking the time, and retrying at once
+    // every tick would neither help nor show.
     queueOne();
     mocks.eraseUser.mockRejectedValue(new ErasureDeferredError('the erasure transaction'));
 
     await processPendingErasures();
 
-    // Three attempts made by now would be a four-minute backoff on a failure.
+    // The third attempt: a four-minute backoff, with no decrement.
     expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: 'user-a', erasureNextAttemptAt: LEASE_UNTIL },
-      data: { erasureNextAttemptAt: NOW, erasureAttempts: { decrement: 1 } },
+      data: { erasureNextAttemptAt: new Date(NOW.getTime() + 4 * MINUTE) },
     });
+  });
+
+  it('logs it as a warning naming where it stopped, so a stuck erasure shows', async () => {
+    queueOne();
+    mocks.eraseUser.mockRejectedValue(new ErasureDeferredError('the stripe cleanup hook'));
+
+    await processPendingErasures();
+
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      'Erasure attempt by the maintenance tick ran out of time; retried after a backoff',
+      {
+        userId: 'user-a',
+        attempts: 3,
+        stoppedBefore: 'the stripe cleanup hook',
+        nextAttemptAt: new Date(NOW.getTime() + 4 * MINUTE).toISOString(),
+      }
+    );
+    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
   });
 
   it('still counts any other failure as failed', async () => {
