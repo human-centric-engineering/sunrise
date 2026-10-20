@@ -71,14 +71,6 @@ const {
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-// `after()` records what it was handed (t-846); the real one throws outside a
-// request scope.
-const mockAfter = vi.hoisted(() => vi.fn());
-vi.mock('next/server', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('next/server')>()),
-  after: mockAfter,
-}));
-
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowTrigger: {
@@ -879,31 +871,6 @@ describe('happy path', () => {
       null,
       'version-id-1'
     );
-  });
-
-  it('keeps the drain alive past the 202: after() holds it until the run settles (t-846)', async () => {
-    let finishRun!: () => void;
-    mockDrainEngine.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finishRun = resolve;
-      })
-    );
-
-    const res = await POST(makeRequest(), makeParams());
-
-    expect(res.status).toBe(202);
-    expect(mockAfter).toHaveBeenCalledTimes(1);
-    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
-    let settled = false;
-    void handed.then(() => {
-      settled = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(settled).toBe(false);
-
-    finishRun();
-    await handed;
-    expect(settled).toBe(true);
   });
 
   it('calls logAdminAction with action:workflow_trigger.fire, channel, and executionId', async () => {

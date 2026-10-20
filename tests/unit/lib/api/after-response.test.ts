@@ -95,6 +95,30 @@ describe('keepRunningAfterResponse', () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
+  it('recognises no request scope by Next’s error code, whatever the wording', () => {
+    mockAfter.mockImplementation(() => {
+      throw Object.assign(new Error('reworded in a later Next release'), {
+        __NEXT_ERROR_CODE: 'E468',
+      });
+    });
+
+    keepRunningAfterResponse(Promise.resolve(), 'test');
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('a coded Next error other than E468 is a real refusal, even if its text matches', () => {
+    mockAfter.mockImplementation(() => {
+      throw Object.assign(new Error('something outside a request scope'), {
+        __NEXT_ERROR_CODE: 'E1376',
+      });
+    });
+
+    keepRunningAfterResponse(Promise.resolve(), 'test');
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
   it('warns when after() refuses for any other reason, and still does not throw', () => {
     mockAfter.mockImplementation(() => {
       throw new Error('`waitUntil` is not available in the current environment.');

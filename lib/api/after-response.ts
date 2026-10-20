@@ -24,6 +24,20 @@ import { after } from 'next/server';
 import { logger } from '@/lib/logging';
 
 /**
+ * Next's error code for "`after` was called outside a request scope". Matched
+ * by code first, because the message's wording is Next's to change; the
+ * message is the fallback for a build that drops the code.
+ */
+const OUTSIDE_REQUEST_SCOPE_CODE = 'E468';
+
+function isOutsideRequestScope(err: unknown, message: string): boolean {
+  if (typeof err === 'object' && err !== null && '__NEXT_ERROR_CODE' in err) {
+    return err.__NEXT_ERROR_CODE === OUTSIDE_REQUEST_SCOPE_CODE;
+  }
+  return message.includes('outside a request scope');
+}
+
+/**
  * Run `task` to completion even after the response is sent. Never throws, and
  * the promise handed to `after()` never rejects: a rejection is logged as
  * "`label` failed" instead.
@@ -44,7 +58,7 @@ export function keepRunningAfterResponse(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // No request scope: the long-lived process runs it, as `void` would.
-    if (message.includes('outside a request scope')) return;
+    if (isOutsideRequestScope(err, message)) return;
     // Any other refusal (Next's `waitUntil` unavailable on this host, a broken
     // `onClose`) still leaves the work running, but not kept alive, so say so.
     logger.warn(`${label}: could not keep background work alive after the response`, {

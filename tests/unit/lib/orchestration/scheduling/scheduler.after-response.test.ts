@@ -92,6 +92,7 @@ vi.mock('@/lib/orchestration/webhooks/payload-context', () => ({
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
+  drainEngine,
   processDueSchedules,
   processOrphanedExecutions,
   processPendingExecutions,
@@ -233,11 +234,28 @@ describe('scheduler drains are kept alive past the response (t-846)', () => {
     await expectDrainKeptAlive(release);
   });
 
-  it('a resumed approval', async () => {
+  it('a resumed approval, which settles only when its run does', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
     const { release } = holdEngineOpen();
 
-    await resumeApprovedExecution('exec_1');
+    // Not awaited: it awaits the drain, so a caller holding this promise holds
+    // the whole resume (the routes hand it to `keepRunningAfterResponse`).
+    let resumed = false;
+    const resume = resumeApprovedExecution('exec_1').then(() => {
+      resumed = true;
+    });
+    await flush();
+    expect(resumed).toBe(false);
+
+    await expectDrainKeptAlive(release);
+    await resume;
+    expect(resumed).toBe(true);
+  });
+
+  it('a direct caller that writes `void drainEngine(...)`, as the inbound route does', async () => {
+    const { release } = holdEngineOpen();
+
+    void drainEngine('exec_1', WORKFLOW, DEFINITION as never, {}, null, 'wfv_1');
 
     await expectDrainKeptAlive(release);
   });

@@ -25,7 +25,7 @@
  *   9. Insert `AiWorkflowExecution` (status `pending`, triggerSource pinned).
  *      Unique violation on (workflowId, triggerExternalId) → 200 `{deduped: true}`.
  *  10. Best-effort `lastFiredAt` update, audit log entry, background engine
- *      drain kept alive past the response (`keepRunningAfterResponse`, t-846).
+ *      drain, which keeps itself alive past the response (t-846).
  *  11. Return 202 `{executionId}`.
  *
  * See `.context/orchestration/inbound-triggers.md` for the full guide.
@@ -45,7 +45,6 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { WorkflowStatus } from '@/types/orchestration';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
-import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { resolvePersistedScope } from '@/lib/orchestration/scope';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
@@ -523,25 +522,21 @@ async function fireTrigger(
   });
 
   // Drain the engine in the background so the workflow starts immediately
-  // rather than waiting for the next maintenance tick, kept alive past the
-  // 202 (t-846). Mirrors the schedule dispatch pattern; identical crash
-  // handling on failure.
+  // rather than waiting for the next maintenance tick. drainEngine keeps
+  // itself alive past the 202 (t-846). Mirrors the schedule dispatch pattern;
+  // identical crash handling on failure.
   // The run's user context moves in lockstep with the row above: passing
   // the operator's id here would leave the memory and scope layers treating
   // a stranger's message as that operator's session. With `null`, the
   // `user_memory` capability returns its `no_user_context` error instead of
   // reading or writing one person's remembered facts from another's traffic.
-  keepRunningAfterResponse(
-    drainEngine(
-      executionId,
-      trigger.workflow,
-      defParsed.data,
-      inputData,
-      null,
-      trigger.workflow.publishedVersion.id
-    ),
-    'Inbound: drain',
-    { executionId }
+  void drainEngine(
+    executionId,
+    trigger.workflow,
+    defParsed.data,
+    inputData,
+    null,
+    trigger.workflow.publishedVersion.id
   );
 
   logger.info('Inbound: trigger fired', {

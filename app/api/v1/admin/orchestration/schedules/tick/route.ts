@@ -24,6 +24,14 @@ import { errorResponse, successResponse } from '@/lib/api/responses';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { noOrgSucceeded, runScopedJob } from '@/lib/orchestration/maintenance/job-scope';
 
+/**
+ * The invocation's budget, including the runs the sweep starts, which are
+ * drained after the response (t-846). 300 s as on the maintenance tick; a run
+ * still going when it ends is picked up by the orphan sweep once its lease
+ * lapses.
+ */
+export const maxDuration = 300;
+
 export const POST = withAdminAuth(async (_request) => {
   const { result } = await runScopedJob({
     name: 'schedules',
