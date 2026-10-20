@@ -380,6 +380,13 @@ describe('supportsReasoningEffort', () => {
       supportsReasoningEffort('anthropic.claude-opus-4-20250514-v1:0', 'anthropic', 'anthropic')
     ).toBe(true);
     expect(supportsReasoningEffort('anthropic/claude-opus-4', 'anthropic', 'anthropic')).toBe(true);
+    expect(
+      supportsReasoningEffort(
+        'us.anthropic.claude-opus-4-1-20250805-v1:0',
+        'anthropic',
+        'anthropic'
+      )
+    ).toBe(true);
   });
 
   it('returns false for legacy / non-reasoning models', () => {
@@ -426,6 +433,12 @@ describe('acceptsSamplingTemperature', () => {
     expect(acceptsSamplingTemperature('anthropic.claude-opus-4-20250514-v1:0')).toBe(true);
     expect(acceptsSamplingTemperature('anthropic/claude-haiku-4.5')).toBe(true);
     expect(acceptsSamplingTemperature('anthropic/claude-haiku-5.5')).toBe(false);
+  });
+
+  it('strips Bedrock cross-region and gateway prefixes', () => {
+    expect(acceptsSamplingTemperature('us.anthropic.claude-3-5-sonnet-20241022-v2:0')).toBe(true);
+    expect(acceptsSamplingTemperature('bedrock/anthropic.claude-3-haiku-20240307-v1:0')).toBe(true);
+    expect(acceptsSamplingTemperature('global.anthropic.claude-sonnet-5-5')).toBe(false);
   });
 
   it('leaves the temperature out for an id it does not recognise', () => {

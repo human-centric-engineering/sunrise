@@ -293,6 +293,19 @@ export function deriveParamProfile(modelId: string, provider: string): ParamProf
 }
 
 /**
+ * Reduce a Claude model id to the bare API form both Claude checks below
+ * match against: lower-cased, with any gateway path (`bedrock/`,
+ * `anthropic/`) and Bedrock's `anthropic.` prefix — cross-region
+ * `us.` / `eu.` / `global.` included — removed.
+ */
+function normalizeClaudeId(modelId: string): string {
+  return modelId
+    .toLowerCase()
+    .replace(/^.*\//, '')
+    .replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '');
+}
+
+/**
  * Does this model accept the `reasoningEffort` parameter?
  *
  * Two distinct routes lead to true:
@@ -322,10 +335,7 @@ export function supportsReasoningEffort(
 ): boolean {
   if (paramProfile === 'openai-reasoning') return true;
   if (provider !== 'anthropic' && paramProfile !== 'anthropic') return false;
-  const id = modelId
-    .toLowerCase()
-    .replace(/^(anthropic[./])/, '')
-    .replace(/^(.*\/)/, '');
+  const id = normalizeClaudeId(modelId);
   // Claude Opus 4 and 5+ (any minor) support thinking. The `(?!-?\d)`
   // negative lookahead after the major version prevents `claude-opus-4`
   // from also matching `claude-opus-40` if Anthropic ever ships one with
@@ -355,16 +365,12 @@ export function supportsReasoningEffort(
  * The caller's intent is still recorded on the trace's
  * `requestParams.temperature`.
  *
- * Prefixes are stripped as in `supportsReasoningEffort`, so Bedrock
- * (`anthropic.claude-…`) and OpenRouter (`anthropic/claude-…`) ids
- * classify the same way. The minor version must be one or two digits,
+ * Ids go through `normalizeClaudeId`, so Bedrock, cross-region and
+ * OpenRouter forms classify the same as the bare API id. The minor version must be one or two digits,
  * so a date stamp (`claude-sonnet-4-20250514`) reads as Sonnet 4.0.
  */
 export function acceptsSamplingTemperature(modelId: string): boolean {
-  const id = modelId
-    .toLowerCase()
-    .replace(/^(anthropic[./])/, '')
-    .replace(/^(.*\/)/, '');
+  const id = normalizeClaudeId(modelId);
   // Claude 2 / 3.x — every family accepts it (`claude-3-5-sonnet`,
   // `claude-3-haiku`, `claude-instant-1.2`, `claude-2.1`).
   if (/^claude-(?:instant|[23])(?:\b|[-.])/.test(id)) return true;

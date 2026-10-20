@@ -115,22 +115,23 @@ export async function refreshFromOpenRouter(options: { force?: boolean } = {}): 
       const body = parsed.data;
 
       const merged = new Map<string, ModelInfo>(buildFallbackMap());
-      const listed = new Set<string>();
-      const aliases: Array<[string, ModelInfo]> = [];
-      let added = 0;
+      const parsedEntries: Array<[OpenRouterModel, ModelInfo]> = [];
       for (const entry of body.data) {
         const info = parseOpenRouterEntry(entry);
-        if (!info) continue;
-        merged.set(info.id, info);
-        listed.add(info.id);
-        if (entry.id !== info.id) merged.set(entry.id, info);
-        const apiId = anthropicApiId(info);
-        if (apiId) aliases.push([apiId, info]);
-        added += 1;
+        if (info) parsedEntries.push([entry, info]);
       }
-      // An entry OpenRouter lists under the API id itself beats the alias.
-      for (const [apiId, info] of aliases) {
-        if (!listed.has(apiId)) merged.set(apiId, info);
+      const listed = new Set(parsedEntries.map(([, info]) => info.id));
+      let added = 0;
+      for (const [entry, parsedInfo] of parsedEntries) {
+        // An Anthropic entry takes the API's dashed id as its own, and keeps
+        // OpenRouter's dotted one as an alias — unless OpenRouter also lists
+        // the dashed id itself, which then wins.
+        const apiId = anthropicApiId(parsedInfo);
+        const info = apiId && !listed.has(apiId) ? { ...parsedInfo, id: apiId } : parsedInfo;
+        merged.set(info.id, info);
+        if (parsedInfo.id !== info.id) merged.set(parsedInfo.id, info);
+        if (entry.id !== info.id) merged.set(entry.id, info);
+        added += 1;
       }
 
       // Successful refresh — clear the failure timestamp so the next
@@ -561,9 +562,10 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
  * The id Anthropic's API (and so every agent) uses for an OpenRouter
  * Anthropic entry, when it differs from OpenRouter's. OpenRouter writes
  * the version with a dot (`claude-haiku-5.5`) where the API uses a dash
- * (`claude-haiku-5-5`), so without this alias the entry's price never
- * reaches a turn on that model. `undefined` for every other provider,
- * and for an id with no dotted version.
+ * (`claude-haiku-5-5`), so filed under OpenRouter's id the entry's price
+ * never reaches a turn on that model, and it never matches the vendor's
+ * own listing. `undefined` for every other provider, and for an id with
+ * no dotted version.
  */
 function anthropicApiId(info: ModelInfo): string | undefined {
   if (info.provider !== 'anthropic') return undefined;

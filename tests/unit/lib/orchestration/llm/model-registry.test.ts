@@ -121,6 +121,7 @@ describe('refreshFromOpenRouter', () => {
     await registry.refreshFromOpenRouter({ force: true });
 
     const haiku = registry.getModel('claude-haiku-5-5');
+    expect(haiku?.id).toBe('claude-haiku-5-5');
     expect(haiku?.provider).toBe('anthropic');
     expect(haiku?.inputCostPerMillion).toBeCloseTo(0.1);
     expect(haiku?.outputCostPerMillion).toBeCloseTo(0.5);
@@ -163,6 +164,35 @@ describe('refreshFromOpenRouter', () => {
     expect(registry.getModel('claude-sonnet-5-5')?.name).toBe('Exact');
     expect(registry.getModel('claude-sonnet-5-5')?.inputCostPerMillion).toBeCloseTo(2);
     expect(registry.getModel('claude-sonnet-5.5')?.name).toBe('Dotted');
+  });
+
+  it('keeps the dashed id in listings when a dotted entry replaces a fallback one', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/claude-opus-4.6',
+            name: 'Anthropic: Claude Opus 4.6',
+            context_length: 1_000_000,
+            pricing: { prompt: '0.000005', completion: '0.000025' },
+          },
+        ],
+      }),
+    });
+    // The static fallback already holds `claude-opus-4-6`, at another price.
+    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBe(15);
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBeCloseTo(5);
+    // Discovery and the model pickers list by `id`; the API's id must survive.
+    const opusIds = registry
+      .getModelsByProvider('anthropic')
+      .map((m) => m.id)
+      .filter((id) => id.startsWith('claude-opus-4'));
+    expect(opusIds).toEqual(['claude-opus-4-6']);
   });
 
   it("keeps OpenRouter's aliased price over a matrix row's hand-entered one, as for any listed model", async () => {
