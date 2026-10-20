@@ -19,7 +19,7 @@ export function useLocalStorage<T>(
 - **SSR-safe:** on the server, returns `initial` and makes the setter a no-op. A post-mount effect hydrates from storage on the client.
 - **JSON round-trip:** values are stringified on write, parsed on read. Invalid JSON falls back to `initial` and logs a warning.
 - **Cross-tab sync:** listens for `storage` events so two tabs stay in sync. A null `newValue` (another tab called `removeItem`) resets to `initial`.
-- **Unchanged values are skipped:** setting a value whose JSON is already what storage holds for the key (e.g. an updater that returns `prev`) writes nothing and notifies no other instance. The check reads storage, not state, so persisting a never-stored default or retrying after a failed write still writes.
+- **Unchanged values are skipped:** setting the value this instance already holds, when storage already holds it too (e.g. an updater that returns `prev`), writes nothing and notifies no other instance. Persisting a never-stored default or retrying after a failed write still writes. An updater that mutates `prev` in place is persisted, but like `useState` it does not re-render the caller — return a new object.
 
 ### Caveats
 

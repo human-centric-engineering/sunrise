@@ -157,6 +157,7 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
     (next) => {
       const resolved =
         typeof next === 'function' ? (next as (prev: T) => T)(valueRef.current) : next;
+      const unchanged = Object.is(resolved, valueRef.current);
       setInternalValue(resolved);
       valueRef.current = resolved;
 
@@ -165,11 +166,14 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       /* v8 ignore stop */
       const serialized = JSON.stringify(resolved);
       try {
-        // Storage already holds this value (e.g. an updater returned `prev`):
-        // nothing to write or broadcast. Compared against storage, not state,
-        // so a never-stored default, a failed earlier write, or an updater
-        // that mutated `prev` in place still writes.
-        if (window.localStorage.getItem(key) === serialized) return;
+        // Same value as this instance holds AND already in storage (e.g. an
+        // updater returned `prev`): nothing to write or broadcast. Both are
+        // needed: a never-stored default, a failed earlier write, or an
+        // updater that mutated `prev` in place matches state but not storage,
+        // and a value this instance was out of step on matches storage but
+        // not state — each of those still writes and broadcasts. Storage is
+        // only read when the value is unchanged, so typing does not pay for it.
+        if (unchanged && window.localStorage.getItem(key) === serialized) return;
         window.localStorage.setItem(key, serialized);
       } catch (err) {
         logger.warn('useLocalStorage: failed to write value', { key, err: String(err) });

@@ -388,7 +388,9 @@ describe('useLocalStorage', () => {
     }
   });
 
-  it('writes an updater that mutated prev in place', () => {
+  it('persists an updater that mutated prev in place', () => {
+    // Storage only: React bails out on the same reference, as with useState,
+    // so the caller is not re-rendered. The hook doc says to return a new object.
     const { result } = renderHook(() => useLocalStorage('k.mutate', { open: true }));
     act(() => {
       result.current[1]({ open: true });
@@ -402,5 +404,20 @@ describe('useLocalStorage', () => {
     });
 
     expect(window.localStorage.getItem('k.mutate')).toBe(JSON.stringify({ open: false }));
+  });
+
+  it('broadcasts a set this instance was out of step on, even when storage matches', () => {
+    // Code elsewhere wrote storage directly (no event), so storage holds 5 while
+    // both instances still show 3. Setting 5 is a change for them, not a no-op.
+    const { result: a } = renderHook(() => useLocalStorage<number>('k.drift', 3));
+    const { result: b } = renderHook(() => useLocalStorage<number>('k.drift', 3));
+    window.localStorage.setItem('k.drift', '5');
+
+    act(() => {
+      a.current[1](5);
+    });
+
+    expect(a.current[0]).toBe(5);
+    expect(b.current[0]).toBe(5);
   });
 });
