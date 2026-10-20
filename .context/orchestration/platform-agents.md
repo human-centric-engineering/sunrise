@@ -300,11 +300,20 @@ init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
 init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
 definition in every org, and that is logged at warn.
 
-Core's checks pin only core's own agents: the reconcile test holds this seam
-empty, and the two-org smoke (`smoke:tenancy-isolation`, section [11]) pins its
-12/4 split on `CORE_PLATFORM_AGENTS` and counts the install org by registered
-slug. A fork's registrations, and a system agent it seeds outside the registry,
-leave both green without an edit.
+Two core checks read the registry and take a fork's registrations in their
+stride. The reconcile test holds this seam empty, so it measures core's
+registry alone. The two-org smoke (`smoke:tenancy-isolation`, section [11])
+requires each of `CORE_PLATFORM_AGENTS` to be registered and derives every
+count from the registry, finding the install org's agents by registered slug,
+so a system agent a fork seeds outside the registry is not counted. Neither
+needs an edit when you add or replace an agent. Two things still notice:
+
+- `tests/unit/lib/app/defaults.test.ts` asserts this seam ships empty, so
+  filling it fails that row by design. Pin your definitions there, as its
+  header says, rather than deleting the row.
+- The smoke runs a few core agents by slug (the clean-up agent, an evaluation
+  judge and the case generator). If you replace one of those, the smoke runs
+  your definition in those steps.
 
 An agent seeded once as the install org's content is still the right shape
 for an app's own agent. Register a platform agent only when every org needs

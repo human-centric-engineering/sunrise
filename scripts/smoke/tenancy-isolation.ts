@@ -209,7 +209,6 @@ import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash'
 import {
   CORE_PLATFORM_AGENTS,
   platformAgentsForOrg,
-  type PlatformAgentAudience,
 } from '@/lib/orchestration/agents/platform-agents';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
@@ -1659,19 +1658,14 @@ async function main(): Promise<void> {
     const inB = await platformRows(b.orgId);
     const inA = await platformRows(a.orgId);
     const inInstall = await platformRows(INSTALL_ORG_ID);
-    // The 12/4 split is core's, so it is pinned on core's list; the registry
-    // also holds whatever a fork registers through lib/app/platform-agents.ts
-    // (#974), and every check below derives from the registry.
-    const coreSlugs = (audience: PlatformAgentAudience) =>
-      CORE_PLATFORM_AGENTS.filter((d) => d.audience === audience).map((d) => d.slug);
-    const coreEveryOrg = coreSlugs('every-org');
-    const coreInstallOnly = coreSlugs('install-only');
+    // The registry holds core's agents and whatever a fork registers through
+    // lib/app/platform-agents.ts, which may add slugs or replace core's
+    // (#974). Every check below derives from the registry; core's own split
+    // is pinned by the unit tests, not here.
+    const registered = new Set([...everyOrg, ...installOnly]);
     check(
-      coreEveryOrg.length === 12 &&
-        coreInstallOnly.length === 4 &&
-        coreEveryOrg.every((slug) => everyOrg.includes(slug)) &&
-        coreInstallOnly.every((slug) => installOnly.includes(slug)),
-      `the registry gives every org core's 12 and the install org core's 4 more (${everyOrg.length}/${installOnly.length} registered)`
+      installOnly.length > 0 && CORE_PLATFORM_AGENTS.every((d) => registered.has(d.slug)),
+      `the registry holds every one of core's ${CORE_PLATFORM_AGENTS.length} (${everyOrg.length} for every org, ${installOnly.length} more for the install org)`
     );
     check(
       inB.length === everyOrg.length && everyOrg.every((slug) => inB.some((r) => r.slug === slug)),
@@ -1685,14 +1679,12 @@ async function main(): Promise<void> {
       installOnly.every((slug) => !inB.some((r) => r.slug === slug)),
       `B has none of the install-only agents (${installOnly.join(', ')})`
     );
-    // Counted by registered slug: a fork may seed a system agent of its own
-    // into the install org outside the registry (#973), and that row is not
-    // a platform agent.
-    const registered = new Set([...everyOrg, ...installOnly]);
+    // By registered slug, not a row count: a fork may seed a system agent of
+    // its own into the install org outside the registry (#973), and that row
+    // is not a platform agent.
     check(
-      installOnly.every((slug) => inInstall.some((r) => r.slug === slug)) &&
-        inInstall.filter((r) => registered.has(r.slug)).length === registered.size,
-      `the install org still has all ${registered.size}`
+      [...registered].every((slug) => inInstall.some((r) => r.slug === slug && r.isActive)),
+      `the install org still has all ${registered.size}, each active`
     );
     check(
       inA.length === everyOrg.length && !inA.some((r) => inB.some((x) => x.id === r.id)),
