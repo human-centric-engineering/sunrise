@@ -94,7 +94,7 @@ import { ESLint } from 'eslint';
 // them is what stops this file's cap drifting from the one the rest of the
 // toolchain uses — which it had already done: it applied a flat 6144 while
 // claiming in a comment to "match run-capped.mjs", which clamps.
-import { buildEnv, resolveHeapMb, DEFAULT_HEAP_MB } from '../run-capped.mjs';
+import { buildEnv, parseRequestedMb, resolveHeapMb, DEFAULT_HEAP_MB } from '../run-capped.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WINDOWS = process.platform === 'win32';
@@ -139,7 +139,20 @@ export const LINTABLE = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '
 export const DEFAULT_CHUNKS = 1;
 
 /**
- * Parse `LINT_CHUNKS`. A garbage value falls back rather than failing the run —
+ * The raw chunk count from the environment: `LINT_CHUNKS`, else
+ * `CI_LINT_CHUNKS`. CI sets `LINT_CHUNKS` from the `CI_LINT_CHUNKS` repo
+ * variable, but every doc tells a developer to set `CI_LINT_CHUNKS`, so a local
+ * `CI_LINT_CHUNKS=4 npm run lint:ci` has to take effect too (#699).
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string | undefined}
+ */
+export function chunksFromEnv(env) {
+  return env.LINT_CHUNKS || env.CI_LINT_CHUNKS;
+}
+
+/**
+ * Parse the chunk count (see `chunksFromEnv`). A garbage value falls back rather than failing the run —
  * refusing to lint because an unrelated variable is malformed trades a small
  * problem for a bigger one, the same rule as `run-capped.mjs`'s `NODE_HEAP_MB`.
  *
@@ -158,7 +171,7 @@ export function parseChunks(raw, warn = console.error) {
   const value = Number(raw);
   if (Number.isInteger(value) && value > 0) return value;
   warn(
-    `chunked-lint: LINT_CHUNKS="${raw}" is not a positive integer — falling back to ${DEFAULT_CHUNKS} chunk(s). ` +
+    `chunked-lint: chunk count "${raw}" (LINT_CHUNKS / CI_LINT_CHUNKS) is not a positive integer — falling back to ${DEFAULT_CHUNKS} chunk(s). ` +
       `If you set this to fix a lint OOM, it has NOT taken effect.`
   );
   return DEFAULT_CHUNKS;
@@ -397,7 +410,11 @@ export function resolveEslintCommand() {
  * @returns {Record<string, string | undefined>}
  */
 export function withHeapCap(env, deps = {}) {
-  const { heapMb = resolveHeapMb({ requestedMb: DEFAULT_HEAP_MB }) } = deps;
+  // `NODE_HEAP_MB` is honoured exactly as `run-capped.mjs` honours it, so
+  // `lint` and `lint:ci` agree when it is set (#699). Unset, it is the default.
+  const {
+    heapMb = resolveHeapMb({ requestedMb: parseRequestedMb(env.NODE_HEAP_MB) ?? DEFAULT_HEAP_MB }),
+  } = deps;
   return buildEnv(env, heapMb);
 }
 
@@ -479,7 +496,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     log = console.log,
     warn = console.error,
     targets = await lintTargets(),
-    chunks = parseChunks(env.LINT_CHUNKS, warn),
+    chunks = parseChunks(chunksFromEnv(env), warn),
     run = runChunk,
   } = deps;
 

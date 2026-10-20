@@ -570,6 +570,11 @@ an untracked one. A CI checkout has nothing untracked, so the two are the same
 run there. Locally, a brand-new file is linted once you `git add` it — and
 `npm run lint` (unchanged) and the pre-commit hook both cover it regardless.
 
+**Reproducing it locally:** `CI_LINT_CHUNKS=4 npm run lint:ci` takes effect, as
+does `LINT_CHUNKS`, the name `ci.yml` passes the repo variable through as (it
+wins if both are set). `NODE_HEAP_MB` sets each chunk's heap cap, the same as
+it does for `npm run lint`.
+
 Measured on a downstream fork of 4,527 lintable files
 (~2× base Sunrise), 4-core runner, cap 6144, cold — these are that fork's
 numbers, not Sunrise's:

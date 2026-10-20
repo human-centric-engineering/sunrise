@@ -583,6 +583,25 @@ describe('withHeapCap', () => {
     expect(out.PATH).toBe('/usr/bin');
     expect(out.CI).toBe('true');
   });
+
+  it('honours NODE_HEAP_MB the way run-capped does, so lint and lint:ci agree (#699)', () => {
+    const capOf = (env: Record<string, string>) =>
+      Number(
+        /--max-old-space-size=(\d+)/.exec(
+          (withHeapCap(env) as { NODE_OPTIONS: string }).NODE_OPTIONS
+        )?.[1]
+      );
+    // 3000 resolves differently from the 6144 default on any machine from a 4GB
+    // container up (the floor and the 75%-of-RAM clamp both land elsewhere), so
+    // this cannot pass by the request being ignored. Checked, not assumed:
+    expect(resolveHeapMb({ requestedMb: 3000 })).not.toBe(
+      resolveHeapMb({ requestedMb: DEFAULT_HEAP_MB })
+    );
+
+    expect(capOf({ NODE_HEAP_MB: '3000' })).toBe(resolveHeapMb({ requestedMb: 3000 }));
+    // A malformed value is ignored, as in run-capped, not fatal.
+    expect(capOf({ NODE_HEAP_MB: 'lots' })).toBe(resolveHeapMb({ requestedMb: DEFAULT_HEAP_MB }));
+  });
 });
 
 describe('main', () => {
@@ -607,6 +626,22 @@ describe('main', () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(String(warn.mock.calls[0]?.[0])).toContain('no lintable files');
+  });
+
+  it('reads CI_LINT_CHUNKS, the name every doc gives, when LINT_CHUNKS is unset (#699)', async () => {
+    // CI bridges the repo variable to LINT_CHUNKS; a developer following the
+    // docs locally sets CI_LINT_CHUNKS, which this ignored — a silent no-op.
+    const targets = ['a/1.ts', 'b/1.ts', 'c/1.ts', 'd/1.ts'];
+    const runWith = async (env: Record<string, string>) => {
+      const run = vi.fn((_files: string[], _argv: string[]) => Promise.resolve(0));
+      await main([], deps({ targets, env, run }));
+      return run.mock.calls.length;
+    };
+
+    expect(await runWith({ CI_LINT_CHUNKS: '4' })).toBe(4);
+    // CI's own bridge still wins when both are present.
+    expect(await runWith({ LINT_CHUNKS: '2', CI_LINT_CHUNKS: '4' })).toBe(2);
+    expect(await runWith({})).toBe(DEFAULT_CHUNKS);
   });
 
   it('runs one eslint process per chunk', async () => {

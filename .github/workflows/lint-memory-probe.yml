@@ -117,28 +117,41 @@ jobs:
           printf '%-8s %-12s %-7s %s\n' "chunks" "peak" "result" "seconds" | tee -a "$GITHUB_STEP_SUMMARY"
           for n in "${ARMS[@]}"; do
             start=$(date +%s)
-            # `|| true` — a lint ERROR is not a probe failure. We are measuring
+            # `|| rc=$?` — a lint ERROR is not a probe failure. We are measuring
             # memory, and stopping on a rule violation would abandon the
-            # remaining arms and produce a partial table.
+            # remaining arms and produce a partial table. The code is kept so a
+            # kill (128+signal) is reported below rather than read as a pass.
+            rc=0
             LINT_CHUNKS="$n" NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" /usr/bin/time -v \
               node scripts/ci/chunked-lint.mjs --no-cache \
-              > "/tmp/lint-$n.log" 2> "/tmp/time-$n.log" || true
+              > "/tmp/lint-$n.log" 2> "/tmp/time-$n.log" || rc=$?
             # `|| true` is load-bearing: GitHub runs `run:` under `bash -e`, so
             # a grep that matches nothing would exit the STEP and abandon every
             # remaining arm — leaving a partial table that looks like a
-            # completed one. The `${kb:-0}` fallback below was written to print
-            # a 0.00 GB row and carry on, and without this it never runs.
+            # completed one.
             kb=$(grep "Maximum resident set size" "/tmp/time-$n.log" | grep -oE '[0-9]+$') || true
             # SURVIVAL is the real verdict at a realistic cap: a V8 abort prints
-            # this and exits 134, which `|| true` would otherwise hide.
+            # this and exits 134, which the `|| rc=$?` above would otherwise hide.
+            # An arm with no measurement, or one the OS killed (an OOM kill is
+            # SIGKILL, 137, and prints no V8 message), is never "ok": printing
+            # it as 0.00 GB ok made the arm that died look like the best one.
             if grep -qE "JavaScript heap out of memory|Allocation failed" "/tmp/time-$n.log" "/tmp/lint-$n.log"; then
               verdict="OOM"
+            elif [ "$rc" -ge 128 ]; then
+              verdict="KILLED($rc)"
+            elif [ -z "$kb" ]; then
+              verdict="NO-DATA"
             else
               verdict="ok"
             fi
+            if [ -n "$kb" ]; then
+              peak=$(awk -v k="$kb" 'BEGIN{printf "%.2f GB", k/1048576}')
+            else
+              peak="n/a"
+            fi
             printf '%-8s %-12s %-7s %s\n' \
               "$n" \
-              "$(awk -v k="${kb:-0}" 'BEGIN{printf "%.2f GB", k/1048576}')" \
+              "$peak" \
               "$verdict" \
               "$(( $(date +%s) - start ))" | tee -a "$GITHUB_STEP_SUMMARY"
           done
