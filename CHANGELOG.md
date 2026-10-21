@@ -16,6 +16,156 @@ release process.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-21
+
+> **Alpha release.** Twenty-first tagged Sunrise release. **MINOR bump**. It
+> completes the multi-tenancy phase: the external plane (§109), per-org quotas
+> (§110), the org-admin console (§111), within-org owner isolation (§115) and
+> vendor support access (§121). It also carries an erasure programme (account
+> deletion that is recorded first and finished in the background, and an
+> erased person kept out of deliveries, configs and runs), split input and
+> output prices on Model Matrix rows, URL secrets kept out of logs, traces,
+> audit rows and analytics, and Next 16.4. Measured against `v0.14.0`: 62 PRs
+> merged, no direct commits, 53 issues closed; the suite is __SUITE__.
+>
+> **`TENANCY_MODE=single` stays the default.** Entries that apply only at
+> `multi` say so. None of the five features has been checked against a
+> deployed `multi` install: §109's check was waived by an owner ruling, §110
+> and §115 leave it to a fork's first `multi` install, and §111 and §121
+> record none. Their behaviour is proved by their tests and the tenancy smoke
+> only.
+>
+> ## What a fork has to do
+>
+> **Seventeen migrations, then `npm run db:seed`.** Five take locks that scale
+> with table size, so apply them off-peak on a large install. Four are on the
+> two delivery tables, `ai_webhook_delivery` and `ai_event_hook_delivery`:
+> `delivery_destination` re-creates their parent foreign keys, which scans
+> both to validate; `delivery_destination_index` and `delivery_payload_index`
+> build GIN indexes without `CONCURRENTLY`; and `delivery_stopped_by_erasure`
+> backfills both with a `LIKE` scan. The fifth,
+> `ai_cost_log_org_created_at_index`, indexes `ai_cost_log`, also without
+> `CONCURRENTLY`. All seventeen, in order: `20261008120000_delivery_destination`,
+> `20261011120000_delivery_destination_index`,
+> `20261013120000_ai_cost_log_org_created_at_index`,
+> `20261013120000_delivery_payload_index`,
+> `20261014120000_provider_model_split_prices`,
+> `20261014130000_provider_model_price_pair`,
+> `20261015120000_ai_agent_binding_owner`,
+> `20261015150000_delivery_stopped_by_erasure`,
+> `20261015160000_delivery_payload_gin_no_fastupdate`,
+> `20261016120000_org_support_grant`,
+> `20261017120000_audit_log_support_grant`,
+> `20261017130000_webhook_delivery_send_generation`,
+> `20261017140000_user_signup_record`,
+> `20261017150000_webhook_subscription_outlives_creator`,
+> `20261017160000_erasure_receipt_email_hash_index`,
+> `20261019120000_user_pending_erasure` and
+> `20261019230000_user_pending_erasure_index`. The seed's new
+> `022-delivery-destinations` unit fills the new delivery columns from each
+> row's current subscription or hook. It also rewrites the fourteen
+> document-cleanup capabilities' `functionDefinition`, gives the seeded hosted
+> chat models split prices, and publishes a new version of the provider-model
+> audit workflow.
+>
+> **Single-tenant installs that invited people into another org:** run
+> `npm run db:tenancy:install-floor` once (it refuses at `multi`).
+>
+> **At `TENANCY_MODE=multi`:**
+>
+> - **Org admins now run their org's sections of the admin console** under
+>   Sunrise's default policy, and can invite people into their org. A fork's
+>   own routes and pages stay platform-only until it declares them
+>   `tier: 'org'` or lists them through `lib/app/admin-tier.ts`.
+> - **A customer org's configs may name only env vars starting
+>   `ORG_<ORG ID>_`.** A binding that names any other env var stops working;
+>   move its value and update the binding.
+> - **Storage.** Agent uploads land under `orgs/{orgId}/` and are private by
+>   default. On S3 set `S3_OBJECTS_PRIVATE_BY_DEFAULT=true` or
+>   `S3_USE_ACL=true`; on Vercel Blob such a binding is refused until it sets
+>   `public: true`.
+> - **Outbound fetches made for a customer org** (knowledge URL import,
+>   webhooks, `external_call`, `call_external_api`) refuse a host that resolves
+>   to a private, loopback or link-local address.
+> - **A memberless user is no longer healed into the install org** at sign-in;
+>   a platform admin adds them. `activeOrgForSession()` can return a `null`
+>   org.
+> - **Backup** export and import leave the shared part out unless `shared=true`
+>   and the caller is in the install org.
+> - **`globalMonthlyBudgetUsd`** is again one ceiling across every org, where it
+>   had been acting as a per-org cap.
+>
+> **Your type-check and `validate` will flag:** `RouteErrorBoundary`'s
+> `reset` prop, now `retry`; the newly required `orgTierPages` prop on
+> `<AdminTierGate>` and `<AdminHeader>` and `viewerTier` on `AdminSidebar`; and
+> hand-built router mocks (`npm run check:router-mocks`), to be rebuilt with
+> `createMockRouter()`.
+>
+> **Changes a build will not catch:**
+>
+> - **The owner layer (§115).** For any caller who is not a platform admin or
+>   an `admin` API key, a read of another member's memories, conversations,
+>   messages, workflow runs, evaluations or datasets without an owner filter
+>   now throws `OwnerReadRefusedError` (a 404), in every mode. Confine the
+>   query with the visibility helpers or `session.subjectFilter`, or wrap a
+>   deliberate cross-owner read in `runAcrossOwners(reason, fn)`.
+> - **Account deletion.** A route that deletes an account should call
+>   `requestUserErasure()`. Both `DELETE` user routes may now answer
+>   `202 { pending: true }` or `409`. Erasure hooks, `cleanupExternal`
+>   included, may run more than once, in another process: make them
+>   idempotent.
+> - **Spend caps** now hold every paid AI call, not only chat, so an install
+>   with a global cap will see workflows, evaluations and ingestion stop at it.
+>   Chat's `budget_exceeded` is now the agent's own cap only, beside new
+>   `org_budget_exceeded` and `global_budget_exceeded`.
+> - **Seams.** An `initApp*` registration seam that returns a promise is
+>   refused as if it had thrown. An erasure hook registered from `initApp()`
+>   now actually runs.
+> - **Behaviour.**
+>   - A webhook `send_notification` step now POSTs to its `webhookUrl`, whose
+>     host must be in `ORCHESTRATION_ALLOWED_HOSTS`.
+>   - A required text field holding only spaces is now a `400`.
+>   - A unique violation other than the user email answers `400
+>     VALIDATION_ERROR`, not `EMAIL_TAKEN`.
+>   - Protected and auth routes match on whole path segments.
+>   - An experiment variant with `agentVersionId` is refused.
+>   - An `admin` API key stops working while its owner is not a platform
+>     admin.
+>   - Delivery `subscription` / `hook` and `AiWebhookSubscription.createdBy`
+>     can be `null`.
+>   - `getStorageClient()` returns a guarded wrapper, and `orgs/` is a
+>     reserved key root in every mode.
+> - **Costs.** Embeddings on Google, Mistral and Cohere models are costed
+>   instead of recorded at $0, and a Model Matrix row with split prices
+>   records chat turns at its input and output rates.
+> - **Logs and analytics.** The logger reduces every outbound URL it writes to
+>   origin and collapsed path, and Plausible now loads `script.manual.js`.
+> - **Overlays animate** now that `tw-animate-css` is installed.
+> - **CI** test jobs now time out (30 minutes per `test-full` shard, 60 for
+>   `test-changed`). If yours pass slower than that, raise
+>   `CI_TEST_TIMEOUT_MINUTES`.
+>
+> **Dependencies.** Next 16.4.2, vitest 5.0.5, vite 8.3.5, Prisma 7.10.1,
+> mermaid 12.2.0 and the rest of October's minor and patch bumps; `undici` 7 is now a direct
+> dependency, and `@sentry/nextjs` 11.6 brings `@sentry/cloudflare` with it.
+> **Next 16.4's `next dev` keeps its agent rules in `AGENTS.md`**, no longer in
+> `CLAUDE.md`. Sunrise now commits `AGENTS.md` and ends `CLAUDE.md` with an
+> `@AGENTS.md` import in place of the old block. If your `CLAUDE.md` still has
+> that block, take Sunrise's ending and commit the `AGENTS.md` your `next dev`
+> writes. The `prisma` → `mysql2` override from 0.14.0 is gone: Prisma pins a
+> patched `mysql2` itself, so a fork that copied the override can drop it.
+> Prisma 7.10.1 also fixes the `deepmerge-ts` alert that 0.13.0 said only
+> Prisma 8 would fix.
+>
+> **Dependency alerts accepted for this release:**
+>
+> - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`.
+>   The fix is in a new major version the plugin does not yet accept, and the
+>   plugin parses only the app's own CSS, at build time.
+> - `sprintf-js` (moderate), under `mammoth` → `argparse`. No patched
+>   release exists, and only mammoth's command-line tool uses argparse, which
+>   Sunrise never runs.
+
 ### Added
 
 - **Account deletion is recorded before it starts, and finished if the
@@ -9334,7 +9484,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...v0.12.1
