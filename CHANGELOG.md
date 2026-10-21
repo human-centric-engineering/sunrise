@@ -38,15 +38,20 @@ release process.
 >
 > ## What a fork has to do
 >
-> **Seventeen migrations, then `npm run db:seed`.** Five take locks that scale
-> with table size, so apply them off-peak on a large install. Four are on the
-> two delivery tables, `ai_webhook_delivery` and `ai_event_hook_delivery`:
-> `delivery_destination` re-creates their parent foreign keys, which scans
-> both to validate; `delivery_destination_index` and `delivery_payload_index`
-> build GIN indexes without `CONCURRENTLY`; and `delivery_stopped_by_erasure`
-> backfills both with a `LIKE` scan. The fifth,
-> `ai_cost_log_org_created_at_index`, indexes `ai_cost_log`, also without
-> `CONCURRENTLY`. All seventeen, in order: `20261008120000_delivery_destination`,
+> **Seventeen migrations, then `npm run db:seed`.** Eight take locks that
+> scale with table size, so apply them off-peak on a large install. Four are
+> on the two delivery tables, `ai_webhook_delivery` and
+> `ai_event_hook_delivery`: `delivery_destination` re-creates their parent
+> foreign keys, which scans both to validate; `delivery_destination_index`
+> builds two indexes on `ai_webhook_delivery` and `delivery_payload_index` a
+> GIN index on each table, all without `CONCURRENTLY`; and
+> `delivery_stopped_by_erasure` backfills both with a `LIKE` scan. The other
+> four index tables that grow with use, also without `CONCURRENTLY`:
+> `ai_cost_log_org_created_at_index` on `ai_cost_log`;
+> `audit_log_support_grant` on `ai_admin_audit_log`, kept for ever by default,
+> where it also validates a new foreign key by scanning; and
+> `user_pending_erasure` and `user_pending_erasure_index` on `user`, blocking
+> sign-ups and profile updates while each builds. All seventeen, in order: `20261008120000_delivery_destination`,
 > `20261011120000_delivery_destination_index`,
 > `20261013120000_ai_cost_log_org_created_at_index`,
 > `20261013120000_delivery_payload_index`,
@@ -63,11 +68,12 @@ release process.
 > `20261017160000_erasure_receipt_email_hash_index`,
 > `20261019120000_user_pending_erasure` and
 > `20261019230000_user_pending_erasure_index`. The seed's new
-> `022-delivery-destinations` unit fills the new delivery columns from each
-> row's current subscription or hook. It also rewrites the fourteen
-> document-cleanup capabilities' `functionDefinition`, gives the seeded hosted
-> chat models split prices, and publishes a new version of the provider-model
-> audit workflow.
+> `022-delivery-destinations` unit fills each delivery's `destination` from its
+> current subscription or hook, where that still exists. The seed also
+> rewrites the fourteen document-cleanup capabilities' `functionDefinition`,
+> gives split prices to the seeded hosted chat models an admin has not
+> customised, updates the model auditor's capability definitions, and
+> publishes a new version of the provider-model audit workflow.
 >
 > **Single-tenant installs that invited people into another org:** run
 > `npm run db:tenancy:install-floor` once (it refuses at `multi`).
@@ -77,7 +83,10 @@ release process.
 > - **Org admins now run their org's sections of the admin console** under
 >   Sunrise's default policy, and can invite people into their org. A fork's
 >   own routes and pages stay platform-only until it declares them
->   `tier: 'org'` or lists them through `lib/app/admin-tier.ts`.
+>   `tier: 'org'` or lists them through `lib/app/admin-tier.ts`. **If your
+>   fork replaced `canAdminister`, gate it on `scope.tier`:** a policy that
+>   admits on `viewer.orgRole` alone now admits org admins to every admin
+>   surface, the layout included.
 > - **A customer org's configs may name only env vars starting
 >   `ORG_<ORG ID>_`.** A binding that names any other env var stops working;
 >   move its value and update the binding.
@@ -88,8 +97,8 @@ release process.
 > - **Outbound fetches made for a customer org** (knowledge URL import,
 >   webhooks, `external_call`, `call_external_api`) refuse a host that resolves
 >   to a private, loopback or link-local address.
-> - **A memberless user is no longer healed into the install org** at sign-in;
->   a platform admin adds them. `activeOrgForSession()` can return a `null`
+> - **A memberless user with no signup record is no longer healed into the
+>   install org** at sign-in; a platform admin adds them. `activeOrgForSession()` can return a `null`
 >   org.
 > - **Backup** export and import leave the shared part out unless `shared=true`
 >   and the caller is in the install org.
@@ -98,18 +107,23 @@ release process.
 >
 > **Your type-check and `validate` will flag:** `RouteErrorBoundary`'s
 > `reset` prop, now `retry`; the newly required `orgTierPages` prop on
-> `<AdminTierGate>` and `<AdminHeader>` and `viewerTier` on `AdminSidebar`; and
-> hand-built router mocks (`npm run check:router-mocks`), to be rebuilt with
-> `createMockRouter()`.
+> `<AdminHeader>` and `viewerTier` on `AdminSidebar`; and hand-built router
+> mocks (`npm run check:router-mocks`), to be rebuilt with
+> `createMockRouter()`. **They will not flag a missing `<AdminTierGate>`**,
+> which is new: a fork that keeps its own `app/admin/layout.tsx` must add
+> `<AdminTierGate viewerTier orgTierPages>` as Sunrise's layout does.
 >
 > **Changes a build will not catch:**
 >
-> - **The owner layer (§115).** For any caller who is not a platform admin or
->   an `admin` API key, a read of another member's memories, conversations,
->   messages, workflow runs, evaluations or datasets without an owner filter
->   now throws `OwnerReadRefusedError` (a 404), in every mode. Confine the
->   query with the visibility helpers or `session.subjectFilter`, or wrap a
->   deliberate cross-owner read in `runAcrossOwners(reason, fn)`.
+> - **The owner layer (§115).** For a guarded caller the policy narrows to
+>   one user (under the default policy, anyone but a platform admin or an
+>   `admin` API key), in every mode: a list, count, aggregate or returning
+>   write of memories, conversations, messages, workflow runs, evaluations or
+>   datasets without an owner filter throws `OwnerReadRefusedError` (a 404),
+>   and an unfiltered `findFirst` is silently narrowed to the caller's own
+>   rows. Confine the query with the visibility helpers or
+>   `session.subjectFilter`, or wrap a deliberate cross-owner read in
+>   `runAcrossOwners(reason, fn)`.
 > - **Account deletion.** A route that deletes an account should call
 >   `requestUserErasure()`. Both `DELETE` user routes may now answer
 >   `202 { pending: true }` or `409`. Erasure hooks, `cleanupExternal`
@@ -147,15 +161,15 @@ release process.
 >   `CI_TEST_TIMEOUT_MINUTES`.
 >
 > **Dependencies.** Next 16.4.2, vitest 5.0.5, vite 8.3.5, Prisma 7.10.1,
-> mermaid 12.2.0 and the rest of October's minor and patch bumps; `undici` 7 is now a direct
-> dependency, and `@sentry/nextjs` 11.6 brings `@sentry/cloudflare` with it.
+> mermaid 12.2.0 and the rest of October's minor and patch bumps; `undici` 7
+> is now a direct dependency, and `@sentry/nextjs` 11.6 brings `@sentry/cloudflare` with it.
 > **Next 16.4's `next dev` keeps its agent rules in `AGENTS.md`**, no longer in
 > `CLAUDE.md`. Sunrise now commits `AGENTS.md` and ends `CLAUDE.md` with an
 > `@AGENTS.md` import in place of the old block. If your `CLAUDE.md` still has
 > that block, take Sunrise's ending and commit the `AGENTS.md` your `next dev`
 > writes. The `prisma` → `mysql2` override from 0.14.0 is gone: Prisma pins a
 > patched `mysql2` itself, so a fork that copied the override can drop it.
-> Prisma 7.10.1 also fixes the `deepmerge-ts` alert that 0.13.0 said only
+> Prisma 7.10.1 also fixes the `deepmerge-ts` alert that 0.12.0 said only
 > Prisma 8 would fix.
 >
 > **Dependency alerts accepted for this release:**
@@ -166,6 +180,9 @@ release process.
 > - `sprintf-js` (moderate), under `mammoth` → `argparse`. No patched
 >   release exists, and only mammoth's command-line tool uses argparse, which
 >   Sunrise never runs.
+> - `braces` / `micromatch` / `fast-glob` (high), under
+>   `@next/eslint-plugin-next`. Lint-only, with no fixed release in the
+>   plugin's range.
 
 ### Added
 
@@ -1546,7 +1563,7 @@ release process.
 - **Prisma 7.10.1 clears the `deepmerge-ts` alert (GHSA-ggr8-5vv4-36mx, high),
   and mermaid 12.2.0 clears the `katex` one (GHSA-238p-pmpm-9mq7, low)**
   (t-914). `@prisma/config` 7.10.1 depends on `deepmerge-ts` 8.0.2, so the
-  0.13.0 note that only Prisma 8 would fix it no longer holds; mermaid 12.2.0
+  0.12.0 note that only Prisma 8 would fix it no longer holds; mermaid 12.2.0
   depends on `katex` ^0.18. Prisma 7.10.1 also pins `mysql2` to 3.24.4, which
   meets the removal condition of the `prisma` → `mysql2` override added in
   0.14.0 (t-781), so that override and its `overrideReasons` entry are gone. A
