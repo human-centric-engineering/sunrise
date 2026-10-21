@@ -26,7 +26,8 @@ release process.
 > erased person kept out of deliveries, configs and runs), split input and
 > output prices on Model Matrix rows, URL secrets kept out of logs, traces,
 > audit rows and analytics, and Next 16.4. Measured against `v0.14.0`: 62 PRs
-> merged, no direct commits, 53 issues closed; the suite is __SUITE__.
+> merged, no direct commits, 53 issues closed; the suite is 1,373 files and
+> 29,100 tests.
 >
 > **`TENANCY_MODE=single` stays the default.** Entries that apply only at
 > `multi` say so. None of the five features has been checked against a
