@@ -456,8 +456,8 @@ rather than reaching for the off switch:
    suppression: it forces the patched transitive past the parent's declared
    range, so the tree genuinely changes and the finding clears honestly. It
    would have resolved the `ws@8.20.1` case, where `engine.io` and
-   `socket.io-adapter` both declared `ws: ~8.20.1`. Sunrise carries two
-   overrides today (`hono`, `valibot`).
+   `socket.io-adapter` both declared `ws: ~8.20.1`. Sunrise's current overrides,
+   and why each is kept, are in `package.json`'s `overrideReasons`.
 
    Adding one is deliberately not quiet: `hasRisk()` in
    `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on an `overrides` change

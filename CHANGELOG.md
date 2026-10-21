@@ -1392,6 +1392,14 @@ release process.
   loads `script.manual.js`, so it records page views only through
   `PlausibleProvider.page()`: a fork relying on Plausible's automatic page
   views or its script extensions must check its setup.
+- **Prisma 7.10.1 clears the `deepmerge-ts` alert (GHSA-ggr8-5vv4-36mx, high),
+  and mermaid 12.2.0 clears the `katex` one (GHSA-238p-pmpm-9mq7, low)**
+  (t-914). `@prisma/config` 7.10.1 depends on `deepmerge-ts` 8.0.2, so the
+  0.13.0 note that only Prisma 8 would fix it no longer holds; mermaid 12.2.0
+  depends on `katex` ^0.18. Prisma 7.10.1 also pins `mysql2` to 3.24.4, which
+  meets the removal condition of the `prisma` → `mysql2` override added in
+  0.14.0 (t-781), so that override and its `overrideReasons` entry are gone. A
+  fork that merged the entry into its own `overrides` can remove it too.
 
 ## [0.14.0] — 2026-10-08
 
