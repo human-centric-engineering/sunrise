@@ -14,6 +14,14 @@
  *
  * Whole-tree: declared in `ALWAYS_RUN_TESTS`, because no import chain connects
  * a new route's `tier` to this file.
+ *
+ * FORK NOTE — this file reads your `lib/app/admin-tier.ts`,
+ * `lib/app/admin-tier-routes.ts` and `lib/app/admin-landing.ts` for real, and
+ * judges them; it does not pin them. Filling them correctly passes here, and
+ * the pins below stay core's. A failure names the entry that is wrong — a
+ * route listed but not declared, a page that does not exist, a landing an org
+ * admin may not open — so fix that entry rather than this file. Pin your
+ * values in `tests/unit/lib/app/defaults.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
