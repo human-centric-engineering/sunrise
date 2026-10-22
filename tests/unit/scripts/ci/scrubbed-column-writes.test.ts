@@ -122,6 +122,14 @@ describe('Prisma writes', () => {
     expect(found(claim)).toEqual([]);
   });
 
+  it('follows a const passed as the shorthand `{ where, data }`', () => {
+    const shorthand = `
+      const data = { status: 'x' };
+      await prisma.aiWorkflowExecution.update({ where, data });
+    `;
+    expect(found(shorthand)).toEqual([]);
+  });
+
   it('does not follow a const that is changed after it is declared', () => {
     // How the settings route builds its write: the literal is empty.
     const mutated = `
@@ -147,6 +155,14 @@ describe('nested writes', () => {
     ).toEqual([]);
   });
 
+  it('ignores a relation that is only read, under include, select or where', () => {
+    expect(
+      found(
+        `prisma.aiWorkflow.update({ where: { versions: filt }, data: { name }, include: { versions: true } })`
+      )
+    ).toEqual([]);
+  });
+
   it('ignores a relation that is only connected', () => {
     expect(
       found(
@@ -167,6 +183,11 @@ describe('raw SQL', () => {
     ]);
   });
 
+  it('reads SQL in any case, and UPDATE ONLY', () => {
+    expect(found('tx.$executeRaw`UPDATE AI_WORKFLOW SET x = 1`')).toEqual(['AiWorkflow:sql']);
+    expect(found('tx.$executeRaw`update only ai_workflow set x = 1`')).toEqual(['AiWorkflow:sql']);
+  });
+
   it('ignores a read', () => {
     expect(found('tx.$queryRaw`SELECT id FROM ai_workflow FOR UPDATE`')).toEqual([]);
   });
@@ -177,6 +198,20 @@ describe('raw SQL', () => {
       await tx.$executeRaw\`UPDATE \${t} AS e SET "inputData" = '{}'\`;
     `;
     expect(found(viaRaw)).toEqual(['AiWorkflowExecution:sql']);
+  });
+
+  it('reports a write to a table held in a const, a quoted name or an argument', () => {
+    const viaConst = `
+      const T = '"ai_workflow_execution"';
+      await db.$executeRawUnsafe(\`UPDATE \${T} SET "inputData" = '{}'\`);
+    `;
+    expect(found(viaConst)).toEqual(['AiWorkflowExecution:sql']);
+    const viaArgument = `
+      async function seed(table: 'ai_workflow' | 'ai_workflow_version') {
+        await db.$executeRawUnsafe(\`INSERT INTO \${table} (id) VALUES ($1)\`, id);
+      }
+    `;
+    expect(found(viaArgument)).toEqual(['AiWorkflow:sql', 'AiWorkflowVersion:sql']);
   });
 
   it('does not report a Prisma.raw table that is only read', () => {

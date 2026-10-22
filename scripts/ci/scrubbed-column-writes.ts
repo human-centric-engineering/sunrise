@@ -23,15 +23,20 @@
  *   cannot be read — `data: patch`, a spread, a computed key — counts: the
  *   unknown direction is the one that asks for a declaration.
  * - A nested write through a relation field whose type is a scrubbed model —
- *   `aiWorkflow.create({ data: { versions: { create: … } } })` — inside a
- *   Prisma write call on any model. The relations are read off the schema per
+ *   `aiWorkflow.create({ data: { versions: { create: … } } })` — inside the
+ *   payload (`data`, an upsert's `create` / `update`) of a Prisma write call
+ *   on any model. A relation under `include`, `select` or `where` is a read. The relations are read off the schema per
  *   parent model, so `AiAgent.versions` is not mistaken for
  *   `AiWorkflow.versions`. Counted whatever its columns: the shapes below a
  *   relation are too many to follow.
- * - SQL text — any string or template piece — that runs `UPDATE`,
- *   `INSERT INTO` or `MERGE INTO` on a scrubbed table, tolerating a schema
- *   qualifier and whitespace across lines; and the `Prisma.raw('ai_…')` form
- *   (`UPDATE ${t}`), when the file also names a scrubbed table that way.
+ * - SQL text — any string or template piece — that runs `UPDATE` (or
+ *   `UPDATE ONLY`), `INSERT INTO` or `MERGE INTO` on a scrubbed table, in any
+ *   case, tolerating a schema qualifier and whitespace across lines. And SQL
+ *   that writes to a substitution (`UPDATE ${t}`, `INSERT INTO ${table}`),
+ *   when the file also holds a scrubbed table's name as a string on its own:
+ *   `Prisma.raw('ai_…')`, a const, an argument, a union type. Every table it
+ *   names that way counts, since which one the substitution holds cannot be
+ *   seen.
  * - A **reference to a scrubbed model's delegate** that is not the receiver of
  *   a method call: `const d = tx.aiWorkflowExecution`, `const { aiWorkflow } =
  *   prisma`, `run(prisma.aiWorkflowSchedule)`. What it is used for cannot be
@@ -186,10 +191,12 @@ function isBareWriteUse(ref: ts.Identifier): boolean {
     const method = accessedName(parent.expression);
     return method !== null && WRITE_METHODS.has(method);
   }
+  const isPayload = (p: ts.ObjectLiteralElementLike): boolean =>
+    ['data', 'create', 'update'].includes(propertyKey(p) ?? '');
+  // `data: ref`, or the shorthand `{ where, data }`.
   return (
-    ts.isPropertyAssignment(parent) &&
-    parent.initializer === ref &&
-    ['data', 'create', 'update'].includes(propertyKey(parent) ?? '')
+    (ts.isPropertyAssignment(parent) && parent.initializer === ref && isPayload(parent)) ||
+    (ts.isShorthandPropertyAssignment(parent) && parent.name === ref && isPayload(parent))
   );
 }
 
@@ -439,17 +446,26 @@ export function createScanner(scrubbed: readonly ScrubbedModel[], relations: Rel
   const byTable = new Map(scrubbed.map((m) => [m.table, m]));
   const tables = scrubbed.map((m) => m.table).join('|');
   const sqlWrite = new RegExp(
-    String.raw`\b(?:UPDATE|INSERT\s+INTO|MERGE\s+INTO)\s+(?:["\w]+\.)?"?(${tables})\b`,
+    String.raw`\b(?:UPDATE(?:\s+ONLY)?|INSERT\s+INTO|MERGE\s+INTO)\s+(?:["\w]+\.)?"?(${tables})\b`,
     'gi'
   );
   /** A write keyword with its target in the next substitution: `UPDATE ${t} …`. */
-  const sqlWriteToSubstitution = /\b(?:UPDATE|INSERT\s+INTO|MERGE\s+INTO)\s+$/i;
-  const mention = new RegExp(
-    [...byAccessor.keys(), ...byTable.keys(), ...reachingFields].join('|')
-  );
+  const sqlWriteToSubstitution =
+    /\b(?:UPDATE(?:\s+ONLY)?|INSERT\s+INTO|MERGE\s+INTO)\s+(?:["\w]+\.)?"?$/i;
+  /**
+   * The cheap pre-filter. A delegate or table name, in any case: Postgres
+   * folds an unquoted `UPDATE AI_WORKFLOW`, so a case-sensitive gate would skip
+   * a file the case-insensitive SQL detector would have caught. A relation
+   * field name is common English (`workflow`, `version`), so it lets a file
+   * through only beside a Prisma write method.
+   */
+  const named = new RegExp([...byAccessor.keys(), ...byTable.keys()].join('|'), 'i');
+  const reaching = new RegExp(String.raw`\b(?:${[...reachingFields].join('|')})\b`);
+  const writeMethod = new RegExp(String.raw`\.(?:${[...WRITE_METHODS].join('|')})\(`);
 
   function scan(file: SourceFile): ScrubbedWrite[] {
-    if (!mention.test(file.source)) return [];
+    const { source } = file;
+    if (!named.test(source) && !(reaching.test(source) && writeMethod.test(source))) return [];
     const sf = ts.createSourceFile(
       file.path,
       file.source,
@@ -462,8 +478,14 @@ export function createScanner(scrubbed: readonly ScrubbedModel[], relations: Rel
       // A definite write outranks an unresolved reference to the same model.
       if (!found.has(model) || found.get(model) === 'unresolved') found.set(model, via);
     };
-    /** Tables named through `Prisma.raw('…')`, and whether a write keyword precedes a substitution. */
-    const rawTables = new Set<string>();
+    /**
+     * Tables named on their own in a string — `Prisma.raw('ai_workflow')`,
+     * `const T = '"ai_workflow"'`, a `'ai_webhook_delivery'` argument — and
+     * whether any SQL writes to a substitution. Together they are a write: the
+     * file can be seen to write to a table it holds in a value, though not to
+     * which one, so every table it names counts.
+     */
+    const namedTables = new Set<string>();
     let writesToSubstitution = false;
 
     const visit = (node: ts.Node): void => {
@@ -486,15 +508,17 @@ export function createScanner(scrubbed: readonly ScrubbedModel[], relations: Rel
           ) {
             record(model.model, 'prisma');
           }
+          // Only the payload: a relation under `include`, `select` or `where`
+          // is read, not written.
           const parent = accessor ? parentByAccessor.get(accessor) : undefined;
-          if (parent && WRITE_METHODS.has(method) && node.arguments[0]) {
+          const datas =
+            parent && WRITE_METHODS.has(method) ? dataOf(method, node.arguments[0]) : [];
+          if (parent && datas !== 'unknown') {
             const nested = new Set<string>();
-            nestedWrites(node.arguments[0], parent, relations, scrubbedNames, nested);
+            for (const data of datas) {
+              nestedWrites(valueOf(data), parent, relations, scrubbedNames, nested);
+            }
             nested.forEach((m) => record(m, 'nested'));
-          }
-          if (method === 'raw' && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
-            const model = byTable.get(node.arguments[0].text.toLowerCase());
-            if (model) rawTables.add(model.model);
           }
         }
       }
@@ -514,6 +538,12 @@ export function createScanner(scrubbed: readonly ScrubbedModel[], relations: Rel
         if (model) record(model.model, 'unresolved');
       }
 
+      if (ts.isStringLiteralLike(node)) {
+        // Type positions too: `table: 'ai_webhook_delivery' | …` names it as surely.
+        const model = byTable.get(node.text.trim().replace(/^"|"$/g, '').toLowerCase());
+        if (model) namedTables.add(model.model);
+      }
+
       if (isTextPiece(node) && !inTypePosition(node)) {
         for (const m of node.text.matchAll(sqlWrite)) {
           const model = byTable.get(m[1].toLowerCase());
@@ -531,7 +561,7 @@ export function createScanner(scrubbed: readonly ScrubbedModel[], relations: Rel
     };
     visit(sf);
 
-    if (writesToSubstitution) rawTables.forEach((m) => record(m, 'sql'));
+    if (writesToSubstitution) namedTables.forEach((m) => record(m, 'sql'));
     return [...found].map(([model, via]) => ({ file: file.path, model, via }));
   }
 

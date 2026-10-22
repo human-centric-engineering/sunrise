@@ -879,7 +879,9 @@ literal), nested writes through a relation, and SQL `UPDATE`, `INSERT INTO` and
 `MERGE INTO`. A write whose columns it cannot read, and a delegate it cannot
 follow (`const d = tx.aiWorkflow`), count. Deletes do not: a deleted row
 cannot put anyone back. Its header says plainly what it still cannot see.
-`scripts/smoke/` is not scanned: its fixtures are written to be erased.
+`scripts/smoke/` and `scripts/spikes/` are not scanned: their fixtures are written to be erased.
+An entry is a file and a model, not a write, so a new write added to a file
+already listed passes: review a change to a listed file against its entry.
 
 **Never delete an entry to make the test pass**, the same rule as the export
 manifest. An unlisted writer is the defect the test exists to find.

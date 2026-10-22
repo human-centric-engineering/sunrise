@@ -37,7 +37,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -61,8 +61,11 @@ const SCHEMAS = readdirSync(SCHEMA_DIR)
  * - `scripts/smoke/` — creates the rows a smoke run against a development
  *   database then erases. A fixture written to be scrubbed is not a stale copy
  *   of anything.
+ * - `scripts/spikes/` — the same, for one-off measurements against a
+ *   development database (`erasure-delivery-scale.ts` seeds deliveries to time
+ *   erasing them).
  */
-const NOT_SCANNED = [/^tests\//, /^scripts\/smoke\//];
+const NOT_SCANNED = [/^tests\//, /^scripts\/smoke\//, /^scripts\/spikes\//];
 
 function sources(): string[] {
   return execSync("git ls-files --cached --others --exclude-standard -- '*.ts' '*.tsx'", {
@@ -75,7 +78,9 @@ function sources(): string[] {
         !p.endsWith('.d.ts') &&
         !/\.test\.tsx?$/.test(p) &&
         !p.startsWith('node_modules/') &&
-        !NOT_SCANNED.some((re) => re.test(p))
+        !NOT_SCANNED.some((re) => re.test(p)) &&
+        // Deleted from the working tree but still in the index: nothing to read.
+        existsSync(p)
     );
 }
 

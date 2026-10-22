@@ -36,6 +36,13 @@
  *   • `pending`  — not converted yet, with the §122 task that converts it.
  *                  §122's last task removes this anchor from the type.
  *
+ * **What the test cannot catch.** An entry is a file and a model, not a write,
+ * so a new write added to a file already listed passes whatever it does: a
+ * second writer in `orchestration-engine.ts` that skips the run-start check
+ * would not fail it. Where a file holds writes of different kinds, its `how`
+ * names them. Review a change to a listed file against its entry. The
+ * scanner's own blind spots are in its header.
+ *
  * **Never delete an entry to make the test pass.** Unlisting a writer hides the
  * one thing this file exists to show. Remove an entry only when its file no
  * longer writes the model, which is the case the test reports as stale.
@@ -75,7 +82,7 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
   {
     model: 'AiWebhookDelivery',
     table: 'ai_webhook_delivery',
-    columns: ['payload', 'destination', 'previousDestinations'],
+    columns: ['payload', 'destination', 'destinationFingerprint', 'previousDestinations'],
   },
   { model: 'AiEventHookDelivery', table: 'ai_event_hook_delivery', columns: ['payload'] },
   { model: 'AiWorkflow', table: 'ai_workflow', columns: ['draftDefinition'] },
