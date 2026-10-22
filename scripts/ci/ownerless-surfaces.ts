@@ -119,6 +119,9 @@ const SKIPPED_FILES = new Set([
 const ORACLE_SKIPPED_FILES = new Set([
   ...SKIPPED_FILES,
   'lib/orchestration/access/ownerless-surfaces.ts',
+  // The stale-writer manifest names each scrubbed model's table as data (§122
+  // t-887), for its own scanner to match SQL against; it reads nothing.
+  'lib/privacy/stale-writers.ts',
 ]);
 
 function isOwnerlessModel(value: string): value is OwnerlessModel {
