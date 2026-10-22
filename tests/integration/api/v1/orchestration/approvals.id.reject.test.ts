@@ -15,9 +15,10 @@ import { POST } from '@/app/api/v1/orchestration/approvals/[id]/reject/route';
 
 // The run's row lock (t-901): the transaction is the prisma mock. That the
 // lock is taken, and first, is `run-row-lock.test.ts`'s and the smoke's.
-vi.mock('@/lib/orchestration/engine/run-row-lock', async () => {
+vi.mock('@/lib/orchestration/engine/run-row-lock', async (importOriginal) => {
   const { prisma: client } = await import('@/lib/db/client');
   return {
+    ...(await importOriginal<typeof import('@/lib/orchestration/engine/run-row-lock')>()),
     withRunRowLocked: vi.fn((_id: string, fn: (tx: unknown) => Promise<unknown>) => fn(client)),
   };
 });
