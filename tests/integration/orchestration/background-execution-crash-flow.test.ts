@@ -43,6 +43,8 @@ vi.mock('@/lib/db/client', () => {
     $transaction: vi.fn(),
     // Its lock_timeout setting (review round 3).
     $executeRaw: vi.fn().mockResolvedValue(1),
+    // The crash repair's check for receipts since the run started (t-901).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     aiWorkflowSchedule: {
       findMany: vi.fn(),
       updateMany: vi.fn(),

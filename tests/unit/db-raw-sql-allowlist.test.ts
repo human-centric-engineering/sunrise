@@ -121,6 +121,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'message-embedding vector INSERT/UPDATE (Prisma cannot write vector columns)',
   },
   {
+    file: 'lib/orchestration/engine/run-row-lock.ts',
+    calls: 1,
+    why: "an action on a run takes the run's row lock before it reads the trace it writes back (§122 t-901): `SELECT id … FOR NO KEY UPDATE`, as erasure and the engine's writes take; Prisma has no row-lock call. Keyed on the run's id, in the caller's org context, and it returns nothing",
+  },
+  {
     file: 'lib/orchestration/invite-tokens.ts',
     calls: 1,
     why: 'atomic invite-token use_count increment guarded by max_uses — the TOCTOU guard the read-then-write cannot give (moved here from app/api/v1/chat/stream/route.ts in §106 t-673)',
@@ -167,8 +172,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/privacy/run-recipients.ts',
-    calls: 6,
-    why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under; and erasure's pass after its commit, which lists the runs not finished or written since by id and then locks each one by id (system-scoped, as every erasure read)",
+    calls: 7,
+    why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under; and erasure's pass after its commit, which lists the runs not finished or written since by id and then locks each one by id (system-scoped, as every erasure read). And (§122 t-901) the same receipt check anchored on a copy's read time rather than a run's start, for a retroactive review: install-wide receipts only",
   },
 ];
 

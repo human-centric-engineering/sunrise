@@ -54,6 +54,11 @@ const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [
     why: 'The backfill runs from the maintenance tick, where no person is narrowed, and returns nothing to a caller; the insert reads only the orgId of the message it is embedding.',
   },
   {
+    file: 'lib/orchestration/engine/run-row-lock.ts',
+    table: 'ai_workflow_execution',
+    why: "Takes one run's row lock by id before an action reads it (§122 t-901). Returns nothing; the read that follows goes through Prisma, so the owner layer still checks the row, and every caller has already been admitted to the run (approve/reject/retry routes, the scheduler, the review route).",
+  },
+  {
     file: 'lib/privacy/delivery-payloads.ts',
     table: 'ai_conversation',
     why: 'Keyed on the data subject (c."userId" = the subject) to find deliveries naming their conversations; it returns delivery rows, never a conversation, and runs for the subject\'s own export or under the export\'s declared crossing.',

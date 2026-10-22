@@ -360,6 +360,20 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'the code that makes the rows the helper later decides about.',
   },
   {
+    path: 'lib/orchestration/engine/run-row-lock.ts',
+    disposition: 'by-design',
+    reason:
+      'takes a run’s row lock by id for an action its caller already admitted (§122 t-901); ' +
+      'it reads nothing on a caller’s behalf.',
+  },
+  {
+    path: 'lib/orchestration/retry-step.ts',
+    disposition: 'by-design',
+    reason:
+      'the retry-step write, moved out of its route (t-901): the route passes ' +
+      '`adminCanViewExecution` as the check, applied to the row read under the lock.',
+  },
+  {
     path: 'lib/orchestration/engine/executors/notification.ts',
     disposition: 'by-design',
     reason:

@@ -302,6 +302,15 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
     kind: 'no-subject',
     because: 'serves the inbound receivers, which enter no subject.',
   },
+  'lib/orchestration/engine/run-row-lock.ts': {
+    kind: 'write',
+    because: 'a row lock by id, taken for an action its caller already admitted (t-901).',
+  },
+  'lib/orchestration/retry-step.ts': {
+    kind: 'checked',
+    because:
+      'reads the run by id under its lock, checked on the row by the layer and the route’s helper.',
+  },
   'lib/orchestration/engine/executors/notification.ts': {
     kind: 'checked',
     because: 'reads its own run’s start time by id, checked by the layer (t-886).',
