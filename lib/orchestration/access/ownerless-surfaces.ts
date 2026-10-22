@@ -288,7 +288,8 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
     reason:
       'Art. 15 and Art. 17 on delivery payloads (t-783): reads only the conversations and runs ' +
       'whose `userId` is the data subject, to find the deliveries that name them; an ownerless ' +
-      'row has no subject, and there is no caller to scope to.',
+      'row has no subject, and there is no caller to scope to. A sender asks the owner of the ' +
+      'conversation or run its payload names (t-886), to check for an erasure, not to show it.',
   },
   {
     path: 'lib/privacy/run-recipients.ts',
@@ -357,6 +358,13 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
     reason:
       'finds or creates the ownerless inbound thread for a channel key (#502); this is ' +
       'the code that makes the rows the helper later decides about.',
+  },
+  {
+    path: 'lib/orchestration/engine/executors/notification.ts',
+    disposition: 'by-design',
+    reason:
+      'the `send_notification` step reads only its own run’s start time, to count erasures ' +
+      'since the run took its copy (t-886); the engine has no caller to scope by.',
   },
   {
     path: 'lib/orchestration/engine/executors/chat-turn.ts',
