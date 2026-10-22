@@ -259,7 +259,9 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
   },
   'lib/privacy/delivery-payloads.ts': {
     kind: 'admitted',
-    because: 'raw SQL keyed on the data subject, inside the export’s crossing.',
+    because:
+      'raw SQL keyed on the data subject, inside the export’s crossing; a sender’s owner ' +
+      'lookup (t-886) crosses owners itself, and only the id leaves.',
     via: 'lib/privacy/export-user.ts',
   },
   'lib/privacy/run-recipients.ts': {
@@ -299,6 +301,10 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
   'lib/orchestration/inbound/conversation-resolver.ts': {
     kind: 'no-subject',
     because: 'serves the inbound receivers, which enter no subject.',
+  },
+  'lib/orchestration/engine/executors/notification.ts': {
+    kind: 'checked',
+    because: 'reads its own run’s start time by id, checked by the layer (t-886).',
   },
   'lib/orchestration/engine/executors/chat-turn.ts': {
     kind: 'checked',

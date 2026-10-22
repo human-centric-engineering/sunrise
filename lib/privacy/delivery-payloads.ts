@@ -61,6 +61,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import {
   AWAITING_RETRY_STATUSES,
   SUBJECT_ERASED,
@@ -354,22 +355,30 @@ export async function subjectsOfPayload(
 
   let dangling = false;
   const { conversationId, executionId } = data;
-  if (typeof conversationId === 'string') {
-    const conversation = await client.aiConversation.findUnique({
-      where: { id: conversationId },
-      select: { userId: true },
-    });
-    if (conversation) name(conversation.userId, 'activity');
-    else dangling = true;
-  }
-  if (typeof executionId === 'string') {
-    const execution = await client.aiWorkflowExecution.findUnique({
-      where: { id: executionId },
-      select: { userId: true },
-    });
-    if (execution) name(execution.userId, 'activity');
-    else dangling = true;
-  }
+  // Across owners: an event a narrowed caller set off can name someone else's
+  // run (an approver acting on it), and the owner layer would refuse that read
+  // by id. Only the owner's id leaves, to be locked and checked, never shown.
+  await runAcrossOwners(
+    'erasure check before a delivery: the owner its payload names',
+    async () => {
+      if (typeof conversationId === 'string') {
+        const conversation = await client.aiConversation.findUnique({
+          where: { id: conversationId },
+          select: { userId: true },
+        });
+        if (conversation) name(conversation.userId, 'activity');
+        else dangling = true;
+      }
+      if (typeof executionId === 'string') {
+        const execution = await client.aiWorkflowExecution.findUnique({
+          where: { id: executionId },
+          select: { userId: true },
+        });
+        if (execution) name(execution.userId, 'activity');
+        else dangling = true;
+      }
+    }
+  );
   name(data.userId, 'activity');
   name(data.actorUserId, ADMIN_ACTION_EVENTS.includes(eventType) ? 'actor' : 'activity');
   const approvers = data[APPROVERS_KEY];
