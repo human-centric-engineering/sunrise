@@ -24,6 +24,7 @@ import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 // Single implementation, deliberately shared: this used to be a private copy,
 // and hardening one while the settings API kept the other is what opened the
@@ -113,7 +114,11 @@ async function emailLiveRecipients(
             recipients: kept.length,
           });
         }
-      }
+      },
+      // An escalation is sent once, with no retry, so it waits as long as the
+      // notification step does for an erasure or an import to let go (code
+      // review round 3). Escalations are rare; the pool cost is not a burst's.
+      { lockWaitMs: SUBJECT_LOCK_WAIT_MS }
     );
   } catch (err) {
     // Before the send, nothing went; after it, a transaction that failed to
@@ -173,7 +178,19 @@ async function notify(payload: EscalationPayload): Promise<void> {
           })
         : Promise.resolve();
     try {
-      await postEscalationWebhook(config, payload, agentName);
+      // The webhook carries their reason and metadata too: not posted about a
+      // person erased since the escalation (code review round 3). Decided
+      // under the locks, posted after, as a webhook delivery is.
+      const subjectErased =
+        payload.userId !== null &&
+        (await sendHoldingSubjects({ userIds: [payload.userId] }, takenAt, 0, (_tx, erased) =>
+          Promise.resolve(erased.userIds.includes(payload.userId ?? ''))
+        ));
+      if (subjectErased) {
+        logger.warn('Escalation webhook not posted: the person it is about was erased');
+      } else {
+        await postEscalationWebhook(config, payload, agentName);
+      }
     } finally {
       await emailed;
     }

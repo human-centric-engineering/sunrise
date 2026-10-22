@@ -39,6 +39,7 @@ import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
   AWAITING_RETRY_STATUSES,
   DISPATCH_TIMEOUT_MS,
+  checkFailureUncounted,
   claimArmedRetry,
   isArmedRetry,
   logSettledInFlight,
@@ -442,6 +443,7 @@ type DeliveryOutcome =
        * Nothing was sent: the erasure check could not run (t-886). Retried,
        * but not counted against the policy's attempts — a backup import or a
        * busy pool is not the receiver failing, and must not exhaust the row.
+       * For the row's first `UNCOUNTED_CHECK_WINDOW_MS`; after that it counts.
        */
       uncounted?: boolean;
     };
@@ -504,7 +506,8 @@ async function attemptDelivery(
 
   if (!delivery) return;
 
-  const newAttempts = delivery.attempts + (outcome.uncounted ? 0 : 1);
+  const uncounted = outcome.uncounted === true && checkFailureUncounted(delivery.createdAt);
+  const newAttempts = delivery.attempts + (uncounted ? 0 : 1);
   // `terminal` forces exhausted regardless of attempt count.
   const exhausted = outcome.terminal === true || newAttempts >= policy.maxAttempts;
 

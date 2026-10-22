@@ -47,6 +47,7 @@ import {
   anyoneErasedSince,
   boundLockWaits,
   findErasedSubjects,
+  matchErasedSubjects,
   namesAnyone,
   type ErasedSubjects,
   type NamedSubjects,
@@ -79,18 +80,19 @@ export async function sendHoldingSubjects<T>(
   subjects: NamedSubjects,
   takenAt: Date,
   sendTimeoutMs: number,
-  send: (tx: Prisma.TransactionClient, erased: ErasedSubjects) => Promise<T>
+  send: (tx: Prisma.TransactionClient, erased: ErasedSubjects) => Promise<T>,
+  { lockWaitMs = SENDER_LOCK_WAIT_MS }: { lockWaitMs?: number } = {}
 ): Promise<T> {
   if (!namesAnyone(subjects)) return send(prisma, NOBODY_ERASED);
   return prisma.$transaction(
     async (tx) => {
-      await boundLockWaits(tx, SENDER_LOCK_WAIT_MS);
+      await boundLockWaits(tx, lockWaitMs);
       const erased = await findErasedSubjects(tx, subjects, { shared: true, since: takenAt });
       return send(tx, erased);
     },
     // maxWait: a connection may be slow to come free while other sends hold
     // theirs; past Prisma's 2 s default that would fail the send (t-841).
-    { timeout: SENDER_LOCK_WAIT_MS + sendTimeoutMs + 10_000, maxWait: 10_000 }
+    { timeout: lockWaitMs + sendTimeoutMs + 10_000, maxWait: 10_000 }
   );
 }
 
@@ -145,10 +147,10 @@ export interface DeliverySendOptions {
  * **Which copy.** The attempt holds two: the row's payload, from the event
  * when the row was created (or earlier — a run's memory, from when it
  * started), and the subscription or hook read for this attempt (`takenAt`).
- * Everything is checked against the oldest of them, so a retry days later
- * still counts an erasure that came after its event (code review). That also
- * leaves out an address re-entered on a subscription after an erasure that
- * came after the row's event, until the row is replaced: the safe side.
+ * The people the payload names are checked against the oldest of them, so a
+ * retry days later still counts an erasure that came after its event (code
+ * review). The subscription's address, read for this attempt, is checked
+ * against `takenAt` alone, so one re-entered after an older erasure is sent to.
  *
  * **A payload naming a conversation or run that is gone** is stopped when
  * anyone at all was erased since this attempt's read: its owner may have
@@ -185,7 +187,16 @@ export async function decideDeliveryUnderLocks<T>(
     since,
     options.holdAcrossSend ? options.sendTimeoutMs : 0,
     async (tx, erased) => {
-      const recipientErased = address !== null && erased.addresses.includes(address);
+      // The address was read for this attempt, so only an erasure since that
+      // read counts against it: one re-entered on the subscription after an
+      // older erasure is sent to, however old the event (code review round 3).
+      // The locks above cover it; `since` is the older of the two anchors.
+      const recipientErased =
+        address !== null &&
+        erased.addresses.includes(address) &&
+        (
+          await matchErasedSubjects(tx, { addresses: [address] }, { since: takenAt })
+        ).addresses.includes(address);
       // Since this attempt's read, not the row's creation: a retry days later
       // would otherwise count every erasure in the meantime, in any org. A
       // row created in the window erasure's pass missed is caught by its

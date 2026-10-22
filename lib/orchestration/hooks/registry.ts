@@ -47,6 +47,7 @@ import {
   AWAITING_RETRY_STATUSES,
   DISPATCH_TIMEOUT_MS,
   SUBJECT_ERASED,
+  checkFailureUncounted,
   claimArmedRetry,
   isArmedRetry,
   logSettledInFlight,
@@ -361,7 +362,8 @@ async function attemptDelivery(
   });
   if (!delivery) return;
 
-  const newAttempts = delivery.attempts + (posted.uncounted ? 0 : 1);
+  const uncounted = posted.uncounted === true && checkFailureUncounted(delivery.createdAt);
+  const newAttempts = delivery.attempts + (uncounted ? 0 : 1);
   const exhausted = newAttempts >= MAX_ATTEMPTS;
   const retryDelay = RETRY_DELAYS_MS[Math.max(newAttempts, 1) - 1];
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);

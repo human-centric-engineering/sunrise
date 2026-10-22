@@ -46,7 +46,8 @@ release process.
   own sender of a copy. A delivery naming someone holds a database connection
   while it waits for an erasure's locks (up to 30 s), and an email for its send
   (15 s); a webhook or hook post goes after the decision commits. A check that
-  cannot run is retried without counting against the delivery's attempts. See
+  cannot run is retried without counting against the delivery's attempts, for
+  the row's first hour. See
   `.context/privacy/data-erasure.md`.
 
 ## [0.15.0] — 2026-10-21

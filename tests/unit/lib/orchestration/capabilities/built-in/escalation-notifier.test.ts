@@ -71,6 +71,7 @@ import { prisma } from '@/lib/db/client';
 import { sendEmail } from '@/lib/email/send';
 import { logger } from '@/lib/logging';
 import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -658,5 +659,36 @@ describe('people erased since the list was read (t-886)', () => {
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       'Escalation email not sent: the person it is about was erased'
     );
+  });
+
+  it('posts no escalation webhook about a person erased since: it carries their reason too', async () => {
+    erasedUserIds.ids = ['user-1'];
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettings({
+        emailAddresses: [],
+        notifyOnPriority: 'all',
+        webhookUrl: 'https://hooks.example.com/escalation',
+      }) as never
+    );
+
+    await notifyEscalation(makePayload());
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'Escalation webhook not posted: the person it is about was erased'
+    );
+  });
+
+  it('waits as long as the notification step for the locks: an escalation is never retried', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettings({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' }) as never
+    );
+
+    await notifyEscalation(makePayload());
+
+    const emailCall = vi
+      .mocked(sendHoldingSubjects)
+      .mock.calls.find(([subjects]) => [...(subjects.addresses ?? [])].length > 0);
+    expect(emailCall?.[4]).toEqual({ lockWaitMs: SUBJECT_LOCK_WAIT_MS });
   });
 });

@@ -77,6 +77,20 @@ export function isArmedRetry(
 export const RETRY_CLAIM_LEASE_MS = 5 * 60_000;
 
 /**
+ * How long after a delivery was created a failed erasure check is retried
+ * without counting against its attempts (t-886). Contention passes within
+ * minutes — an erasure holds the locks for 60 s, a backup import for 130 s —
+ * so a check still failing an hour on is a fault, and its failures count, so
+ * the row is exhausted rather than retried for ever (code review round 3).
+ */
+export const UNCOUNTED_CHECK_WINDOW_MS = 60 * 60_000;
+
+/** Whether a failed erasure check on a row created at `createdAt` goes uncounted. */
+export function checkFailureUncounted(createdAt: Date, now = Date.now()): boolean {
+  return now - createdAt.getTime() < UNCOUNTED_CHECK_WINDOW_MS;
+}
+
+/**
  * How long one send may take, per delivery channel (t-808). An attempt that
  * outlived {@link RETRY_CLAIM_LEASE_MS} would leave its row's lease expired
  * while it was still out, and the next sender would claim the row and send it

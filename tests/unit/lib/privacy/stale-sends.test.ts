@@ -230,3 +230,38 @@ describe('decideDeliveryUnderLocks (owner ruling, 2026-10-22)', () => {
     );
   });
 });
+
+describe('decideDeliveryUnderLocks: two anchors (code review round 3)', () => {
+  it('checks the payload against the row’s age and the address against this read', async () => {
+    const createdAt = new Date(takenAt.getTime() - 10 * 24 * 60 * 60_000);
+    const erasedAt = new Date(takenAt.getTime() - 5 * 24 * 60 * 60_000);
+    // A receipt for the address, from between the row's event and this read.
+    tx.dataErasureReceipt.findMany.mockImplementation(
+      async (args: { where: { erasedAt?: { gte: Date } } }) =>
+        !args.where.erasedAt || args.where.erasedAt.gte <= erasedAt
+          ? [
+              {
+                subjectUserId: 'gone',
+                subjectEmailHash: subjectEmailHash('back@example.com'),
+                metadata: { addressVerified: true },
+              },
+            ]
+          : []
+    );
+    const send = vi.fn().mockResolvedValue('sent');
+    const settle = vi.fn().mockResolvedValue(undefined);
+
+    const result = await decideDeliveryUnderLocks(
+      { eventType: 'e', payload: { event: 'e', data: {} }, createdAt },
+      'back@example.com',
+      takenAt,
+      { sendTimeoutMs: 15_000, holdAcrossSend: true },
+      settle,
+      send
+    );
+
+    // Re-entered on the subscription after that erasure: sent.
+    expect(result).toBe('sent');
+    expect(settle).toHaveBeenCalledWith(tx, { kind: 'send', payload: null });
+  });
+});

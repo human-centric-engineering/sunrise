@@ -918,8 +918,10 @@ commits, on another host's clock):
 - the start of the run its payload names (`executionId`): an event built from
   a run's memory, its approvers or outputs, holds a copy from then.
 
-A retry of an old row therefore also leaves out an address re-entered on its
-subscription after an erasure that followed the row's event: the safe side.
+Those anchors are for the people the **payload** names. The subscription's
+**address** was read for this attempt, so only an erasure since that read
+counts against it: an address re-entered on a subscription after an older
+erasure is sent to, however old the event.
 
 | Found erased since the copy                                         | What happens                                                                                                  |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -928,7 +930,7 @@ subscription after an erasure that followed the row's event: the safe side.
 | Only an admin acting on configuration (`actor`)                     | Sent without who acted; the row's payload is redacted to match.                                               |
 | A conversation or run that no longer exists, with any erasure since | Not sent: its owner can no longer be named. Kept to its record keys and stopped.                              |
 | A recipient of the escalation email                                 | Left out; the rest are emailed. The log counts them, never names them.                                        |
-| The person the escalation is about                                  | The email is not sent: it carries their reason and their thread.                                              |
+| The person the escalation is about                                  | Neither the email nor the escalation webhook goes: both carry their reason.                                   |
 
 A stopped row is never retried or replayed (t-793). Someone erased **before**
 the copy was taken is not in it, so a copy naming them was written after the
@@ -938,9 +940,12 @@ it goes to a live account or to an address the admin just typed.
 The cost is a connection held for up to `SENDER_LOCK_WAIT_MS` (30 s) waiting
 for an erasure's or a backup import's locks, plus an email's send (15 s), and
 only when the copy names someone. A wait past 30 s — or any other failure of the check — sends nothing
-and is retried, **without counting against the subscription's attempts**:
-lock contention is not the receiver failing, and must not exhaust a live
-delivery. The escalation webhook does not wait behind its email, and the
+and is retried, **without counting against the subscription's attempts** for
+the row's first hour (`UNCOUNTED_CHECK_WINDOW_MS`): lock contention is not the
+receiver failing, and must not exhaust a live delivery. After that the failures
+count, so a check that never succeeds ends in `exhausted`, not a loop. The
+escalation email, which has no retry, waits as long as the notification step
+(`SUBJECT_LOCK_WAIT_MS`). The escalation webhook does not wait behind its email, and the
 escalation is kept alive past the response that set it off.
 
 Costs accepted with it:

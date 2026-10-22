@@ -53,6 +53,8 @@ const erasedSince = vi.hoisted(() => ({
   addresses: [] as string[],
   userIds: [] as string[],
   fail: null as Error | null,
+  /** Erased since this attempt's read; null: the same as `addresses`. */
+  addressesSinceRead: null as string[] | null,
 }));
 vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/privacy/erased-subjects')>()),
@@ -61,6 +63,13 @@ vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
     erasedSince.fail
       ? Promise.reject(erasedSince.fail)
       : Promise.resolve({ addresses: erasedSince.addresses, userIds: erasedSince.userIds })
+  ),
+  // The address's re-check, since this attempt's read (code review round 3).
+  matchErasedSubjects: vi.fn(() =>
+    Promise.resolve({
+      addresses: erasedSince.addressesSinceRead ?? erasedSince.addresses,
+      userIds: [],
+    })
   ),
 }));
 
@@ -2167,6 +2176,7 @@ describe('a delivery built from a copy taken before an erasure (t-886)', () => {
     erasedSince.addresses = [];
     erasedSince.userIds = [];
     erasedSince.fail = null;
+    erasedSince.addressesSinceRead = null;
     mockFetch.mockResolvedValue({ ok: true, status: 200 });
     mockResendSend.mockResolvedValue({ data: { id: 'email-1' }, error: null });
     // The row as the dispatch created it, so the attempt checks what it stored.
@@ -2427,6 +2437,35 @@ describe('a delivery built from a copy taken before an erasure (t-886)', () => {
     const [, subjects, { since }] = checkCall();
     expect(subjects).toEqual({ addresses: [], userIds: ['a-1'] });
     expect(since).toEqual(startedAt);
+  });
+
+  it('sends to an address re-entered after an older erasure, however old the event', async () => {
+    // Erased since the row's event, but not since this attempt read the
+    // subscription: the admin put the address back on purpose.
+    erasedSince.addresses = ['alerts@example.com'];
+    erasedSince.addressesSinceRead = [];
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeEmailSub()] as never);
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(mockResendSend).toHaveBeenCalledOnce();
+    expect(stopWrites()).toEqual([]);
+  });
+
+  it('counts a failed check once the row is an hour old, so it cannot retry for ever', async () => {
+    erasedSince.fail = new Error('canceling statement due to lock timeout');
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeEmailSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 2, createdAt: new Date(Date.now() - 2 * 60 * 60_000) })
+    );
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'exhausted', attempts: 3 }),
+      })
+    );
   });
 
   it('anchors a manual retry on its read', async () => {
