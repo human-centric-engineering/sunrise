@@ -453,6 +453,8 @@ small and conflict-free.)
 | `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)                         | the chat context builder (server route-handler)                                                                       |
 | `lib/app/admin-nav.ts`                     | admin sidebar sections                                                | `admin-sidebar.tsx` (client)                                                                                          |
 | `lib/app/admin-tier.ts`                    | the fork's admin pages an org admin may open                          | `orgTierAdminPages()` → the admin layout (server), which hands the list to `<AdminTierGate>`                          |
+| `lib/app/admin-tier-routes.ts`             | the fork's admin API routes an org admin may call (`path#NAME`)       | `tests/unit/scripts/ci/admin-tier-roster.test.ts` (CI / `/pre-pr`); the guard reads the call site                     |
+| `lib/app/admin-landing.ts`                 | where an org admin lands at `/admin`                                  | `orgAdminLanding()` → `app/admin/page.tsx` (server)                                                                   |
 | `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                                          | `scripts/db/check-drift.ts` (CI / `/pre-pr`)                                                                          |
 | `lib/app/ci.ts`                            | coverage exclusions / always-run tests / ownerless-surface exceptions | `vitest.config.ts` + `scripts/ci/scoped-tests.ts` + `lib/orchestration/access/ownerless-surfaces.ts` (CI / `/pre-pr`) |
 | `lib/app/llm-providers.ts`                 | which LLM providers may be used                                       | `resolveEligibleProviders` on first use (server)                                                                      |
@@ -782,6 +784,33 @@ is not listed, if an org-tier nav item points at an unlisted page, or if this
 function threw. It runs on the server only — the admin layout runs it and
 hands the list to the browser-side tier gate — and if it throws, none of its
 pages open.
+
+**Org-tier admin routes — `lib/app/admin-tier-routes.ts`.** A route opens to
+an org admin at its call site, `withAdminAuth(handler, { tier: 'org',
+ownership })`, and the roster test fails until it is listed. List yours here,
+not in core's `ORG_TIER_ADMIN_ROUTES`:
+
+```ts
+// lib/app/admin-tier-routes.ts — yours to edit (ships empty)
+export const APP_ORG_TIER_ADMIN_ROUTES: readonly string[] = [
+  'app/api/v1/app/reports/route.ts#GET',
+  'app/api/v1/app/reports/_lib/read-route.ts#withReportsRead',
+];
+```
+
+Each entry is the file's path from the repo root, `#`, then the HTTP method,
+or the name of a wrapper that bakes the tier in (list the wrapper, not each
+route that uses it). Nothing reads the list at runtime; it is how the opening
+shows in your diff. The roster test fails if a listed entry does not declare
+`tier: 'org'`, if one that declares it is listed nowhere, or if it has no
+`ownership`.
+
+**Where an org admin lands — `lib/app/admin-landing.ts`.** `/admin` sends an
+org OWNER/ADMIN to the orchestration dashboard. Point it elsewhere with
+`appOrgAdminLandingRoute = '/admin/reports'`. The page must be one they may
+open: a literal path under `/admin/` that core or `lib/app/admin-tier.ts`
+lists as org-tier. Otherwise `/admin` logs an error and uses the default, and
+the roster test fails. A platform admin still lands on the overview.
 
 **API-key scopes — `lib/app/api-key-scopes.ts`.** `AiApiKey.scopes` is a
 `String[]` in the schema, but the two places that decided what may go in it were

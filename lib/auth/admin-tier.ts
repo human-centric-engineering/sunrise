@@ -14,9 +14,10 @@
  *
  * - **API routes** declare at the call site: `withAdminAuth(handler, { tier:
  *   'org' })`. The guard passes it to the policy as `scope.tier`; the policy
- *   decides. {@link ORG_TIER_ADMIN_ROUTES} lists them, and
+ *   decides. {@link ORG_TIER_ADMIN_ROUTES} lists core's, a fork lists its own
+ *   in `lib/app/admin-tier-routes.ts`, and
  *   `tests/unit/scripts/ci/admin-tier-roster.test.ts` fails naming any route
- *   marked org-tier that is not listed (or listed and not marked).
+ *   marked org-tier that neither lists (or listed and not marked).
  * - **Pages** declare here, in {@link ORG_TIER_ADMIN_PAGES}, because a page
  *   cannot: Next.js refuses unknown exports from a `page.tsx`, and a check a
  *   page has to remember to call is fail-OPEN for every page that forgets. A
@@ -245,7 +246,8 @@ export function restoreAppOrgTierAdminPages(pages: readonly string[]): void {
 /**
  * Admin API handlers declared `tier: 'org'`, as `path#METHOD`. Documentation
  * the roster test holds to the tree, not a list anything reads at runtime:
- * the declaration at the call site is what the guard acts on.
+ * the declaration at the call site is what the guard acts on. Core's alone; a
+ * fork's go in `APP_ORG_TIER_ADMIN_ROUTES` (`lib/app/admin-tier-routes.ts`).
  */
 export const ORG_TIER_ADMIN_ROUTES: readonly string[] = Object.freeze([
   'app/api/v1/admin/orchestration/agent-profiles/route.ts#GET',

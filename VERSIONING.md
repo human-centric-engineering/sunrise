@@ -94,8 +94,10 @@ covered by the version contract.
   Fork-owned scaffolds in `lib/app/` — a fork edits these, upstream ships them
   empty (or, for `surface.ts`, as a default it may replace):
   - `lib/app/account-sections.ts` → `initAppAccountSections()` — account-page section registry
+  - `lib/app/admin-landing.ts` → `appOrgAdminLandingRoute` — where an org admin lands at `/admin` (checked by `orgAdminLandingProblem()` in `lib/auth/admin-landing.ts`)
   - `lib/app/admin-nav.ts` → `initAppNav()` — admin nav registry (`registerNavSection()`)
   - `lib/app/admin-tier.ts` → `initAppOrgTierAdminPages()` — the fork's org-tier admin pages (primitive: `registerOrgTierAdminPage()` in `lib/auth/admin-tier.ts`)
+  - `lib/app/admin-tier-routes.ts` → `APP_ORG_TIER_ADMIN_ROUTES` — the fork's org-tier admin API routes and wrappers, as `path#NAME`, read by the roster test
   - `lib/app/agent-fields.ts` → `appAgentFields` — extra `AiAgent` config fields
   - `lib/app/api-key-scopes.ts` → `APP_API_KEY_SCOPES` — extra mintable API-key scopes
   - `lib/app/auth-landing.ts` → `appAuthLandingRoute` / `appAuthLandingLabel` — where sign-in lands

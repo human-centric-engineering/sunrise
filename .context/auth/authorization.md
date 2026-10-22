@@ -187,8 +187,9 @@ install org, so `tier: 'org'` widens admission only.
 **The roster is pinned.** `tests/unit/scripts/ci/admin-tier-roster.test.ts`
 (always-run) pins both lists. It fails when:
 
-- a route declares `tier: 'org'` without being listed in `ORG_TIER_ADMIN_ROUTES`;
-- a route is listed without declaring it;
+- a route declares `tier: 'org'` without being listed in `ORG_TIER_ADMIN_ROUTES`
+  or, for a fork's, `lib/app/admin-tier-routes.ts`;
+- a route is listed in either without declaring it;
 - a route passes a `tier` the scanner cannot read as the literal;
 - an org-tier route has no `ownership`;
 - a listed page has no `page.tsx`;
@@ -256,8 +257,9 @@ an org admin to every platform surface, roster or not. Gate it on
 `ORG_TIER_ADMIN_PAGES`: its `initAppOrgTierAdminPages()` calls
 `registerOrgTierAdminPage(pattern)`, and `orgTierAdminPages()`
 (`lib/auth/org-tier-admin-pages.ts`) returns core's list and the fork's. Its
-routes and nav items already declare in the fork's own files, so opening a
-fork page edits no core file.
+nav items declare `tier: 'org'` in `lib/app/admin-nav.ts`, and its routes
+declare it at their call site and are listed in `lib/app/admin-tier-routes.ts`
+(t-927), so opening a fork page edits no core file.
 
 - **One realm.** The init runs lazily on the server, at the admin layout's
   first read. The layout hands the list to `<AdminTierGate>` and
@@ -273,6 +275,24 @@ fork page edits no core file.
   tree, so a `[x]` segment would also name a literal page beside it, which
   Next.js serves instead. The roster test fails for any page a listed
   pattern names that is not itself listed, core's and the fork's alike.
+
+**A fork's own routes** (t-927) are listed in `APP_ORG_TIER_ADMIN_ROUTES`
+(`lib/app/admin-tier-routes.ts`), as `path#NAME` — the method, or the name of a
+wrapper that bakes the tier in. Only the roster test reads it: the declaration
+at the call site is what the guard acts on, so the list opens nothing. It is
+there so the opening shows in a diff, without the fork editing core's list.
+The roster test holds it to core's checks (listed if and only if declared, a
+literal tier, an `ownership`), and reads every module under `app/` and `lib/`,
+so a wrapper in a fork's `app/api/v1/app/x/_lib/` is seen.
+
+**Where an org admin lands** (t-928). `/admin` sends a platform admin to the
+overview and an org admin to `/admin/orchestration`, or to the page a fork
+names in `appOrgAdminLandingRoute` (`lib/app/admin-landing.ts`). The fork's
+page is used only if an org admin may open it: a literal path under `/admin/`
+on the org-tier roster, core's or the fork's. Otherwise `/admin` logs why and
+uses the default, since a page they cannot open would send them straight to
+the sign-in landing, and back to `/admin` if that is where it points. The
+roster test fails on the same check.
 
 `lib/auth/admin-tier.ts` imports nothing, so the scaffold can import the
 registrar from it and `proxy.ts` its header name without either pulling the

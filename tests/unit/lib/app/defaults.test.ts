@@ -108,6 +108,9 @@ import {
 } from '@/lib/account-sections/registry';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { ORG_TIER_ADMIN_PAGES, adminPageTier } from '@/lib/auth/admin-tier';
+import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
+import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
+import { orgAdminLanding } from '@/lib/auth/admin-landing';
 import {
   getAppOrgTierAdminPages,
   orgTierAdminPages,
@@ -452,6 +455,20 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // …and the roster the layout reads and hands the gate is exactly core's.
       expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
       expect(adminPageTier('/admin/users', orgTierAdminPages())).toBeNull();
+    },
+  },
+  {
+    seam: 'lib/app/admin-tier-routes.ts',
+    risk: "a stray entry would let a route declaring tier 'org' pass the roster test without core's list naming it — it opens nothing by itself, but the opening would no longer show in the diff a reviewer reads",
+    assert: () => expect(APP_ORG_TIER_ADMIN_ROUTES).toEqual([]),
+  },
+  {
+    seam: 'lib/app/admin-landing.ts',
+    risk: 'a stray route would send every org OWNER/ADMIN on every install somewhere other than their orchestration dashboard when they open the console',
+    assert: () => {
+      expect(appOrgAdminLandingRoute).toBeNull();
+      // …and /admin sends an org admin exactly where it did before the seam.
+      expect(orgAdminLanding()).toBe('/admin/orchestration');
     },
   },
   {

@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **A fork's org-tier admin routes (§111, t-927).** New scaffold
+  `lib/app/admin-tier-routes.ts` (`APP_ORG_TIER_ADMIN_ROUTES`, ships empty)
+  lists the fork's admin API routes and wrappers that declare `tier: 'org'`, so
+  the roster test passes without the fork editing core's
+  `ORG_TIER_ADMIN_ROUTES`. Held to core's checks; nothing reads it at runtime.
+  The roster test now reads every module under `app/`, not only route files,
+  so a tier-baking wrapper under `app/` is seen — **a fork with an unlisted one
+  will now fail that test** until it is listed here. See
+  `.context/auth/authorization.md` ("Admin tiers").
+- **A fork's landing page for org admins (§111, t-928).** New scaffold
+  `lib/app/admin-landing.ts` (`appOrgAdminLandingRoute`, ships `null`) names
+  where `/admin` sends an org OWNER/ADMIN. Used only if it is an org-tier page;
+  otherwise `/admin` logs an error and keeps `/admin/orchestration`, and the
+  roster test fails.
+
 - **Stale-writer manifest for erasure (§122, t-887).** `lib/privacy/stale-writers.ts`
   lists every file that writes a column erasure scrubs in place, with how it
   knows its copy is stale. `tests/unit/lib/privacy/stale-writers.test.ts` parses

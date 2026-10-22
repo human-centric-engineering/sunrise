@@ -11,8 +11,9 @@
  *
  * What it reports:
  *
- * - a route handler declared `tier: 'org'` that the roster does not list, or
- *   one listed that does not declare it;
+ * - a route handler declared `tier: 'org'` that neither core's roster nor
+ *   the fork's (`lib/app/admin-tier-routes.ts`) lists, or one listed in either
+ *   that does not declare it;
  * - a `tier` the scanner cannot read as the literal `'org'` — a variable or a
  *   spread hides the declaration from review, which is the thing the roster is for;
  * - an org-tier handler with no `ownership` declaration. An org admin's rows
@@ -135,10 +136,12 @@ function guardNames(sf: ts.SourceFile): Set<string> {
  * the guard acts on any call, so a scanner that recognises one export shape
  * reports a clean tree for every other shape (`export { h as GET }`, a call
  * under `as` or `satisfies`, a call inside `export async function GET`). The
- * test runs it over `lib/` as well as the routes, so a wrapper that bakes the
- * tier in (`withOrgAdmin = (h) => withAdminAuth(h, { tier: 'org', … })`) is
- * reported under its own name and has to be listed — the routes that use it
- * are then reviewed as uses of a listed wrapper.
+ * test runs it over every module under `app/` and `lib/`, not the route files
+ * alone, so a wrapper that bakes the tier in (`withOrgAdmin = (h) =>
+ * withAdminAuth(h, { tier: 'org', … })`) is reported under its own name and
+ * has to be listed, wherever it sits — `lib/`, or a fork's
+ * `app/api/v1/app/reports/_lib/`. The routes that use it are then reviewed as
+ * uses of a listed wrapper.
  */
 export function tierDeclarations(file: SourceFile): TierDeclaration[] {
   const sf = ts.createSourceFile(file.path, file.source, ts.ScriptTarget.Latest, true);
@@ -209,10 +212,15 @@ export interface NavItemFacts {
 }
 
 export interface RosterInput {
-  /** Every route file under `app/`, and every module under `lib/` (for wrappers). */
+  /** Every module under `app/` and `lib/`: route files, and the wrappers beside them. */
   routes: readonly SourceFile[];
   /** `ORG_TIER_ADMIN_ROUTES`. */
   listedRoutes: readonly string[];
+  /**
+   * The fork's routes, from `lib/app/admin-tier-routes.ts`. Held to the same
+   * checks as core's, and named as the fork's in a problem.
+   */
+  appListedRoutes?: readonly string[];
   /** `ORG_TIER_ADMIN_PAGES`. */
   listedPages: readonly string[];
   /**
@@ -264,14 +272,23 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       );
     }
   }
+  const appListed = new Set(input.appListedRoutes ?? []);
   for (const at of declared) {
-    if (!listed.has(at)) {
-      problems.push(`${at}: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES.`);
+    if (!listed.has(at) && !appListed.has(at)) {
+      problems.push(
+        `${at}: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`
+      );
     }
   }
-  for (const at of listed) {
-    if (!declared.has(at)) {
-      problems.push(`${at}: listed in ORG_TIER_ADMIN_ROUTES but does not declare tier 'org'.`);
+  const routeLists: [string, ReadonlySet<string>][] = [
+    ['ORG_TIER_ADMIN_ROUTES', listed],
+    ['lib/app/admin-tier-routes.ts', appListed],
+  ];
+  for (const [where, ats] of routeLists) {
+    for (const at of ats) {
+      if (!declared.has(at)) {
+        problems.push(`${at}: listed in ${where} but does not declare tier 'org'.`);
+      }
     }
   }
 

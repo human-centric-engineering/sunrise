@@ -34,6 +34,9 @@ import {
   appOrgTierAdminPagesInitState,
   getAppOrgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
+import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
+import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
+import { DEFAULT_ORG_ADMIN_LANDING, orgAdminLandingProblem } from '@/lib/auth/admin-landing';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
 
@@ -45,12 +48,11 @@ function tracked(dir: string): string[] {
     .filter(Boolean);
 }
 
-// The routes, and every module under lib/ — where a wrapper that bakes the
-// tier in would live.
-const ROUTES: SourceFile[] = [
-  ...tracked('app').filter((p) => /\/route\.tsx?$/.test(p)),
-  ...tracked('lib').filter((p) => /\.tsx?$/.test(p) && !p.endsWith('.d.ts')),
-].map((path) => ({ path, source: readFileSync(path, 'utf8') }));
+// Every module under app/ and lib/: the routes, and wherever a wrapper that
+// bakes the tier in may live — lib/, or a fork's app/api/v1/app/x/_lib/.
+const ROUTES: SourceFile[] = [...tracked('app'), ...tracked('lib')]
+  .filter((p) => /\.tsx?$/.test(p) && !p.endsWith('.d.ts'))
+  .map((path) => ({ path, source: readFileSync(path, 'utf8') }));
 const PAGE_FILES = tracked('app/admin').filter((p) => p.endsWith('/page.tsx'));
 // Core sections and whatever the fork registered: importing the sidebar has
 // already run `initAppNav()`.
@@ -64,6 +66,9 @@ const NAV_ITEMS: NavItemFacts[] = itemsOf([...coreNavSections, ...getRegisteredN
 const TREE: RosterInput = {
   routes: ROUTES,
   listedRoutes: ORG_TIER_ADMIN_ROUTES,
+  // The fork's, from lib/app/admin-tier-routes.ts: held to the same checks,
+  // and pinned by the fork in tests/unit/lib/app/defaults.test.ts, not here.
+  appListedRoutes: APP_ORG_TIER_ADMIN_ROUTES,
   listedPages: ORG_TIER_ADMIN_PAGES,
   // The fork's, from lib/app/admin-tier.ts: held to the same checks. Not
   // pinned here — the fork pins its own list in tests/unit/lib/app/defaults.test.ts.
@@ -316,12 +321,23 @@ describe('the tree', () => {
     expect(appOrgTierAdminPagesInitState()).toBe('ok');
   });
 
+  it('lands an org admin on a page they may open (t-928)', () => {
+    // A landing outside the org tier turns an org admin away the moment they
+    // arrive; /admin falls back to the default at runtime, and this says so in CI.
+    const landing = appOrgAdminLandingRoute ?? DEFAULT_ORG_ADMIN_LANDING;
+    expect(
+      orgAdminLandingProblem(landing, [...ORG_TIER_ADMIN_PAGES, ...getAppOrgTierAdminPages()])
+    ).toBeNull();
+  });
+
   it('sees the tree it judges', () => {
     // A check that reads nothing passes everything; these are the floor.
     expect(ROUTES.length).toBeGreaterThan(100);
     expect(PAGE_FILES.length).toBeGreaterThan(50);
     expect(NAV_ITEMS.length).toBeGreaterThan(15);
     expect(PAGE_FILES).toContain('app/admin/orchestration/agents/page.tsx');
+    // Modules beside the routes are read too, where a fork's wrapper may sit.
+    expect(ROUTES.map((r) => r.path)).toContain('app/admin/page.tsx');
   });
 });
 
@@ -497,7 +513,7 @@ describe('what it catches', () => {
     (_l, source, method) => {
       expect(findAdminTierRosterProblems(input({ routes: [{ path: ROUTE, source }] }))).toEqual(
         expect.arrayContaining([
-          `${ROUTE}#${method}: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES.`,
+          `${ROUTE}#${method}: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`,
         ])
       );
     }
@@ -522,7 +538,53 @@ describe('what it catches', () => {
     const path = 'lib/api/org-admin.ts';
     const source = `export const withOrgAdmin = (h: H) => withAdminAuth(h, { tier: 'org', ${OWNED} });`;
     expect(findAdminTierRosterProblems(input({ routes: [{ path, source }] }))).toEqual([
-      `${path}#withOrgAdmin: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES.`,
+      `${path}#withOrgAdmin: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`,
+    ]);
+  });
+
+  it('accepts a fork’s route listed in its own list, not core’s (t-927)', () => {
+    const path = 'app/api/v1/app/reports/route.ts';
+    const source = `export const GET = withAdminAuth(h, { tier: 'org', ${OWNED} });`;
+    const fork = input({ routes: [{ path, source }], appListedRoutes: [`${path}#GET`] });
+    expect(findAdminTierRosterProblems(fork)).toEqual([]);
+    // …and the same route unlisted fails, naming the fork's list as a home for it.
+    expect(findAdminTierRosterProblems({ ...fork, appListedRoutes: [] })).toEqual([
+      expect.stringContaining("or lib/app/admin-tier-routes.ts (the fork's)"),
+    ]);
+  });
+
+  it('a route the fork lists that does not declare the tier, named as the fork’s (t-927)', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({ routes: [route(`{ ${OWNED} }`)], appListedRoutes: [`${ROUTE}#GET`] })
+      )
+    ).toEqual([
+      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org'.`,
+    ]);
+  });
+
+  it('holds a fork’s wrapper to the same checks: listed, literal tier, ownership (t-927)', () => {
+    const path = 'app/api/v1/app/reports/_lib/read-route.ts';
+    const wrapper = (options: string): SourceFile => ({
+      path,
+      source: `export const withReportsRead = (h: H) => withAdminAuth(h, ${options});`,
+    });
+    const listed = { appListedRoutes: [`${path}#withReportsRead`] };
+    expect(
+      findAdminTierRosterProblems(
+        input({ routes: [wrapper(`{ tier: 'org', ${OWNED} }`)], ...listed })
+      )
+    ).toEqual([]);
+    expect(
+      findAdminTierRosterProblems(input({ routes: [wrapper(`{ tier: 'org' }`)], ...listed }))
+    ).toEqual([expect.stringContaining('no `ownership`')]);
+    expect(
+      findAdminTierRosterProblems(
+        input({ routes: [wrapper(`{ tier: TIER, ${OWNED} }`)], ...listed })
+      )
+    ).toEqual([
+      expect.stringContaining('not the literal'),
+      expect.stringContaining('listed in lib/app/admin-tier-routes.ts but does not declare'),
     ]);
   });
 
