@@ -27,6 +27,23 @@ release process.
   `initAppErasureHooks()` in `lib/app/erasure.ts`. Nothing changes at runtime.
   See `.context/privacy/data-erasure.md`.
 
+### Changed
+
+- **Deliveries and email sends leave out people erased since their copy was
+  taken (§122, t-886).** Every webhook and event-hook delivery attempt, first
+  or retry, and the escalation email now hold erasure's subject locks across
+  the send and check for erasures **since** the subscriptions, hook row or
+  settings were read (`sendHoldingSubjects()`, `lib/privacy/stale-sends.ts`).
+  A delivery to an erased address, or about an erased person's activity, is
+  stopped as erasure stops one (`stoppedByErasure`, never retried); one naming
+  them only as an admin acting is sent without who acted. The
+  `send_notification` step's check moves from every erasure ever to erasures
+  since its run started, so **an address re-entered after an older erasure is
+  emailed again**. `findErasedSubjects()` takes a `since` option for a fork's
+  own sender of a copy. A delivery naming someone now holds a database
+  connection for its send (at most 5–15 s). See
+  `.context/privacy/data-erasure.md`.
+
 ## [0.15.0] — 2026-10-21
 
 > **Alpha release.** Twenty-first tagged Sunrise release. **MINOR bump**. It
