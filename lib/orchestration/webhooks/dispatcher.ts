@@ -582,7 +582,9 @@ async function sendUnlessErased(
       record,
       address,
       takenAt,
-      DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'],
+      // An email reaches the person: sent under the locks. A webhook post is
+      // sent once the decision has committed (owner ruling, 2026-10-22).
+      { sendTimeoutMs: DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'], holdAcrossSend: email },
       async (tx, decision) => {
         if (decision.kind === 'stop') {
           await tx.aiWebhookDelivery.updateMany({
@@ -603,19 +605,21 @@ async function sendUnlessErased(
             deliveryId: record.id,
             reason: decision.reason,
           });
-          return null;
-        }
-        let sendBody = body;
-        if (decision.payload !== null) {
+        } else if (decision.payload !== null) {
           await tx.aiWebhookDelivery.updateMany({
             where: { id: record.id },
             data: { payload: decision.payload },
           });
-          sendBody = JSON.stringify({
-            ...toJsonRecord(JSON.parse(body)),
-            ...toJsonRecord(decision.payload),
-          });
         }
+      },
+      (decision) => {
+        const sendBody =
+          decision.payload === null
+            ? body
+            : JSON.stringify({
+                ...toJsonRecord(JSON.parse(body)),
+                ...toJsonRecord(decision.payload),
+              });
         return email
           ? attemptEmailDelivery(record, sub, sendBody)
           : attemptWebhookDelivery(sub, sendBody);
@@ -623,10 +627,9 @@ async function sendUnlessErased(
     );
   } catch (err) {
     // The check could not run — a lock held past its wait, or the database
-    // gone — so nothing was sent; or the transaction failed to commit after
-    // the send. Retried as any failed send is; an email's idempotency key
-    // keeps the second case from reaching the inbox twice, a webhook's
-    // receiver may get it again.
+    // gone — so nothing was sent; or, for an email, its transaction failed to
+    // commit after the send, and its idempotency key keeps the retry from
+    // reaching the inbox twice. Retried either way, uncounted.
     return {
       delivered: false,
       uncounted: true,

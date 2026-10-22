@@ -488,19 +488,23 @@ async function sendUnlessErased(
   post: (payload: HookEventPayload) => Promise<HookPostResult>
 ): Promise<HookPostResult | null> {
   try {
-    return await decideDeliveryUnderLocks(
+    const decided = await decideDeliveryUnderLocks(
       record,
       null,
       takenAt,
-      DISPATCH_TIMEOUT_MS.hook,
+      // Posted once the decision has committed: no connection is held across
+      // the receiver's response (owner ruling, 2026-10-22).
+      { sendTimeoutMs: DISPATCH_TIMEOUT_MS.hook, holdAcrossSend: false },
       async (tx, decision) => {
         const redacted = decision.payload;
-        if (decision.kind === 'send' && redacted === null) return post(payload);
+        if (decision.kind === 'send' && redacted === null) return;
         // Redaction only removes keys from `data`, so the result still parses;
         // one that somehow did not is stopped rather than sent unredacted.
-        const sendable =
-          decision.kind === 'send' ? HookEventPayloadSchema.safeParse(redacted) : null;
-        if (redacted === null || !sendable?.success) {
+        if (
+          decision.kind === 'stop' ||
+          redacted === null ||
+          !HookEventPayloadSchema.safeParse(redacted).success
+        ) {
           await tx.aiEventHookDelivery.updateMany({
             where: { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
             data: {
@@ -515,15 +519,21 @@ async function sendUnlessErased(
           logger.warn('Hook delivery left out: it names a person erased since its event', {
             deliveryId: record.id,
           });
-          return null;
+          return;
         }
         await tx.aiEventHookDelivery.updateMany({
           where: { id: record.id },
           data: { payload: redacted },
         });
-        return post(sendable.data);
+      },
+      (decision) => {
+        if (decision.payload === null) return post(payload);
+        const sendable = HookEventPayloadSchema.safeParse(decision.payload);
+        // One that did not parse was stopped under the locks above: not posted.
+        return sendable.success ? post(sendable.data) : Promise.resolve(null);
       }
     );
+    return decided;
   } catch (err) {
     // The check could not run — a lock held past its wait, or the database
     // gone — so nothing was sent; or the transaction failed to commit after

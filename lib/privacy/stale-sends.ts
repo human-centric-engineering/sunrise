@@ -15,22 +15,26 @@
  * was written after the erasure, on purpose — an address re-entered as a
  * contact — and is sent like any other.
  *
- * **Why the locks, held across the send.** The check alone races an erasure
- * still running: its receipt is not visible until it commits. So the sender
- * takes erasure's advisory lock for everyone the copy names, shared (t-841),
- * and keeps it until the send settles. Whichever gets there first finishes
- * before the other reads: either the send went before the erasure committed,
- * and erasure then redacts the row it left; or the erasure committed first,
- * and the sender sees its receipt. Erasure only tries the locks, and waits
- * outside its transaction when they are busy (t-840). Shared, so two sends to
- * the same person do not wait for each other.
+ * **Why the locks.** The check alone races an erasure still running: its
+ * receipt is not visible until it commits. So the sender takes erasure's
+ * advisory lock for everyone the copy names, shared (t-841), and decides —
+ * and writes what it decided — under them. Whichever gets there first
+ * finishes before the other reads: either the decision committed first, and
+ * an erasure then redacts the row it left; or the erasure committed first, and
+ * the sender sees its receipt. Erasure only tries the locks, and waits outside
+ * its transaction when they are busy (t-840). Shared, so two sends to the
+ * same person do not wait for each other.
  *
- * The cost is a connection held for the send, and only when the copy names
- * someone: a send naming nobody opens no transaction. It is held for at most
- * {@link SENDER_LOCK_WAIT_MS} waiting for the locks, then the send's timeout.
- * A post that went out and whose transaction then failed to commit is reported
- * as failed and retried, so its receiver may get it twice; an email carries an
- * idempotency key, a webhook or hook post does not.
+ * **An email is sent under the locks**; a webhook or hook post after the
+ * decision commits (owner ruling, 2026-10-22). An email reaches the person and
+ * cannot be recalled, so it holds them until it settles, as the notification
+ * step does. A post goes to a third party, and holding a pooled connection
+ * across its response let a burst of retries starve the pool (code review
+ * round 2); an erasure in the moment between still redacts the stored row.
+ *
+ * The cost is a connection held for at most {@link SENDER_LOCK_WAIT_MS}
+ * waiting for the locks, plus an email's send, and only when the copy names
+ * someone: a send naming nobody opens no transaction.
  *
  * @see lib/orchestration/engine/executors/notification.ts — the same shape,
  *      anchored on the run's start (t-841)
@@ -115,11 +119,28 @@ export type DeliveryDecision =
       payload: Prisma.JsonValue | null;
     };
 
+/** How {@link decideDeliveryUnderLocks} sends. */
+export interface DeliverySendOptions {
+  /** How long the send may take, when it is held under the locks. */
+  sendTimeoutMs: number;
+  /**
+   * Send inside the transaction, holding the locks until it settles: for an
+   * email, which reaches the person and cannot be recalled. A webhook or hook
+   * post is sent after the decision commits (owner ruling, 2026-10-22, t-886):
+   * no pooled connection is held across a third party's HTTP response, and an
+   * erasure committing in the moment between still redacts the stored row —
+   * the receiver gets an event decided a moment before it.
+   */
+  holdAcrossSend: boolean;
+}
+
 /**
- * Decide a webhook or event-hook delivery attempt under erasure's locks, and
- * act on the decision inside them (t-886): `act` writes the stop, or stores the
- * redacted payload and sends. The one place both delivery tables decide, so a
- * fix to the rule lands in both.
+ * Decide a webhook or event-hook delivery attempt under erasure's locks (t-886):
+ * `settle` writes the decision in the transaction — the stop, or the redacted
+ * payload — and `send` sends what was decided, inside the transaction or after
+ * it commits ({@link DeliverySendOptions.holdAcrossSend}). Null when the
+ * attempt was stopped. The one place both delivery tables decide, so a fix to
+ * the rule lands in both.
  *
  * **Which copy.** The attempt holds two: the row's payload, from the event
  * when the row was created (or earlier — a run's memory, from when it
@@ -130,18 +151,20 @@ export type DeliveryDecision =
  * came after the row's event, until the row is replaced: the safe side.
  *
  * **A payload naming a conversation or run that is gone** is stopped when
- * anyone at all was erased since: its owner may have cascaded away, and can no
- * longer be named. Receipts carry no org, so an erasure anywhere counts; the
- * cost is a delivery about a conversation deleted for another reason, stopped
- * when an erasure happened within minutes of this attempt.
+ * anyone at all was erased since this attempt's read: its owner may have
+ * cascaded away, and can no longer be named. Receipts carry no org, so an
+ * erasure anywhere counts; the cost is a delivery about a conversation deleted
+ * for another reason, stopped when an erasure happened within minutes of this
+ * attempt.
  */
 export async function decideDeliveryUnderLocks<T>(
   delivery: HeldDelivery,
   address: string | null,
   takenAt: Date,
-  sendTimeoutMs: number,
-  act: (tx: Prisma.TransactionClient, decision: DeliveryDecision) => Promise<T>
-): Promise<T> {
+  options: DeliverySendOptions,
+  settle: (tx: Prisma.TransactionClient, decision: DeliveryDecision) => Promise<void>,
+  send: (decision: Extract<DeliveryDecision, { kind: 'send' }>) => Promise<T>
+): Promise<T | null> {
   const named = await subjectsOfPayload(prisma, delivery.eventType, delivery.payload);
   const since = new Date(
     Math.min(
@@ -150,10 +173,17 @@ export async function decideDeliveryUnderLocks<T>(
       named.runStartedAt?.getTime() ?? Number.POSITIVE_INFINITY
     )
   );
-  return sendHoldingSubjects(
+  type Held =
+    | { stopped: true }
+    | {
+        stopped: false;
+        decision: Extract<DeliveryDecision, { kind: 'send' }>;
+        sent?: { result: T };
+      };
+  const held = await sendHoldingSubjects<Held>(
     { addresses: address ? [address] : [], userIds: [...named.userIds.keys()] },
     since,
-    sendTimeoutMs,
+    options.holdAcrossSend ? options.sendTimeoutMs : 0,
     async (tx, erased) => {
       const recipientErased = address !== null && erased.addresses.includes(address);
       // Since this attempt's read, not the row's creation: a retry days later
@@ -168,14 +198,20 @@ export async function decideDeliveryUnderLocks<T>(
         danglingErased
       );
       if (recipientErased || stop) {
-        return act(tx, {
+        await settle(tx, {
           kind: 'stop',
           reason: recipientErased ? RECIPIENT_ERASED : SUBJECT_ERASED,
           recipientErased,
           payload,
         });
+        return { stopped: true };
       }
-      return act(tx, { kind: 'send', payload });
+      const decision = { kind: 'send' as const, payload };
+      await settle(tx, decision);
+      if (!options.holdAcrossSend) return { stopped: false, decision };
+      return { stopped: false, decision, sent: { result: await send(decision) } };
     }
   );
+  if (held.stopped) return null;
+  return held.sent ? held.sent.result : send(held.decision);
 }

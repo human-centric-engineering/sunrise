@@ -22,7 +22,12 @@ const prismaMock = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: prismaMock }));
 
-import { NOBODY_ERASED, SENDER_LOCK_WAIT_MS, sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import {
+  NOBODY_ERASED,
+  SENDER_LOCK_WAIT_MS,
+  decideDeliveryUnderLocks,
+  sendHoldingSubjects,
+} from '@/lib/privacy/stale-sends';
 import { COPY_CLOCK_SKEW_MS, subjectEmailHash } from '@/lib/privacy/erased-subjects';
 
 const takenAt = new Date('2026-10-22T12:00:00Z');
@@ -138,5 +143,90 @@ describe('sendHoldingSubjects', () => {
       'lock timeout'
     );
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('decideDeliveryUnderLocks (owner ruling, 2026-10-22)', () => {
+  const delivery = {
+    eventType: 'message.created',
+    payload: { event: 'message.created', data: { userId: 'u-1' } },
+    createdAt: takenAt,
+  };
+
+  /** Run the decision, recording whether `send` ran inside the transaction. */
+  async function decide(holdAcrossSend: boolean) {
+    let inTx = false;
+    prismaMock.$transaction.mockImplementation(
+      async (run: (client: typeof tx) => Promise<unknown>) => {
+        inTx = true;
+        try {
+          return await run(tx);
+        } finally {
+          inTx = false;
+        }
+      }
+    );
+    const sentInTx: boolean[] = [];
+    const settle = vi.fn().mockResolvedValue(undefined);
+    const result = await decideDeliveryUnderLocks(
+      delivery,
+      null,
+      takenAt,
+      { sendTimeoutMs: 15_000, holdAcrossSend },
+      settle,
+      async () => {
+        sentInTx.push(inTx);
+        return 'sent';
+      }
+    );
+    return { result, sentInTx, settle };
+  }
+
+  it('posts a webhook or hook after the decision commits: no connection held across it', async () => {
+    const { result, sentInTx, settle } = await decide(false);
+
+    expect(result).toBe('sent');
+    expect(sentInTx).toEqual([false]);
+    expect(settle).toHaveBeenCalledWith(tx, { kind: 'send', payload: null });
+    // The transaction is given no send time, only the lock wait.
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: SENDER_LOCK_WAIT_MS + 0 + 10_000,
+      maxWait: 10_000,
+    });
+  });
+
+  it('sends an email under the locks, until it settles', async () => {
+    const { result, sentInTx } = await decide(true);
+
+    expect(result).toBe('sent');
+    expect(sentInTx).toEqual([true]);
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: SENDER_LOCK_WAIT_MS + 15_000 + 10_000,
+      maxWait: 10_000,
+    });
+  });
+
+  it('settles a stop inside the transaction and sends nothing', async () => {
+    tx.dataErasureReceipt.findMany.mockResolvedValue([
+      { subjectUserId: 'u-1', subjectEmailHash: null, metadata: null },
+    ]);
+    const send = vi.fn();
+    const settle = vi.fn().mockResolvedValue(undefined);
+
+    const result = await decideDeliveryUnderLocks(
+      delivery,
+      null,
+      takenAt,
+      { sendTimeoutMs: 5_000, holdAcrossSend: false },
+      settle,
+      send
+    );
+
+    expect(result).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    expect(settle).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ kind: 'stop', reason: 'subject erased' })
+    );
   });
 });

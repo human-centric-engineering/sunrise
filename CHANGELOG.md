@@ -41,10 +41,12 @@ release process.
   them only as an admin acting is sent without who acted. The
   `send_notification` step's check moves from every erasure ever to erasures
   since its run started, so **an address re-entered after an older erasure is
-  emailed again**. `findErasedSubjects()` takes a `since` option for a fork's
-  own sender of a copy. A delivery naming someone now holds a database
-  connection while it waits for an erasure's locks (up to 30 s) and for its
-  send (5–15 s). See
+  emailed again** — except one resolved from an earlier step's output, whose
+  source erasure never scrubs, which still counts every erasure. `findErasedSubjects()` takes a `since` option for a fork's
+  own sender of a copy. A delivery naming someone holds a database connection
+  while it waits for an erasure's locks (up to 30 s), and an email for its send
+  (15 s); a webhook or hook post goes after the decision commits. A check that
+  cannot run is retried without counting against the delivery's attempts. See
   `.context/privacy/data-erasure.md`.
 
 ## [0.15.0] — 2026-10-21

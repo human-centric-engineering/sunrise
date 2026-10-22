@@ -44,6 +44,7 @@ import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import {
   boundLockWaits,
   findErasedSubjects,
+  matchErasedSubjects,
   SUBJECT_LOCK_WAIT_MS,
 } from '@/lib/privacy/erased-subjects';
 
@@ -143,6 +144,32 @@ function resolveRecipients(
   return Array.isArray(to) ? to.map(resolveOne) : resolveOne(to);
 }
 
+/** A `{{…}}` placeholder's expression. */
+const PLACEHOLDER = /\{\{\s*([^}]*?)\s*\}\}/g;
+
+/**
+ * The resolved recipients that came from somewhere erasure does not scrub
+ * (owner ruling, 2026-10-22, t-886): any `to` entry with a placeholder other
+ * than `{{input}}` / `{{input.…}}` — an earlier step's output, read from a
+ * knowledge document, a conversation or an outside system. A literal address
+ * is in the definition and `{{input…}}` in the run's input, both of which
+ * erasure scrubs; those keep the since-run-started rule.
+ */
+function recipientsFromUnscrubbedSources(
+  to: string | string[],
+  resolved: string | string[]
+): Set<string> {
+  const raws = Array.isArray(to) ? to : [to];
+  const values = Array.isArray(resolved) ? resolved : [resolved];
+  const out = new Set<string>();
+  raws.forEach((raw, i) => {
+    const expressions = [...raw.matchAll(PLACEHOLDER)].map((m) => m[1]);
+    const fromInput = (expr: string) => expr === 'input' || expr.startsWith('input.');
+    if (expressions.some((expr) => !fromInput(expr))) out.add(normaliseAddress(values[i]));
+  });
+  return out;
+}
+
 /**
  * Send to the recipients who have not been erased (t-841).
  *
@@ -152,7 +179,10 @@ function resolveRecipients(
  * since the run started, and send — holding the locks until the send has
  * settled. Since the run started, not ever (§122 t-886): someone erased before
  * it started is not in what it read, so a `to` naming them was written after
- * the erasure, on purpose — an address re-entered as a contact.
+ * the erasure, on purpose — an address re-entered as a contact. Except a
+ * recipient resolved from an earlier step's output (`unscrubbed`): its source
+ * — a knowledge document, a conversation, an outside system — is never
+ * scrubbed, so anyone ever erased is left out (owner ruling, 2026-10-22).
  * Whichever of this and an erasure takes the lock first finishes before the
  * other reads: either the receipt is seen and the person is left out, or the
  * email went before the erasure committed. Erasure only tries the lock, and
@@ -168,7 +198,11 @@ async function sendToLiveRecipients(
   send: (to: string | string[], signal: AbortSignal, idempotencyKey: string) => Promise<SendResult>,
   ctx: Readonly<ExecutionContext>,
   stepId: string,
-  { content, deadline }: { content: string; deadline: number | null }
+  {
+    content,
+    deadline,
+    unscrubbed,
+  }: { content: string; deadline: number | null; unscrubbed: ReadonlySet<string> }
 ): Promise<{ result: SendResult; to: string | string[]; leftOut: number }> {
   const list = Array.isArray(to) ? to : [to];
   // A retry of a cancelled run's step does not open a transaction to wait in
@@ -201,7 +235,12 @@ async function sendToLiveRecipients(
         { addresses: list },
         { shared: true, since: run ? (run.startedAt ?? run.createdAt) : undefined }
       );
-      const gone = new Set(erased.addresses);
+      // The unscrubbed ones also against every erasure ever, under the locks
+      // just taken.
+      const everErased = unscrubbed.size
+        ? await matchErasedSubjects(tx, { addresses: [...unscrubbed] })
+        : { addresses: [] };
+      const gone = new Set([...erased.addresses, ...everErased.addresses]);
       const kept = list.filter((address) => !gone.has(normaliseAddress(address)));
       if (kept.length === 0) {
         throw new ExecutorError(
@@ -356,7 +395,11 @@ async function executeNotification(
           }),
         ctx,
         step.id,
-        { content: `${subject}\n${body}`, deadline }
+        {
+          content: `${subject}\n${body}`,
+          deadline,
+          unscrubbed: recipientsFromUnscrubbedSources(config.to, resolved),
+        }
       );
 
       // A send the run's cancel aborted reports failed: not a send to retry.

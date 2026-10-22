@@ -658,7 +658,11 @@ transaction):
 
    - **A `send_notification` email step** checks its resolved recipients
      against the receipts of erasures **since the run started** (§122 t-886:
-     someone erased before it started and since re-entered is emailed), under
+     someone erased before it started and since re-entered is emailed) — except
+     a recipient resolved from an earlier step's output (any placeholder but
+     `{{input…}}`), checked against every erasure ever, since a knowledge
+     document, conversation or outside system it came from is never scrubbed
+     (owner ruling, 2026-10-22) — under
      the subjects' locks, in the transaction it sends in, and holds the locks
      until the send settles. It takes them
      shared, so two sends to one address run side by side; only an erasure,
@@ -899,8 +903,12 @@ and the **escalation email** run through `sendHoldingSubjects()`
 takes erasure's locks, shared, for the email address and everyone the payload
 names (`subjectsOfPayload`: `userId`, `actorUserId`, `approverUserIds`, and
 the owners of its `conversationId` and `executionId`), asks who among them was
-erased **since the copy was taken**, and holds the locks until the send
-settles. The copy's time is the **oldest** thing the attempt holds, less
+erased **since the copy was taken**, and writes what it decided under them.
+**An email is sent under the locks**, held until it settles: it reaches the
+person and cannot be recalled. **A webhook or hook post goes after the
+decision commits** (owner ruling, 2026-10-22): no pooled connection waits on a
+third party's response, and an erasure in the moment between still redacts the
+stored row. The copy's time is the **oldest** thing the attempt holds, less
 `COPY_CLOCK_SKEW_MS` (5 min: erasure stamps its receipt up to 60 s before it
 commits, on another host's clock):
 
@@ -928,19 +936,17 @@ erasure, on purpose, and is sent. An auth or invitation email is never checked:
 it goes to a live account or to an address the admin just typed.
 
 The cost is a connection held for up to `SENDER_LOCK_WAIT_MS` (30 s) waiting
-for an erasure's or a backup import's locks, then across the send (5 s for a
-webhook, 15 s for an email, 10 s for a hook), and only when the copy names
-someone. A wait past 30 s — or any other failure of the check — sends nothing
+for an erasure's or a backup import's locks, plus an email's send (15 s), and
+only when the copy names someone. A wait past 30 s — or any other failure of the check — sends nothing
 and is retried, **without counting against the subscription's attempts**:
 lock contention is not the receiver failing, and must not exhaust a live
 delivery. The escalation webhook does not wait behind its email, and the
 escalation is kept alive past the response that set it off.
 
-Two costs accepted with it:
+Costs accepted with it:
 
-- **A post that went out, whose transaction then failed to commit**, is
-  recorded as failed and retried. An email carries an idempotency key; a
-  webhook or hook receiver may get the event twice.
+- **An email that went out, whose transaction then failed to commit**, is
+  retried; its Resend idempotency key keeps it from reaching the inbox twice.
 - **A payload naming a conversation or run that is gone** is stopped whenever
   anyone was erased since, because receipts carry no org and the owner can no
   longer be named. A delivery about a conversation deleted for another reason,
