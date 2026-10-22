@@ -29,6 +29,16 @@ release process.
 
 ### Changed
 
+- **A backup import strips only people erased after the bundle was exported
+  (§122, t-902).** `POST /backup/import` used to strip every erased person's
+  address and approver id from what it wrote, however long ago they were
+  erased, including an address an admin re-added on purpose after the erasure.
+  It now counts only erasures since the bundle's `exportedAt`, less five
+  minutes for clock skew. An `exportedAt` that does not parse, or lies further
+  in the future than that, counts every erasure, as before. A bundle with no
+  `exportedAt` is still refused. See `.context/privacy/data-erasure.md`
+  ("Backup import").
+
 - **Actions on a run read and write it under its row lock (§122, t-901).**
   Approve, reject and retry-step now take the run's row lock before reading
   its trace (`withRunRowLocked()`, `lib/orchestration/engine/run-row-lock.ts`),

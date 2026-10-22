@@ -776,7 +776,7 @@ what it is about to write names an erased person —
 | `rollback`                                                                 | the same, in the target snapshot                                                                          | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
 | `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                                                            | 400 on the field                                                                                                                                                                                                                    |
 | `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                                                           | 400 on the field                                                                                                                                                                                                                    |
-| Backup import                                                              | all of the above in the bundle                                                                            | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
+| Backup import                                                              | all of the above in the bundle, against erasures since its `exportedAt` (t-902)                           | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
 | Scheduler tick (`processDueSchedules`)                                     | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                   |
 
 The tick reads its schedules at the top of the tick, and an erasure can commit
@@ -934,6 +934,28 @@ afterwards. It passes with the lock removed too: in the orders it can stage,
 erasure's own later passes reach the write. The old failure needs an action
 that read before an erasure and wrote after it had finished, which the lock
 removes by construction.
+
+### Backup import (`taken-at`, t-902)
+
+A bundle is a copy taken at its `exportedAt`. Someone erased before then is
+not in it, so a bundle that names them had them added back after the erasure,
+on purpose, and the import keeps them. Only people erased **since**
+`exportedAt`, less `COPY_CLOCK_SKEW_MS`, are stripped from the workflows,
+email subscriptions and escalation list it writes, with the same warnings as
+before (`bundleTakenAt` in `lib/orchestration/backup/importer.ts`).
+
+`exportedAt` is whatever the uploaded file says:
+
+- **Missing**: the schema refuses the bundle, as it always has.
+- **Does not parse**: read as the epoch, so everyone ever erased is stripped.
+- **In the future by more than the skew margin**: also the epoch. No export was
+  taken then, and read as it stands it would leave out everyone erased before
+  the import. Within the margin, it is another host's clock running ahead and
+  is clamped to the import's time.
+- **A past date written by hand** leaves out everyone erased before it. The
+  admin who uploads it can type the same addresses into a workflow, a
+  subscription or the escalation list directly, so the field grants nothing
+  new.
 
 ### Deliveries and emails sent from a copy (`taken-at`, t-886)
 
