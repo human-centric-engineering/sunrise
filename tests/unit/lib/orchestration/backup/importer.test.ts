@@ -2729,10 +2729,6 @@ describe('bundleTakenAt (§122 t-902)', () => {
     expect(bundleTakenAt('2026-06-01T09:30:00Z', NOW)).toEqual(new Date('2026-06-01T09:30:00Z'));
   });
 
-  it('reads a missing exportedAt as the epoch, so every erasure counts', () => {
-    expect(bundleTakenAt(undefined, NOW)).toEqual(new Date(0));
-  });
-
   it('reads an exportedAt that does not parse as the epoch', () => {
     expect(bundleTakenAt('last tuesday', NOW)).toEqual(new Date(0));
     expect(bundleTakenAt('', NOW)).toEqual(new Date(0));
@@ -2824,16 +2820,21 @@ describe("importOrchestrationConfig — only people erased after the bundle's ex
     expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
   });
 
-  it.each([
-    ['missing', undefined],
-    ['unparseable', 'not a date'],
-  ])('strips an address erased before the export when exportedAt is %s', async (_label, at) => {
+  it('strips an address erased before the export when exportedAt does not parse', async () => {
     receiptsErasedAt(new Date('2026-01-01T00:00:00Z'));
 
-    const result = await importOrchestrationConfig(bundle(at), 'user-1', SHARED_SCOPE);
+    const result = await importOrchestrationConfig(bundle('not a date'), 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
     expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
+  });
+
+  it('refuses a bundle with no exportedAt, as before, importing nothing', async () => {
+    await expect(
+      importOrchestrationConfig(bundle(undefined), 'user-1', SHARED_SCOPE)
+    ).rejects.toThrow();
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
   });
 
   it('strips an address erased long before the import when exportedAt is in the future', async () => {

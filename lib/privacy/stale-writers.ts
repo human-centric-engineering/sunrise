@@ -137,7 +137,7 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'taken-at',
     how:
       'Imports workflow snapshots. ' +
-      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. An " +
       'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
   },
   {
@@ -146,7 +146,7 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'taken-at',
     how:
       'Imports subscriptions. ' +
-      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. An " +
       'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
   },
   {
@@ -155,7 +155,7 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'taken-at',
     how:
       'Imports the escalation list. ' +
-      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. An " +
       'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
   },
   {

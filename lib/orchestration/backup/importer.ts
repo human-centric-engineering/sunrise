@@ -947,9 +947,10 @@ async function importedWorkflowProviderWarnings(
 /**
  * When a bundle's copy was taken, for the erased-person check (§122 t-902).
  *
- * `exportedAt` is whatever the uploaded file says. One that is missing or does
- * not parse is read as the epoch, so everyone ever erased is stripped — the
- * check before t-902. So is one further in the future than
+ * `exportedAt` is whatever the uploaded file says; the schema refuses a bundle
+ * without one, as it always has. One that does not parse is read as the epoch,
+ * so everyone ever erased is stripped — the check before t-902. So is one
+ * further in the future than
  * {@link COPY_CLOCK_SKEW_MS}: no export was taken then, and read as it stands
  * it would leave out everyone erased before the import. One within that margin
  * is another host's clock running ahead, and is clamped to `now`.
@@ -958,8 +959,8 @@ async function importedWorkflowProviderWarnings(
  * it. That admin can type the same addresses into the workflow, subscription
  * or escalation list directly, so the field grants nothing new.
  */
-export function bundleTakenAt(exportedAt: string | undefined, now: Date): Date {
-  const at = exportedAt === undefined ? Number.NaN : Date.parse(exportedAt);
+export function bundleTakenAt(exportedAt: string, now: Date): Date {
+  const at = Date.parse(exportedAt);
   if (Number.isNaN(at) || at > now.getTime() + COPY_CLOCK_SKEW_MS) return new Date(0);
   return new Date(Math.min(at, now.getTime()));
 }
