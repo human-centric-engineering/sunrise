@@ -22,9 +22,12 @@
  *
  * What it cannot show is the old failure itself: an action that read before
  * an erasure and wrote after the erasure had finished. Staging that needs a
- * stall between the read and the write, which the lock now removes by
- * construction; `run-row-lock.test.ts` and `approval-actions.test.ts` hold
- * the order (lock, then read).
+ * stall between the read and the write that does not also hold the row — and
+ * anything that stalls the write on the row stalls the erasure too. So this
+ * passes with the lock removed as well (measured): in both orders staged here
+ * erasure's own later passes reach the action's write. It proves the outcome
+ * under real locking; `run-row-lock.test.ts` and `approval-actions.test.ts`
+ * hold the order the fix depends on (lock, then read).
  *
  * Run with:
  *   npm run smoke:erasure-run-actions
