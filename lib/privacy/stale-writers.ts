@@ -100,7 +100,7 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
 export type StaleWriteAnchor = 'version' | 'row-lock' | 'taken-at' | 'intent' | 'erasure' | 'seed';
 
 /** The §122 tasks that convert a `pending` writer. */
-export type StaleWriterTask = 't-899' | 't-900' | 't-902';
+export type StaleWriterTask = 't-899' | 't-900';
 
 interface StaleWriterBase {
   /** Repo-relative path of the file that writes. */
@@ -131,6 +131,33 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
   // ---------------------------------------------------------------------
   // Settled.
   // ---------------------------------------------------------------------
+  {
+    file: 'lib/orchestration/backup/importer.ts',
+    model: 'AiWorkflowVersion',
+    anchor: 'taken-at',
+    how:
+      'Imports workflow snapshots. ' +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
+  },
+  {
+    file: 'lib/orchestration/backup/importer.ts',
+    model: 'AiWebhookSubscription',
+    anchor: 'taken-at',
+    how:
+      'Imports subscriptions. ' +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
+  },
+  {
+    file: 'lib/orchestration/backup/importer.ts',
+    model: 'AiOrchestrationSettings',
+    anchor: 'taken-at',
+    how:
+      'Imports the escalation list. ' +
+      "Strips anyone erased after the bundle's `exportedAt`, under erasure's locks. A missing or " +
+      'unparseable `exportedAt`, or one beyond the clock-skew margin ahead, counts every erasure (t-902).',
+  },
   {
     file: 'lib/orchestration/engine/orchestration-engine.ts',
     model: 'AiWorkflowExecution',
@@ -357,26 +384,5 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'pending',
     task: 't-900',
     how: 'Publishes and rolls back snapshots. Refuses or strips anyone ever erased.',
-  },
-  {
-    file: 'lib/orchestration/backup/importer.ts',
-    model: 'AiWorkflowVersion',
-    anchor: 'pending',
-    task: 't-902',
-    how: "Imports workflow snapshots. Strips anyone ever erased; ignores the bundle's `exportedAt`.",
-  },
-  {
-    file: 'lib/orchestration/backup/importer.ts',
-    model: 'AiWebhookSubscription',
-    anchor: 'pending',
-    task: 't-902',
-    how: "Imports subscriptions. Strips anyone ever erased; ignores the bundle's `exportedAt`.",
-  },
-  {
-    file: 'lib/orchestration/backup/importer.ts',
-    model: 'AiOrchestrationSettings',
-    anchor: 'pending',
-    task: 't-902',
-    how: "Imports the escalation list. Strips anyone ever erased; ignores the bundle's `exportedAt`.",
   },
 ];

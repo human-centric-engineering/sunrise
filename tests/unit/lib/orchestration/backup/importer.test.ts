@@ -10,7 +10,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The org's provider policy (§120 t-743): approves everything unless a test
 // refuses a slug.
@@ -124,10 +124,11 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', async (importOriginal) => (
 import {
   IMPORTED_FROM_SLUG_KEY,
   IMPORT_TRANSACTION_TIMEOUT_MS,
+  bundleTakenAt,
   importOrchestrationConfig,
   isWorkflowSlugConflict,
 } from '@/lib/orchestration/backup/importer';
-import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
+import { COPY_CLOCK_SKEW_MS, SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { getTenantContext } from '@/lib/tenancy/context';
@@ -2718,5 +2719,133 @@ describe('isWorkflowSlugConflict', () => {
 
   it('is false for a plain Error', () => {
     expect(isWorkflowSlugConflict(new Error('boom'))).toBe(false);
+  });
+});
+
+describe('bundleTakenAt (§122 t-902)', () => {
+  const NOW = new Date('2026-10-22T12:00:00Z');
+
+  it("reads a past exportedAt as the bundle's age", () => {
+    expect(bundleTakenAt('2026-06-01T09:30:00Z', NOW)).toEqual(new Date('2026-06-01T09:30:00Z'));
+  });
+
+  it('reads a missing exportedAt as the epoch, so every erasure counts', () => {
+    expect(bundleTakenAt(undefined, NOW)).toEqual(new Date(0));
+  });
+
+  it('reads an exportedAt that does not parse as the epoch', () => {
+    expect(bundleTakenAt('last tuesday', NOW)).toEqual(new Date(0));
+    expect(bundleTakenAt('', NOW)).toEqual(new Date(0));
+  });
+
+  it('clamps an exportedAt a host clock ahead, within the skew margin, to now', () => {
+    const ahead = new Date(NOW.getTime() + COPY_CLOCK_SKEW_MS).toISOString();
+    expect(bundleTakenAt(ahead, NOW)).toEqual(NOW);
+  });
+
+  it('reads an exportedAt further in the future than the margin as the epoch', () => {
+    const beyond = new Date(NOW.getTime() + COPY_CLOCK_SKEW_MS + 1).toISOString();
+    expect(bundleTakenAt(beyond, NOW)).toEqual(new Date(0));
+    expect(bundleTakenAt('2099-01-01T00:00:00Z', NOW)).toEqual(new Date(0));
+  });
+});
+
+describe("importOrchestrationConfig — only people erased after the bundle's exportedAt (§122 t-902)", () => {
+  const EXPORTED_AT = '2026-06-01T00:00:00Z';
+  const ADDRESS = 'readded@example.com';
+
+  /**
+   * Receipts as Postgres would return them for the importer's query: only
+   * those at or after the query's `erasedAt.gte`, when it sets one. So the
+   * test follows the anchor the importer chose, not a canned answer.
+   */
+  function receiptsErasedAt(erasedAt: Date) {
+    mockTx.dataErasureReceipt.findMany.mockImplementation(((args: {
+      where: { erasedAt?: { gte: Date } };
+    }) => {
+      const gte = args.where.erasedAt?.gte;
+      return Promise.resolve(gte && erasedAt < gte ? [] : [erasedAddressReceipt(ADDRESS)]);
+    }) as never);
+  }
+
+  function bundle(exportedAt: unknown) {
+    const { exportedAt: _omit, ...rest } = minPayload;
+    return {
+      ...rest,
+      ...(exportedAt === undefined ? {} : { exportedAt }),
+      data: {
+        ...minPayload.data,
+        webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: ADDRESS })],
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    mockTx.aiWebhookSubscription.findFirst.mockReset();
+    mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+    mockTx.aiWebhookSubscription.create.mockReset();
+    mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks only for erasures since the export, less the clock-skew margin', async () => {
+    receiptsErasedAt(new Date('2026-01-01T00:00:00Z'));
+
+    await importOrchestrationConfig(bundle(EXPORTED_AT), 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        erasedAt: { gte: new Date(Date.parse(EXPORTED_AT) - COPY_CLOCK_SKEW_MS) },
+      },
+    });
+  });
+
+  it('keeps an address erased before the export: it was re-added on purpose', async () => {
+    receiptsErasedAt(new Date('2026-01-01T00:00:00Z'));
+
+    const result = await importOrchestrationConfig(bundle(EXPORTED_AT), 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
+    expect(result.webhooks.created).toBe(1);
+    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(false);
+  });
+
+  it('strips an address erased after the export, and warns', async () => {
+    receiptsErasedAt(new Date('2026-07-01T00:00:00Z'));
+
+    const result = await importOrchestrationConfig(bundle(EXPORTED_AT), 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['unparseable', 'not a date'],
+  ])('strips an address erased before the export when exportedAt is %s', async (_label, at) => {
+    receiptsErasedAt(new Date('2026-01-01T00:00:00Z'));
+
+    const result = await importOrchestrationConfig(bundle(at), 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
+  });
+
+  it('strips an address erased long before the import when exportedAt is in the future', async () => {
+    receiptsErasedAt(new Date('2026-01-01T00:00:00Z'));
+
+    const result = await importOrchestrationConfig(
+      bundle('2099-01-01T00:00:00Z'),
+      'user-1',
+      SHARED_SCOPE
+    );
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
   });
 });

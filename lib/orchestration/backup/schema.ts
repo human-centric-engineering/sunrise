@@ -200,7 +200,9 @@ export const IMPORTED_FROM_SLUG_KEY = 'importedFromSlug';
 //        import: the importer falls back to hash lookup when slugs are absent.
 export const backupSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-  exportedAt: z.string(),
+  // Read by the importer as when the copy was taken (§122 t-902). Optional: a
+  // bundle without it imports as one taken at the epoch.
+  exportedAt: z.string().optional(),
   data: z.object({
     agents: z.array(agentBackupSchema),
     capabilities: z.array(capabilityBackupSchema),
