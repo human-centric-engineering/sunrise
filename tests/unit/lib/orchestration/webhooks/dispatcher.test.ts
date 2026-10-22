@@ -2348,6 +2348,10 @@ describe('a delivery built from a copy taken before an erasure (t-886)', () => {
           status: 'failed',
           lastError:
             'Could not check for an erasure before sending: canceling statement due to lock timeout',
+          // Nothing was sent, so it is not an attempt: lock contention must
+          // not exhaust a live delivery (code review round 2).
+          attempts: 0,
+          nextRetryAt: expect.any(Date),
         }),
       })
     );

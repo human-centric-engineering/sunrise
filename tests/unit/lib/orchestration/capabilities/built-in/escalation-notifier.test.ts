@@ -31,6 +31,7 @@ vi.mock('@/lib/email/send', () => ({
 // The locks and the receipt query are `stale-sends.test.ts`'s; here, what the
 // notifier does with the answer.
 const erasedSince = vi.hoisted(() => ({ addresses: [] as string[] }));
+const erasedUserIds = vi.hoisted(() => ({ ids: [] as string[] }));
 vi.mock('@/lib/privacy/stale-sends', () => ({
   sendHoldingSubjects: vi.fn(
     (
@@ -38,7 +39,7 @@ vi.mock('@/lib/privacy/stale-sends', () => ({
       _takenAt: Date,
       _timeoutMs: number,
       send: (tx: unknown, erased: { addresses: string[]; userIds: string[] }) => Promise<unknown>
-    ) => send({}, { addresses: erasedSince.addresses, userIds: [] })
+    ) => send({}, { addresses: erasedSince.addresses, userIds: erasedUserIds.ids })
   ),
 }));
 
@@ -538,6 +539,7 @@ describe('people erased since the list was read (t-886)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     erasedSince.addresses = [];
+    erasedUserIds.ids = [];
     vi.mocked(sendEmail).mockResolvedValue({ status: 'sent', success: true } as never);
   });
 
@@ -556,7 +558,11 @@ describe('people erased since the list was read (t-886)', () => {
     await notifyEscalation(makePayload());
 
     const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
-    expect(subjects).toEqual({ addresses: ['ops@example.com', 'lead@example.com'] });
+    // The recipients, and the person the escalation is about.
+    expect(subjects).toEqual({
+      addresses: ['ops@example.com', 'lead@example.com'],
+      userIds: ['user-1'],
+    });
     // Taken no later than the read, so nothing on the list is newer than it.
     expect(readAt).toBeGreaterThan(0);
     expect(takenAt.getTime()).toBeLessThanOrEqual(readAt);
@@ -638,5 +644,19 @@ describe('people erased since the list was read (t-886)', () => {
     expect(settled).toBe(false);
     finishEmail();
     await notifying;
+  });
+
+  it('sends no email about a person erased since, whose reason and thread it carries', async () => {
+    erasedUserIds.ids = ['user-1'];
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettings({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' }) as never
+    );
+
+    await notifyEscalation(makePayload());
+
+    expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'Escalation email not sent: the person it is about was erased'
+    );
   });
 });

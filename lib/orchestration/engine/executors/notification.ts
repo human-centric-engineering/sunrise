@@ -39,6 +39,7 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
 import { notificationToSchema } from '@/lib/validations/orchestration';
 import { prisma } from '@/lib/db/client';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import {
   boundLockWaits,
@@ -187,10 +188,14 @@ async function sendToLiveRecipients(
       // The run's start is when it took its copy, as the engine's own writes
       // count it (`findErasedSinceRunStarted`, t-843). A run that cannot be
       // found counts every erasure: the stricter reading.
-      const run = await tx.aiWorkflowExecution.findUnique({
-        where: { id: ctx.executionId },
-        select: { startedAt: true, createdAt: true },
-      });
+      // Across owners: an approver resuming someone else's run is a narrowed
+      // caller, and the owner layer would refuse the read; only the time leaves.
+      const run = await runAcrossOwners('notification step: its own run’s start', () =>
+        tx.aiWorkflowExecution.findUnique({
+          where: { id: ctx.executionId },
+          select: { startedAt: true, createdAt: true },
+        })
+      );
       const erased = await findErasedSubjects(
         tx,
         { addresses: list },

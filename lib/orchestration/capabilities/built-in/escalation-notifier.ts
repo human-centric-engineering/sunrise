@@ -24,6 +24,7 @@ import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 // Single implementation, deliberately shared: this used to be a private copy,
 // and hardening one while the settings API kept the other is what opened the
 // recipient-list data-loss path (#553).
@@ -73,15 +74,23 @@ function meetsPriorityThreshold(
  */
 async function emailLiveRecipients(
   recipients: string[],
+  subjectUserId: string | null,
   takenAt: Date,
   message: Pick<Parameters<typeof sendEmail>[0], 'subject' | 'react'>
 ): Promise<void> {
   try {
     await sendHoldingSubjects(
-      { addresses: recipients },
+      { addresses: recipients, userIds: subjectUserId ? [subjectUserId] : [] },
       takenAt,
       ESCALATION_EMAIL_TIMEOUT_MS,
       async (_tx, erased) => {
+        // The escalation is about this person's conversation: erased since,
+        // the email (their reason, their thread) is not sent, as a delivery
+        // about their activity is not (code review round 2).
+        if (subjectUserId && erased.userIds.includes(subjectUserId)) {
+          logger.warn('Escalation email not sent: the person it is about was erased');
+          return;
+        }
         const gone = new Set(erased.addresses);
         const kept = recipients.filter((address) => !gone.has(normaliseAddress(address)));
         if (kept.length < recipients.length) {
@@ -122,7 +131,15 @@ async function emailLiveRecipients(
  * priority filter, sends emails and optionally POSTs to webhookUrl.
  * All errors are caught and logged — this must never throw.
  */
-export async function notifyEscalation(payload: EscalationPayload): Promise<void> {
+export function notifyEscalation(payload: EscalationPayload): Promise<void> {
+  // Kept alive past the response, as a webhook dispatch is (t-903): the email
+  // can wait for an erasure's locks, and a frozen function would drop it.
+  const notifying = notify(payload);
+  keepRunningAfterResponse(notifying, 'Escalation notification', { agentId: payload.agentId });
+  return notifying;
+}
+
+async function notify(payload: EscalationPayload): Promise<void> {
   try {
     // Before the read: the list is the copy the email is sent from (t-886).
     const takenAt = new Date();
@@ -144,7 +161,7 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
     // webhook must not wait behind it. Never rejects.
     const emailed =
       config.emailAddresses.length > 0
-        ? emailLiveRecipients(config.emailAddresses, takenAt, {
+        ? emailLiveRecipients(config.emailAddresses, payload.userId, takenAt, {
             subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
             react: EscalationNotification({
               agentName,

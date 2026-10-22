@@ -1121,7 +1121,10 @@ describe('a payload with the people erased since taken out (t-886)', () => {
   });
 
   it('stops a dangling payload, to its record keys, only when someone was erased since', () => {
-    const payload = { event: 'e', data: { conversationId: 'gone', prompt: 'theirs' } };
+    const payload = {
+      event: 'e',
+      data: { conversationId: 'gone', prompt: 'theirs', actorUserName: 'Ada', userId: 'u-x' },
+    };
     const dangling = { userIds: new Map<string, 'activity' | 'actor'>(), dangling: true };
 
     expect(withoutErasedSubjects(payload, dangling, [], true)).toEqual({

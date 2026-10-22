@@ -2094,6 +2094,9 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
             status: 'failed',
             lastError:
               'Could not check for an erasure before sending: canceling statement due to lock timeout',
+            // Not an attempt: nothing was posted (code review round 2).
+            attempts: 0,
+            nextRetryAt: expect.any(Date),
           }),
         })
       )

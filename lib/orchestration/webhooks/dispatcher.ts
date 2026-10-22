@@ -433,7 +433,18 @@ async function recordSettledAttempt(
  */
 type DeliveryOutcome =
   | { delivered: true; statusCode?: number }
-  | { delivered: false; error: string; statusCode?: number; terminal?: boolean };
+  | {
+      delivered: false;
+      error: string;
+      statusCode?: number;
+      terminal?: boolean;
+      /**
+       * Nothing was sent: the erasure check could not run (t-886). Retried,
+       * but not counted against the policy's attempts — a backup import or a
+       * busy pool is not the receiver failing, and must not exhaust the row.
+       */
+      uncounted?: boolean;
+    };
 
 /** What an attempt reads off its delivery row. */
 type AttemptRecord = DeliveryLike & {
@@ -493,14 +504,14 @@ async function attemptDelivery(
 
   if (!delivery) return;
 
-  const newAttempts = delivery.attempts + 1;
+  const newAttempts = delivery.attempts + (outcome.uncounted ? 0 : 1);
   // `terminal` forces exhausted regardless of attempt count.
   const exhausted = outcome.terminal === true || newAttempts >= policy.maxAttempts;
 
   // After attempt N fails, the next delay is policy.retryBackoffMs[N-1].
   // If the array is shorter than maxAttempts-1, fall back to the last
   // configured delay so we never trip an out-of-bounds undefined.
-  const backoffIndex = Math.min(newAttempts - 1, policy.retryBackoffMs.length - 1);
+  const backoffIndex = Math.min(Math.max(newAttempts, 1) - 1, policy.retryBackoffMs.length - 1);
   const retryDelay = backoffIndex >= 0 ? policy.retryBackoffMs[backoffIndex] : undefined;
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
@@ -618,6 +629,7 @@ async function sendUnlessErased(
     // receiver may get it again.
     return {
       delivered: false,
+      uncounted: true,
       error: `Could not check for an erasure before sending: ${err instanceof Error ? err.message : String(err)}`,
     };
   }

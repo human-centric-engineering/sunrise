@@ -133,7 +133,7 @@ export type DeliveryDecision =
  * anyone at all was erased since: its owner may have cascaded away, and can no
  * longer be named. Receipts carry no org, so an erasure anywhere counts; the
  * cost is a delivery about a conversation deleted for another reason, stopped
- * when an erasure happened within minutes of it.
+ * when an erasure happened within minutes of this attempt.
  */
 export async function decideDeliveryUnderLocks<T>(
   delivery: HeldDelivery,
@@ -156,7 +156,11 @@ export async function decideDeliveryUnderLocks<T>(
     sendTimeoutMs,
     async (tx, erased) => {
       const recipientErased = address !== null && erased.addresses.includes(address);
-      const danglingErased = named.dangling && (await anyoneErasedSince(tx, since));
+      // Since this attempt's read, not the row's creation: a retry days later
+      // would otherwise count every erasure in the meantime, in any org. A
+      // row created in the window erasure's pass missed is caught by its
+      // first attempt, whose read is that recent (code review round 2).
+      const danglingErased = named.dangling && (await anyoneErasedSince(tx, takenAt));
       const { payload, stop } = withoutErasedSubjects(
         delivery.payload,
         named,

@@ -361,9 +361,9 @@ async function attemptDelivery(
   });
   if (!delivery) return;
 
-  const newAttempts = delivery.attempts + 1;
+  const newAttempts = delivery.attempts + (posted.uncounted ? 0 : 1);
   const exhausted = newAttempts >= MAX_ATTEMPTS;
-  const retryDelay = RETRY_DELAYS_MS[newAttempts - 1];
+  const retryDelay = RETRY_DELAYS_MS[Math.max(newAttempts, 1) - 1];
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
   // Conditional for the same reason as the delivered write: one an erasure
@@ -415,7 +415,9 @@ type AttemptRecord = DeliveryLike & {
 
 /** How one POST to a hook went. */
 type HookPostResult =
-  { ok: true; statusCode: number } | { ok: false; statusCode?: number; error: string };
+  | { ok: true; statusCode: number }
+  /** `uncounted`: nothing was posted, as the dispatcher's outcome (t-886). */
+  | { ok: false; statusCode?: number; error: string; uncounted?: boolean };
 
 /** POST `payload` to the hook, signed when it has a secret. Never throws. */
 async function postHook(
@@ -529,6 +531,7 @@ async function sendUnlessErased(
     // post is.
     return {
       ok: false,
+      uncounted: true,
       error: `Could not check for an erasure before sending: ${err instanceof Error ? err.message : String(err)}`,
     };
   }

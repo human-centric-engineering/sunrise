@@ -920,6 +920,7 @@ subscription after an erasure that followed the row's event: the safe side.
 | Only an admin acting on configuration (`actor`)                     | Sent without who acted; the row's payload is redacted to match.                                               |
 | A conversation or run that no longer exists, with any erasure since | Not sent: its owner can no longer be named. Kept to its record keys and stopped.                              |
 | A recipient of the escalation email                                 | Left out; the rest are emailed. The log counts them, never names them.                                        |
+| The person the escalation is about                                  | The email is not sent: it carries their reason and their thread.                                              |
 
 A stopped row is never retried or replayed (t-793). Someone erased **before**
 the copy was taken is not in it, so a copy naming them was written after the
@@ -929,8 +930,11 @@ it goes to a live account or to an address the admin just typed.
 The cost is a connection held for up to `SENDER_LOCK_WAIT_MS` (30 s) waiting
 for an erasure's or a backup import's locks, then across the send (5 s for a
 webhook, 15 s for an email, 10 s for a hook), and only when the copy names
-someone. A wait past 30 s fails the attempt, which is retried like any failed
-send. The escalation webhook does not wait behind its email.
+someone. A wait past 30 s — or any other failure of the check — sends nothing
+and is retried, **without counting against the subscription's attempts**:
+lock contention is not the receiver failing, and must not exhaust a live
+delivery. The escalation webhook does not wait behind its email, and the
+escalation is kept alive past the response that set it off.
 
 Two costs accepted with it:
 

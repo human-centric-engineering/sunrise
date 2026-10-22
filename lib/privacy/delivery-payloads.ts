@@ -429,8 +429,12 @@ export function withoutErasedSubjects(
   }
   if (subjects.dangling && danglingErased) {
     // Nobody left to name: the conversation or run is gone, and with it who it
-    // was about. Kept to its record keys, as an `activity` row is.
-    next = erasedPayload(next, 'activity', '');
+    // was about. Kept to its record keys only — no person key either, since
+    // the id or name left in one may be the owner's (code review round 2).
+    const envelope = objectOf(next);
+    const data = objectOf(envelope?.data);
+    if (envelope && data)
+      next = { ...envelope, data: pick(data, (key) => EVENT_RECORD_KEYS.has(key)) };
     changed = true;
     stop = true;
   }
