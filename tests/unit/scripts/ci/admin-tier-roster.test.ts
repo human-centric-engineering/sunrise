@@ -41,6 +41,7 @@ import {
 import {
   appOrgTierAdminPagesInitState,
   getAppOrgTierAdminPages,
+  orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
@@ -333,9 +334,7 @@ describe('the tree', () => {
     // A landing outside the org tier turns an org admin away the moment they
     // arrive; /admin falls back to the default at runtime, and this says so in CI.
     const landing = appOrgAdminLandingRoute ?? DEFAULT_ORG_ADMIN_LANDING;
-    expect(
-      orgAdminLandingProblem(landing, [...ORG_TIER_ADMIN_PAGES, ...getAppOrgTierAdminPages()])
-    ).toBeNull();
+    expect(orgAdminLandingProblem(landing, orgTierAdminPages())).toBeNull();
   });
 
   it('sees the tree it judges', () => {
@@ -568,6 +567,20 @@ describe('what it catches', () => {
       )
     ).toEqual([
       `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org'.`,
+    ]);
+  });
+
+  it('a core route the fork re-lists in its own list (t-927)', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({
+          routes: [route(`{ tier: 'org', ${OWNED} }`)],
+          listedRoutes: [`${ROUTE}#GET`],
+          appListedRoutes: [`${ROUTE}#GET`],
+        })
+      )
+    ).toEqual([
+      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts, but it is core's and ORG_TIER_ADMIN_ROUTES already lists it. Remove it from the fork's list.`,
     ]);
   });
 

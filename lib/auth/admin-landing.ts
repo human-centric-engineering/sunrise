@@ -6,8 +6,9 @@
  * fork names another page in `lib/app/admin-landing.ts`.
  *
  * The fork's page is used only if an org admin may open it: a path under
- * `/admin/` with literal segments, on the org-tier roster (core's or the
- * fork's). Anything else would turn them away the moment they arrived — to the
+ * `/admin/` with literal segments, listed word for word on the org-tier roster
+ * (core's or the fork's) — not a concrete URL of an `[x]` page, which is one
+ * row of one org. Anything else would turn them away the moment they arrived — to the
  * sign-in landing, and back here if that is `/admin`. So a page that fails is
  * not used: `/admin` logs why and falls back to the platform default, and the
  * roster test fails on the same check, so the fork hears of it in CI first.
@@ -20,7 +21,6 @@
  */
 import { logger } from '@/lib/logging';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
-import { adminPageTier } from '@/lib/auth/admin-tier';
 import { orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
 
 /** Where a platform admin lands. */
@@ -48,8 +48,10 @@ export function orgAdminLandingProblem(route: unknown, pages: readonly string[])
   ) {
     return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
   }
-  if (adminPageTier(route, pages) !== 'org') {
-    return 'is not a page an org admin may open. List it in lib/app/admin-tier.ts, or name an org-tier page.';
+  // Exactly a listed page, not a URL an `[x]` pattern also names: a concrete
+  // `/admin/workflows/abc123` is one org's row, a not-found for every other.
+  if (!pages.includes(route)) {
+    return 'is not a page an org admin may open. Name a page listed as org-tier, word for word, or list it in lib/app/admin-tier.ts.';
   }
   return null;
 }

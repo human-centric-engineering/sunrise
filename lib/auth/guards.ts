@@ -409,9 +409,11 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * platform admin. Absent — every route that has not opted in, a fork's
    * included — the route stays platform-only.
    *
-   * Opening a route is a reviewed diff in two places: here, and
-   * `ORG_TIER_ADMIN_ROUTES` in `lib/auth/admin-tier.ts`, which
-   * `tests/unit/scripts/ci/admin-tier-roster.test.ts` holds to the tree. It
+   * Opening a route is a reviewed diff in two places: here, and a list —
+   * `ORG_TIER_ADMIN_ROUTES` in `lib/auth/admin-tier.ts` for core's,
+   * `APP_ORG_TIER_ADMIN_ROUTES` in `lib/app/admin-tier-routes.ts` for a
+   * fork's — which `tests/unit/scripts/ci/admin-tier-roster.test.ts` holds to
+   * the tree. It
    * widens admission only: the handler still runs in the entered org, so what
    * it reads is that org's by row isolation, and `writesSharedSettings` still
    * refuses a shared-settings write from outside the install org.

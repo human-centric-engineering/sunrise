@@ -13,7 +13,7 @@
  *
  * - a route handler declared `tier: 'org'` that neither core's roster nor
  *   the fork's (`lib/app/admin-tier-routes.ts`) lists, or one listed in either
- *   that does not declare it;
+ *   that does not declare it, or a core route the fork re-lists;
  * - a `tier` the scanner cannot read as the literal `'org'` — a variable or a
  *   spread hides the declaration from review, which is the thing the roster is for;
  * - an org-tier handler with no `ownership` declaration. An org admin's rows
@@ -284,6 +284,16 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     ['ORG_TIER_ADMIN_ROUTES', listed],
     ['lib/app/admin-tier-routes.ts', appListed],
   ];
+  for (const at of appListed) {
+    // The fork's list means "routes the fork opened". A core route there
+    // passes either way, and a core rename would then be reported against a
+    // file core does not own.
+    if (listed.has(at)) {
+      problems.push(
+        `${at}: listed in lib/app/admin-tier-routes.ts, but it is core's and ORG_TIER_ADMIN_ROUTES already lists it. Remove it from the fork's list.`
+      );
+    }
+  }
   for (const [where, ats] of routeLists) {
     for (const at of ats) {
       if (!declared.has(at)) {

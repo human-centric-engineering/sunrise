@@ -37,7 +37,6 @@ describe('orgAdminLandingProblem', () => {
   it.each([
     ['a core org-tier page', '/admin/members'],
     ['a fork’s listed page', '/admin/reports'],
-    ['a concrete URL of a listed [x] page', '/admin/reports/q3'],
   ])('accepts %s', (_l, route) => {
     expect(orgAdminLandingProblem(route, pages)).toBeNull();
   });
@@ -45,6 +44,12 @@ describe('orgAdminLandingProblem', () => {
   it.each([
     ['a platform page', '/admin/users', 'not a page an org admin may open'],
     ['a page nobody listed', '/admin/nowhere', 'not a page an org admin may open'],
+    // One org's row: every other org's admin would land on a not-found.
+    [
+      'a concrete URL of a listed [x] page',
+      '/admin/reports/q3',
+      'not a page an org admin may open',
+    ],
     // `/admin` sends here, so landing on it would loop.
     ['the console index itself', '/admin', 'not a path under /admin/'],
     ['a path outside the console', '/dashboard', 'not a path under /admin/'],

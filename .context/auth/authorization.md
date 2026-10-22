@@ -289,7 +289,8 @@ so a wrapper in a fork's `app/api/v1/app/x/_lib/` is seen.
 overview and an org admin to `/admin/orchestration`, or to the page a fork
 names in `appOrgAdminLandingRoute` (`lib/app/admin-landing.ts`). The fork's
 page is used only if an org admin may open it: a literal path under `/admin/`
-on the org-tier roster, core's or the fork's. Otherwise `/admin` logs why and
+listed word for word on the org-tier roster, core's or the fork's (not one row
+of an `[x]` page, which is one org's). Otherwise `/admin` logs why and
 uses the default, since a page they cannot open would send them straight to
 the sign-in landing, and back to `/admin` if that is where it points. The
 roster test fails on the same check.

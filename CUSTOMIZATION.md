@@ -809,7 +809,7 @@ shows in your diff. The roster test fails if a listed entry does not declare
 org OWNER/ADMIN to the orchestration dashboard. Point it elsewhere with
 `appOrgAdminLandingRoute = '/admin/reports'`. The page must be one they may
 open: a literal path under `/admin/` that core or `lib/app/admin-tier.ts`
-lists as org-tier. Otherwise `/admin` logs an error and uses the default, and
+lists as org-tier, word for word (not one row of an `[x]` page). Otherwise `/admin` logs an error and uses the default, and
 the roster test fails. A platform admin still lands on the overview.
 
 **API-key scopes — `lib/app/api-key-scopes.ts`.** `AiApiKey.scopes` is a
