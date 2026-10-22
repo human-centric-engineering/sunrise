@@ -727,10 +727,9 @@ transaction):
    and its locks are let go, so an erasure that ran from start to finish in
    that gap of milliseconds would not see the delivery they create. A run's
    multi-turn step state (`ai_workflow_running_step.turns`) is not redacted
-   by erasure at all, nor is `supervisorReport` (t-882). Nor are the writes of
-   a paused run made outside the engine — an approval or rejection, and a
-   scheduler's failure write — which read the row before they write it
-   (t-883). The engine deletes the running-step row when its step ends, but it
+   by erasure at all, nor is `supervisorReport` (t-882). The writes of a run
+   made outside the engine are below ("Actions on a run", §122 t-901). The
+   engine deletes the running-step row when its step ends, but it
    is kept while the run is paused at an approval (resume reads its turns
    back) and when the host running it dies mid-step. A tick that read a schedule before the erasure and creates
    its run after it is a writer like any other (t-839, see "Writers that read
@@ -888,6 +887,43 @@ cannot put anyone back. Its header says plainly what it still cannot see.
 `scripts/smoke/` and `scripts/spikes/` are not scanned: their fixtures are written to be erased.
 An entry is a file and a model, not a write, so a new write added to a file
 already listed passes: review a change to a listed file against its entry.
+
+### Actions on a run (`row-lock`, t-901)
+
+**Approve, reject and retry-step** read a run's trace and write it back whole,
+so a copy read before an erasure would put the person back into a run that,
+once rejected or failed, is never scrubbed again. Each now reads and writes in
+one transaction under the run's row lock (`withRunRowLocked`,
+`lib/orchestration/engine/run-row-lock.ts`; retry-step's core is
+`lib/orchestration/retry-step.ts`). Erasure locks each run it redacts the
+same way, so either the action reads a run erasure already scrubbed, or
+erasure waits and reads what the action wrote. A write that commits while an
+erasure is open, to a run its pass had not reached, is caught by the pass
+after its commit (`redactSubjectFromRunsSince`), which reads every run
+written since, terminal ones included.
+
+- **Cancel, force-fail and the zombie reaper** each write a fixed message —
+  force-fail, the reason the admin typed — in one UPDATE, which holds the row
+  while it writes. Nothing they read is written back, so they take no further
+  lock.
+- **The scheduler's crash repair** writes the engine's error message, which
+  comes from what the run held in memory, under the row lock with anyone
+  erased since the run started taken out (`findErasedSinceRunStarted`, as the
+  engine's own writes do). Its other repair writes are fixed messages.
+- **The scheduler's run creation** blanks anyone erased **since the tick read
+  the schedule**, not ever: an address re-entered in an input template after
+  an older erasure is the admin's, on purpose, and reaches the run.
+- **A retroactive review** cannot hold the lock across its model call, so it
+  writes `supervisorReport` under the lock with anyone erased since its read
+  of the run taken out (`findErasedSinceCopy`). `supervisorReport` joins
+  `SCRUBBED_COLUMNS` with t-882.
+
+`npm run smoke:erasure-run-actions` races each of approve, reject and
+retry-step against an erasure, in both orders, and the person is gone
+afterwards. It passes with the lock removed too: in the orders it can stage,
+erasure's own later passes reach the write. The old failure needs an action
+that read before an erasure and wrote after it had finished, which the lock
+removes by construction.
 
 ### Deliveries and emails sent from a copy (`taken-at`, t-886)
 
