@@ -103,6 +103,12 @@ function normalised(subjects: NamedSubjects): { addresses: string[]; userIds: st
   return { addresses: [...addresses], userIds: [...userIds] };
 }
 
+/** Whether `subjects` names anyone a lock or a receipt could be keyed on. */
+export function namesAnyone(subjects: NamedSubjects): boolean {
+  const { addresses, userIds } = normalised(subjects);
+  return addresses.length > 0 || userIds.length > 0;
+}
+
 /** The lock keys for `subjects`, sorted, so every holder takes them in one order. */
 function subjectKeys(subjects: NamedSubjects): string[] {
   const { addresses, userIds } = normalised(subjects);
@@ -124,6 +130,30 @@ export interface LockOptions {
    */
   shared?: boolean;
 }
+
+/** How {@link findErasedSubjects} looks. */
+export interface FindOptions extends LockOptions {
+  /**
+   * Only erasures since this moment, less {@link COPY_CLOCK_SKEW_MS} (§122
+   * t-886): for a writer holding a copy taken then. A person erased before the
+   * copy was taken is not in it, so whoever the copy names was put there after
+   * the erasure, on purpose — an address re-entered as a contact. Left out,
+   * every erasure ever counts: the check the §122 writers are moving off.
+   */
+  since?: Date;
+}
+
+/**
+ * How far before a copy was taken an erasure is still counted as since it
+ * (t-886). Two things put a receipt's `erasedAt` before the moment its erasure
+ * could be seen: it is stamped inside erasure's transaction, which runs for up
+ * to 60 s before it commits (`ERASURE_TRANSACTION_TIMEOUT_MS`), and it is
+ * stamped by one app host's clock and compared against another's. Generous on
+ * purpose, as `RUN_CLOCK_SKEW_MS` is: a wider margin only leaves out someone
+ * re-entered within minutes of their erasure, while a narrower one can send to
+ * a person whose erasure the copy predates.
+ */
+export const COPY_CLOCK_SKEW_MS = 5 * 60_000;
 
 /**
  * Take the transaction-scoped advisory lock for every address and user id in
@@ -255,14 +285,14 @@ export class SubjectLocksBusyError extends Error {
 export async function findErasedSubjects(
   tx: CheckClient,
   subjects: NamedSubjects,
-  options: LockOptions = {}
+  options: FindOptions = {}
 ): Promise<ErasedSubjects> {
   const named = normalised(subjects);
   if (named.addresses.length === 0 && named.userIds.length === 0) {
     return { addresses: [], userIds: [] };
   }
   await lockSubjects(tx, named, options);
-  return matchErasedSubjects(tx, named);
+  return matchErasedSubjects(tx, named, { since: options.since });
 }
 
 /**
@@ -272,7 +302,8 @@ export async function findErasedSubjects(
  */
 export async function matchErasedSubjects(
   tx: ReceiptClient,
-  subjects: NamedSubjects
+  subjects: NamedSubjects,
+  options: Pick<FindOptions, 'since'> = {}
 ): Promise<ErasedSubjects> {
   const { addresses, userIds } = normalised(subjects);
   if (addresses.length === 0 && userIds.length === 0) return { addresses: [], userIds: [] };
@@ -280,6 +311,7 @@ export async function matchErasedSubjects(
   const byHash = new Map(addresses.map((a) => [subjectEmailHash(a), a]));
   const receipts = await tx.dataErasureReceipt.findMany({
     where: {
+      ...(options.since ? { erasedAt: { gte: copyAnchor(options.since) } } : {}),
       OR: [
         ...(byHash.size > 0 ? [{ subjectEmailHash: { in: [...byHash.keys()] } }] : []),
         ...(userIds.length > 0 ? [{ subjectUserId: { in: userIds } }] : []),
@@ -311,6 +343,27 @@ export async function matchErasedSubjects(
   }
 
   return { addresses: [...erasedAddresses], userIds: [...erasedIds] };
+}
+
+/** The earliest `erasedAt` that counts as since a copy taken at `takenAt`. */
+function copyAnchor(takenAt: Date): Date {
+  return new Date(takenAt.getTime() - COPY_CLOCK_SKEW_MS);
+}
+
+/**
+ * Whether anyone at all was erased since `takenAt` (t-886): for a copy naming
+ * something that no longer exists — a conversation or run that cascaded away
+ * with its owner — so its owner can no longer be asked for by id.
+ */
+export async function anyoneErasedSince(
+  tx: Pick<Prisma.TransactionClient, 'dataErasureReceipt'>,
+  takenAt: Date
+): Promise<boolean> {
+  const receipt = await tx.dataErasureReceipt.findFirst({
+    where: { erasedAt: { gte: copyAnchor(takenAt) } },
+    select: { id: true },
+  });
+  return receipt !== null;
 }
 
 /** `metadata.addressVerified === true` on a receipt; anything else is "not known". */

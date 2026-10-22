@@ -6,6 +6,11 @@
  * conversation is escalated to a human.
  *
  * Called fire-and-forget from `EscalateToHumanCapability.execute()`.
+ *
+ * The email goes to the list as it was read, which an erasure may overtake
+ * before the send: anyone on it erased since is left out (§122 t-886,
+ * `lib/privacy/stale-sends.ts`). Someone erased before the read and since
+ * added back is on the list on purpose, and is emailed.
  */
 
 import { prisma } from '@/lib/db/client';
@@ -16,6 +21,9 @@ import { env } from '@/lib/env';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
+import { withTimeout } from '@/lib/utils/with-timeout';
+import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
+import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
 // Single implementation, deliberately shared: this used to be a private copy,
 // and hardening one while the settings API kept the other is what opened the
 // recipient-list data-loss path (#553).
@@ -31,6 +39,9 @@ interface EscalationPayload {
   priority: 'low' | 'medium' | 'high';
   metadata: Record<string, unknown> | null;
 }
+
+/** How long the escalation email may take: the locks it holds are held that long. */
+export const ESCALATION_EMAIL_TIMEOUT_MS = 15_000;
 
 const PRIORITY_RANK: Record<string, number> = {
   low: 1,
@@ -56,6 +67,53 @@ function meetsPriorityThreshold(
 }
 
 /**
+ * Email the escalation to `recipients`, leaving out anyone erased since the
+ * list was read at `takenAt`, holding erasure's locks for them until the send
+ * settles (t-886). Never throws: a failed email must not stop the webhook.
+ */
+async function emailLiveRecipients(
+  recipients: string[],
+  takenAt: Date,
+  message: Pick<Parameters<typeof sendEmail>[0], 'subject' | 'react'>
+): Promise<void> {
+  try {
+    await sendHoldingSubjects(
+      { addresses: recipients },
+      takenAt,
+      ESCALATION_EMAIL_TIMEOUT_MS,
+      async (_tx, erased) => {
+        const gone = new Set(erased.addresses);
+        const kept = recipients.filter((address) => !gone.has(normaliseAddress(address)));
+        if (kept.length < recipients.length) {
+          // Never the address: it is what was erased.
+          logger.warn('Escalation email: left out recipients erased since the list was read', {
+            leftOut: recipients.length - kept.length,
+          });
+        }
+        if (kept.length === 0) return;
+        const result = await withTimeout(
+          ESCALATION_EMAIL_TIMEOUT_MS,
+          'Escalation email',
+          (signal) => sendEmail({ ...message, to: kept, signal })
+        );
+        if (!result.success) {
+          // A count, not the list: the addresses are personal data, and the
+          // log outlives an erasure of any of them.
+          logger.warn('Escalation email send failed', {
+            error: result.error,
+            recipients: kept.length,
+          });
+        }
+      }
+    );
+  } catch (err) {
+    logger.warn('Escalation email not sent', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Notify configured recipients about an escalation.
  *
  * Reads escalation config from the settings singleton, checks the
@@ -64,6 +122,8 @@ function meetsPriorityThreshold(
  */
 export async function notifyEscalation(payload: EscalationPayload): Promise<void> {
   try {
+    // Before the read: the list is the copy the email is sent from (t-886).
+    const takenAt = new Date();
     const settings = await prisma.aiOrchestrationSettings.findUnique({
       where: { slug: 'global' },
       select: { escalationConfig: true },
@@ -79,8 +139,7 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
 
     // Send emails
     if (config.emailAddresses.length > 0) {
-      const result = await sendEmail({
-        to: config.emailAddresses,
+      await emailLiveRecipients(config.emailAddresses, takenAt, {
         subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
         react: EscalationNotification({
           agentName,
@@ -90,13 +149,6 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
           appUrl: appUrl || undefined,
         }),
       });
-
-      if (!result.success) {
-        logger.warn('Escalation email send failed', {
-          error: result.error,
-          to: config.emailAddresses,
-        });
-      }
     }
 
     // Optional webhook POST

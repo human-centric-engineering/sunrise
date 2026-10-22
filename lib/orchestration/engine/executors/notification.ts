@@ -147,8 +147,11 @@ function resolveRecipients(
  *
  * A run holds its definition and input in memory from the moment it starts, so
  * a person erased while it runs is still named by the step's `to`. So, in one
- * transaction: take erasure's lock for each recipient, leave out anyone with an
- * erasure receipt, and send — holding the locks until the send has settled.
+ * transaction: take erasure's lock for each recipient, leave out anyone erased
+ * since the run started, and send — holding the locks until the send has
+ * settled. Since the run started, not ever (§122 t-886): someone erased before
+ * it started is not in what it read, so a `to` naming them was written after
+ * the erasure, on purpose — an address re-entered as a contact.
  * Whichever of this and an erasure takes the lock first finishes before the
  * other reads: either the receipt is seen and the person is left out, or the
  * email went before the erasure committed. Erasure only tries the lock, and
@@ -181,7 +184,18 @@ async function sendToLiveRecipients(
       await boundLockWaits(tx, lockWaitMs);
       // Shared: sends to the same address need not wait for each other, only
       // for an erasure, which takes the lock exclusively (review round 2).
-      const erased = await findErasedSubjects(tx, { addresses: list }, { shared: true });
+      // The run's start is when it took its copy, as the engine's own writes
+      // count it (`findErasedSinceRunStarted`, t-843). A run that cannot be
+      // found counts every erasure: the stricter reading.
+      const run = await tx.aiWorkflowExecution.findUnique({
+        where: { id: ctx.executionId },
+        select: { startedAt: true, createdAt: true },
+      });
+      const erased = await findErasedSubjects(
+        tx,
+        { addresses: list },
+        { shared: true, since: run ? (run.startedAt ?? run.createdAt) : undefined }
+      );
       const gone = new Set(erased.addresses);
       const kept = list.filter((address) => !gone.has(normaliseAddress(address)));
       if (kept.length === 0) {

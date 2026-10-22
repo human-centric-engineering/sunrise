@@ -324,6 +324,102 @@ function isPersonKey(key: string): boolean {
 }
 
 /**
+ * Who a delivery's payload names, by the rule erasure matches rows on
+ * ({@link matchArms}), for a sender about to send it (§122 t-886): each user id
+ * with the basis it is named on, `activity` winning. A conversation or run the
+ * payload names is asked for its owner. `dangling` when one no longer exists:
+ * it may have cascaded away with an owner erased since, who can then no longer
+ * be named.
+ */
+export interface PayloadSubjects {
+  userIds: Map<string, DeliveryBasis>;
+  dangling: boolean;
+}
+
+type OwnerClient = Pick<Prisma.TransactionClient, 'aiConversation' | 'aiWorkflowExecution'>;
+
+/** See {@link PayloadSubjects}. */
+export async function subjectsOfPayload(
+  client: OwnerClient,
+  eventType: string,
+  payload: Prisma.JsonValue
+): Promise<PayloadSubjects> {
+  const userIds = new Map<string, DeliveryBasis>();
+  const name = (id: unknown, basis: DeliveryBasis): void => {
+    if (typeof id !== 'string' || id === '') return;
+    if (userIds.get(id) !== 'activity') userIds.set(id, basis);
+  };
+  const data = dataOf(payload);
+  if (!data) return { userIds, dangling: false };
+
+  let dangling = false;
+  const { conversationId, executionId } = data;
+  if (typeof conversationId === 'string') {
+    const conversation = await client.aiConversation.findUnique({
+      where: { id: conversationId },
+      select: { userId: true },
+    });
+    if (conversation) name(conversation.userId, 'activity');
+    else dangling = true;
+  }
+  if (typeof executionId === 'string') {
+    const execution = await client.aiWorkflowExecution.findUnique({
+      where: { id: executionId },
+      select: { userId: true },
+    });
+    if (execution) name(execution.userId, 'activity');
+    else dangling = true;
+  }
+  name(data.userId, 'activity');
+  name(data.actorUserId, ADMIN_ACTION_EVENTS.includes(eventType) ? 'actor' : 'activity');
+  const approvers = data[APPROVERS_KEY];
+  if (Array.isArray(approvers)) for (const approver of approvers) name(approver, 'actor');
+  return { userIds, dangling };
+}
+
+/** What a sender does with a payload once it knows who in it was erased. */
+export interface ErasedPayloadDisposition {
+  /** The payload with them taken out, or null when it names none of them. */
+  payload: Prisma.JsonValue | null;
+  /**
+   * Not sent at all: it is about an erased person's own activity, which
+   * erasure stops (t-793). An `actor` row is sent without who acted.
+   */
+  stop: boolean;
+}
+
+/**
+ * Erasure's disposition ({@link erasedPayload}) for a payload a sender holds,
+ * given who among {@link subjectsOfPayload} was erased since its copy was
+ * taken, and whether anyone was when the payload is `dangling` (t-886).
+ */
+export function withoutErasedSubjects(
+  payload: Prisma.JsonValue,
+  subjects: PayloadSubjects,
+  erasedUserIds: readonly string[],
+  danglingErased: boolean
+): ErasedPayloadDisposition {
+  let next = payload;
+  let stop = false;
+  let changed = false;
+  for (const userId of erasedUserIds) {
+    const basis = subjects.userIds.get(userId);
+    if (!basis) continue;
+    next = erasedPayload(next, basis, userId);
+    changed = true;
+    stop ||= basis === 'activity';
+  }
+  if (subjects.dangling && danglingErased) {
+    // Nobody left to name: the conversation or run is gone, and with it who it
+    // was about. Kept to its record keys, as an `activity` row is.
+    next = erasedPayload(next, 'activity', '');
+    changed = true;
+    stop = true;
+  }
+  return { payload: changed ? next : null, stop };
+}
+
+/**
  * The part of a delivery's `data` a subject-access export hands the subject:
  * see the module comment. Other people's ids and names are never in it — an
  * approver list names colleagues, and an admin who force-failed the subject's

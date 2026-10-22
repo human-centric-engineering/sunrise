@@ -19,6 +19,7 @@
  */
 
 import { createHash, createHmac } from 'crypto';
+import type { AiWebhookSubscription, Prisma } from '@prisma/client';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -38,16 +39,23 @@ import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
   AWAITING_RETRY_STATUSES,
   DISPATCH_TIMEOUT_MS,
+  RECIPIENT_ERASED,
+  SUBJECT_ERASED,
   claimArmedRetry,
   isArmedRetry,
   logSettledInFlight,
   notRetried,
 } from '@/lib/orchestration/webhooks/not-retried';
 import {
+  ERASED_DESTINATION,
   destinationUpdate,
+  normaliseAddress,
   subscriptionDestination,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
+import { anyoneErasedSince } from '@/lib/privacy/erased-subjects';
+import { subjectsOfPayload, withoutErasedSubjects } from '@/lib/privacy/delivery-payloads';
+import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
 
 /** Safely extract a JSON object from a Prisma Json field, falling back to empty object. */
 function toJsonRecord(value: unknown): Record<string, unknown> {
@@ -148,54 +156,85 @@ async function dispatchToSubscriptions(
   payload: Record<string, unknown>
 ): Promise<void> {
   try {
-    const subscriptions = await prisma.aiWebhookSubscription.findMany({
-      where: {
-        isActive: true,
-        events: { has: eventType },
-      },
-    });
-
-    if (subscriptions.length === 0) return;
-
-    // Dimension-specific entity scoping: filter out subscriptions whose
-    // agent/workflow filters exclude this event. Done in JS (not SQL)
-    // because the admin-scoped subs list is small and the rules are
-    // dimension-specific — see event-entity-keys.ts for the contract.
-    const matched = subscriptions.filter((sub) => matchesEntityScope(eventType, payload, sub));
-
-    if (matched.length === 0) return;
-
-    const body = JSON.stringify({
-      event: eventType,
-      timestamp: new Date().toISOString(),
-      data: payload,
-    });
-
-    await Promise.allSettled(
-      matched.map(async (sub) => {
-        // Create delivery record
-        const delivery = await prisma.aiWebhookDelivery.create({
-          data: {
-            subscriptionId: sub.id,
-            eventType,
-            payload: {
-              event: eventType,
-              data: payload,
-            } as unknown as import('@prisma/client').Prisma.InputJsonValue,
-            status: 'pending',
-            ...subscriptionDestination(sub),
-          },
-        });
-
-        await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub));
-      })
-    );
+    await deliverToSubscribers(eventType, payload, await readSubscribers(eventType, payload));
   } catch (err) {
     logger.error('Webhook dispatch error', {
       eventType,
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * The subscriptions an event goes to, and when they were read: the copy its
+ * deliveries are built from, which an erasure can overtake (t-886).
+ */
+export interface Subscribers {
+  takenAt: Date;
+  subscriptions: AiWebhookSubscription[];
+}
+
+/**
+ * Read the subscriptions `eventType` goes to. The first half of a dispatch,
+ * apart from {@link deliverToSubscribers} so the erasure smoke can put an
+ * erasure between them.
+ */
+export async function readSubscribers(
+  eventType: string,
+  payload: Record<string, unknown>
+): Promise<Subscribers> {
+  // Before the read, and so before anything the copy holds: the event's
+  // payload was built just before this call, which COPY_CLOCK_SKEW_MS covers.
+  const takenAt = new Date();
+  const subscriptions = await prisma.aiWebhookSubscription.findMany({
+    where: {
+      isActive: true,
+      events: { has: eventType },
+    },
+  });
+  // Dimension-specific entity scoping: filter out subscriptions whose
+  // agent/workflow filters exclude this event. Done in JS (not SQL)
+  // because the admin-scoped subs list is small and the rules are
+  // dimension-specific — see event-entity-keys.ts for the contract.
+  return {
+    takenAt,
+    subscriptions: subscriptions.filter((sub) => matchesEntityScope(eventType, payload, sub)),
+  };
+}
+
+/** Create a delivery for each of `subscribers` and attempt it: a dispatch's second half. */
+export async function deliverToSubscribers(
+  eventType: string,
+  payload: Record<string, unknown>,
+  { takenAt, subscriptions: matched }: Subscribers
+): Promise<void> {
+  if (matched.length === 0) return;
+
+  const body = JSON.stringify({
+    event: eventType,
+    timestamp: new Date().toISOString(),
+    data: payload,
+  });
+
+  await Promise.allSettled(
+    matched.map(async (sub) => {
+      // Create delivery record
+      const delivery = await prisma.aiWebhookDelivery.create({
+        data: {
+          subscriptionId: sub.id,
+          eventType,
+          payload: {
+            event: eventType,
+            data: payload,
+          } as unknown as Prisma.InputJsonValue,
+          status: 'pending',
+          ...subscriptionDestination(sub),
+        },
+      });
+
+      await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt);
+    })
+  );
 }
 
 /**
@@ -215,6 +254,8 @@ export async function retryDelivery(
   deliveryId: string,
   options?: { awaitDelivery?: boolean }
 ): Promise<boolean> {
+  // Before the read: the subscription is this attempt's copy (t-886).
+  const takenAt = new Date();
   const delivery = await prisma.aiWebhookDelivery.findUnique({
     where: { id: deliveryId },
     include: { subscription: true },
@@ -262,7 +303,13 @@ export async function retryDelivery(
     timestamp: new Date().toISOString(),
   });
 
-  const attempt = attemptDelivery(current, subscription, body, resolveRetryPolicy(subscription));
+  const attempt = attemptDelivery(
+    current,
+    subscription,
+    body,
+    resolveRetryPolicy(subscription),
+    takenAt
+  );
 
   if (options?.awaitDelivery) {
     await attempt;
@@ -284,6 +331,8 @@ export async function processPendingRetries(): Promise<number> {
   // transitions to `exhausted` the moment the cap is hit, so no extra
   // `attempts < N` filter is needed (which would have been per-subscription
   // and not expressible as a single SQL predicate anyway).
+  // Before the read: each row's subscription is its attempt's copy (t-886).
+  const takenAt = new Date();
   const pending = await prisma.aiWebhookDelivery.findMany({
     where: {
       status: 'failed',
@@ -333,7 +382,8 @@ export async function processPendingRetries(): Promise<number> {
         claimed,
         delivery.subscription,
         body,
-        resolveRetryPolicy(delivery.subscription)
+        resolveRetryPolicy(delivery.subscription),
+        takenAt
       );
     })
   );
@@ -390,13 +440,25 @@ type DeliveryOutcome =
   | { delivered: false; error: string; statusCode?: number; terminal?: boolean };
 
 /** What an attempt reads off its delivery row. */
-type AttemptRecord = DeliveryLike & { createdAt: Date; sendGeneration: number };
+type AttemptRecord = DeliveryLike & {
+  createdAt: Date;
+  sendGeneration: number;
+  eventType: string;
+  payload: Prisma.JsonValue;
+  lastError: string | null;
+};
 
+/**
+ * One attempt at a delivery. `takenAt` is when the copy it sends from was
+ * read — the subscription, and the event its payload came from — which an
+ * erasure since may have overtaken (t-886, {@link sendUnlessErased}).
+ */
 async function attemptDelivery(
   record: AttemptRecord,
   sub: SubscriptionLike,
   body: string,
-  policy: RetryPolicy
+  policy: RetryPolicy,
+  takenAt: Date
 ): Promise<void> {
   const deliveryId = record.id;
   const now = new Date();
@@ -405,10 +467,9 @@ async function attemptDelivery(
   // the row's history rather than overwriting it.
   const recordDestination = destinationUpdate(record, subscriptionDestination(sub), now);
 
-  const outcome: DeliveryOutcome =
-    sub.channel === 'email'
-      ? await attemptEmailDelivery(record, sub, body)
-      : await attemptWebhookDelivery(sub, body);
+  const outcome = await sendUnlessErased(record, sub, body, takenAt);
+  // Left out: recorded as stopped, in the decision's transaction.
+  if (outcome === null) return;
 
   if (outcome.delivered) {
     // Written only to a row still waiting to send: one an erasure stopped
@@ -486,6 +547,93 @@ async function attemptDelivery(
     error: outcome.error,
     statusCode: outcome.statusCode,
   });
+}
+
+/**
+ * Send the attempt, unless the copy it was built from names a person erased
+ * since `takenAt` (§122 t-886, `lib/privacy/stale-sends.ts`): its email
+ * address, or someone its payload is about. Null when it was left out.
+ *
+ * Left out, the row is settled as erasure settles one it stops (t-793):
+ * `exhausted`, `stoppedByErasure`, so no retry or replay sends it, with the
+ * address taken off and the payload redacted. A payload that names the erased
+ * person only as an admin acting on configuration is sent without who acted,
+ * as erasure leaves such a row. The decision and that write commit together,
+ * under the locks held across the send.
+ */
+async function sendUnlessErased(
+  record: AttemptRecord,
+  sub: SubscriptionLike,
+  body: string,
+  takenAt: Date
+): Promise<DeliveryOutcome | null> {
+  const email = sub.channel === 'email';
+  const address = email && sub.emailAddress ? normaliseAddress(sub.emailAddress) : null;
+  try {
+    const named = await subjectsOfPayload(prisma, record.eventType, record.payload);
+    return await sendHoldingSubjects(
+      { addresses: address ? [address] : [], userIds: [...named.userIds.keys()] },
+      takenAt,
+      DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'],
+      async (tx, erased) => {
+        const recipientErased = address !== null && erased.addresses.includes(address);
+        const danglingErased = named.dangling && (await anyoneErasedSince(tx, takenAt));
+        const { payload, stop } = withoutErasedSubjects(
+          record.payload,
+          named,
+          erased.userIds,
+          danglingErased
+        );
+        if (recipientErased || stop) {
+          await tx.aiWebhookDelivery.updateMany({
+            where: { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
+            data: {
+              status: 'exhausted',
+              nextRetryAt: null,
+              stoppedByErasure: true,
+              lastError: notRetried(
+                record.lastError,
+                recipientErased ? RECIPIENT_ERASED : SUBJECT_ERASED
+              ),
+              ...(payload !== null ? { payload: payload } : {}),
+              ...(recipientErased && record.destination === address
+                ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
+                : {}),
+            },
+          });
+          // Never the address or the person: they are what was erased.
+          logger.warn('Webhook delivery left out: it names a person erased since it was read', {
+            deliveryId: record.id,
+            reason: recipientErased ? RECIPIENT_ERASED : SUBJECT_ERASED,
+          });
+          return null;
+        }
+        let sendBody = body;
+        if (payload !== null) {
+          await tx.aiWebhookDelivery.updateMany({
+            where: { id: record.id },
+            data: { payload: payload },
+          });
+          sendBody = JSON.stringify({
+            ...toJsonRecord(JSON.parse(body)),
+            ...toJsonRecord(payload),
+          });
+        }
+        return email
+          ? attemptEmailDelivery(record, sub, sendBody)
+          : attemptWebhookDelivery(sub, sendBody);
+      }
+    );
+  } catch (err) {
+    // The check could not run — a lock held past its wait by a backup import,
+    // or the database gone — so nothing was sent; or the transaction failed
+    // to commit after the send. Retried as any failed send is; an email's
+    // idempotency key keeps the second case from reaching the inbox twice.
+    return {
+      delivered: false,
+      error: `Could not check for an erasure before sending: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**
@@ -757,6 +905,8 @@ function scheduleRetry(
     () =>
       void (async () => {
         try {
+          // Before the reads: the subscription is this attempt's copy (t-886).
+          const takenAt = new Date();
           const [delivery, sub] = await Promise.all([
             prisma.aiWebhookDelivery.findUnique({ where: { id: deliveryId } }),
             prisma.aiWebhookSubscription.findUnique({ where: { id: subscriptionId } }),
@@ -795,7 +945,7 @@ function scheduleRetry(
             ...storedPayload,
             timestamp: new Date().toISOString(),
           });
-          await attemptDelivery(claimed, sub, body, resolveRetryPolicy(sub));
+          await attemptDelivery(claimed, sub, body, resolveRetryPolicy(sub), takenAt);
         } catch (err) {
           logger.error('Webhook scheduled retry error', {
             deliveryId,

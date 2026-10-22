@@ -657,8 +657,10 @@ transaction):
    it sends to a person check at the moment they send (t-841):
 
    - **A `send_notification` email step** checks its resolved recipients
-     against the receipts, under the subjects' locks, in the transaction it
-     sends in, and holds the locks until the send settles. It takes them
+     against the receipts of erasures **since the run started** (§122 t-886:
+     someone erased before it started and since re-entered is emailed), under
+     the subjects' locks, in the transaction it sends in, and holds the locks
+     until the send settles. It takes them
      shared, so two sends to one address run side by side; only an erasure,
      which takes them exclusively, waits — and once queued it is not overtaken
      by a later send. Whichever of the
@@ -882,6 +884,42 @@ cannot put anyone back. Its header says plainly what it still cannot see.
 `scripts/smoke/` and `scripts/spikes/` are not scanned: their fixtures are written to be erased.
 An entry is a file and a model, not a write, so a new write added to a file
 already listed passes: review a change to a listed file against its entry.
+
+### Deliveries and emails sent from a copy (`taken-at`, t-886)
+
+A webhook dispatch reads the subscriptions and builds its payload from an
+event; an escalation reads the settings, then emails. An erasure committing in
+between would otherwise be overtaken: an email to the erased address, or a
+delivery row naming them that erasure's own pass ran too early to see.
+
+So every **attempt** — a first send or a retry, webhook (`dispatcher.ts`) or
+event hook (`hooks/registry.ts`) — and the **escalation email** run through
+`sendHoldingSubjects()` (`lib/privacy/stale-sends.ts`): in one transaction it
+takes erasure's locks, shared, for the email address and everyone the payload
+names (`subjectsOfPayload`: `userId`, `actorUserId`, `approverUserIds`, and
+the owners of its `conversationId` and `executionId`), asks who among them was
+erased **since the copy was taken**, and holds the locks until the send
+settles. The copy's time is when the subscriptions, the hook's row or the
+settings were read, less `COPY_CLOCK_SKEW_MS` (5 min: erasure stamps its
+receipt up to 60 s before it commits, on another host's clock).
+
+| Found erased since the copy                                         | What happens                                                                                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| The email address                                                   | Not sent. The row is settled `exhausted`, `stoppedByErasure`, `recipient erased`, its destination `[erased]`. |
+| A person whose activity the event is about                          | Not sent. The row is stopped the same way (`subject erased`), its payload redacted as erasure redacts one.    |
+| Only an admin acting on configuration (`actor`)                     | Sent without who acted; the row's payload is redacted to match.                                               |
+| A conversation or run that no longer exists, with any erasure since | Not sent: its owner can no longer be named. Kept to its record keys and stopped.                              |
+| A recipient of the escalation email                                 | Left out; the rest are emailed. The log counts them, never names them.                                        |
+
+A stopped row is never retried or replayed (t-793). Someone erased **before**
+the copy was taken is not in it, so a copy naming them was written after the
+erasure, on purpose, and is sent. An auth or invitation email is never checked:
+it goes to a live account or to an address the admin just typed.
+
+The cost is a connection held across the send, bounded by its timeout (5 s for
+a webhook, 15 s for an email, 10 s for a hook), and only when the copy names
+someone. A lock held past `SUBJECT_LOCK_WAIT_MS` (a backup import) fails the
+attempt, which is retried like any failed send.
 
 **Never delete an entry to make the test pass**, the same rule as the export
 manifest. An unlisted writer is the defect the test exists to find.

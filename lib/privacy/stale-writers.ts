@@ -100,7 +100,7 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
 export type StaleWriteAnchor = 'version' | 'row-lock' | 'taken-at' | 'intent' | 'erasure' | 'seed';
 
 /** The §122 tasks that convert a `pending` writer. */
-export type StaleWriterTask = 't-886' | 't-899' | 't-900' | 't-901' | 't-902';
+export type StaleWriterTask = 't-899' | 't-900' | 't-901' | 't-902';
 
 interface StaleWriterBase {
   /** Repo-relative path of the file that writes. */
@@ -139,6 +139,25 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
       "A run's trace, output and error are written from memory with the people erased since the " +
       'run started taken out (`findErasedSinceRunStarted`, t-843). A new run is created from the ' +
       "caller's input, which it holds now.",
+  },
+  {
+    file: 'lib/orchestration/hooks/registry.ts',
+    model: 'AiEventHookDelivery',
+    anchor: 'taken-at',
+    how:
+      'Each attempt, first or retry, holds erasure’s locks for the people its payload names ' +
+      'and leaves out anyone erased since the event (or the retry’s read) before it posts: ' +
+      'stopped and redacted, or posted without an admin who acted (`stale-sends.ts`, t-886).',
+  },
+  {
+    file: 'lib/orchestration/webhooks/dispatcher.ts',
+    model: 'AiWebhookDelivery',
+    anchor: 'taken-at',
+    how:
+      'Each attempt, first or retry, holds erasure’s locks for its email address and the ' +
+      'people its payload names, and leaves out anyone erased since the subscriptions were ' +
+      'read before it sends: stopped with the address and payload redacted (`stale-sends.ts`, ' +
+      't-886).',
   },
   {
     file: 'app/api/v1/inbound/[channel]/[slug]/route.ts',
@@ -232,22 +251,6 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
   // ---------------------------------------------------------------------
   // Pending — converted by the named §122 task.
   // ---------------------------------------------------------------------
-  {
-    file: 'lib/orchestration/hooks/registry.ts',
-    model: 'AiEventHookDelivery',
-    anchor: 'pending',
-    task: 't-886',
-    how: 'Creates and retries event-hook deliveries from the event in memory. No erasure check.',
-  },
-  {
-    file: 'lib/orchestration/webhooks/dispatcher.ts',
-    model: 'AiWebhookDelivery',
-    anchor: 'pending',
-    task: 't-886',
-    how:
-      'Creates deliveries from the event and the subscriptions it read, and rewrites the ' +
-      'destination on each attempt. No erasure check.',
-  },
   {
     file: 'app/api/v1/admin/orchestration/settings/route.ts',
     model: 'AiOrchestrationSettings',
