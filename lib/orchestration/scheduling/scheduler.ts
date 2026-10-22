@@ -196,16 +196,22 @@ async function runDrain(
     // The message is the engine's, from what the run held in memory, so it
     // can name a person erased while it ran: written under the run's row lock
     // with anyone erased since the run started taken out, as the engine's own
-    // writes are (§122 t-901, t-843).
+    // writes are (§122 t-901, t-843). The hook below carries the same
+    // redacted message (code review).
+    let recordedMessage = errorMessage;
     try {
       await withRunRowLocked(executionId, async (tx) => {
         const erased = await findErasedSinceRunStarted(tx, executionId, [errorMessage]);
-        const message = erased ? redactErased(errorMessage, erased) : errorMessage;
+        if (erased) {
+          const redacted = redactErased(errorMessage, erased);
+          // A string in, a string out; anything else fails closed.
+          recordedMessage = typeof redacted === 'string' ? redacted : '[erased]';
+        }
         await tx.aiWorkflowExecution.update({
           where: { id: executionId },
           data: {
             status: WorkflowStatus.FAILED,
-            errorMessage: typeof message === 'string' ? message : errorMessage,
+            errorMessage: recordedMessage,
             completedAt: new Date(),
             leaseToken: null,
             leaseExpiresAt: null,
@@ -223,7 +229,7 @@ async function runDrain(
       });
     }
 
-    const sanitisedError = sanitiseHookErrorMessage(errorMessage);
+    const sanitisedError = sanitiseHookErrorMessage(recordedMessage);
     const crashPayload = {
       executionId,
       workflowId: workflow.id,

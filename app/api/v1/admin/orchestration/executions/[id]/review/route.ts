@@ -114,6 +114,21 @@ function toReportJson(report: SupervisorReport): Prisma.JsonValue {
   return z.json().parse(JSON.parse(JSON.stringify(report)));
 }
 
+/**
+ * The stored report's summary. Redaction keeps the report's shape, so it is
+ * there; a report without one answers `[erased]` rather than the unredacted
+ * summary.
+ */
+function summaryOf(report: SupervisorReport | Prisma.JsonValue): string {
+  return typeof report === 'object' &&
+    report !== null &&
+    !Array.isArray(report) &&
+    'summary' in report &&
+    typeof report.summary === 'string'
+    ? report.summary
+    : '[erased]';
+}
+
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
     const log = await getRouteLogger(request);
@@ -323,22 +338,29 @@ export const POST = withAdminAuth<{ id: string }>(
     // Written under the run's row lock (§122 t-901), with anyone erased since
     // the read above taken out of the report: the model call between the two
     // can take long enough for an erasure to land, and the report quotes the
-    // run it read. The lock orders this against an erasure redacting the run.
+    // run it read. By erasure's rule: an id wherever it appears, an address
+    // only where it is a whole value, never inside the report's prose. The
+    // lock orders this against an erasure once erasure redacts the report
+    // itself (t-882); until then a review written while an erasure is still
+    // open, before its receipt commits, keeps the person.
     // Confined as the read above was, so the owner layer sees a write it can
     // check: the row it returns is one this caller may read.
-    await withRunRowLocked(id, async (tx) => {
+    const report = await withRunRowLocked(id, async (tx) => {
       const erased = await findErasedSinceCopy(tx, takenAt, [finalReport]);
-      const report = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
+      const stored = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
       await tx.aiWorkflowExecution.update({
         where: { id, AND: [executionVisibilityWhere(session)] },
         data: {
           supervisorVerdict: finalReport.verdict,
           supervisorScore: finalReport.score,
-          supervisorReport: report as unknown as Prisma.InputJsonValue,
+          supervisorReport: stored as unknown as Prisma.InputJsonValue,
           supervisorReviewedAt: new Date(),
         },
       });
+      return stored;
     });
+    // What the caller gets is what was stored, redacted alike (code review).
+    const summary = summaryOf(report);
 
     log.info('Retroactive supervisor review completed', {
       executionId: id,
@@ -351,8 +373,8 @@ export const POST = withAdminAuth<{ id: string }>(
     return successResponse({
       verdict: finalReport.verdict,
       score: finalReport.score,
-      summary: finalReport.summary,
-      report: finalReport,
+      summary,
+      report,
       tokensUsed: assessment.tokensUsed,
       costUsd: assessment.costUsd,
     });

@@ -662,7 +662,16 @@ describe('processDueSchedules', () => {
         inputTemplate: { userEmail: 'Gone@Example.com', note: 'weekly' },
         workflow: { ...makeSchedule().workflow, publishedVersion: { id: 'wfv_1', snapshot } },
       });
-      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+      // When the tick read the schedule: the erasure check's anchor must not
+      // be later, or an erasure committing in between would be missed.
+      let scheduleReadAt = 0;
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockImplementationOnce((async () => {
+        // Stamped as the read starts; the read then takes a moment, so an
+        // anchor taken after it is measurably later.
+        scheduleReadAt = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [schedule];
+      }) as never);
       let inTransaction = false;
       vi.mocked(prisma.$transaction).mockImplementationOnce(
         async (callback: (tx: typeof prisma) => Promise<unknown>) => {
@@ -705,12 +714,10 @@ describe('processDueSchedules', () => {
       );
       expect(subjects.userIds).toEqual(['approver-1']);
       // Erasures since the tick read the schedule, not ever (§122 t-901): the
-      // anchor is taken before the read, so nothing the copy holds is newer.
+      // anchor is taken no later than the read, so nothing the copy holds is
+      // newer than it.
       const findOptions = mockFindErasedSubjects.mock.calls[0][2] as { since: Date };
-      const readAt = vi.mocked(prisma.aiWorkflowSchedule.findMany).mock.invocationCallOrder[0];
-      expect(findOptions.since).toBeInstanceOf(Date);
-      expect(readAt).toBeGreaterThan(0);
-      expect(findOptions.since.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(findOptions.since.getTime()).toBeLessThanOrEqual(scheduleReadAt);
       // The claim can wait out an erasure rewriting the schedule for its 60 s.
       const options = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
       expect(options.timeout).toBeGreaterThan(60_000);
