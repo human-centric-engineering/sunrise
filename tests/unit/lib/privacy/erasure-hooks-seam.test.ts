@@ -85,3 +85,37 @@ describe('the lib/app/erasure.ts seam', () => {
     );
   });
 });
+
+describe('stale writers declared from the same seam (§122)', () => {
+  const writer = {
+    file: 'lib/app/orders/notify.ts',
+    model: 'AiWebhookSubscription',
+    anchor: 'version',
+    how: 'Saves with If-Match, refused when the subscription moved since it was read.',
+  } as const;
+
+  it('are returned once the init has run, one per file and model', async () => {
+    const registry = await freshRegistry();
+    seam.init = () => {
+      registry.registerStaleWriter(writer);
+      registry.registerStaleWriter({ ...writer, how: 'Re-registered under HMR: replaces.' });
+    };
+
+    expect(registry.getAppStaleWriters()).toEqual([
+      { ...writer, how: 'Re-registered under HMR: replaces.' },
+    ]);
+  });
+
+  it('are rolled back with the hooks when the init throws part-way', async () => {
+    const registry = await freshRegistry();
+    seam.init = () => {
+      registry.registerStaleWriter(writer);
+      registry.registerErasureCleanupHook({ name: 'half-registered' });
+      throw new Error('fork init bug');
+    };
+
+    // Read the writers first: whichever read runs the init, both roll back.
+    expect(registry.getAppStaleWriters()).toEqual([]);
+    expect(registry.getErasureCleanupHooks()).toEqual([]);
+  });
+});

@@ -16,6 +16,17 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Stale-writer manifest for erasure (§122, t-887).** `lib/privacy/stale-writers.ts`
+  lists every file that writes a column erasure scrubs in place, with how it
+  knows its copy is stale. `tests/unit/lib/privacy/stale-writers.test.ts` parses
+  the tree and fails on an unlisted writer, so **a fork file that writes one of
+  those columns fails the build until it declares itself** with the new
+  `registerStaleWriter()` (`lib/privacy/erasure-hooks.ts`), called from
+  `initAppErasureHooks()` in `lib/app/erasure.ts`. Nothing changes at runtime.
+  See `.context/privacy/data-erasure.md`.
+
 ## [0.15.0] — 2026-10-21
 
 > **Alpha release.** Twenty-first tagged Sunrise release. **MINOR bump**. It

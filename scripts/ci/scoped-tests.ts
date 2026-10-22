@@ -208,6 +208,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'one is exactly the change no import chain connects to this test (§107 t-751).',
   },
   {
+    path: 'tests/unit/lib/privacy/stale-writers.test.ts',
+    reason:
+      'parses every source file in the tree and fails naming any file that writes a column ' +
+      'erasure scrubs in place without an entry in STALE_WRITERS (or a registerStaleWriter() ' +
+      'declaration). A new writer is exactly the change no import chain connects to this ' +
+      'test (§122 t-887).',
+  },
+  {
     path: 'tests/unit/scripts/ci/admin-tier-roster.test.ts',
     reason:
       'parses every route under app/ and every module under lib/ and fails naming any `withAdminAuth` call ' +

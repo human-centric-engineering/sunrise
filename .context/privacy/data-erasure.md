@@ -846,7 +846,63 @@ takes a little over a minute.
 
 **A fork's own writer** of a recipient — a module that stores an address or
 user id it notifies — calls `refuseErasedSubjects(tx, { addresses, userIds },
-field)` inside its write transaction, and the same guarantee holds.
+field)` inside its write transaction, and the same guarantee holds. It also
+declares itself in the stale-writer manifest (below).
+
+## Writers of scrubbed data (the stale-writer manifest)
+
+The checks above refuse anyone **ever** erased. §122 (`f-erasure-stale-writes`)
+replaces them with a check against **how old the writer's copy is**, so a stale
+tab is refused and an address re-entered on purpose is not. Step one is
+knowing every writer. That list is `lib/privacy/stale-writers.ts`:
+
+- **`SCRUBBED_COLUMNS`** is every column erasure rewrites in place, by model.
+  A column added to erasure goes here in the same change, with its writers.
+  `AiWorkflowExecution.supervisorReport` joins it with t-882.
+- **`STALE_WRITERS`** is every file that writes one, with its anchor:
+
+| Anchor     | How the writer knows its copy is stale                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `version`  | Optimistic concurrency: the save carries the version it loaded, and is refused once the row has moved. Erasure moves it.        |
+| `row-lock` | Reads and writes in one transaction under the row lock, which erasure also takes.                                               |
+| `taken-at` | A copy held in memory leaves out people erased since it was taken: the event's time, the read's, `exportedAt`, the run's start. |
+| `intent`   | Writes only what arrives in the request, typed by an admin or sent from outside. Not checked.                                   |
+| `erasure`  | Erasure itself.                                                                                                                 |
+| `seed`     | A seed unit, run at deploy.                                                                                                     |
+| `pending`  | Not converted yet. Names the §122 task that converts it; §122's last task removes the anchor.                                   |
+
+`tests/unit/lib/privacy/stale-writers.test.ts` parses the tree with
+`scripts/ci/scrubbed-column-writes.ts`. It fails on any file that writes a
+scrubbed column and is not listed, and on any entry whose file no longer
+writes. The parser reads Prisma write calls (column by column, from the `data`
+literal), nested writes through a relation, and SQL `UPDATE`, `INSERT INTO` and
+`MERGE INTO`. A write whose columns it cannot read, and a delegate it cannot
+follow (`const d = tx.aiWorkflow`), count. Deletes do not: a deleted row
+cannot put anyone back. Its header says plainly what it still cannot see.
+`scripts/smoke/` is not scanned: its fixtures are written to be erased.
+
+**Never delete an entry to make the test pass**, the same rule as the export
+manifest. An unlisted writer is the defect the test exists to find.
+
+**A fork** declares its own writers from `initAppErasureHooks()` in
+`lib/app/erasure.ts`, or its framework tier's init:
+
+```typescript
+import { registerStaleWriter } from '@/lib/privacy/erasure-hooks';
+
+export function initAppErasureHooks(): void {
+  registerStaleWriter({
+    file: 'lib/app/orders/notify-settings.ts',
+    model: 'AiWebhookSubscription',
+    anchor: 'version',
+    how: 'Saves with the version it loaded; refused once the subscription moved.',
+  });
+}
+```
+
+Only a settled anchor is accepted from a fork. The registration rolls back
+with the fork's hooks if its init throws. Nothing reads it at runtime; the test
+does.
 
 ## App / Fork Tables Relating to `User`
 

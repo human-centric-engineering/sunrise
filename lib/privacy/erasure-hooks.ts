@@ -33,6 +33,12 @@
  * GDPR-safe: a `CASCADE` FK is handled automatically by `prisma.user.delete()`,
  * but `SET NULL` retained tables and external blobs need this hook.
  *
+ * The same init declares the app's **stale writers** (§122):
+ * `registerStaleWriter()` for each app file that writes a column Sunrise's
+ * erasure scrubs in place, saying how it knows its copy is stale. Nothing at
+ * runtime reads them; `tests/unit/lib/privacy/stale-writers.test.ts` does, and
+ * fails on an app writer that has not declared. See `lib/privacy/stale-writers.ts`.
+ *
  * @see lib/privacy/erase-user.ts — the consumer that invokes these hooks
  * @see .context/privacy/data-erasure.md — the app-author guide
  */
@@ -41,6 +47,7 @@ import type { Prisma } from '@prisma/client';
 
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppErasureHooks } from '@/lib/app/erasure';
+import type { AnchoredStaleWriter } from '@/lib/privacy/stale-writers';
 
 /** Context passed to {@link ErasureCleanupHook.cleanupExternal}. */
 export interface ErasureExternalContext {
@@ -96,10 +103,15 @@ export interface ErasureCleanupHook {
  */
 const globalForErasureHooks = globalThis as unknown as {
   sunriseErasureCleanupHooks?: Map<string, ErasureCleanupHook>;
+  sunriseStaleWriters?: Map<string, AnchoredStaleWriter>;
 };
 
 const hooks: Map<string, ErasureCleanupHook> = (globalForErasureHooks.sunriseErasureCleanupHooks ??=
   new Map<string, ErasureCleanupHook>());
+
+/** Keyed `file#model`, so a re-registration replaces rather than duplicates. */
+const staleWriters: Map<string, AnchoredStaleWriter> =
+  (globalForErasureHooks.sunriseStaleWriters ??= new Map<string, AnchoredStaleWriter>());
 
 /**
  * Register an app erasure cleanup hook. Idempotent by `name` — re-registering
@@ -107,6 +119,17 @@ const hooks: Map<string, ErasureCleanupHook> = (globalForErasureHooks.sunriseEra
  */
 export function registerErasureCleanupHook(hook: ErasureCleanupHook): void {
   hooks.set(hook.name, hook);
+}
+
+/**
+ * Declare an app file that writes a column Sunrise's erasure scrubs in place,
+ * and how it knows its copy is stale (§122). Idempotent by `file` and `model`.
+ *
+ * Only a settled anchor: `pending` names a Sunrise task and is for Sunrise's
+ * own unconverted writers. Read by the stale-writer test, not at runtime.
+ */
+export function registerStaleWriter(writer: AnchoredStaleWriter): void {
+  staleWriters.set(`${writer.file}#${writer.model}`, writer);
 }
 
 /**
@@ -124,8 +147,11 @@ const appInit = createAppInitGate({
   // plainly that none of the app's cleanup is in place.
   subject: 'app erasure hooks',
   init: initAppErasureHooks,
-  snapshot: () => new Map(hooks),
-  restore: (before) => restoreMap(hooks, before),
+  snapshot: () => ({ hooks: new Map(hooks), staleWriters: new Map(staleWriters) }),
+  restore: (before) => {
+    restoreMap(hooks, before.hooks);
+    restoreMap(staleWriters, before.staleWriters);
+  },
 });
 
 /** All registered hooks, in first-registration order. */
@@ -134,8 +160,15 @@ export function getErasureCleanupHooks(): ErasureCleanupHook[] {
   return [...hooks.values()];
 }
 
-/** Test-only: clear the registry and re-arm the one-shot app init. */
+/** The app's declared stale writers, in first-registration order. */
+export function getAppStaleWriters(): AnchoredStaleWriter[] {
+  appInit.ensure();
+  return [...staleWriters.values()];
+}
+
+/** Test-only: clear both registries and re-arm the one-shot app init. */
 export function __resetErasureCleanupHooksForTests(): void {
   hooks.clear();
+  staleWriters.clear();
   appInit.reset();
 }
