@@ -956,13 +956,20 @@ async function importedWorkflowProviderWarnings(
  * is another host's clock running ahead, and is clamped to `now`.
  *
  * A past date an admin writes by hand still leaves out everyone erased before
- * it. That admin can type the same addresses into the workflow, subscription
- * or escalation list directly, so the field grants nothing new.
+ * it: the importer keeps an address re-added on purpose, and cannot tell a
+ * genuine bundle's date from a typed one. Only an admin of the target scope can
+ * import. Until t-899 and t-900 move the settings, subscription, schedule and
+ * workflow routes onto the same since-anchor, those routes still refuse anyone
+ * ever erased, so for now this is the one admin path that writes back an
+ * address erased before the date given.
+ *
+ * A date before the epoch is the epoch: no receipt is older, and it keeps
+ * `copyAnchor`'s subtraction inside the range a `Date` can hold.
  */
 export function bundleTakenAt(exportedAt: string, now: Date): Date {
   const at = Date.parse(exportedAt);
   if (Number.isNaN(at) || at > now.getTime() + COPY_CLOCK_SKEW_MS) return new Date(0);
-  return new Date(Math.min(at, now.getTime()));
+  return new Date(Math.max(0, Math.min(at, now.getTime())));
 }
 
 /**

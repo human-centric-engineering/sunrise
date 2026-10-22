@@ -952,10 +952,13 @@ before (`bundleTakenAt` in `lib/orchestration/backup/importer.ts`).
   taken then, and read as it stands it would leave out everyone erased before
   the import. Within the margin, it is another host's clock running ahead and
   is clamped to the import's time.
-- **A past date written by hand** leaves out everyone erased before it. The
-  admin who uploads it can type the same addresses into a workflow, a
-  subscription or the escalation list directly, so the field grants nothing
-  new.
+- **Before the epoch**: the epoch.
+- **A past date written by hand** leaves out everyone erased before it; the
+  importer cannot tell it from a genuine bundle's. Only an admin of the target
+  scope can import. Until t-899 and t-900 move the settings, subscription,
+  schedule and workflow routes onto the same since-anchor, those routes still
+  refuse anyone ever erased, so for now a hand-dated bundle is the one admin
+  path that writes back an address erased before the date it gives.
 
 ### Deliveries and emails sent from a copy (`taken-at`, t-886)
 

@@ -2734,6 +2734,11 @@ describe('bundleTakenAt (§122 t-902)', () => {
     expect(bundleTakenAt('', NOW)).toEqual(new Date(0));
   });
 
+  it('reads an exportedAt before the epoch as the epoch, even the earliest a Date holds', () => {
+    expect(bundleTakenAt('1960-01-01T00:00:00Z', NOW)).toEqual(new Date(0));
+    expect(bundleTakenAt('-271821-04-20T00:00:00Z', NOW)).toEqual(new Date(0));
+  });
+
   it('clamps an exportedAt a host clock ahead, within the skew margin, to now', () => {
     const ahead = new Date(NOW.getTime() + COPY_CLOCK_SKEW_MS).toISOString();
     expect(bundleTakenAt(ahead, NOW)).toEqual(NOW);
