@@ -19,6 +19,7 @@ import {
   RUN_CLOCK_SKEW_MS,
   RUN_PAGE_SIZE,
   eraseFromRunInputs,
+  findErasedSinceCopy,
   findErasedSinceRunStarted,
   preRedactSubjectFromRuns,
   redactSubjectFromRunsSince,
@@ -714,6 +715,45 @@ describe('findErasedSinceRunStarted (t-843)', () => {
     const tx = makeWriterTx([{ subjectUserId: USER_ID, subjectEmailHash: hash(ADDRESS) }], false);
 
     expect(await findErasedSinceRunStarted(tx as never, 'exec-1', [{ to: ADDRESS }])).toBeNull();
+  });
+});
+
+describe('findErasedSinceCopy (§122 t-901)', () => {
+  const hash = (a: string) => createHash('sha256').update(a).digest('hex');
+  type Receipt = { subjectUserId: string; subjectEmailHash: string | null };
+
+  function makeWriterTx(since: Receipt[]) {
+    return {
+      $queryRaw: vi.fn(async () => since),
+      dataErasureReceipt: {
+        findMany: vi.fn(async () =>
+          since.map((r) => ({ ...r, metadata: { addressVerified: true } }))
+        ),
+      },
+      user: { findMany: vi.fn(async () => []) },
+    };
+  }
+
+  it('asks for receipts since the copy was taken, less the margin, and is null when none', async () => {
+    const tx = makeWriterTx([]);
+    const takenAt = new Date('2026-10-22T12:00:00Z');
+
+    expect(await findErasedSinceCopy(tx as never, takenAt, [{ to: ADDRESS }])).toBeNull();
+
+    const call = tx.$queryRaw.mock.calls[0] as unknown[];
+    expect(sqlOf(call)).toContain('"erasedAt" >=');
+    expect(call).toContain(takenAt);
+    expect(call).toContain(RUN_CLOCK_SKEW_MS);
+  });
+
+  it('matches what the copy names as findErasedSinceRunStarted does', async () => {
+    const tx = makeWriterTx([{ subjectUserId: USER_ID, subjectEmailHash: hash(ADDRESS) }]);
+
+    const erased = await findErasedSinceCopy(tx as never, new Date(), [
+      { summary: `Approved by ${USER_ID}`, to: ADDRESS },
+    ]);
+
+    expect(erased).toEqual({ addresses: [ADDRESS], userIds: [USER_ID] });
   });
 });
 

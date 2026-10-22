@@ -24,6 +24,21 @@ vi.mock('@/lib/auth/config', () => ({
 vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
+// The run's row lock (t-901): the transaction is the prisma mock. That the
+// lock is taken, and first, is `run-row-lock.test.ts`'s and the smoke's.
+vi.mock('@/lib/orchestration/engine/run-row-lock', async () => {
+  const { prisma: client } = await import('@/lib/db/client');
+  return {
+    withRunRowLocked: vi.fn((_id: string, fn: (tx: unknown) => Promise<unknown>) => fn(client)),
+  };
+});
+
+// Nobody erased since the review read the run, unless a test says otherwise.
+vi.mock('@/lib/privacy/run-recipients', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/privacy/run-recipients')>()),
+  findErasedSinceCopy: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
@@ -74,6 +89,8 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { runSupervisorAssessment } from '@/lib/orchestration/supervisor';
+import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
+import { findErasedSinceCopy } from '@/lib/privacy/run-recipients';
 import {
   ProviderCallRefusedError,
   registerProviderEligibility,
@@ -245,6 +262,37 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
         }),
       })
     );
+  });
+
+  it('takes anyone erased since the read out of the report, written under the run’s lock (t-901)', async () => {
+    // The model call between read and write can outlast an erasure; the
+    // report quotes the run it read.
+    const before = Date.now();
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    vi.mocked(runSupervisorAssessment).mockResolvedValue({
+      ...happyAssessment(),
+      report: {
+        ...happyAssessment().report,
+        summary: 'Approved by cmgoneperson0000000000001',
+      },
+    } as never);
+    vi.mocked(findErasedSinceCopy).mockResolvedValueOnce({
+      addresses: [],
+      userIds: ['cmgoneperson0000000000001'],
+    });
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(withRunRowLocked).toHaveBeenCalledWith(EXEC_ID, expect.any(Function));
+    const [, takenAt, values] = vi.mocked(findErasedSinceCopy).mock.calls[0];
+    expect(takenAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(values).toEqual([expect.objectContaining({ summary: expect.any(String) })]);
+    const written = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0].data as {
+      supervisorReport: { summary: string };
+    };
+    expect(written.supervisorReport.summary).toBe('Approved by [erased]');
   });
 
   it('archives prior verdict into previousVerdicts[] on re-entry', async () => {

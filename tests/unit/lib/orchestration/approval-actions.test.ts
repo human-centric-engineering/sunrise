@@ -25,6 +25,8 @@ vi.mock('@/lib/db/client', () => {
     aiWorkflowRunningStep: {
       deleteMany: vi.fn(),
     },
+    // The run's row lock (t-901), taken first in the transaction.
+    $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(async <T>(cb: (tx: unknown) => Promise<T>) => cb(prisma)),
   };
   return { prisma };
@@ -316,5 +318,32 @@ describe('executeRejection', () => {
     await expect(
       executeRejection(EXECUTION_ID, { reason: 'r', actorLabel: 'test' })
     ).rejects.toThrow(expect.objectContaining({ code: 'CONCURRENT' }));
+  });
+});
+
+describe('under the run’s row lock (§122 t-901)', () => {
+  it.each([
+    ['approve', () => executeApproval('exec-1', { actorLabel: 'admin:u1' })],
+    ['reject', () => executeRejection('exec-1', { reason: 'no', actorLabel: 'admin:u1' })],
+  ])('%s locks the run before it reads the trace it writes back', async (_label, act) => {
+    const order: string[] = [];
+    vi.mocked(prisma.$queryRaw).mockImplementation((async () => {
+      order.push('lock');
+      return [];
+    }) as never);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockImplementation((async () => {
+      order.push('read');
+      return null;
+    }) as never);
+
+    await expect(act()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    expect(order).toEqual(['lock', 'read']);
+    const [strings, id] = vi.mocked(prisma.$queryRaw).mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      string,
+    ];
+    expect(strings.join('?')).toContain('FOR NO KEY UPDATE');
+    expect(id).toBe('exec-1');
   });
 });

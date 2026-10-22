@@ -26,6 +26,15 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// The run's row lock (t-901): the transaction is the prisma mock. That the
+// lock is taken, and first, is `run-row-lock.test.ts`'s and the smoke's.
+vi.mock('@/lib/orchestration/engine/run-row-lock', async () => {
+  const { prisma: client } = await import('@/lib/db/client');
+  return {
+    withRunRowLocked: vi.fn((_id: string, fn: (tx: unknown) => Promise<unknown>) => fn(client)),
+  };
+});
+
 vi.mock('@/lib/db/client', () => {
   // The retry-step route wraps the status flip + defensive running-step
   // sweep in a callback transaction. Pass `prisma` itself as the `tx` arg

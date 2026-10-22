@@ -24,6 +24,9 @@ vi.mock('@/lib/db/client', () => {
     // The run is created, and the schedule claimed, in one transaction
     // (t-839). The callback gets this same object, so `tx.X === prisma.X`.
     $transaction: vi.fn(),
+    // A crash repair locks the run's row (t-901) and asks for receipts since
+    // the run started; both raw, and empty unless a test says otherwise.
+    $queryRaw: vi.fn().mockResolvedValue([]),
     aiWorkflowSchedule: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -60,7 +63,7 @@ vi.mock('@/lib/db/client', () => {
 // The erased-person check (t-839): its locks and receipt reads are proved in
 // erased-subjects.test.ts. Nobody is erased unless a test says so.
 const mockFindErasedSubjects = vi.hoisted(() =>
-  vi.fn(async (_tx: unknown, _subjects: unknown) => ({
+  vi.fn(async (_tx: unknown, _subjects: unknown, _options?: unknown) => ({
     addresses: [] as string[],
     userIds: [] as string[],
   }))
@@ -70,11 +73,19 @@ const mockTryLockSubjects = vi.hoisted(() =>
   vi.fn(async (_tx: unknown, _subjects: unknown) => true)
 );
 const mockBoundLockWaits = vi.hoisted(() => vi.fn(async (_tx: unknown, _ms: number) => undefined));
+// The crash repair's match of receipts since the run started (t-901).
+const mockMatchErasedSubjects = vi.hoisted(() =>
+  vi.fn(async (_tx: unknown, _subjects: unknown) => ({
+    addresses: [] as string[],
+    userIds: [] as string[],
+  }))
+);
 vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/privacy/erased-subjects')>()),
   findErasedSubjects: mockFindErasedSubjects,
   tryLockSubjects: mockTryLockSubjects,
   boundLockWaits: mockBoundLockWaits,
+  matchErasedSubjects: mockMatchErasedSubjects,
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -693,6 +704,13 @@ describe('processDueSchedules', () => {
         expect.arrayContaining(['Gone@Example.com', 'someone@example.com'])
       );
       expect(subjects.userIds).toEqual(['approver-1']);
+      // Erasures since the tick read the schedule, not ever (§122 t-901): the
+      // anchor is taken before the read, so nothing the copy holds is newer.
+      const findOptions = mockFindErasedSubjects.mock.calls[0][2] as { since: Date };
+      const readAt = vi.mocked(prisma.aiWorkflowSchedule.findMany).mock.invocationCallOrder[0];
+      expect(findOptions.since).toBeInstanceOf(Date);
+      expect(readAt).toBeGreaterThan(0);
+      expect(findOptions.since.getTime()).toBeLessThanOrEqual(Date.now());
       // The claim can wait out an erasure rewriting the schedule for its 60 s.
       const options = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
       expect(options.timeout).toBeGreaterThan(60_000);
@@ -1269,6 +1287,55 @@ describe('drainEngine: engine crash path', () => {
       data: expect.objectContaining({
         errorMessage: dirtyMessage,
       }),
+    });
+  });
+
+  it('takes anyone erased since the run started out of the engine’s error, under the row lock', async () => {
+    // §122 t-901: the message comes from what the run held in memory.
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: {},
+    } as never);
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('Approver cmgoneperson0000000000001 refused');
+      })()
+    );
+    // The crash repair's raw reads: the row lock, then receipts since the run
+    // started — one for the person the message names, erased while it ran.
+    // (An id is replaced wherever it appears; an address only where it is the
+    // whole value, never inside free text, as erasure's own pass does.)
+    const order: string[] = [];
+    vi.mocked(prisma.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('FOR NO KEY UPDATE')) {
+        order.push('lock');
+        return [];
+      }
+      if (sql.includes('data_erasure_receipt')) {
+        return [{ subjectUserId: 'cmgoneperson0000000000001', subjectEmailHash: null }];
+      }
+      return [];
+    }) as never);
+    mockMatchErasedSubjects.mockResolvedValueOnce({
+      addresses: [],
+      userIds: ['cmgoneperson0000000000001'],
+    });
+    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+      order.push('write');
+      return {};
+    }) as never);
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => expect(order).toContain('write'));
+    expect(order.slice(0, 2)).toEqual(['lock', 'write']);
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec_1' },
+      data: expect.objectContaining({ errorMessage: 'Approver [erased] refused' }),
     });
   });
 });
