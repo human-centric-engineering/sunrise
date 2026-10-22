@@ -14,11 +14,14 @@ const tx = vi.hoisted(() => ({ $queryRaw: vi.fn() }));
 const prismaMock = vi.hoisted(() => ({ $transaction: vi.fn() }));
 vi.mock('@/lib/db/client', () => ({ prisma: prismaMock }));
 
+import { Prisma } from '@prisma/client';
 import {
+  RUN_BUSY_MESSAGE,
   RUN_ROW_WRITE_OPTIONS,
   lockRunRow,
   withRunRowLocked,
 } from '@/lib/orchestration/engine/run-row-lock';
+import { ConflictError } from '@/lib/api/errors';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 
 beforeEach(() => {
@@ -74,5 +77,31 @@ describe('withRunRowLocked', () => {
         throw new Error('refused');
       })
     ).rejects.toThrow('refused');
+  });
+
+  it('answers a wait past its bound as a 409 saying nothing changed, not a bare 500', async () => {
+    // A failure the plain writes this replaced did not have: an erasure can
+    // hold the row for its 60 s, or the pool be slow (code review).
+    prismaMock.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Transaction already closed', {
+        code: 'P2028',
+        clientVersion: 'test',
+      })
+    );
+
+    const err = await withRunRowLocked('exec-1', async () => undefined).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as ConflictError).message).toBe(RUN_BUSY_MESSAGE);
+  });
+
+  it('passes any other database error through unchanged', async () => {
+    const other = new Prisma.PrismaClientKnownRequestError('Unique constraint', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
+    prismaMock.$transaction.mockRejectedValue(other);
+
+    await expect(withRunRowLocked('exec-1', async () => undefined)).rejects.toBe(other);
   });
 });

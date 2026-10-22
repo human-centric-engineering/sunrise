@@ -135,6 +135,13 @@ export interface ScheduleProcessResult {
 }
 
 /**
+ * What the crash hook carries when the repair write failed: the engine's
+ * message was never checked for people erased while the run ran (t-901).
+ */
+export const CRASH_MESSAGE_WITHHELD =
+  'The engine failed; its message is withheld because the run could not be updated.';
+
+/**
  * Drain the orchestration engine's async iterator, consuming all events
  * for side-effects only (DB checkpoints, status transitions).
  *
@@ -223,6 +230,9 @@ async function runDrain(
       // handle is gone with the stack frame), so we record without it.
       void recordReleaseEvent(executionId, null, 'crash-repair');
     } catch (updateErr) {
+      // The erasure check did not run either, so the hook below cannot be
+      // told the message is clean: it gets a fixed one instead (code review).
+      recordedMessage = CRASH_MESSAGE_WITHHELD;
       logger.error('Scheduler: failed to mark crashed execution as failed', {
         executionId,
         error: updateErr instanceof Error ? updateErr.message : String(updateErr),

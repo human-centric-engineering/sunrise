@@ -150,6 +150,7 @@ import {
   sanitiseHookErrorMessage,
   MAX_RECOVERY_ATTEMPTS,
   getNextScheduleRunAt,
+  CRASH_MESSAGE_WITHHELD,
 } from '@/lib/orchestration/scheduling/scheduler';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -1194,7 +1195,9 @@ describe('drainEngine: engine crash path', () => {
     await vi.waitFor(() => {
       expect(emitHookEvent).toHaveBeenCalledWith(
         'workflow.execution.failed',
-        expect.objectContaining({ executionId: 'exec_1', error: 'engine boom' })
+        // Withheld: the repair failed, so the message was never checked for
+        // people erased while the run ran (t-901).
+        expect.objectContaining({ executionId: 'exec_1', error: CRASH_MESSAGE_WITHHELD })
       );
       expect(logger.error).toHaveBeenCalledWith(
         'Scheduler: failed to mark crashed execution as failed',

@@ -294,6 +294,10 @@ function mapActionError(err: unknown, kind: 'approve' | 'reject'): Response {
       });
     case 'CONCURRENT':
       return errorResponse('Execution was already processed', { code: 'CONFLICT', status: 409 });
+    // The run was held past the wait (an erasure, a busy pool): nothing was
+    // written, and trying again is the answer (t-901, `withRunRowLocked`).
+    case 'CONFLICT':
+      return errorResponse(error.message, { code: 'CONFLICT', status: 409 });
     default:
       logger.error(`token ${kind} failed`, err);
       return errorResponse('Unexpected error', { code: 'INTERNAL_ERROR', status: 500 });

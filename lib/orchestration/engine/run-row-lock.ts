@@ -18,15 +18,16 @@
  * @see lib/privacy/stale-writers.ts — the `row-lock` anchor
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { ConflictError } from '@/lib/api/errors';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 
 /**
- * How a locked action on a run waits: an erasure may hold the row for its
- * whole transaction (60 s), and Prisma's 5 s default would fail the action
- * behind it; and for a connection, as a plain query does. The engine's own run
- * writes wait the same way (`RUN_WRITE_TRANSACTION_OPTIONS`).
+ * How a write of a run waits, inside the engine (t-843) and outside it: an
+ * erasure may hold the row for its whole transaction (60 s), and Prisma's 5 s
+ * default would fail the write behind it; and for a connection, as a plain
+ * query does.
  */
 export const RUN_ROW_WRITE_OPTIONS = { ...WRITER_TRANSACTION_OPTIONS, maxWait: 10_000 } as const;
 
@@ -35,16 +36,32 @@ export async function lockRunRow(tx: Prisma.TransactionClient, executionId: stri
   await tx.$queryRaw`SELECT id FROM ai_workflow_execution WHERE id = ${executionId} FOR NO KEY UPDATE`;
 }
 
+/** What a caller is told when the run was held past the wait: retry, nothing was written. */
+export const RUN_BUSY_MESSAGE = 'The run is busy; nothing was changed. Try again in a moment.';
+
 /**
  * Run `fn` in a transaction that holds the run's row lock from the start, so
  * every read of the run inside it sees what an erasure that held the row left.
+ *
+ * Waiting for the row is a failure the plain writes this replaced did not
+ * have (code review): an erasure can hold it for its 60 s, and the pool can be
+ * slow to give a connection. Prisma reports either as P2028; it is rethrown
+ * as a `ConflictError` (409) saying the run was busy and nothing changed, so
+ * a route answers that rather than a bare 500.
  */
-export function withRunRowLocked<T>(
+export async function withRunRowLocked<T>(
   executionId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    await lockRunRow(tx, executionId);
-    return fn(tx);
-  }, RUN_ROW_WRITE_OPTIONS);
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await lockRunRow(tx, executionId);
+      return fn(tx);
+    }, RUN_ROW_WRITE_OPTIONS);
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2028') {
+      throw new ConflictError(RUN_BUSY_MESSAGE);
+    }
+    throw err;
+  }
 }

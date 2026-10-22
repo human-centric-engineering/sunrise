@@ -912,7 +912,13 @@ written since, terminal ones included.
   engine's own writes do). Its other repair writes are fixed messages.
 - **The scheduler's run creation** blanks anyone erased **since the tick read
   the schedule**, not ever: an address re-entered in an input template after
-  an older erasure is the admin's, on purpose, and reaches the run.
+  an older erasure is the admin's, on purpose, and will reach the run. The
+  schedule routes still refuse any address ever erased until t-899 converts
+  them, so nothing reaches a template that way yet.
+- **Waiting for the row** past `RUN_ROW_WRITE_OPTIONS` (an erasure holding it,
+  a busy pool) answers 409, "the run is busy; nothing was changed".
+- **A crash repair that fails** sends its hook a fixed message, since the
+  engine's was never checked for people erased while the run ran.
 - **A retroactive review** cannot hold the lock across its model call, so it
   writes `supervisorReport` under the lock with anyone erased since its read
   of the run taken out (`findErasedSinceCopy`), and returns what it stored. It

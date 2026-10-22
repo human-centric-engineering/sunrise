@@ -33,9 +33,11 @@ release process.
   Approve, reject and retry-step now take the run's row lock before reading
   its trace (`withRunRowLocked()`, `lib/orchestration/engine/run-row-lock.ts`),
   so a copy read before an erasure cannot write the person back. A scheduled
-  run now blanks anyone erased since the tick read its schedule, not ever, so
-  **an address re-entered in an input template after an older erasure reaches
-  the run**. See `.context/privacy/data-erasure.md` ("Actions on a run").
+  run now blanks anyone erased since the tick read its schedule rather than
+  anyone ever erased; the schedule routes still refuse an erased address until
+  t-899, so nothing reaches a template that way yet. An approve, reject or
+  retry-step that waits past the lock's bound answers 409 ("the run is busy;
+  nothing was changed") rather than 500. See `.context/privacy/data-erasure.md` ("Actions on a run").
 
 - **Deliveries and email sends leave out people erased since their copy was
   taken (§122, t-886).** Every webhook and event-hook delivery attempt, first
