@@ -227,6 +227,34 @@ export async function findErasedSinceRunStarted(
      WHERE r."erasedAt" >= (SELECT coalesce(e."startedAt", e."createdAt")
          FROM ai_workflow_execution e WHERE e.id = ${executionId})
        - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
+  return erasedAmong(tx, receipts, values);
+}
+
+/**
+ * Anyone erased since `takenAt` whom `values` name, or null when nobody was
+ * (§122 t-901): {@link findErasedSinceRunStarted} for a copy taken at a time
+ * of the caller's — a retroactive review's read of the run, before the model
+ * call that turned it into a report.
+ */
+export async function findErasedSinceCopy(
+  tx: RunWriterClient,
+  takenAt: Date,
+  values: unknown[]
+): Promise<ErasedSubjects | null> {
+  const receipts = await tx.$queryRaw<
+    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+  >`SELECT r."subjectUserId", r."subjectEmailHash"
+     FROM data_erasure_receipt r
+     WHERE r."erasedAt" >= ${takenAt}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
+  return erasedAmong(tx, receipts, values);
+}
+
+/** Who among `receipts` `values` name, matched as {@link matchErasedSubjects} matches. */
+async function erasedAmong(
+  tx: RunWriterClient,
+  receipts: Array<{ subjectUserId: string; subjectEmailHash: string | null }>,
+  values: unknown[]
+): Promise<ErasedSubjects | null> {
   if (receipts.length === 0) return null;
 
   // An id is matched in the strings, which is where redaction can take it out

@@ -4,10 +4,15 @@
  * Both admin (session-auth) and public (token-auth) endpoints delegate
  * to these functions so the DB update, trace manipulation, optimistic
  * lock, and audit logging live in one place.
+ *
+ * Each reads and writes the run in one transaction under the run's row lock
+ * (§122 t-901, `withRunRowLocked`): the trace is written back whole, and a
+ * copy read before an erasure would put the erased person back into a run
+ * that, once rejected, is never scrubbed again.
  */
 
-import { prisma } from '@/lib/db/client';
 import { Prisma } from '@prisma/client';
+import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
 import { logger } from '@/lib/logging';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 import { WorkflowStatus } from '@/types/orchestration';
@@ -50,7 +55,15 @@ export async function executeApproval(
   executionId: string,
   opts: ApproveOptions
 ): Promise<ApprovalResult> {
-  const execution = await prisma.aiWorkflowExecution.findUnique({
+  return withRunRowLocked(executionId, (tx) => approveLocked(tx, executionId, opts));
+}
+
+async function approveLocked(
+  tx: Prisma.TransactionClient,
+  executionId: string,
+  opts: ApproveOptions
+): Promise<ApprovalResult> {
+  const execution = await tx.aiWorkflowExecution.findUnique({
     where: { id: executionId },
   });
 
@@ -98,8 +111,9 @@ export async function executeApproval(
     completedAt: new Date().toISOString(),
   };
 
-  // Optimistic lock: WHERE includes status to prevent double-approve
-  const result = await prisma.aiWorkflowExecution.updateMany({
+  // Status in the WHERE as well: the row lock already orders two approvals,
+  // and this keeps the double-approve refusal where it always was.
+  const result = await tx.aiWorkflowExecution.updateMany({
     where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
     data: {
       status: WorkflowStatus.PENDING,
@@ -134,7 +148,15 @@ export async function executeRejection(
   executionId: string,
   opts: RejectOptions
 ): Promise<RejectionResult> {
-  const execution = await prisma.aiWorkflowExecution.findUnique({
+  return withRunRowLocked(executionId, (tx) => rejectLocked(tx, executionId, opts));
+}
+
+async function rejectLocked(
+  tx: Prisma.TransactionClient,
+  executionId: string,
+  opts: RejectOptions
+): Promise<RejectionResult> {
+  const execution = await tx.aiWorkflowExecution.findUnique({
     where: { id: executionId },
   });
 
@@ -179,21 +201,18 @@ export async function executeRejection(
   // swept now — there's no engine path to clear it after rejection.
   // Atomic with the status flip so a guard-failed reject doesn't sweep
   // rows still being driven elsewhere.
-  const result = await prisma.$transaction(async (tx) => {
-    const updated = await tx.aiWorkflowExecution.updateMany({
-      where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
-      data: {
-        status: WorkflowStatus.CANCELLED,
-        completedAt: new Date(),
-        errorMessage: `Rejected: ${opts.reason}`,
-        executionTrace: trace as unknown as Prisma.InputJsonValue,
-      },
-    });
-    if (updated.count > 0) {
-      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId } });
-    }
-    return updated;
+  const result = await tx.aiWorkflowExecution.updateMany({
+    where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
+    data: {
+      status: WorkflowStatus.CANCELLED,
+      completedAt: new Date(),
+      errorMessage: `Rejected: ${opts.reason}`,
+      executionTrace: trace as unknown as Prisma.InputJsonValue,
+    },
   });
+  if (result.count > 0) {
+    await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId } });
+  }
 
   if (result.count === 0) {
     throw Object.assign(new Error('Execution was already processed'), { code: 'CONCURRENT' });

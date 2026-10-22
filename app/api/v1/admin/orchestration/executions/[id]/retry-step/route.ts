@@ -24,16 +24,14 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { Prisma } from '@prisma/client';
-import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import { retryStepBodySchema, executionTraceSchema } from '@/lib/validations/orchestration';
+import { retryStepBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
-import { WorkflowStatus } from '@/types/orchestration';
+import { prepareRetryStep } from '@/lib/orchestration/retry-step';
 
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
@@ -47,94 +45,22 @@ export const POST = withAdminAuth<{ id: string }>(
 
     const body = await validateRequestBody(request, retryStepBodySchema);
 
-    const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
-    if (!execution || !adminCanViewExecution(execution, session)) {
-      throw new NotFoundError(`Execution ${id} not found`);
-    }
-    if (execution.status !== WorkflowStatus.FAILED) {
-      throw new ValidationError('Execution is not in failed state', {
-        status: [`Expected "failed", got "${execution.status}"`],
-      });
-    }
-
-    const traceParse = executionTraceSchema.safeParse(execution.executionTrace);
-    if (!traceParse.success) {
-      throw new ValidationError('Execution trace is corrupted and cannot be modified');
-    }
-    const trace = traceParse.data;
-
-    // Find the failed step in the trace
-    const failedIdx = trace.findIndex((e) => e.stepId === body.stepId && e.status === 'failed');
-    if (failedIdx === -1) {
-      throw new ValidationError('Step not found in trace or is not failed', {
-        stepId: [`Step "${body.stepId}" is not a failed step in this execution`],
-      });
-    }
-
-    // Truncate: keep only entries before the failed step
-    const keptTrace = trace.slice(0, failedIdx);
-
-    // Recalculate totals from kept entries
-    let totalTokensUsed = 0;
-    let totalCostUsd = 0;
-    for (const entry of keptTrace) {
-      totalTokensUsed += entry.tokensUsed;
-      totalCostUsd += entry.costUsd;
-    }
-
-    // The currentStep should be the last completed step (so nextIdsAfter
-    // returns the failed step). If no entries remain, clear currentStep
-    // so the engine starts from entryStepId.
-    const lastEntry = keptTrace.length > 0 ? keptTrace[keptTrace.length - 1] : null;
-    const currentStep = lastEntry?.stepId ?? null;
-
-    // Use PENDING (not RUNNING) to signal "ready to resume but no engine
-    // attached yet". This prevents the zombie reaper from sweeping the row
-    // before the client reconnects via ?resumeFromExecutionId=.
-    //
-    // Optimistic lock: include status in WHERE so concurrent retry requests
-    // don't both truncate the trace (second one sees count === 0).
-    //
-    // Defensive deleteMany of running-step rows: there should be none at
-    // this point (finalize cleared on FAILED), but a crashed-mid-finalize
-    // path could leave orphans. Atomic with the status flip so a
-    // guard-failed retry doesn't sweep rows belonging to another path.
-    const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.aiWorkflowExecution.updateMany({
-        where: { id, status: WorkflowStatus.FAILED },
-        data: {
-          status: WorkflowStatus.PENDING,
-          executionTrace: keptTrace as unknown as Prisma.InputJsonValue,
-          totalTokensUsed,
-          totalCostUsd,
-          currentStep,
-          errorMessage: null,
-          completedAt: null,
-        },
-      });
-      if (updated.count > 0) {
-        await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
-      }
-      return updated;
-    });
-    if (result.count === 0) {
-      throw new ValidationError('Execution was already retried by another request', {
-        status: ['Concurrent retry detected'],
-      });
-    }
+    const { workflowId, keptSteps } = await prepareRetryStep(id, body.stepId, (execution) =>
+      adminCanViewExecution(execution, session)
+    );
 
     log.info('execution retry-step prepared', {
       executionId: id,
       userId: session.user.id,
       retryStepId: body.stepId,
-      keptSteps: keptTrace.length,
+      keptSteps,
     });
 
     return successResponse({
       success: true,
       executionId: id,
       retryStepId: body.stepId,
-      workflowId: execution.workflowId,
+      workflowId,
     });
   },
   {

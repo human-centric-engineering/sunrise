@@ -33,7 +33,12 @@ import {
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { withoutErasedRecipients } from '@/lib/orchestration/workflows/version-service';
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
-import { blankAddressInTemplate } from '@/lib/privacy/run-recipients';
+import {
+  blankAddressInTemplate,
+  findErasedSinceRunStarted,
+  redactErased,
+} from '@/lib/privacy/run-recipients';
+import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
 import {
   boundLockWaits,
   findErasedSubjects,
@@ -187,16 +192,25 @@ async function runDrain(
     // Lease columns are cleared alongside the FAILED flip so an orphan-resume
     // run that crashed pre-finalize doesn't leave a stale lease pinned to the
     // terminal row (which would block any future re-claim until natural expiry).
+    //
+    // The message is the engine's, from what the run held in memory, so it
+    // can name a person erased while it ran: written under the run's row lock
+    // with anyone erased since the run started taken out, as the engine's own
+    // writes are (§122 t-901, t-843).
     try {
-      await prisma.aiWorkflowExecution.update({
-        where: { id: executionId },
-        data: {
-          status: WorkflowStatus.FAILED,
-          errorMessage,
-          completedAt: new Date(),
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
+      await withRunRowLocked(executionId, async (tx) => {
+        const erased = await findErasedSinceRunStarted(tx, executionId, [errorMessage]);
+        const message = erased ? redactErased(errorMessage, erased) : errorMessage;
+        await tx.aiWorkflowExecution.update({
+          where: { id: executionId },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage: typeof message === 'string' ? message : errorMessage,
+            completedAt: new Date(),
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
       });
       // Lease inspector entry. The lease token isn't in scope here
       // (the crash happened inside the executor; the engine's lease
@@ -406,8 +420,9 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
       // t-839): an erasure committing since the read above has blanked the
       // person's address in the template and taken them out of the version,
       // and a run made from the earlier copy would still email them. So the
-      // people both name are checked against the erasure receipts, under the
-      // locks erasure takes. An erased address is blanked in the run's input,
+      // people both name are checked against the receipts of erasures since
+      // the tick read them (`now`, before the read), under the locks erasure
+      // takes. An erased address is blanked in the run's input,
       // and an erased person taken out of the definition the engine runs, as
       // erasure did to the rows. An erasure that has not committed waits for
       // this transaction, then redacts the new run with the other unfinished
@@ -439,7 +454,10 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           // round 3).
           await boundLockWaits(tx, CLAIM_LOCK_WAIT_MS);
           if (!(await tryLockSubjects(tx, subjects))) throw new ScheduleSubjectsBusy();
-          const erased = await findErasedSubjects(tx, subjects);
+          // Erased since the tick read the schedule, not ever (§122 t-901): an
+          // address re-entered in the template after an older erasure is the
+          // admin's, on purpose, and reaches the run.
+          const erased = await findErasedSubjects(tx, subjects, { since: now });
           const execution = await tx.aiWorkflowExecution.create({
             data: {
               workflowId: schedule.workflow.id,

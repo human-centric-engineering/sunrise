@@ -100,7 +100,7 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
 export type StaleWriteAnchor = 'version' | 'row-lock' | 'taken-at' | 'intent' | 'erasure' | 'seed';
 
 /** The §122 tasks that convert a `pending` writer. */
-export type StaleWriterTask = 't-899' | 't-900' | 't-901' | 't-902';
+export type StaleWriterTask = 't-899' | 't-900' | 't-902';
 
 interface StaleWriterBase {
   /** Repo-relative path of the file that writes. */
@@ -158,6 +158,55 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
       'people its payload names, and leaves out anyone erased since the subscriptions were ' +
       'read before it sends: stopped with the address and payload redacted (`stale-sends.ts`, ' +
       't-886).',
+  },
+  {
+    file: 'lib/orchestration/approval-actions.ts',
+    model: 'AiWorkflowExecution',
+    anchor: 'row-lock',
+    how:
+      "Approve and reject read the run and write its trace back in one transaction under the run's " +
+      'row lock (`withRunRowLocked`, t-901).',
+  },
+  {
+    file: 'lib/orchestration/retry-step.ts',
+    model: 'AiWorkflowExecution',
+    anchor: 'row-lock',
+    how:
+      "Reads the run and writes its trace, cut back to the retried step, in one transaction under the run's " +
+      'row lock (`withRunRowLocked`, t-901).',
+  },
+  {
+    file: `${RUN_ROUTES}/cancel/route.ts`,
+    model: 'AiWorkflowExecution',
+    anchor: 'row-lock',
+    how:
+      "One UPDATE, which holds the row while it writes, of a fixed message ('Cancelled by user'): " +
+      'nothing it read is written back (t-901).',
+  },
+  {
+    file: `${RUN_ROUTES}/force-fail/route.ts`,
+    model: 'AiWorkflowExecution',
+    anchor: 'intent',
+    how:
+      'One UPDATE of a fixed message and the reason the admin typed in this request; nothing it read ' +
+      'is written back (t-901).',
+  },
+  {
+    file: 'lib/orchestration/engine/execution-reaper.ts',
+    model: 'AiWorkflowExecution',
+    anchor: 'row-lock',
+    how:
+      'One UPDATE per batch, which holds the rows while it writes, of a fixed sentinel message: ' +
+      'nothing it read is written back (t-901).',
+  },
+  {
+    file: 'lib/orchestration/scheduling/scheduler.ts',
+    model: 'AiWorkflowExecution',
+    anchor: 'taken-at',
+    how:
+      "Creates runs from a schedule's template with anyone erased since the tick read it blanked, " +
+      "under erasure's locks. Repair writes are fixed messages, or the engine's error under the row " +
+      'lock with anyone erased since the run started taken out (t-901).',
   },
   {
     file: 'app/api/v1/inbound/[channel]/[slug]/route.ts',
@@ -308,51 +357,6 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'pending',
     task: 't-900',
     how: 'Publishes and rolls back snapshots. Refuses or strips anyone ever erased.',
-  },
-  {
-    file: `${RUN_ROUTES}/cancel/route.ts`,
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how: "Writes a fixed error message ('Cancelled by user'). Reads the trace only to authorise.",
-  },
-  {
-    file: `${RUN_ROUTES}/force-fail/route.ts`,
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how: "Writes an error message carrying the admin's typed reason. No erasure check.",
-  },
-  {
-    file: `${RUN_ROUTES}/retry-step/route.ts`,
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how: "Writes the run's trace, cut back to the retried step, from the copy it read. No erasure check.",
-  },
-  {
-    file: 'lib/orchestration/approval-actions.ts',
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how: "Approve and reject write the run's trace and error from the copy they read. No erasure check.",
-  },
-  {
-    file: 'lib/orchestration/engine/execution-reaper.ts',
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how: 'Writes a fixed sentinel error message on the runs it reaps.',
-  },
-  {
-    file: 'lib/orchestration/scheduling/scheduler.ts',
-    model: 'AiWorkflowExecution',
-    anchor: 'pending',
-    task: 't-901',
-    how:
-      "Writes the error message on runs it repairs. Also creates runs from a schedule's input " +
-      'template, stripping anyone ever erased (`findErasedSubjects`) — t-901 does not name that ' +
-      'yet; it reads the schedule before the transaction.',
   },
   {
     file: 'lib/orchestration/backup/importer.ts',

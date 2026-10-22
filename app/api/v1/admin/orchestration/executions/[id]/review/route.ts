@@ -63,6 +63,8 @@ import {
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
+import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
+import { findErasedSinceCopy, redactErased } from '@/lib/privacy/run-recipients';
 
 const TERMINAL_STATUSES = new Set<string>([
   WorkflowStatus.COMPLETED,
@@ -107,6 +109,11 @@ function stepOutputsFromTrace(trace: ExecutionTraceEntry[]): Record<string, unkn
   return out;
 }
 
+/** The report as the JSON it is stored as, for erasure's redaction to walk. */
+function toReportJson(report: SupervisorReport): Prisma.JsonValue {
+  return z.json().parse(JSON.parse(JSON.stringify(report)));
+}
+
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
     const log = await getRouteLogger(request);
@@ -131,6 +138,9 @@ export const POST = withAdminAuth<{ id: string }>(
       );
     }
 
+    // Before the read: the report is built from this copy of the run, and an
+    // erasure during the model call below must still be taken out of it.
+    const takenAt = new Date();
     const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
     if (!execution || !adminCanViewExecution(execution, session)) {
       throw new NotFoundError(`Execution ${id} not found`);
@@ -310,16 +320,24 @@ export const POST = withAdminAuth<{ id: string }>(
       }
     }
 
+    // Written under the run's row lock (§122 t-901), with anyone erased since
+    // the read above taken out of the report: the model call between the two
+    // can take long enough for an erasure to land, and the report quotes the
+    // run it read. The lock orders this against an erasure redacting the run.
     // Confined as the read above was, so the owner layer sees a write it can
     // check: the row it returns is one this caller may read.
-    await prisma.aiWorkflowExecution.update({
-      where: { id, AND: [executionVisibilityWhere(session)] },
-      data: {
-        supervisorVerdict: finalReport.verdict,
-        supervisorScore: finalReport.score,
-        supervisorReport: finalReport as unknown as Prisma.InputJsonValue,
-        supervisorReviewedAt: new Date(),
-      },
+    await withRunRowLocked(id, async (tx) => {
+      const erased = await findErasedSinceCopy(tx, takenAt, [finalReport]);
+      const report = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
+      await tx.aiWorkflowExecution.update({
+        where: { id, AND: [executionVisibilityWhere(session)] },
+        data: {
+          supervisorVerdict: finalReport.verdict,
+          supervisorScore: finalReport.score,
+          supervisorReport: report as unknown as Prisma.InputJsonValue,
+          supervisorReviewedAt: new Date(),
+        },
+      });
     });
 
     log.info('Retroactive supervisor review completed', {
