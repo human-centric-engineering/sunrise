@@ -35,7 +35,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiEventHook: { findMany: mockFindMany },
     aiEventHookDelivery: {
-      create: vi.fn().mockResolvedValue({ id: 'del-1' }),
+      create: vi.fn().mockResolvedValue({ id: 'del-1', createdAt: new Date() }),
       update: vi.fn().mockResolvedValue({ id: 'del-1' }),
     },
   },

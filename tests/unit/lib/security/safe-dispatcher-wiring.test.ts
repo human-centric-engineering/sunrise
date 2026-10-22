@@ -96,7 +96,10 @@ describe('webhook delivery', () => {
 
   beforeEach(() => {
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([sub] as never);
-    vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue({ id: 'del-1' } as never);
+    vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue({
+      id: 'del-1',
+      createdAt: new Date(),
+    } as never);
     vi.mocked(prisma.aiWebhookDelivery.update).mockResolvedValue({} as never);
     vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 1 });
     mockFetch.mockResolvedValue(new Response('ok', { status: 200 }));
