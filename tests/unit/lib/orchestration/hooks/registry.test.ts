@@ -33,8 +33,34 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       findMany: vi.fn(),
     },
+    // Who a payload's conversation or run belongs to (t-886).
+    aiConversation: { findUnique: vi.fn().mockResolvedValue({ userId: null }) },
+    aiWorkflowExecution: { findUnique: vi.fn().mockResolvedValue({ userId: null }) },
+    dataErasureReceipt: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
+
+// Who the lock-holding check reports erased since the event (t-886). The
+// locks and the receipt query are `stale-sends.test.ts`'s; here, what the
+// registry does with the answer. The transaction it hands over is the prisma
+// mock, so a write in it is a write on `prisma`.
+const erasedSince = vi.hoisted(() => ({ userIds: [] as string[], fail: null as Error | null }));
+vi.mock('@/lib/privacy/stale-sends', async () => {
+  const { prisma: client } = await import('@/lib/db/client');
+  return {
+    sendHoldingSubjects: vi.fn(
+      (
+        _subjects: unknown,
+        _takenAt: Date,
+        _timeoutMs: number,
+        send: (tx: unknown, erased: { addresses: string[]; userIds: string[] }) => Promise<unknown>
+      ) =>
+        erasedSince.fail
+          ? Promise.reject(erasedSince.fail)
+          : send(client, { addresses: [], userIds: erasedSince.userIds })
+    ),
+  };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -58,6 +84,7 @@ import {
   processPendingHookRetries,
 } from '@/lib/orchestration/hooks/registry';
 import { describeDestination } from '@/lib/orchestration/webhooks/destination';
+import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -1944,5 +1971,152 @@ describe('delivery destination recording', () => {
         data: { status: 'exhausted', nextRetryAt: null },
       });
     });
+  });
+});
+
+describe('a hook delivery built from an event taken before an erasure (t-886)', () => {
+  beforeEach(() => {
+    erasedSince.userIds = [];
+    erasedSince.fail = null;
+    // The row as the dispatch created it, so the attempt checks what it stored.
+    vi.mocked(prisma.aiEventHookDelivery.create).mockImplementation((async (args: {
+      data: Record<string, unknown>;
+    }) => makeDelivery(args.data)) as never);
+  });
+
+  /** The data of every write that stopped the row as erasure stops one. */
+  function stopWrites(): Array<Record<string, unknown>> {
+    return vi
+      .mocked(prisma.aiEventHookDelivery.updateMany)
+      .mock.calls.map(([args]) => (args as { data: Record<string, unknown> }).data)
+      .filter((data) => data.stoppedByErasure === true);
+  }
+
+  it('asks about the people the payload names, since the event was emitted', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ eventType: 'workflow.failed' }),
+    ] as never);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce({
+      userId: 'owner-1',
+    } as never);
+    const before = Date.now();
+
+    emitHookEvent('workflow.failed', { executionId: 'exec-1', approverUserIds: ['a-1'] });
+
+    await vi.waitFor(() => expect(sendHoldingSubjects).toHaveBeenCalled());
+    const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
+    expect(subjects).toEqual({ userIds: ['owner-1', 'a-1'] });
+    expect(takenAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(takenAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('does not post an event about the activity of a person erased since, and stops the row', async () => {
+    erasedSince.userIds = ['u-1'];
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ eventType: 'message.created' }),
+    ] as never);
+
+    emitHookEvent('message.created', { agentId: 'agent-1', userId: 'u-1', content: 'their words' });
+
+    await vi.waitFor(() => expect(stopWrites()).toHaveLength(1));
+    expect(mockFetch).not.toHaveBeenCalled();
+    const [stop] = stopWrites();
+    expect(stop).toMatchObject({
+      status: 'exhausted',
+      nextRetryAt: null,
+      lastError: 'Not retried: subject erased',
+    });
+    expect((stop.payload as { data: unknown }).data).toEqual({ agentId: 'agent-1', userId: null });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'Hook delivery left out: it names a person erased since its event',
+      { deliveryId: 'del-1' }
+    );
+  });
+
+  it('posts an admin action without who acted, and stores what it posted', async () => {
+    erasedSince.userIds = ['admin-1'];
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ eventType: 'agent.updated' }),
+    ] as never);
+
+    emitHookEvent('agent.updated', { agentId: 'agent-1', actorUserId: 'admin-1' });
+
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+    const posted = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body) as {
+      data: Record<string, unknown>;
+    };
+    expect(posted.data).toEqual({ agentId: 'agent-1', actorUserId: null });
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+      where: { id: 'del-1' },
+      data: {
+        payload: expect.objectContaining({ data: { agentId: 'agent-1', actorUserId: null } }),
+      },
+    });
+    expect(stopWrites()).toEqual([]);
+  });
+
+  it('CONTROL — posts the same event when nobody in it was erased since', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ eventType: 'message.created' }),
+    ] as never);
+
+    emitHookEvent('message.created', { agentId: 'agent-1', userId: 'u-1' });
+
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+    const posted = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body) as {
+      data: Record<string, unknown>;
+    };
+    expect(posted.data).toEqual({ agentId: 'agent-1', userId: 'u-1' });
+    expect(stopWrites()).toEqual([]);
+  });
+
+  it('fails the attempt, to be retried, when the check cannot run', async () => {
+    erasedSince.fail = new Error('canceling statement due to lock timeout');
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() =>
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'failed',
+            lastError:
+              'Could not check for an erasure before sending: canceling statement due to lock timeout',
+          }),
+        })
+      )
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('anchors a manual retry on its read, and checks the payload its reset returned', async () => {
+    let readAt = 0;
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockImplementationOnce((() => {
+      readAt = Date.now();
+      return Promise.resolve({
+        ...makeDelivery({ status: 'exhausted' }),
+        hook: makeHook(),
+      });
+    }) as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({
+        status: 'pending',
+        payload: {
+          eventType: 'conversation.started',
+          timestamp: '2026-10-22T00:00:00Z',
+          data: { userId: 'u-7' },
+        },
+      }),
+    ] as never);
+    erasedSince.userIds = ['u-7'];
+
+    await retryHookDelivery('del-1');
+
+    await vi.waitFor(() => expect(stopWrites()).toHaveLength(1));
+    const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
+    expect(subjects).toEqual({ userIds: ['u-7'] });
+    expect(takenAt.getTime()).toBeLessThanOrEqual(readAt);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

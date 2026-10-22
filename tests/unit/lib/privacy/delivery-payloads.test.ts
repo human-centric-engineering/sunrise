@@ -19,6 +19,8 @@ import {
   erasedPayload,
   preRedactSubjectFromDeliveries,
   subjectViewOfPayload,
+  subjectsOfPayload,
+  withoutErasedSubjects,
   type RawClient,
 } from '@/lib/privacy/delivery-payloads';
 
@@ -970,5 +972,141 @@ describe('byCreatedAtThenId', () => {
     expect(byCreatedAtThenId(at(2, 'a'), at(1, 'a'))).toBeGreaterThan(0);
     expect(byCreatedAtThenId(at(1, 'a'), at(1, 'b'))).toBeLessThan(0);
     expect(byCreatedAtThenId(at(1, 'b'), at(1, 'a'))).toBeGreaterThan(0);
+  });
+});
+
+describe('who a payload about to be sent names (t-886)', () => {
+  function owners(conversation: { userId: string | null } | null, execution = conversation) {
+    return {
+      aiConversation: { findUnique: vi.fn().mockResolvedValue(conversation) },
+      aiWorkflowExecution: { findUnique: vi.fn().mockResolvedValue(execution) },
+    };
+  }
+
+  it('names every person key, on the basis erasure matches it on, activity winning', async () => {
+    const client = owners(null);
+    const named = await subjectsOfPayload(client as never, 'workflow_failed', {
+      event: 'workflow_failed',
+      data: { userId: 'u-1', actorUserId: 'u-2', approverUserIds: ['u-3', 'u-1', 7] },
+    });
+
+    expect([...named.userIds]).toEqual([
+      ['u-1', 'activity'],
+      ['u-2', 'activity'],
+      ['u-3', 'actor'],
+    ]);
+    expect(named.dangling).toBe(false);
+    expect(client.aiConversation.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('reads actorUserId on an admin action as the actor, not the activity', async () => {
+    const named = await subjectsOfPayload(owners(null) as never, ADMIN_ACTION_EVENTS[0], {
+      data: { actorUserId: 'admin-1' },
+    });
+
+    expect(named.userIds.get('admin-1')).toBe('actor');
+  });
+
+  it('names the owners of the conversation and the run the payload names', async () => {
+    const client = {
+      aiConversation: { findUnique: vi.fn().mockResolvedValue({ userId: 'conv-owner' }) },
+      aiWorkflowExecution: { findUnique: vi.fn().mockResolvedValue({ userId: 'run-owner' }) },
+    };
+    const named = await subjectsOfPayload(client as never, 'x', {
+      data: { conversationId: 'c-1', executionId: 'e-1' },
+    });
+
+    expect([...named.userIds]).toEqual([
+      ['conv-owner', 'activity'],
+      ['run-owner', 'activity'],
+    ]);
+    expect(client.aiConversation.findUnique).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      select: { userId: true },
+    });
+    expect(named.dangling).toBe(false);
+  });
+
+  it('is dangling when a conversation or run it names no longer exists', async () => {
+    const named = await subjectsOfPayload(
+      { ...owners(null), aiWorkflowExecution: { findUnique: vi.fn() } } as never,
+      'x',
+      { data: { conversationId: 'gone' } }
+    );
+
+    expect(named).toEqual({ userIds: new Map(), dangling: true });
+  });
+
+  it('names nobody in a payload with no data, or a system-owned run', async () => {
+    expect(await subjectsOfPayload(owners(null) as never, 'x', null)).toEqual({
+      userIds: new Map(),
+      dangling: false,
+    });
+    expect(
+      await subjectsOfPayload(owners({ userId: null }) as never, 'x', {
+        data: { executionId: 'scheduled' },
+      })
+    ).toEqual({ userIds: new Map(), dangling: false });
+  });
+});
+
+describe('a payload with the people erased since taken out (t-886)', () => {
+  const activity = new Map<string, 'activity' | 'actor'>([['u-1', 'activity']]);
+  const actor = new Map<string, 'activity' | 'actor'>([['admin-1', 'actor']]);
+
+  it('stops an activity payload, redacted as erasure redacts the row', () => {
+    const result = withoutErasedSubjects(
+      { event: 'e', data: { workflowId: 'wf', userId: 'u-1', reason: 'theirs' } },
+      { userIds: activity, dangling: false },
+      ['u-1'],
+      false
+    );
+
+    expect(result).toEqual({
+      stop: true,
+      payload: { event: 'e', data: { workflowId: 'wf', userId: null } },
+    });
+  });
+
+  it('sends an actor payload without who acted', () => {
+    const result = withoutErasedSubjects(
+      {
+        event: 'agent_updated',
+        data: { changes: { a: 1 }, actorUserId: 'admin-1', actorUserName: 'Ada' },
+      },
+      { userIds: actor, dangling: false },
+      ['admin-1'],
+      false
+    );
+
+    expect(result).toEqual({
+      stop: false,
+      payload: { event: 'agent_updated', data: { changes: { a: 1 }, actorUserId: null } },
+    });
+  });
+
+  it('leaves a payload alone when nobody it names was erased, or only someone it does not name', () => {
+    const payload = { event: 'e', data: { userId: 'u-1' } };
+
+    expect(
+      withoutErasedSubjects(payload, { userIds: activity, dangling: false }, [], false)
+    ).toEqual({ stop: false, payload: null });
+    expect(
+      withoutErasedSubjects(payload, { userIds: activity, dangling: false }, ['stranger'], false)
+    ).toEqual({ stop: false, payload: null });
+  });
+
+  it('stops a dangling payload, to its record keys, only when someone was erased since', () => {
+    const payload = { event: 'e', data: { conversationId: 'gone', prompt: 'theirs' } };
+    const dangling = { userIds: new Map<string, 'activity' | 'actor'>(), dangling: true };
+
+    expect(withoutErasedSubjects(payload, dangling, [], true)).toEqual({
+      stop: true,
+      payload: { event: 'e', data: { conversationId: 'gone' } },
+    });
+    expect(withoutErasedSubjects(payload, dangling, [], false)).toEqual({
+      stop: false,
+      payload: null,
+    });
   });
 });
