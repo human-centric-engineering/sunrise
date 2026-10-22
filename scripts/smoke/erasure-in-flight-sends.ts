@@ -16,6 +16,22 @@
  *     (this script holds it) sends before an erasure started meanwhile, which
  *     waits for it: the step takes erasure's lock, so the two are ordered.
  *
+ * The erasure-first run starts after the erasure, holding a definition built
+ * before it: within `COPY_CLOCK_SKEW_MS` of its start, as a definition read
+ * just before a run starts is (§122 t-886).
+ *
+ * And a webhook email delivery built from subscriptions read before an erasure
+ * (§122 t-886), with the dispatcher's two halves (`readSubscribers`, then
+ * `deliverToSubscribers`) so the erasure lands between them:
+ *
+ *   • **Erasure first.** The delivery is not sent: its row is stopped as
+ *     erasure stops one, with the address taken off.
+ *   • **Send first.** A delivery waiting on the person's lock (this script
+ *     holds it) is attempted before an erasure started meanwhile, which then
+ *     takes the address off the row it left.
+ *   • **Re-entered.** An address erased before the subscriptions were read,
+ *     and since put on a subscription again, is sent to.
+ *
  * Email is switched off (the npm script blanks `RESEND_API_KEY`, and this
  * script refuses to run if it is still on), so nothing is sent; the step's
  * output says how many it left out. Everything it creates is a
@@ -29,7 +45,8 @@
 import { prisma } from '@/lib/db/client';
 import { isEmailEnabled } from '@/lib/email/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
-import { lockSubjects } from '@/lib/privacy/erased-subjects';
+import { COPY_CLOCK_SKEW_MS, lockSubjects } from '@/lib/privacy/erased-subjects';
+import { deliverToSubscribers, readSubscribers } from '@/lib/orchestration/webhooks/dispatcher';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import '@/lib/orchestration/engine/executors';
 import { lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
@@ -101,6 +118,7 @@ async function main(): Promise<void> {
   const userIds: string[] = [];
   const workflowIds: string[] = [];
   const receiptIds: string[] = [];
+  const subscriptionIds: string[] = [];
 
   const person = (name: string) =>
     prisma.user
@@ -259,8 +277,145 @@ async function main(): Promise<void> {
       await hold.catch(() => undefined);
     }
 
+    // ── 3. A webhook email built from subscriptions read before the erasure ──
+    const EVENT = 'budget_exceeded';
+    const emailing = async (address: string) => {
+      const sub = await prisma.aiWebhookSubscription.create({
+        data: {
+          orgId: INSTALL_ORG_ID,
+          channel: 'email',
+          emailAddress: address,
+          events: [EVENT],
+          description: `${PREFIX} ${stamp}`,
+          createdBy: admin.id,
+        },
+      });
+      subscriptionIds.push(sub.id);
+      return sub.id;
+    };
+    // This script's subscription only: a development database may hold real
+    // ones for the same event, which must not be sent to.
+    const readOnly = async (subscriptionId: string) => {
+      const read = await readSubscribers(EVENT, { agentId: PREFIX });
+      return { ...read, subscriptions: read.subscriptions.filter((s) => s.id === subscriptionId) };
+    };
+    const deliveryOf = (subscriptionId: string) =>
+      prisma.aiWebhookDelivery.findFirstOrThrow({
+        where: { subscriptionId },
+        select: {
+          status: true,
+          stoppedByErasure: true,
+          destination: true,
+          lastError: true,
+          attempts: true,
+        },
+      });
+
+    console.log('webhook email: erasure first');
+    const subscriber = await person('subscriber');
+    const subId = await emailing(subscriber.email);
+    const copy = await readOnly(subId);
+    check(copy.subscriptions.length === 1, 'the dispatch read the subscription emailing them');
+    const subscriberErasure = await eraseUser({
+      userId: subscriber.id,
+      actorUserId: admin.id,
+      reason: 'admin_action',
+    });
+    receiptIds.push(subscriberErasure.receiptId);
+    await deliverToSubscribers(EVENT, { agentId: PREFIX }, copy);
+    const stopped = await deliveryOf(subId);
+    check(
+      stopped.stoppedByErasure && stopped.status === 'exhausted' && stopped.attempts === 0,
+      'the delivery built from the earlier copy is stopped, never attempted'
+    );
+    check(stopped.destination === '[erased]', 'and its row does not keep the address');
+    check(
+      stopped.lastError?.includes('recipient erased') === true,
+      'its last error says the recipient was erased (not a failed send)'
+    );
+
+    console.log('webhook email: send first');
+    const raced = await person('raced');
+    const racedSub = await emailing(raced.email);
+    let releaseSub = (): void => undefined;
+    const subReleased = new Promise<void>((resolve) => {
+      releaseSub = resolve;
+    });
+    const holdSub = prisma.$transaction(
+      async (tx) => {
+        await lockSubjects(tx, { addresses: [raced.email] });
+        await subReleased;
+      },
+      { timeout: 60_000 }
+    );
+    holdSub.catch(() => undefined);
+    try {
+      await sleep(100);
+      const waitersBefore = await lockWaiters();
+      const delivering = readOnly(racedSub).then((read) =>
+        deliverToSubscribers(EVENT, { agentId: PREFIX }, read)
+      );
+      await until(
+        async () => (await lockWaiters()) > waitersBefore,
+        10_000,
+        'the delivery to queue'
+      );
+      check(true, "the delivery waits on the person's erasure lock");
+      const racedErasure = eraseUser({
+        userId: raced.id,
+        actorUserId: admin.id,
+        reason: 'admin_action',
+      });
+      await sleep(300);
+      releaseSub();
+      await delivering;
+      receiptIds.push((await racedErasure).receiptId);
+      const attempted = await deliveryOf(racedSub);
+      // What shows it went first is that it was attempted at all. Its outcome
+      // is written after its locks are let go, so the erasure may stop the row
+      // in between, as it stops any attempt in flight (t-793).
+      check(attempted.attempts === 1, 'the delivery queued first is attempted, before the erasure');
+      check(
+        attempted.destination === '[erased]',
+        'and the erasure, waiting for it, then took the address off its row'
+      );
+    } finally {
+      releaseSub();
+      await holdSub.catch(() => undefined);
+    }
+
+    console.log('webhook email: re-entered after an older erasure');
+    const returning = await person('returning');
+    const returningErasure = await eraseUser({
+      userId: returning.id,
+      actorUserId: admin.id,
+      reason: 'admin_action',
+    });
+    receiptIds.push(returningErasure.receiptId);
+    // An erasure from before the margin: the copy below cannot predate it.
+    await prisma.dataErasureReceipt.update({
+      where: { id: returningErasure.receiptId },
+      data: { erasedAt: new Date(Date.now() - COPY_CLOCK_SKEW_MS - 60_000) },
+    });
+    const backSub = await emailing(returning.email);
+    await deliverToSubscribers(EVENT, { agentId: PREFIX }, await readOnly(backSub));
+    const reentered = await deliveryOf(backSub);
+    // Email is off, so the attempt itself fails, terminally: it was attempted.
+    check(
+      !reentered.stoppedByErasure &&
+        reentered.attempts === 1 &&
+        reentered.lastError?.includes('not configured') === true,
+      'an address put back on a subscription after its erasure is sent to'
+    );
+
     console.log('\n✓ smoke:erasure-sends passed');
   } finally {
+    await prisma.aiWebhookDelivery
+      .deleteMany({ where: { subscriptionId: { in: subscriptionIds } } })
+      .catch(() => undefined);
+    await prisma.aiWebhookSubscription
+      .deleteMany({ where: { id: { in: subscriptionIds } } })
+      .catch(() => undefined);
     await prisma.aiWorkflow
       .deleteMany({ where: { id: { in: workflowIds } } })
       .catch(() => undefined);
