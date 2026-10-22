@@ -107,7 +107,9 @@ async function emailLiveRecipients(
       }
     );
   } catch (err) {
-    logger.warn('Escalation email not sent', {
+    // Before the send, nothing went; after it, a transaction that failed to
+    // commit may follow an email that did go.
+    logger.warn('Escalation email may not have been sent', {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -137,89 +139,103 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
     const agentName = payload.agentName ?? 'Unknown Agent';
     const appUrl = env.BETTER_AUTH_URL ?? env.NEXT_PUBLIC_APP_URL;
 
-    // Send emails
-    if (config.emailAddresses.length > 0) {
-      await emailLiveRecipients(config.emailAddresses, takenAt, {
-        subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
-        react: EscalationNotification({
-          agentName,
-          reason: payload.reason,
-          priority: payload.priority,
-          conversationId: payload.conversationId,
-          appUrl: appUrl || undefined,
-        }),
-      });
-    }
-
-    // Optional webhook POST
-    if (config.webhookUrl) {
-      // Re-check at the point of use, not just at the API boundary (#553).
-      // `escalationConfigWriteSchema` rejects an unsafe target on PATCH, but a
-      // direct DB write, a restored backup bundle or a value stored before that
-      // refine existed reaches here unvalidated — the same reasoning
-      // provider-manager applies to `baseUrl`. Skipping only the POST (rather
-      // than failing the parse) keeps the emails flowing and leaves the URL
-      // visible in the settings form so it can actually be corrected.
-      // The flag means "my relay is on infrastructure I control and it is not
-      // publicly routable". A same-pod sidecar on loopback fits that exactly —
-      // and is a pattern this codebase already supports for LLM providers via
-      // `isLocal` — so it opts into both. The guard keeps the two options
-      // orthogonal because they are different properties of an address; the
-      // product-level flag composes them because they are one operator intent.
-      const targetCheck = checkSafeProviderUrl(config.webhookUrl, {
-        allowPrivateNetwork: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
-        allowLoopback: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
-      });
-      if (!targetCheck.ok) {
-        logger.warn('Escalation webhook target rejected; skipping the POST', {
-          url: loggableUrl(config.webhookUrl),
-          reason: targetCheck.reason,
-          message: targetCheck.message,
-        });
-        return;
-      }
-
-      try {
-        const response = await fetch(config.webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            event: 'conversation_escalated',
-            agentId: payload.agentId,
-            agentName,
-            conversationId: payload.conversationId,
-            reason: payload.reason,
-            priority: payload.priority,
-            metadata: payload.metadata,
-            timestamp: new Date().toISOString(),
-          }),
-          signal: AbortSignal.timeout(10_000),
-          // Refuse redirects (#534/#553). The URL is validated when the config
-          // is parsed, not per hop, so following one would POST the escalation
-          // payload to a target the guard never saw.
-          redirect: 'error',
-        });
-
-        if (!response.ok) {
-          logger.warn('Escalation webhook returned non-OK', {
-            status: response.status,
-            url: loggableUrl(config.webhookUrl),
-          });
-        }
-      } catch (err) {
-        // `redirect: 'error'` above makes a newly-redirecting endpoint a new
-        // failure mode, and undici renders it as a bare "fetch failed" — this
-        // warning is the only signal there is, so it must name the cause.
-        logger.warn('Escalation webhook call failed', {
-          error: describeFetchFailure(err),
-          url: loggableUrl(config.webhookUrl),
-        });
-      }
+    // Send emails. Not awaited before the webhook: the email may wait up to
+    // SENDER_LOCK_WAIT_MS for an erasure's locks (t-886), and the on-call
+    // webhook must not wait behind it. Never rejects.
+    const emailed =
+      config.emailAddresses.length > 0
+        ? emailLiveRecipients(config.emailAddresses, takenAt, {
+            subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
+            react: EscalationNotification({
+              agentName,
+              reason: payload.reason,
+              priority: payload.priority,
+              conversationId: payload.conversationId,
+              appUrl: appUrl || undefined,
+            }),
+          })
+        : Promise.resolve();
+    try {
+      await postEscalationWebhook(config, payload, agentName);
+    } finally {
+      await emailed;
     }
   } catch (err) {
     logger.error('notifyEscalation failed', {
       error: err instanceof Error ? err.message : String(err),
       agentId: payload.agentId,
     });
+  }
+}
+
+/** The optional webhook POST. */
+async function postEscalationWebhook(
+  config: EscalationConfig,
+  payload: EscalationPayload,
+  agentName: string
+): Promise<void> {
+  if (config.webhookUrl) {
+    // Re-check at the point of use, not just at the API boundary (#553).
+    // `escalationConfigWriteSchema` rejects an unsafe target on PATCH, but a
+    // direct DB write, a restored backup bundle or a value stored before that
+    // refine existed reaches here unvalidated — the same reasoning
+    // provider-manager applies to `baseUrl`. Skipping only the POST (rather
+    // than failing the parse) keeps the emails flowing and leaves the URL
+    // visible in the settings form so it can actually be corrected.
+    // The flag means "my relay is on infrastructure I control and it is not
+    // publicly routable". A same-pod sidecar on loopback fits that exactly —
+    // and is a pattern this codebase already supports for LLM providers via
+    // `isLocal` — so it opts into both. The guard keeps the two options
+    // orthogonal because they are different properties of an address; the
+    // product-level flag composes them because they are one operator intent.
+    const targetCheck = checkSafeProviderUrl(config.webhookUrl, {
+      allowPrivateNetwork: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
+      allowLoopback: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
+    });
+    if (!targetCheck.ok) {
+      logger.warn('Escalation webhook target rejected; skipping the POST', {
+        url: loggableUrl(config.webhookUrl),
+        reason: targetCheck.reason,
+        message: targetCheck.message,
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(config.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'conversation_escalated',
+          agentId: payload.agentId,
+          agentName,
+          conversationId: payload.conversationId,
+          reason: payload.reason,
+          priority: payload.priority,
+          metadata: payload.metadata,
+          timestamp: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(10_000),
+        // Refuse redirects (#534/#553). The URL is validated when the config
+        // is parsed, not per hop, so following one would POST the escalation
+        // payload to a target the guard never saw.
+        redirect: 'error',
+      });
+
+      if (!response.ok) {
+        logger.warn('Escalation webhook returned non-OK', {
+          status: response.status,
+          url: loggableUrl(config.webhookUrl),
+        });
+      }
+    } catch (err) {
+      // `redirect: 'error'` above makes a newly-redirecting endpoint a new
+      // failure mode, and undici renders it as a bare "fetch failed" — this
+      // warning is the only signal there is, so it must name the cause.
+      logger.warn('Escalation webhook call failed', {
+        error: describeFetchFailure(err),
+        url: loggableUrl(config.webhookUrl),
+      });
+    }
   }
 }

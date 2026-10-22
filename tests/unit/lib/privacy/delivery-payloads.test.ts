@@ -1034,19 +1034,43 @@ describe('who a payload about to be sent names (t-886)', () => {
       { data: { conversationId: 'gone' } }
     );
 
-    expect(named).toEqual({ userIds: new Map(), dangling: true });
+    expect(named).toEqual({ userIds: new Map(), dangling: true, runStartedAt: null });
   });
 
   it('names nobody in a payload with no data, or a system-owned run', async () => {
     expect(await subjectsOfPayload(owners(null) as never, 'x', null)).toEqual({
       userIds: new Map(),
       dangling: false,
+      runStartedAt: null,
     });
+    const createdAt = new Date('2026-10-22T08:00:00Z');
     expect(
-      await subjectsOfPayload(owners({ userId: null }) as never, 'x', {
-        data: { executionId: 'scheduled' },
-      })
-    ).toEqual({ userIds: new Map(), dangling: false });
+      await subjectsOfPayload(
+        owners({ userId: null, startedAt: null, createdAt } as never) as never,
+        'x',
+        { data: { executionId: 'scheduled' } }
+      )
+    ).toEqual({ userIds: new Map(), dangling: false, runStartedAt: createdAt });
+  });
+
+  it('says when the run it names started: an event from run memory holds a copy from then', async () => {
+    const startedAt = new Date('2026-10-20T09:00:00Z');
+    const client = {
+      aiConversation: { findUnique: vi.fn() },
+      aiWorkflowExecution: {
+        findUnique: vi.fn().mockResolvedValue({ userId: 'u-1', startedAt, createdAt: new Date(0) }),
+      },
+    };
+
+    const named = await subjectsOfPayload(client as never, 'workflow.paused_for_approval', {
+      data: { executionId: 'e-1', approverUserIds: ['a-1'] },
+    });
+
+    expect(named.runStartedAt).toEqual(startedAt);
+    expect(client.aiWorkflowExecution.findUnique).toHaveBeenCalledWith({
+      where: { id: 'e-1' },
+      select: { userId: true, startedAt: true, createdAt: true },
+    });
   });
 });
 

@@ -39,8 +39,6 @@ import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
   AWAITING_RETRY_STATUSES,
   DISPATCH_TIMEOUT_MS,
-  RECIPIENT_ERASED,
-  SUBJECT_ERASED,
   claimArmedRetry,
   isArmedRetry,
   logSettledInFlight,
@@ -53,9 +51,7 @@ import {
   subscriptionDestination,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
-import { anyoneErasedSince } from '@/lib/privacy/erased-subjects';
-import { subjectsOfPayload, withoutErasedSubjects } from '@/lib/privacy/delivery-payloads';
-import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { decideDeliveryUnderLocks } from '@/lib/privacy/stale-sends';
 
 /** Safely extract a JSON object from a Prisma Json field, falling back to empty object. */
 function toJsonRecord(value: unknown): Record<string, unknown> {
@@ -551,8 +547,9 @@ async function attemptDelivery(
 
 /**
  * Send the attempt, unless the copy it was built from names a person erased
- * since `takenAt` (§122 t-886, `lib/privacy/stale-sends.ts`): its email
- * address, or someone its payload is about. Null when it was left out.
+ * since that copy was taken — the oldest of `takenAt`, the row's creation and
+ * the start of the run it names (§122 t-886, `decideDeliveryUnderLocks`): its
+ * email address, or someone its payload is about. Null when it was left out.
  *
  * Left out, the row is settled as erasure settles one it stops (t-793):
  * `exhausted`, `stoppedByErasure`, so no retry or replay sends it, with the
@@ -570,33 +567,22 @@ async function sendUnlessErased(
   const email = sub.channel === 'email';
   const address = email && sub.emailAddress ? normaliseAddress(sub.emailAddress) : null;
   try {
-    const named = await subjectsOfPayload(prisma, record.eventType, record.payload);
-    return await sendHoldingSubjects(
-      { addresses: address ? [address] : [], userIds: [...named.userIds.keys()] },
+    return await decideDeliveryUnderLocks(
+      record,
+      address,
       takenAt,
       DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'],
-      async (tx, erased) => {
-        const recipientErased = address !== null && erased.addresses.includes(address);
-        const danglingErased = named.dangling && (await anyoneErasedSince(tx, takenAt));
-        const { payload, stop } = withoutErasedSubjects(
-          record.payload,
-          named,
-          erased.userIds,
-          danglingErased
-        );
-        if (recipientErased || stop) {
+      async (tx, decision) => {
+        if (decision.kind === 'stop') {
           await tx.aiWebhookDelivery.updateMany({
             where: { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
             data: {
               status: 'exhausted',
               nextRetryAt: null,
               stoppedByErasure: true,
-              lastError: notRetried(
-                record.lastError,
-                recipientErased ? RECIPIENT_ERASED : SUBJECT_ERASED
-              ),
-              ...(payload !== null ? { payload: payload } : {}),
-              ...(recipientErased && record.destination === address
+              lastError: notRetried(record.lastError, decision.reason),
+              ...(decision.payload !== null ? { payload: decision.payload } : {}),
+              ...(decision.recipientErased && record.destination === address
                 ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
                 : {}),
             },
@@ -604,19 +590,19 @@ async function sendUnlessErased(
           // Never the address or the person: they are what was erased.
           logger.warn('Webhook delivery left out: it names a person erased since it was read', {
             deliveryId: record.id,
-            reason: recipientErased ? RECIPIENT_ERASED : SUBJECT_ERASED,
+            reason: decision.reason,
           });
           return null;
         }
         let sendBody = body;
-        if (payload !== null) {
+        if (decision.payload !== null) {
           await tx.aiWebhookDelivery.updateMany({
             where: { id: record.id },
-            data: { payload: payload },
+            data: { payload: decision.payload },
           });
           sendBody = JSON.stringify({
             ...toJsonRecord(JSON.parse(body)),
-            ...toJsonRecord(payload),
+            ...toJsonRecord(decision.payload),
           });
         }
         return email
@@ -625,10 +611,11 @@ async function sendUnlessErased(
       }
     );
   } catch (err) {
-    // The check could not run — a lock held past its wait by a backup import,
-    // or the database gone — so nothing was sent; or the transaction failed
-    // to commit after the send. Retried as any failed send is; an email's
-    // idempotency key keeps the second case from reaching the inbox twice.
+    // The check could not run — a lock held past its wait, or the database
+    // gone — so nothing was sent; or the transaction failed to commit after
+    // the send. Retried as any failed send is; an email's idempotency key
+    // keeps the second case from reaching the inbox twice, a webhook's
+    // receiver may get it again.
     return {
       delivered: false,
       error: `Could not check for an erasure before sending: ${err instanceof Error ? err.message : String(err)}`,

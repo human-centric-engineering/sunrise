@@ -22,12 +22,8 @@ const prismaMock = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: prismaMock }));
 
-import { NOBODY_ERASED, sendHoldingSubjects } from '@/lib/privacy/stale-sends';
-import {
-  COPY_CLOCK_SKEW_MS,
-  SUBJECT_LOCK_WAIT_MS,
-  subjectEmailHash,
-} from '@/lib/privacy/erased-subjects';
+import { NOBODY_ERASED, SENDER_LOCK_WAIT_MS, sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { COPY_CLOCK_SKEW_MS, subjectEmailHash } from '@/lib/privacy/erased-subjects';
 
 const takenAt = new Date('2026-10-22T12:00:00Z');
 
@@ -82,7 +78,7 @@ describe('sendHoldingSubjects', () => {
 
     const sql = statements();
     expect(sql[0]).toContain("set_config('lock_timeout'");
-    expect(tx.$executeRaw.mock.calls[0]).toContain(`${SUBJECT_LOCK_WAIT_MS}ms`);
+    expect(tx.$executeRaw.mock.calls[0]).toContain(`${SENDER_LOCK_WAIT_MS}ms`);
     expect(sql.slice(1)).toEqual([
       expect.stringContaining('pg_advisory_xact_lock_shared'),
       expect.stringContaining('pg_advisory_xact_lock_shared'),
@@ -127,7 +123,7 @@ describe('sendHoldingSubjects', () => {
     await sendHoldingSubjects({ userIds: ['u-1'] }, takenAt, 15_000, vi.fn());
 
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-      timeout: SUBJECT_LOCK_WAIT_MS + 15_000 + 10_000,
+      timeout: SENDER_LOCK_WAIT_MS + 15_000 + 10_000,
       maxWait: 10_000,
     });
   });

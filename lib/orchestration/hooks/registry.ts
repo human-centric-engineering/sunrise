@@ -57,9 +57,7 @@ import {
   destinationUpdate,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
-import { anyoneErasedSince } from '@/lib/privacy/erased-subjects';
-import { subjectsOfPayload, withoutErasedSubjects } from '@/lib/privacy/delivery-payloads';
-import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { decideDeliveryUnderLocks } from '@/lib/privacy/stale-sends';
 import { requireTenantContext } from '@/lib/tenancy/context';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
@@ -409,6 +407,7 @@ async function attemptDelivery(
 
 /** What an attempt reads off its delivery row. */
 type AttemptRecord = DeliveryLike & {
+  createdAt: Date;
   eventType: string;
   payload: Prisma.JsonValue;
   lastError: string | null;
@@ -467,9 +466,10 @@ async function postHook(
 }
 
 /**
- * Post the attempt, unless its payload is about a person erased since
- * `takenAt` (§122 t-886, `lib/privacy/stale-sends.ts`). Null when it was left
- * out.
+ * Post the attempt, unless its payload is about a person erased since its
+ * copy was taken — the oldest of `takenAt`, the row's creation and the start of
+ * the run it names (§122 t-886, `decideDeliveryUnderLocks`). Null when it was
+ * left out.
  *
  * Left out, the row is settled as erasure settles one it stops (t-793):
  * `exhausted`, `stoppedByErasure`, so no retry or replay sends it, with the
@@ -486,24 +486,19 @@ async function sendUnlessErased(
   post: (payload: HookEventPayload) => Promise<HookPostResult>
 ): Promise<HookPostResult | null> {
   try {
-    const named = await subjectsOfPayload(prisma, record.eventType, record.payload);
-    return await sendHoldingSubjects(
-      { userIds: [...named.userIds.keys()] },
+    return await decideDeliveryUnderLocks(
+      record,
+      null,
       takenAt,
       DISPATCH_TIMEOUT_MS.hook,
-      async (tx, erased) => {
-        const danglingErased = named.dangling && (await anyoneErasedSince(tx, takenAt));
-        const { payload: redacted, stop } = withoutErasedSubjects(
-          record.payload,
-          named,
-          erased.userIds,
-          danglingErased
-        );
-        if (redacted === null) return post(payload);
+      async (tx, decision) => {
+        const redacted = decision.payload;
+        if (decision.kind === 'send' && redacted === null) return post(payload);
         // Redaction only removes keys from `data`, so the result still parses;
         // one that somehow did not is stopped rather than sent unredacted.
-        const sendable = HookEventPayloadSchema.safeParse(redacted);
-        if (stop || !sendable.success) {
+        const sendable =
+          decision.kind === 'send' ? HookEventPayloadSchema.safeParse(redacted) : null;
+        if (redacted === null || !sendable?.success) {
           await tx.aiEventHookDelivery.updateMany({
             where: { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
             data: {
@@ -511,7 +506,7 @@ async function sendUnlessErased(
               nextRetryAt: null,
               stoppedByErasure: true,
               lastError: notRetried(record.lastError, SUBJECT_ERASED),
-              payload: redacted,
+              ...(redacted !== null ? { payload: redacted } : {}),
             },
           });
           // Never the person: they are what was erased.
@@ -528,9 +523,10 @@ async function sendUnlessErased(
       }
     );
   } catch (err) {
-    // The check could not run — a lock held past its wait by a backup import,
-    // or the database gone — so nothing was sent; or the transaction failed
-    // to commit after the post. Retried as any failed post is.
+    // The check could not run — a lock held past its wait, or the database
+    // gone — so nothing was sent; or the transaction failed to commit after
+    // the post, whose receiver may then get it again. Retried as any failed
+    // post is.
     return {
       ok: false,
       error: `Could not check for an erasure before sending: ${err instanceof Error ? err.message : String(err)}`,

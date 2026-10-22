@@ -335,6 +335,12 @@ function isPersonKey(key: string): boolean {
 export interface PayloadSubjects {
   userIds: Map<string, DeliveryBasis>;
   dangling: boolean;
+  /**
+   * When the run the payload names started, or null when it names none. An
+   * event built from a run's memory — its approvers, its outputs — holds a
+   * copy from then, however long ago the run started (code review, t-886).
+   */
+  runStartedAt: Date | null;
 }
 
 type OwnerClient = Pick<Prisma.TransactionClient, 'aiConversation' | 'aiWorkflowExecution'>;
@@ -351,9 +357,10 @@ export async function subjectsOfPayload(
     if (userIds.get(id) !== 'activity') userIds.set(id, basis);
   };
   const data = dataOf(payload);
-  if (!data) return { userIds, dangling: false };
+  if (!data) return { userIds, dangling: false, runStartedAt: null };
 
   let dangling = false;
+  let runStartedAt: Date | null = null;
   const { conversationId, executionId } = data;
   // Across owners: an event a narrowed caller set off can name someone else's
   // run (an approver acting on it), and the owner layer would refuse that read
@@ -372,10 +379,12 @@ export async function subjectsOfPayload(
       if (typeof executionId === 'string') {
         const execution = await client.aiWorkflowExecution.findUnique({
           where: { id: executionId },
-          select: { userId: true },
+          select: { userId: true, startedAt: true, createdAt: true },
         });
-        if (execution) name(execution.userId, 'activity');
-        else dangling = true;
+        if (execution) {
+          name(execution.userId, 'activity');
+          runStartedAt = execution.startedAt ?? execution.createdAt;
+        } else dangling = true;
       }
     }
   );
@@ -383,7 +392,7 @@ export async function subjectsOfPayload(
   name(data.actorUserId, ADMIN_ACTION_EVENTS.includes(eventType) ? 'actor' : 'activity');
   const approvers = data[APPROVERS_KEY];
   if (Array.isArray(approvers)) for (const approver of approvers) name(approver, 'actor');
-  return { userIds, dangling };
+  return { userIds, dangling, runStartedAt };
 }
 
 /** What a sender does with a payload once it knows who in it was erased. */
@@ -404,7 +413,7 @@ export interface ErasedPayloadDisposition {
  */
 export function withoutErasedSubjects(
   payload: Prisma.JsonValue,
-  subjects: PayloadSubjects,
+  subjects: Pick<PayloadSubjects, 'userIds' | 'dangling'>,
   erasedUserIds: readonly string[],
   danglingErased: boolean
 ): ErasedPayloadDisposition {

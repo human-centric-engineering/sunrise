@@ -20,8 +20,8 @@ vi.mock('next/server', async (importOriginal) => ({
   after: mockAfter,
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiEventHook: {
       findMany: vi.fn(),
     },
@@ -37,30 +37,34 @@ vi.mock('@/lib/db/client', () => ({
     aiConversation: { findUnique: vi.fn().mockResolvedValue({ userId: null }) },
     aiWorkflowExecution: { findUnique: vi.fn().mockResolvedValue({ userId: null }) },
     dataErasureReceipt: { findFirst: vi.fn().mockResolvedValue(null) },
-  },
-}));
-
-// Who the lock-holding check reports erased since the event (t-886). The
-// locks and the receipt query are `stale-sends.test.ts`'s; here, what the
-// registry does with the answer. The transaction it hands over is the prisma
-// mock, so a write in it is a write on `prisma`.
-const erasedSince = vi.hoisted(() => ({ userIds: [] as string[], fail: null as Error | null }));
-vi.mock('@/lib/privacy/stale-sends', async () => {
-  const { prisma: client } = await import('@/lib/db/client');
+  };
+  // The erasure check's transaction runs on the same mock.
   return {
-    sendHoldingSubjects: vi.fn(
-      (
-        _subjects: unknown,
-        _takenAt: Date,
-        _timeoutMs: number,
-        send: (tx: unknown, erased: { addresses: string[]; userIds: string[] }) => Promise<unknown>
-      ) =>
-        erasedSince.fail
-          ? Promise.reject(erasedSince.fail)
-          : send(client, { addresses: [], userIds: erasedSince.userIds })
-    ),
+    prisma: {
+      ...prisma,
+      $transaction: vi.fn((run: (tx: typeof prisma) => Promise<unknown>) => run(prisma)),
+    },
   };
 });
+
+// Who the receipt check reports erased since the copy was taken (t-886).
+// The lock statements and the receipt query are `erased-subjects.test.ts`'s
+// and `stale-sends.test.ts`'s; here, what the sender does with the answer.
+// The transaction is the prisma mock, so a write in it is a write on `prisma`.
+const erasedSince = vi.hoisted(() => ({
+  addresses: [] as string[],
+  userIds: [] as string[],
+  fail: null as Error | null,
+}));
+vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/privacy/erased-subjects')>()),
+  boundLockWaits: vi.fn().mockResolvedValue(undefined),
+  findErasedSubjects: vi.fn(() =>
+    erasedSince.fail
+      ? Promise.reject(erasedSince.fail)
+      : Promise.resolve({ addresses: erasedSince.addresses, userIds: erasedSince.userIds })
+  ),
+}));
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -84,7 +88,7 @@ import {
   processPendingHookRetries,
 } from '@/lib/orchestration/hooks/registry';
 import { describeDestination } from '@/lib/orchestration/webhooks/destination';
-import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
+import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -1974,6 +1978,13 @@ describe('delivery destination recording', () => {
   });
 });
 
+/** The erasure check's call: the transaction, who it asked about, and since when. */
+function checkCall(): [unknown, unknown, { shared?: boolean; since: Date }] {
+  const call = vi.mocked(findErasedSubjects).mock.calls[0];
+  if (!call) throw new Error('the erasure check never ran');
+  return call as unknown as [unknown, unknown, { shared?: boolean; since: Date }];
+}
+
 describe('a hook delivery built from an event taken before an erasure (t-886)', () => {
   beforeEach(() => {
     erasedSince.userIds = [];
@@ -2003,9 +2014,9 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
 
     emitHookEvent('workflow.failed', { executionId: 'exec-1', approverUserIds: ['a-1'] });
 
-    await vi.waitFor(() => expect(sendHoldingSubjects).toHaveBeenCalled());
-    const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
-    expect(subjects).toEqual({ userIds: ['owner-1', 'a-1'] });
+    await vi.waitFor(() => expect(findErasedSubjects).toHaveBeenCalled());
+    const [, subjects, { since: takenAt }] = checkCall();
+    expect(subjects).toEqual({ addresses: [], userIds: ['owner-1', 'a-1'] });
     expect(takenAt.getTime()).toBeGreaterThanOrEqual(before);
     expect(takenAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
@@ -2074,7 +2085,7 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
     erasedSince.fail = new Error('canceling statement due to lock timeout');
     vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
 
-    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    emitHookEvent('conversation.started', { conversationId: 'conv-1', userId: 'u-1' });
 
     await vi.waitFor(() =>
       expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
@@ -2114,8 +2125,8 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
     await retryHookDelivery('del-1');
 
     await vi.waitFor(() => expect(stopWrites()).toHaveLength(1));
-    const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
-    expect(subjects).toEqual({ userIds: ['u-7'] });
+    const [, subjects, { since: takenAt }] = checkCall();
+    expect(subjects).toEqual({ addresses: [], userIds: ['u-7'] });
     expect(takenAt.getTime()).toBeLessThanOrEqual(readAt);
     expect(mockFetch).not.toHaveBeenCalled();
   });

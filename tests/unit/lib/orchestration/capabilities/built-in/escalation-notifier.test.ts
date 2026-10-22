@@ -523,7 +523,7 @@ describe('notifyEscalation', () => {
     await expect(notifyEscalation(makePayload())).resolves.toBeUndefined();
 
     // The email's failure is its own: the webhook still goes.
-    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Escalation email not sent', {
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Escalation email may not have been sent', {
       error: 'SMTP crashed',
     });
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -610,5 +610,33 @@ describe('people erased since the list was read (t-886)', () => {
       error: 'rejected',
       recipients: 1,
     });
+  });
+
+  it('posts the webhook without waiting behind the email, which may wait for locks', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettings({
+        emailAddresses: ['ops@example.com'],
+        notifyOnPriority: 'all',
+        webhookUrl: 'https://hooks.example.com/escalation',
+      }) as never
+    );
+    let finishEmail!: () => void;
+    vi.mocked(sendHoldingSubjects).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishEmail = resolve;
+        })
+    );
+
+    const notifying = notifyEscalation(makePayload());
+
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    // Settles only once the email has: nothing is left running.
+    let settled = false;
+    void notifying.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+    finishEmail();
+    await notifying;
   });
 });

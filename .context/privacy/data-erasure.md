@@ -893,15 +893,25 @@ between would otherwise be overtaken: an email to the erased address, or a
 delivery row naming them that erasure's own pass ran too early to see.
 
 So every **attempt** — a first send or a retry, webhook (`dispatcher.ts`) or
-event hook (`hooks/registry.ts`) — and the **escalation email** run through
-`sendHoldingSubjects()` (`lib/privacy/stale-sends.ts`): in one transaction it
+event hook (`hooks/registry.ts`, both through `decideDeliveryUnderLocks()`) —
+and the **escalation email** run through `sendHoldingSubjects()`
+(`lib/privacy/stale-sends.ts`): in one transaction it
 takes erasure's locks, shared, for the email address and everyone the payload
 names (`subjectsOfPayload`: `userId`, `actorUserId`, `approverUserIds`, and
 the owners of its `conversationId` and `executionId`), asks who among them was
 erased **since the copy was taken**, and holds the locks until the send
-settles. The copy's time is when the subscriptions, the hook's row or the
-settings were read, less `COPY_CLOCK_SKEW_MS` (5 min: erasure stamps its
-receipt up to 60 s before it commits, on another host's clock).
+settles. The copy's time is the **oldest** thing the attempt holds, less
+`COPY_CLOCK_SKEW_MS` (5 min: erasure stamps its receipt up to 60 s before it
+commits, on another host's clock):
+
+- the subscriptions, the hook's row or the settings, as this attempt read them;
+- the delivery row's `createdAt`, since its payload is the event's copy — so a
+  retry days later still counts an erasure that came after its event;
+- the start of the run its payload names (`executionId`): an event built from
+  a run's memory, its approvers or outputs, holds a copy from then.
+
+A retry of an old row therefore also leaves out an address re-entered on its
+subscription after an erasure that followed the row's event: the safe side.
 
 | Found erased since the copy                                         | What happens                                                                                                  |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -916,10 +926,21 @@ the copy was taken is not in it, so a copy naming them was written after the
 erasure, on purpose, and is sent. An auth or invitation email is never checked:
 it goes to a live account or to an address the admin just typed.
 
-The cost is a connection held across the send, bounded by its timeout (5 s for
-a webhook, 15 s for an email, 10 s for a hook), and only when the copy names
-someone. A lock held past `SUBJECT_LOCK_WAIT_MS` (a backup import) fails the
-attempt, which is retried like any failed send.
+The cost is a connection held for up to `SENDER_LOCK_WAIT_MS` (30 s) waiting
+for an erasure's or a backup import's locks, then across the send (5 s for a
+webhook, 15 s for an email, 10 s for a hook), and only when the copy names
+someone. A wait past 30 s fails the attempt, which is retried like any failed
+send. The escalation webhook does not wait behind its email.
+
+Two costs accepted with it:
+
+- **A post that went out, whose transaction then failed to commit**, is
+  recorded as failed and retried. An email carries an idempotency key; a
+  webhook or hook receiver may get the event twice.
+- **A payload naming a conversation or run that is gone** is stopped whenever
+  anyone was erased since, because receipts carry no org and the owner can no
+  longer be named. A delivery about a conversation deleted for another reason,
+  within minutes of an unrelated erasure, is stopped with it.
 
 **Never delete an entry to make the test pass**, the same rule as the export
 manifest. An unlisted writer is the defect the test exists to find.
