@@ -915,8 +915,12 @@ written since, terminal ones included.
   an older erasure is the admin's, on purpose, and reaches the run.
 - **A retroactive review** cannot hold the lock across its model call, so it
   writes `supervisorReport` under the lock with anyone erased since its read
-  of the run taken out (`findErasedSinceCopy`). `supervisorReport` joins
-  `SCRUBBED_COLUMNS` with t-882.
+  of the run taken out (`findErasedSinceCopy`), and returns what it stored. It
+  follows erasure's rule: an id wherever it appears, an address only where it
+  is a whole value, never inside the report's prose. Erasure does not redact
+  `supervisorReport` itself until t-882, so until then a review written while
+  an erasure is still open, before its receipt commits, keeps the person.
+- **The scheduler's crash hook** carries the same redacted message as the row.
 
 `npm run smoke:erasure-run-actions` races each of approve, reject and
 retry-step against an erasure, in both orders, and the person is gone

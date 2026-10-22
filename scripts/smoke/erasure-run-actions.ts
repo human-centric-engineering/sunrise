@@ -38,6 +38,7 @@ import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { executeApproval, executeRejection } from '@/lib/orchestration/approval-actions';
 import { prepareRetryStep } from '@/lib/orchestration/retry-step';
+import { lockRunRow } from '@/lib/orchestration/engine/run-row-lock';
 import { lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -162,7 +163,8 @@ async function main(): Promise<void> {
       });
       const held = prisma.$transaction(
         async (tx) => {
-          await tx.$queryRaw`SELECT id FROM ai_workflow_execution WHERE id = ${executionId} FOR NO KEY UPDATE`;
+          // The very lock the actions take, so a change to it changes this too.
+          await lockRunRow(tx, executionId);
           await released;
         },
         { timeout: 120_000 }
@@ -185,15 +187,17 @@ async function main(): Promise<void> {
                 receiptIds.push(r.receiptId);
               }
             );
-          let waiters = await lockWaiters();
+          const baseline = await lockWaiters();
+          let waiters = baseline;
           const first = order === 'action first' ? act(action, executionId) : erase();
           await until(async () => (await lockWaiters()) > waiters, 15_000, 'the first to queue');
           waiters = await lockWaiters();
           const second = order === 'action first' ? erase() : act(action, executionId);
           await until(async () => (await lockWaiters()) > waiters, 15_000, 'the second to queue');
+          // Both are now waiting on the row this script holds.
           check(
-            true,
-            `the ${order === 'action first' ? 'action' : 'erasure'} queued on the run’s row first`
+            (await lockWaiters()) >= baseline + 2,
+            `the ${order === 'action first' ? 'action' : 'erasure'} queued on the run’s row first, then the other`
           );
           release();
           await Promise.all([first, second]);

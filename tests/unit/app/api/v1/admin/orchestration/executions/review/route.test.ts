@@ -293,6 +293,12 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
       supervisorReport: { summary: string };
     };
     expect(written.supervisorReport.summary).toBe('Approved by [erased]');
+    // The caller gets what was stored, not the copy before redaction.
+    const body = (await res.json()) as {
+      data: { summary: string; report: { summary: string } };
+    };
+    expect(body.data.summary).toBe('Approved by [erased]');
+    expect(body.data.report.summary).toBe('Approved by [erased]');
   });
 
   it('archives prior verdict into previousVerdicts[] on re-entry', async () => {

@@ -1344,6 +1344,13 @@ describe('drainEngine: engine crash path', () => {
       where: { id: 'exec_1' },
       data: expect.objectContaining({ errorMessage: 'Approver [erased] refused' }),
     });
+    // The failure hook carries the redacted message too, never the raw one.
+    await vi.waitFor(() =>
+      expect(emitHookEvent).toHaveBeenCalledWith(
+        'workflow.execution.failed',
+        expect.objectContaining({ error: 'Approver [erased] refused' })
+      )
+    );
   });
 });
 
