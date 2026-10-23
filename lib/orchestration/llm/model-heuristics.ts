@@ -312,12 +312,13 @@ function normalizeClaudeId(modelId: string): string {
  *   1. **OpenAI reasoning family** — any model resolved to the
  *      `openai-reasoning` param profile accepts `reasoning_effort`
  *      (`minimal | low | medium | high`).
- *   2. **Anthropic extended thinking** — only specific Claude 4 models
+ *   2. **Anthropic extended thinking** — only specific Claude models
  *      accept the `thinking` field. We check this via a prefix match
  *      because the matrix doesn't carry a separate "supports thinking"
- *      column. Patterns covered: `claude-opus-4*`, `claude-sonnet-4-5*`
- *      and later 4.x. Claude Haiku 4.5 is intentionally NOT in the list
- *      — Anthropic doesn't ship extended thinking on Haiku.
+ *      column. Patterns covered: `claude-opus-4*` and later, Sonnet 4.5
+ *      and later, Haiku 4.5 and later, and every Fable and Mythos model.
+ *      Haiku 4.5 takes a token budget; the rest of the newer families
+ *      take adaptive thinking (`acceptsThinkingBudget` picks the shape).
  *
  * Anthropic-prefixed Bedrock ids (`anthropic.claude-…`) and OpenRouter
  * ids (`anthropic/claude-…`) are handled by stripping the known
@@ -347,7 +348,97 @@ export function supportsReasoningEffort(
   // `claude-sonnet-4.5` both ship in different SDK / API surfaces).
   if (/^claude-sonnet-4[-.](?:[5-9]|\d{2,})(?:\b|[-.])/.test(id)) return true;
   if (/^claude-sonnet-([5-9]|\d{2,})(?:\b|[-.])/.test(id)) return true;
+  const version = claudeVersion(id);
+  if (!version) return false;
+  // Fable and Mythos think on every release (thinking can't be turned off).
+  if (version.family === 'fable' || version.family === 'mythos') return true;
+  // Haiku 4.5 takes a thinking budget; Haiku 5+ takes adaptive thinking.
+  if (version.family === 'haiku') return atLeast(version, 4, 5);
   return false;
+}
+
+/** A Claude model id split into family and version, e.g. Opus 4.6. */
+interface ClaudeVersion {
+  family: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'mythos';
+  major: number;
+  minor: number;
+}
+
+/**
+ * Parse a family-first Claude id (`claude-opus-4-6`, `claude-fable-5-1`)
+ * already through `normalizeClaudeId`. A missing minor, or a date stamp in
+ * its place (`claude-opus-4-20250514`), is `.0`. The older version-first
+ * names (`claude-3-5-sonnet`) and unknown families return `undefined`.
+ */
+function claudeVersion(id: string): ClaudeVersion | undefined {
+  const match =
+    /^claude-(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2})(?!\d))?(?:$|[-.@:])/.exec(
+      id
+    );
+  if (!match) return undefined;
+  return {
+    family: match[1] as ClaudeVersion['family'],
+    major: Number(match[2]),
+    minor: match[3] === undefined ? 0 : Number(match[3]),
+  };
+}
+
+function atLeast(version: ClaudeVersion, major: number, minor: number): boolean {
+  return version.major > major || (version.major === major && version.minor >= minor);
+}
+
+/**
+ * Does this Claude model take native structured output
+ * (`output_config.format: { type: 'json_schema', schema }`)?
+ *
+ * Anthropic documents it on Fable and Mythos, Opus 4.1, 4.5, 4.8 and 5+,
+ * Sonnet 5+, Haiku 4.5 and Haiku 5+. Opus 4.0 / 4.6 / 4.7 and Sonnet 4.x
+ * are not on that list, so they keep the forced extraction tool. Native
+ * output needs no tool, so it can't clash with thinking or with the newer
+ * models' refusal of a forced `tool_choice`.
+ *
+ * Ids the parser doesn't recognise return false and keep the extraction
+ * tool, which every Claude model accepts.
+ */
+export function acceptsNativeStructuredOutput(modelId: string): boolean {
+  const version = claudeVersion(normalizeClaudeId(modelId));
+  if (!version) return false;
+  switch (version.family) {
+    case 'fable':
+    case 'mythos':
+      return true;
+    case 'opus':
+      if (version.major !== 4) return version.major > 4;
+      return version.minor === 1 || version.minor === 5 || version.minor >= 8;
+    case 'sonnet':
+      return version.major >= 5;
+    case 'haiku':
+      return atLeast(version, 4, 5);
+  }
+}
+
+/**
+ * Does this Claude model refuse a forced `tool_choice` (`any` or a named
+ * tool) outright, with a 400?
+ *
+ * Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 do, whatever the thinking
+ * setting; later releases of those families are assumed to as well. Every
+ * Claude model also refuses one alongside an explicit `thinking` field,
+ * which the provider handles separately.
+ */
+export function refusesForcedToolChoice(modelId: string): boolean {
+  const version = claudeVersion(normalizeClaudeId(modelId));
+  if (!version) return false;
+  switch (version.family) {
+    case 'opus':
+    case 'sonnet':
+      return atLeast(version, 5, 5);
+    case 'fable':
+    case 'mythos':
+      return atLeast(version, 5, 1);
+    case 'haiku':
+      return false;
+  }
 }
 
 /**

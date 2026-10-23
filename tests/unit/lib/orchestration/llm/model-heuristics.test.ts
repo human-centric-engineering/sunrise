@@ -12,6 +12,8 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  acceptsNativeStructuredOutput,
+  refusesForcedToolChoice,
   acceptsSamplingTemperature,
   acceptsThinkingBudget,
   anthropicAdaptiveEffort,
@@ -372,9 +374,25 @@ describe('supportsReasoningEffort', () => {
     );
   });
 
-  it('Claude Haiku is NOT a thinking model regardless of version', () => {
-    expect(supportsReasoningEffort('claude-haiku-4-5', 'anthropic', 'anthropic')).toBe(false);
+  it('Claude Haiku thinks from 4.5 on', () => {
+    expect(supportsReasoningEffort('claude-haiku-4-5', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-haiku-4-5-20251001', 'anthropic', 'anthropic')).toBe(
+      true
+    );
+    expect(supportsReasoningEffort('claude-haiku-5-5', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('anthropic.claude-haiku-5-5', 'anthropic', 'anthropic')).toBe(
+      true
+    );
     expect(supportsReasoningEffort('claude-haiku-4', 'anthropic', 'anthropic')).toBe(false);
+    expect(supportsReasoningEffort('claude-3-5-haiku-latest', 'anthropic', 'anthropic')).toBe(
+      false
+    );
+  });
+
+  it('Fable and Mythos think on every release', () => {
+    for (const id of ['claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5-1']) {
+      expect(supportsReasoningEffort(id, 'anthropic', 'anthropic')).toBe(true);
+    }
   });
 
   it('strips Bedrock and OpenRouter prefixes before matching', () => {
@@ -534,6 +552,65 @@ describe('anthropicThinkingBudget', () => {
     expect(anthropicThinkingBudget('low')).toBe(1024);
     expect(anthropicThinkingBudget('medium')).toBe(4096);
     expect(anthropicThinkingBudget('high')).toBe(16384);
+  });
+});
+
+describe('acceptsNativeStructuredOutput', () => {
+  it.each([
+    'claude-fable-5',
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-5-5',
+    'claude-opus-5',
+    'claude-opus-4-8',
+    'claude-opus-4-5',
+    'claude-opus-4-1-20250805',
+    'claude-sonnet-5-5',
+    'claude-sonnet-5',
+    'claude-haiku-5-5',
+    'claude-haiku-4-5',
+    'anthropic.claude-sonnet-5-5',
+    'anthropic/claude-opus-5-5',
+  ])('accepts it on %s', (id) => {
+    expect(acceptsNativeStructuredOutput(id)).toBe(true);
+  });
+
+  it.each([
+    'claude-opus-4-7',
+    'claude-opus-4-6',
+    'claude-opus-4-20250514',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5',
+    'claude-3-5-sonnet-latest',
+    'claude-3-5-haiku-latest',
+    'some-other-model',
+  ])('keeps the extraction tool on %s', (id) => {
+    expect(acceptsNativeStructuredOutput(id)).toBe(false);
+  });
+});
+
+describe('refusesForcedToolChoice', () => {
+  it.each([
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-6',
+    'anthropic.claude-opus-5-5',
+  ])('refuses on %s', (id) => {
+    expect(refusesForcedToolChoice(id)).toBe(true);
+  });
+
+  it.each([
+    'claude-opus-5',
+    'claude-fable-5',
+    'claude-sonnet-5',
+    'claude-opus-4-8',
+    'claude-haiku-5-5',
+    'claude-haiku-4-5',
+    'claude-3-5-sonnet-latest',
+  ])('accepts a forced tool on %s', (id) => {
+    expect(refusesForcedToolChoice(id)).toBe(false);
   });
 });
 
