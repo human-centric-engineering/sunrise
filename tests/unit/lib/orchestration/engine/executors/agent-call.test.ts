@@ -565,6 +565,40 @@ describe('executeAgentCall', () => {
     expect(result.output).toBe('Answered without it.');
   });
 
+  it('replays the turn’s thinking blocks on the assistant message it appends', async () => {
+    vi.mocked(getCapabilityDefinitions).mockResolvedValue([
+      {
+        name: 'search',
+        description: 'search tool',
+        parameters: { type: 'object', properties: {} },
+      },
+    ]);
+    const reasoning = [{ type: 'thinking' as const, thinking: '', signature: 'sig-1' }];
+    mockChat.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [{ id: 'tc_1', name: 'apply_audit_changes', arguments: {} }],
+      reasoning,
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'tool_use',
+      model: 'claude-opus-5-5',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'Answered.',
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'stop',
+      model: 'claude-opus-5-5',
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    const secondCallMessages = mockChat.mock.calls[1][0] as Array<{
+      role: string;
+      reasoning?: unknown;
+    }>;
+    const assistant = secondCallMessages.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning).toEqual(reasoning);
+  });
+
   it('still dispatches a tool that IS advertised', async () => {
     // The guard rejects what was not granted, not everything.
     vi.mocked(getCapabilityDefinitions).mockResolvedValue([

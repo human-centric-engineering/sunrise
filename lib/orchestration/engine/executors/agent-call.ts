@@ -484,7 +484,12 @@ async function runSingleTurn(
 
         currentMessages = [
           ...currentMessages,
-          { role: 'assistant' as const, content: response.content, toolCalls: [toolCall] },
+          {
+            role: 'assistant' as const,
+            content: response.content,
+            toolCalls: [toolCall],
+            ...(response.reasoning ? { reasoning: response.reasoning } : {}),
+          },
           { role: 'tool' as const, content: JSON.stringify(capResult), toolCallId: toolCall.id },
         ];
         return 'continue' as const;

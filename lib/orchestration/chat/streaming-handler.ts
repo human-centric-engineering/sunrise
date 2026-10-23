@@ -38,6 +38,7 @@ import { CostOperation } from '@/types/orchestration';
 import type {
   LlmFinishReason,
   LlmMessage,
+  LlmReasoningBlock,
   LlmToolCall,
   LlmToolChoice,
   LlmToolDefinition,
@@ -1547,6 +1548,9 @@ export class StreamingChatHandler {
 
         let assistantText = '';
         const toolCalls = new Map<number, LlmToolCall>();
+        // Thinking blocks from this turn, replayed on the assistant message the
+        // tool loop appends — Anthropic requires them back unchanged.
+        let reasoning: LlmReasoningBlock[] | undefined;
         let usage: { inputTokens: number; outputTokens: number } | null = null;
         // Per-iteration, deliberately: the `done` event is emitted from inside
         // the terminal iteration, so this carries why the FINAL turn stopped —
@@ -1622,6 +1626,7 @@ export class StreamingChatHandler {
                   } else if (chunk.type === 'done') {
                     usage = chunk.usage;
                     finishReason = chunk.finishReason;
+                    reasoning = chunk.reasoning;
                   }
                 }
                 streamSucceeded = true;
@@ -1869,6 +1874,7 @@ export class StreamingChatHandler {
                 // Reset accumulated content for the retry
                 assistantText = '';
                 toolCalls.clear();
+                reasoning = undefined;
                 usage = null;
                 // Reset with its siblings. Not reachable via the two in-repo
                 // adapters — both yield `done` as their final statement, so a
@@ -2479,7 +2485,12 @@ export class StreamingChatHandler {
             });
             messages = [
               ...messages,
-              { role: 'assistant', content: assistantText, toolCalls: [tc] },
+              {
+                role: 'assistant',
+                content: assistantText,
+                toolCalls: [tc],
+                ...(reasoning ? { reasoning } : {}),
+              },
               { role: 'tool', content: JSON.stringify(unavailableResult), toolCallId: tc.id },
             ];
             continue;
@@ -2621,7 +2632,12 @@ export class StreamingChatHandler {
 
           messages = [
             ...messages,
-            { role: 'assistant', content: assistantText, toolCalls: [tc] },
+            {
+              role: 'assistant',
+              content: assistantText,
+              toolCalls: [tc],
+              ...(reasoning ? { reasoning } : {}),
+            },
             { role: 'tool', content: JSON.stringify(augmentedResult), toolCallId: tc.id },
           ];
         } else {
@@ -2919,7 +2935,12 @@ export class StreamingChatHandler {
           // calls) followed by each tool result message.
           messages = [
             ...messages,
-            { role: 'assistant', content: assistantText, toolCalls: toolCallArray },
+            {
+              role: 'assistant',
+              content: assistantText,
+              toolCalls: toolCallArray,
+              ...(reasoning ? { reasoning } : {}),
+            },
             ...toolResultMessages,
           ];
         }

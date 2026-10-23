@@ -2304,6 +2304,63 @@ describe('StreamingChatHandler', () => {
     expect(done).toBeDefined();
   });
 
+  // 28b ---------------------------------------------------------------------
+  it.each([
+    {
+      shape: 'one tool call',
+      calls: [{ id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'react' } }],
+    },
+    {
+      shape: 'parallel tool calls',
+      calls: [
+        { id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'react' } },
+        { id: 'tc-b', name: 'get_weather', arguments: { city: 'London' } },
+      ],
+    },
+  ])(
+    'carries the turn’s thinking blocks onto the assistant message it replays ($shape)',
+    async ({ calls }) => {
+      const reasoning = [
+        { type: 'thinking', thinking: '', signature: 'sig-1' },
+        { type: 'redacted_thinking', data: 'opaque' },
+      ];
+      const provider = mockProvider([
+        [
+          ...calls.map((toolCall) => ({ type: 'tool_call', toolCall })),
+          {
+            type: 'done',
+            usage: { inputTokens: 20, outputTokens: 5 },
+            finishReason: 'tool_use',
+            reasoning,
+          },
+        ],
+        [
+          { type: 'text', content: 'Done.' },
+          { type: 'done', usage: { inputTokens: 40, outputTokens: 10 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+      await collect(streamChat(baseRequest));
+
+      expect(provider.chatStream).toHaveBeenCalledTimes(2);
+      const turn2Messages = (
+        provider.chatStream.mock.calls[1] as unknown as unknown[][]
+      )[0] as Array<{
+        role: string;
+        toolCalls?: unknown[];
+        reasoning?: unknown;
+      }>;
+      const assistantMsg = turn2Messages.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistantMsg?.toolCalls).toHaveLength(calls.length);
+      expect(assistantMsg?.reasoning).toEqual(reasoning);
+    }
+  );
+
   // 29 ----------------------------------------------------------------------
   it('parallel tool calls: any skipFollowup result short-circuits after all dispatches', async () => {
     const provider = mockProvider([
