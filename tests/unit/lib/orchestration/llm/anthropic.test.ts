@@ -418,7 +418,27 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
     expect(callArgs.temperature).toBe(0.5);
   });
 
-  it('drops thinking silently on a non-thinking model (Haiku) — no 400', async () => {
+  it('drops thinking silently on a non-thinking model (Haiku 3.5) — no 400', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 10, output_tokens: 3 },
+      model: 'claude-3-5-haiku-latest',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-3-5-haiku-latest',
+      maxTokens: 4096,
+      reasoningEffort: 'high',
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.thinking).toBeUndefined();
+    expect(callArgs.output_config).toBeUndefined();
+  });
+
+  it('sends a thinking budget to Haiku 4.5, which takes budget thinking', async () => {
     createMock.mockResolvedValue({
       content: [{ type: 'text', text: 'ok' }],
       usage: { input_tokens: 10, output_tokens: 3 },
@@ -429,13 +449,38 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
     const provider = makeProvider();
     await provider.chat([{ role: 'user', content: 'hi' }], {
       model: 'claude-haiku-4-5',
-      maxTokens: 4096,
-      reasoningEffort: 'high',
+      maxTokens: 8192,
+      reasoningEffort: 'medium',
     });
 
     const callArgs = createMock.mock.calls[0][0];
-    expect(callArgs.thinking).toBeUndefined();
+    expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
+    // Haiku 4.5 errors on `effort`, so the budget path never sends it.
+    expect(callArgs.output_config).toBeUndefined();
   });
+
+  it.each(['claude-haiku-5-5', 'claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5-1'])(
+    'sends adaptive thinking with the mapped effort to %s',
+    async (model) => {
+      createMock.mockResolvedValue({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+        model,
+        stop_reason: 'end_turn',
+      });
+
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'hi' }], {
+        model,
+        maxTokens: 4096,
+        reasoningEffort: 'high',
+      });
+
+      const callArgs = createMock.mock.calls[0][0];
+      expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+      expect(callArgs.output_config).toEqual({ effort: 'high' });
+    }
+  );
 
   it('clamps the budget to leave 1024 tokens of visible-output headroom', async () => {
     createMock.mockResolvedValue({
@@ -1813,13 +1858,13 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
         },
       ],
       usage: { input_tokens: 5, output_tokens: 5 },
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       stop_reason: 'tool_use',
     });
 
     const provider = makeProvider();
     await provider.chat([{ role: 'user', content: 'compute' }], {
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       responseFormat: {
         type: 'json_schema',
         name: 'result',
@@ -1842,13 +1887,13 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
     createMock.mockResolvedValue({
       content: [{ type: 'tool_use', id: 's', name: '__structured_x', input: {} }],
       usage: { input_tokens: 1, output_tokens: 1 },
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       stop_reason: 'tool_use',
     });
 
     const provider = makeProvider();
     await provider.chat([{ role: 'user', content: 'go' }], {
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       responseFormat: {
         type: 'json_schema',
         name: 'Customer Profile (v2)!',
@@ -1870,13 +1915,13 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
     createMock.mockResolvedValue({
       content: [{ type: 'tool_use', id: 's', name: '__structured_x', input: {} }],
       usage: { input_tokens: 1, output_tokens: 1 },
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       stop_reason: 'tool_use',
     });
 
     const provider = makeProvider();
     await provider.chat([{ role: 'user', content: 'go' }], {
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       responseFormat: {
         type: 'json_schema',
         name: 'a'.repeat(120),
@@ -1898,7 +1943,7 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
         { type: 'tool_use', id: 's', name: '__structured_result', input: { partial: true } },
       ],
       usage: { input_tokens: 5, output_tokens: 5 },
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       stop_reason: 'max_tokens',
     });
 
@@ -1906,7 +1951,7 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
     let caught: unknown;
     try {
       await provider.chat([{ role: 'user', content: 'compute' }], {
-        model: 'claude-haiku-4-5',
+        model: 'claude-sonnet-4-6',
         responseFormat: {
           type: 'json_schema',
           name: 'result',
@@ -2162,7 +2207,7 @@ describe('AnthropicProvider.chatStream — structured output extraction (json_sc
     const provider = makeProvider();
     const chunks: object[] = [];
     for await (const chunk of provider.chatStream([{ role: 'user', content: 'answer?' }], {
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       responseFormat: {
         type: 'json_schema',
         name: 'answer',
@@ -2216,7 +2261,7 @@ describe('AnthropicProvider.chatStream — structured output extraction (json_sc
     let caught: unknown;
     try {
       for await (const _chunk of provider.chatStream([{ role: 'user', content: 'answer?' }], {
-        model: 'claude-haiku-4-5',
+        model: 'claude-sonnet-4-6',
         responseFormat: {
           type: 'json_schema',
           name: 'answer',
@@ -2335,5 +2380,380 @@ describe('outbound redirect policy (#635)', () => {
     } finally {
       inner.mockRestore();
     }
+  });
+});
+
+describe('AnthropicProvider — structured output without a forced tool (t-896, t-907)', () => {
+  const schema = {
+    type: 'object',
+    properties: { name: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } },
+    required: ['name'],
+  };
+
+  it('sends native output_config.format, and no tool, to a model that refuses forced tool choice', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: '{"name":"Alice","tags":[]}' }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-opus-5-5',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.tools).toBeUndefined();
+    expect(callArgs.tool_choice).toBeUndefined();
+    expect(callArgs.output_config).toEqual({
+      format: {
+        type: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+          required: ['name'],
+        },
+      },
+    });
+    expect(response.content).toBe('{"name":"Alice","tags":[]}');
+    expect(response.finishReason).toBe('stop');
+  });
+
+  it('keeps the effort alongside the format when thinking is on', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: '{"name":"A"}' }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-sonnet-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-sonnet-5-5',
+      reasoningEffort: 'medium',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+    expect(callArgs.output_config.effort).toBe('medium');
+    expect(callArgs.output_config.format.type).toBe('json_schema');
+    expect(callArgs.tool_choice).toBeUndefined();
+  });
+
+  it('treats a native response cut off at max_tokens as a truncation', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: '{"name":"Ali' }],
+      usage: { input_tokens: 8, output_tokens: 100 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    await expect(
+      provider.chat([{ role: 'user', content: 'extract' }], {
+        model: 'claude-opus-5-5',
+        maxTokens: 100,
+        responseFormat: { type: 'json_schema', name: 'profile', schema },
+      })
+    ).rejects.toMatchObject({ code: 'truncated_no_output' });
+  });
+
+  it('falls back to the extraction tool when the schema has a node the transform cannot take', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 's1', name: '__structured_loose', input: { any: 1 } }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-5',
+      stop_reason: 'tool_use',
+    });
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-opus-5',
+      // `any` has no `type`, which the SDK's transform rejects.
+      responseFormat: {
+        type: 'json_schema',
+        name: 'loose',
+        schema: { type: 'object', properties: { any: {} } },
+      },
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.output_config).toBeUndefined();
+    expect(callArgs.tools[0].name).toBe('__structured_loose');
+    expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_loose' });
+    expect(response.content).toBe('{"any":1}');
+  });
+
+  it('offers the extraction tool with auto, and asks for it, when thinking is on', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        { type: 'tool_use', id: 's1', name: '__structured_profile', input: { name: 'A' } },
+      ],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-sonnet-4-6',
+      stop_reason: 'tool_use',
+    });
+
+    const provider = makeProvider();
+    const response = await provider.chat(
+      [
+        { role: 'system', content: 'Be brief.' },
+        { role: 'user', content: 'extract' },
+      ],
+      {
+        model: 'claude-sonnet-4-6',
+        maxTokens: 8192,
+        reasoningEffort: 'low',
+        responseFormat: { type: 'json_schema', name: 'profile', schema },
+      }
+    );
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    expect(callArgs.tool_choice).toEqual({ type: 'auto' });
+    expect(callArgs.system).toBe(
+      'Be brief.\n\nRespond only by calling the __structured_profile tool with the result.'
+    );
+    expect(response.content).toBe('{"name":"A"}');
+  });
+
+  it('still forces the extraction tool on an older model with thinking off', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 's1', name: '__structured_profile', input: { name: 'A' } }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'tool_use',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-opus-4-6',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_profile' });
+    expect(callArgs.system).toBeUndefined();
+  });
+
+  it('streams native structured output as text', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '{"name":' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '"A"}' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } },
+      ])
+    );
+
+    const provider = makeProvider();
+    const chunks = [];
+    for await (const chunk of provider.chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-fable-5-1',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    })) {
+      chunks.push(chunk);
+    }
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.output_config.format.type).toBe('json_schema');
+    expect(callArgs.tools).toBeUndefined();
+    const text = chunks
+      .filter((c) => c.type === 'text')
+      .map((c) => (c as { content: string }).content)
+      .join('');
+    expect(text).toBe('{"name":"A"}');
+  });
+});
+
+describe('AnthropicProvider — caller-forced tool choice (t-896, t-907)', () => {
+  const tools = [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }];
+  const okResponse = (model: string) => ({
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+    model,
+    stop_reason: 'end_turn',
+  });
+
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'])(
+    'sends auto instead of a forced tool to %s, which refuses one',
+    async (model) => {
+      createMock.mockResolvedValue(okResponse(model));
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model,
+        tools,
+        toolChoice: { name: 'lookup' },
+      });
+      expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' });
+    }
+  );
+
+  it('sends auto instead of a forced tool when thinking is on', async () => {
+    createMock.mockResolvedValue(okResponse('claude-opus-4-6'));
+    await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-6',
+      maxTokens: 8192,
+      reasoningEffort: 'high',
+      tools,
+      toolChoice: { name: 'lookup' },
+    });
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.thinking).toBeDefined();
+    expect(callArgs.tool_choice).toEqual({ type: 'auto' });
+  });
+
+  it('keeps the forced tool when thinking is off on a model that accepts it', async () => {
+    createMock.mockResolvedValue(okResponse('claude-opus-4-6'));
+    await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-6',
+      tools,
+      toolChoice: { name: 'lookup' },
+    });
+    expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'tool', name: 'lookup' });
+  });
+});
+
+describe('AnthropicProvider — thinking blocks across a tool loop (t-897, t-908)', () => {
+  it('returns thinking and redacted_thinking blocks on the response, in order', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: 'plan', signature: 'sig-1' },
+        { type: 'redacted_thinking', data: 'opaque' },
+        { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'x' } },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'tool_use',
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-5-5',
+      tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+    });
+
+    expect(response.reasoning).toEqual([
+      { type: 'thinking', thinking: 'plan', signature: 'sig-1' },
+      { type: 'redacted_thinking', data: 'opaque' },
+    ]);
+    expect(response.toolCalls).toHaveLength(1);
+  });
+
+  it('replays the previous turn’s thinking blocks unchanged, ahead of its text and tool_use', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'done' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'x' },
+        {
+          role: 'assistant',
+          content: 'Looking it up.',
+          toolCalls: [{ id: 'call_1', name: 'lookup', arguments: { q: 'x' } }],
+          reasoning: [
+            { type: 'thinking', thinking: '', signature: 'sig-1' },
+            { type: 'redacted_thinking', data: 'opaque' },
+          ],
+        },
+        { role: 'tool', content: '{"hit":true}', toolCallId: 'call_1' },
+      ],
+      {
+        model: 'claude-opus-5-5',
+        tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+      }
+    );
+
+    const assistant = createMock.mock.calls[0][0].messages[1];
+    expect(assistant).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig-1' },
+        { type: 'redacted_thinking', data: 'opaque' },
+        { type: 'text', text: 'Looking it up.' },
+        { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'x' } },
+      ],
+    });
+  });
+
+  it('assembles streamed thinking and signature deltas and returns them on done', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '', signature: '' },
+        },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'a' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'b' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'signature_delta', signature: 'sig-final' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'redacted_thinking', data: 'opaque' },
+        },
+        { type: 'content_block_stop', index: 1 },
+        {
+          type: 'content_block_start',
+          index: 2,
+          content_block: { type: 'tool_use', id: 'call_1', name: 'lookup', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index: 2,
+          delta: { type: 'input_json_delta', partial_json: '{"q":"x"}' },
+        },
+        { type: 'content_block_stop', index: 2 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 9 } },
+      ])
+    );
+
+    const chunks = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-5-5',
+      tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const done = chunks.find((c) => c.type === 'done');
+    expect(done).toMatchObject({
+      reasoning: [
+        { type: 'thinking', thinking: 'ab', signature: 'sig-final' },
+        { type: 'redacted_thinking', data: 'opaque' },
+      ],
+    });
+    expect(chunks.filter((c) => c.type === 'tool_call')).toHaveLength(1);
+  });
+
+  it('leaves reasoning off a response with no thinking blocks', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'hi' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-haiku-4-5',
+      stop_reason: 'end_turn',
+    });
+    const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-haiku-4-5',
+    });
+    expect(response.reasoning).toBeUndefined();
   });
 });

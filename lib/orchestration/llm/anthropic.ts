@@ -33,13 +33,16 @@ import type {
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { Stream } from '@anthropic-ai/sdk/core/streaming';
+import { transformJSONSchema } from '@anthropic-ai/sdk/lib/transform-json-schema';
 
 import { logger } from '@/lib/logging';
 import {
+  acceptsNativeStructuredOutput,
   acceptsSamplingTemperature,
   acceptsThinkingBudget,
   anthropicAdaptiveEffort,
   anthropicThinkingBudget,
+  refusesForcedToolChoice,
   supportsReasoningEffort,
 } from '@/lib/orchestration/llm/model-heuristics';
 import {
@@ -58,6 +61,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmOptions,
+  LlmReasoningBlock,
   LlmResponse,
   LlmToolCall,
   LlmToolChoice,
@@ -174,11 +178,11 @@ export class AnthropicProvider implements LlmProvider {
 
     const content: string[] = [];
     const toolCalls: LlmToolCall[] = [];
-    // Gates the extraction-tool -> JSON-text conversion below. Stays
-    // `json_schema`-only: that is the only mode that installs a forced
-    // extraction tool (see buildBaseParams).
-    const isStructuredExtraction =
-      options.responseFormat?.type === 'json_schema' && !options.tools?.length;
+    const reasoning: LlmReasoningBlock[] = [];
+    // Gates the extraction-tool -> JSON-text conversion below. True only when
+    // buildBaseParams installed the extraction tool; a `json_schema` request
+    // sent as native structured output comes back as ordinary text.
+    const isStructuredExtraction = installsExtractionTool(params);
     /**
      * Any JSON-shaped request, for the truncation guard only — `json_object`
      * as well as `json_schema`.
@@ -198,6 +202,10 @@ export class AnthropicProvider implements LlmProvider {
     for (const block of message.content) {
       if (block.type === 'text') {
         content.push(block.text);
+      } else if (block.type === 'thinking') {
+        reasoning.push({ type: 'thinking', thinking: block.thinking, signature: block.signature });
+      } else if (block.type === 'redacted_thinking') {
+        reasoning.push({ type: 'redacted_thinking', data: block.data });
       } else if (block.type === 'tool_use') {
         if (isStructuredExtraction && block.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
           // Structured output extraction — convert tool arguments to JSON text
@@ -266,6 +274,7 @@ export class AnthropicProvider implements LlmProvider {
       finishReason: isStructuredExtraction ? 'stop' : mapStopReason(message.stop_reason),
     };
     if (toolCalls.length > 0) response.toolCalls = toolCalls;
+    if (reasoning.length > 0) response.reasoning = reasoning;
     return response;
   }
 
@@ -285,10 +294,9 @@ export class AnthropicProvider implements LlmProvider {
       throw toProviderError(err, 'Anthropic chat stream failed');
     }
 
-    // Gates the extraction-tool -> text conversion below; `json_schema` only,
-    // since that is the only mode that installs a forced extraction tool.
-    const isStructuredExtraction =
-      options.responseFormat?.type === 'json_schema' && !options.tools?.length;
+    // Gates the extraction-tool -> text conversion below; true only when
+    // buildBaseParams installed the extraction tool.
+    const isStructuredExtraction = installsExtractionTool(params);
     /** Any JSON-shaped request, for the truncation guard only (#594). */
     const wantsParseableJson =
       (options.responseFormat?.type === 'json_object' ||
@@ -308,6 +316,10 @@ export class AnthropicProvider implements LlmProvider {
     // Buffered tool-use blocks by `content_block` index — Anthropic streams
     // `input_json_delta` fragments that we assemble into a single tool call.
     const toolBuffers = new Map<number, { id: string; name: string; partial: string }>();
+    // Thinking blocks by `content_block` index, assembled from
+    // `thinking_delta` / `signature_delta` events and handed back on `done`
+    // in index order, so a tool loop can replay them unchanged.
+    const reasoningBlocks = new Map<number, LlmReasoningBlock>();
 
     try {
       for await (const event of stream) {
@@ -324,6 +336,14 @@ export class AnthropicProvider implements LlmProvider {
             const block = event.content_block;
             if (block.type === 'tool_use') {
               toolBuffers.set(event.index, { id: block.id, name: block.name, partial: '' });
+            } else if (block.type === 'thinking') {
+              reasoningBlocks.set(event.index, {
+                type: 'thinking',
+                thinking: block.thinking,
+                signature: block.signature,
+              });
+            } else if (block.type === 'redacted_thinking') {
+              reasoningBlocks.set(event.index, { type: 'redacted_thinking', data: block.data });
             }
             break;
           }
@@ -335,6 +355,12 @@ export class AnthropicProvider implements LlmProvider {
             } else if (event.delta.type === 'input_json_delta') {
               const buf = toolBuffers.get(event.index);
               if (buf) buf.partial += event.delta.partial_json;
+            } else if (event.delta.type === 'thinking_delta') {
+              const block = reasoningBlocks.get(event.index);
+              if (block?.type === 'thinking') block.thinking += event.delta.thinking;
+            } else if (event.delta.type === 'signature_delta') {
+              const block = reasoningBlocks.get(event.index);
+              if (block?.type === 'thinking') block.signature = event.delta.signature;
             }
             break;
           }
@@ -410,10 +436,14 @@ export class AnthropicProvider implements LlmProvider {
       );
     }
 
+    const reasoning = [...reasoningBlocks.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, block]) => block);
     yield {
       type: 'done',
       usage: { inputTokens, outputTokens },
       finishReason: isStructuredExtraction ? 'stop' : finishReason,
+      ...(reasoning.length > 0 ? { reasoning } : {}),
     };
   }
 
@@ -546,24 +576,66 @@ export class AnthropicProvider implements LlmProvider {
         input_schema: buildToolInputSchema(t.parameters),
       }));
       const toolChoice = mapToolChoice(options.toolChoice);
-      if (toolChoice) params.tool_choice = toolChoice;
+      // Anthropic refuses a forced tool alongside thinking, and Opus 5.5 /
+      // Sonnet 5.5 / Fable 5.1 refuse one outright — both a 400. Send `auto`
+      // instead, which keeps the tool on offer. No instruction is added to
+      // the system prompt: in a tool loop the next request would then carry
+      // a different system prompt, which invalidates the thinking blocks it
+      // replays.
+      if (
+        toolChoice?.type === 'tool' &&
+        (thinkingEnabled || refusesForcedToolChoice(options.model))
+      ) {
+        logger.info('Anthropic: forced tool choice sent as auto', {
+          provider: this.name,
+          model: options.model,
+          tool: toolChoice.name,
+          reason: thinkingEnabled ? 'thinking' : 'model_refuses_forced_tool_choice',
+        });
+        params.tool_choice = { type: 'auto' };
+      } else if (toolChoice) {
+        params.tool_choice = toolChoice;
+      }
     }
-    // Structured output: Anthropic doesn't support response_format natively.
-    // We use a tool-based extraction pattern: define a tool with the schema,
-    // force the model to use it, and extract the structured data from the
-    // tool call arguments. This is only applied when no other tools are present
-    // (structured output and regular tool use are mutually exclusive per turn).
+    // Structured output, only when no other tools are present (structured
+    // output and regular tool use are mutually exclusive per turn).
+    //
+    // Models that take native structured output get `output_config.format`:
+    // no tool, so nothing to clash with thinking or with a model that refuses
+    // a forced `tool_choice`, and the JSON arrives as ordinary text. The rest
+    // get the extraction pattern: a tool carrying the schema, whose arguments
+    // are read back as the structured result. That tool is forced unless
+    // thinking is on, where a forced tool is a 400 — there it is offered with
+    // `auto` and the system prompt asks for it, which is safe because a
+    // structured-output request is a single turn with no tool loop.
     if (options.responseFormat && !options.tools?.length) {
       if (options.responseFormat.type === 'json_schema') {
-        const extractionToolName = buildExtractionToolName(options.responseFormat.name);
-        params.tools = [
-          {
-            name: extractionToolName,
-            description: `Extract structured data matching the ${options.responseFormat.name} schema.`,
-            input_schema: buildToolInputSchema(options.responseFormat.schema),
-          },
-        ];
-        params.tool_choice = { type: 'tool', name: extractionToolName };
+        const inputSchema = buildToolInputSchema(options.responseFormat.schema);
+        const nativeSchema = acceptsNativeStructuredOutput(options.model)
+          ? toNativeOutputSchema(inputSchema)
+          : undefined;
+        if (nativeSchema) {
+          params.output_config = {
+            ...params.output_config,
+            format: { type: 'json_schema', schema: nativeSchema },
+          };
+        } else {
+          const extractionToolName = buildExtractionToolName(options.responseFormat.name);
+          params.tools = [
+            {
+              name: extractionToolName,
+              description: `Extract structured data matching the ${options.responseFormat.name} schema.`,
+              input_schema: inputSchema,
+            },
+          ];
+          if (thinkingEnabled) {
+            params.tool_choice = { type: 'auto' };
+            const instruction = `Respond only by calling the ${extractionToolName} tool with the result.`;
+            params.system = system ? `${system}\n\n${instruction}` : instruction;
+          } else {
+            params.tool_choice = { type: 'tool', name: extractionToolName };
+          }
+        }
       } else if (options.responseFormat.type === 'json_object') {
         // For json_object mode, instruct the model via system message prefix
         // since Anthropic has no native JSON mode. The caller's system
@@ -618,11 +690,14 @@ function splitSystemMessages(messages: LlmMessage[]): {
       });
       continue;
     }
-    if (msg.role === 'assistant' && msg.toolCalls?.length) {
-      const blocks: ContentBlockParam[] = [];
+    if (msg.role === 'assistant' && (msg.toolCalls?.length || msg.reasoning?.length)) {
+      // Thinking blocks go back first and unchanged, signatures included:
+      // a tool loop on a thinking model must replay them on the turn it
+      // continues.
+      const blocks: ContentBlockParam[] = (msg.reasoning ?? []).map(toReasoningBlockParam);
       const text = getTextContent(msg.content);
       if (text) blocks.push({ type: 'text', text });
-      for (const call of msg.toolCalls) {
+      for (const call of msg.toolCalls ?? []) {
         blocks.push({
           type: 'tool_use',
           id: call.id,
@@ -694,6 +769,39 @@ function toAnthropicBlocks(parts: ContentPart[]): ContentBlockParam[] {
     }
   }
   return blocks;
+}
+
+function toReasoningBlockParam(block: LlmReasoningBlock): ContentBlockParam {
+  return block.type === 'thinking'
+    ? { type: 'thinking', thinking: block.thinking, signature: block.signature }
+    : { type: 'redacted_thinking', data: block.data };
+}
+
+/** Did buildBaseParams install the structured-output extraction tool? */
+function installsExtractionTool(params: { tools?: ReadonlyArray<object> }): boolean {
+  const only = params.tools?.length === 1 ? params.tools[0] : undefined;
+  return (
+    only !== undefined &&
+    'name' in only &&
+    typeof only.name === 'string' &&
+    only.name.startsWith(EXTRACTION_TOOL_PREFIX)
+  );
+}
+
+/**
+ * Rewrite a tool input schema into the subset native structured output
+ * accepts, with the SDK's own transform: `additionalProperties: false` on
+ * every object, and unsupported constraints moved into descriptions.
+ * Returns `undefined` when the transform can't handle the schema (it needs
+ * a `type` on every node), so the caller falls back to the extraction tool,
+ * which accepted that schema before native output existed.
+ */
+function toNativeOutputSchema(schema: Tool.InputSchema): Record<string, unknown> | undefined {
+  try {
+    return transformJSONSchema(schema);
+  } catch {
+    return undefined;
+  }
 }
 
 function mapToolChoice(choice: LlmToolChoice | undefined): ToolChoice | undefined {

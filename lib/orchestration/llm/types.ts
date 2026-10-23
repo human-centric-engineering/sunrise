@@ -24,6 +24,18 @@ export interface LlmToolCall {
 }
 
 /**
+ * A reasoning block a provider returned alongside an assistant turn —
+ * today Anthropic's `thinking` / `redacted_thinking` blocks. Opaque to
+ * everything but the provider that produced it: a tool loop carries it on
+ * the assistant message and the provider sends it back unchanged on the
+ * request that continues the turn, which Anthropic requires when thinking
+ * is on. Other providers ignore it.
+ */
+export type LlmReasoningBlock =
+  | { type: 'thinking'; thinking: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
+
+/**
  * A single content part in a multimodal message. When `LlmMessage.content`
  * is a `ContentPart[]`, the provider maps each part to the appropriate
  * wire format (e.g., Anthropic `source`, OpenAI `image_url`).
@@ -53,6 +65,12 @@ export interface LlmMessage {
   toolCallId?: string;
   /** Present when the assistant decided to call one or more tools. */
   toolCalls?: LlmToolCall[];
+  /**
+   * The reasoning blocks the provider returned with this assistant turn
+   * (`LlmResponse.reasoning`), replayed unchanged on the next request of a
+   * tool loop. Not persisted: only the turn being continued needs them.
+   */
+  reasoning?: LlmReasoningBlock[];
 }
 
 /**
@@ -79,7 +97,7 @@ export type LlmResponseFormat =
  * How much reasoning the model should do before producing visible output.
  * Only honoured by reasoning-capable models — the OpenAI reasoning /
  * gpt-5 families (`paramProfile === 'openai-reasoning'`) and Anthropic's
- * extended-thinking Claude 4 models (resolved via
+ * thinking Claude models (resolved via
  * `supportsReasoningEffort()` in `model-heuristics`). Silently dropped
  * by other models — no error.
  *
@@ -154,6 +172,11 @@ export interface LlmResponse {
   /** Echo of the model id the provider actually used. */
   model: string;
   finishReason: LlmFinishReason;
+  /**
+   * Reasoning blocks returned with this turn, in order. A tool loop puts
+   * them on the assistant message it appends (`LlmMessage.reasoning`).
+   */
+  reasoning?: LlmReasoningBlock[];
 }
 
 /**
@@ -162,7 +185,8 @@ export interface LlmResponse {
  * - `text` — incremental assistant text.
  * - `tool_call` — a fully-assembled tool invocation (we buffer streaming
  *   fragments and emit one chunk per call for consumer simplicity).
- * - `done` — terminal chunk with usage and finish reason.
+ * - `done` — terminal chunk with usage, finish reason and any reasoning
+ *   blocks the turn produced.
  */
 export type StreamChunk =
   | { type: 'text'; content: string }
@@ -171,6 +195,8 @@ export type StreamChunk =
       type: 'done';
       usage: { inputTokens: number; outputTokens: number };
       finishReason: LlmFinishReason;
+      /** Reasoning blocks streamed this turn, in order — see `LlmResponse.reasoning`. */
+      reasoning?: LlmReasoningBlock[];
     };
 
 /**
