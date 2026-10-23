@@ -18,6 +18,11 @@
  * `lib/storage/access-tokens.ts` carry their own: all three use the same
  * secret, and the tag keeps a MAC minted for one from verifying as another.
  *
+ * The seal covers the date, not the bundle's contents. An admin who edits a
+ * sealed bundle, or moves its seal onto another, is typing those addresses in
+ * on purpose; what the seal rules out is a bundle naming an erased person
+ * because it came from somewhere their erasure never reached.
+ *
  * An install that shares its secret with another (a staging copy configured
  * from production's environment) shares its seals too. Give each environment
  * its own secret; nothing here can tell two installs with one key apart.

@@ -967,6 +967,12 @@ can re-add an account that is gone.
 Each strip carries the warning it always has. A bundle with no `exportedAt` is
 still refused by the schema.
 
+**The seal covers the date, not the contents.** An admin who edits a sealed
+bundle, or moves its seal onto another, is typing those addresses in, as they
+could on the subscription or settings page once t-899 lets an address be
+re-entered there. What the seal rules out is the accident: a bundle that names
+an erased person because it came from somewhere their erasure never reached.
+
 **An install that shares its secret with another shares its seals.** A
 staging copy configured from production's environment would seal bundles
 production trusts. Give each environment its own `BETTER_AUTH_SECRET`; the
