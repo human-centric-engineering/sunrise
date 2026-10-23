@@ -15,7 +15,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -35,13 +34,9 @@ vi.mock('@/lib/db/client', () => {
       count: vi.fn(),
       create: vi.fn(),
     },
-    // The erased-person check runs in the write's transaction (t-805)
-    $executeRaw: vi.fn(),
+    // Watched so a test can show a create asks erasure nothing (t-899)
     dataErasureReceipt: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
-    $transaction: vi.fn(),
   };
-  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
   return { prisma };
 });
 
@@ -119,9 +114,7 @@ describe('Webhook Subscription API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
     vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -487,33 +480,28 @@ describe('Webhook Subscription API', () => {
       );
     });
 
-    it('refuses an email subscription for an erased address with a 400 and writes nothing (t-805)', async () => {
-      // A receipt exists for the (verified) address the form still holds
-      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
-        {
-          subjectUserId: 'gone-user',
-          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
-          metadata: { addressVerified: true },
-        },
-      ] as never);
+    it('creates an email subscription for an address typed in, without asking who was erased (t-899)', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({
+        ...mockWebhook,
+        channel: 'email',
+        url: null,
+        emailAddress: 'readded@example.com',
+      } as never);
 
       const res = await POST(
         makePostRequest({
           channel: 'email',
-          emailAddress: 'Gone@Example.com',
+          emailAddress: 'readded@example.com',
           events: ['workflow_failed'],
         })
       );
-      const json = JSON.parse(await res.text());
 
-      expect(res.status).toBe(400);
-      expect(json.error.code).toBe('VALIDATION_ERROR');
-      expect(json.error.details.emailAddress).toEqual([expect.stringMatching(/erased/i)]);
-      expect(prisma.aiWebhookSubscription.create).not.toHaveBeenCalled();
-      expect(logAdminAction).not.toHaveBeenCalled();
+      expect(res.status).toBe(201);
+      expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookSubscription.create).toHaveBeenCalledOnce();
     });
 
-    it('does not consult erasure receipts for a URL-channel subscription (t-805)', async () => {
+    it('does not consult erasure receipts for a URL-channel subscription', async () => {
       vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue(mockWebhook as never);
 
       const res = await POST(makePostRequest(validPayload));
