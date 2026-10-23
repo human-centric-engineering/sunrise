@@ -11,6 +11,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
+// The backup seal's key (§122 t-902). happy-dom hides the server env.
+vi.mock('@/lib/env', async (importOriginal) => ({
+  env: {
+    ...(await importOriginal<typeof import('@/lib/env')>()).env,
+    BETTER_AUTH_SECRET: 'test-secret-that-is-at-least-32-characters-long',
+  },
+}));
+
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
 /** Records `model` and the tenant org each query ran in, in call order. */
@@ -40,6 +48,7 @@ vi.mock('@/lib/db/client', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
+import { isSealedByThisInstall, sealExportedAt } from '@/lib/orchestration/backup/export-seal';
 import { getTenantContext } from '@/lib/tenancy/context';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
@@ -184,6 +193,32 @@ describe('exportOrchestrationConfig', () => {
     // exportedAt should be a valid ISO date between before and after
     expect(payload.exportedAt.localeCompare(before)).toBeGreaterThanOrEqual(0);
     expect(payload.exportedAt.localeCompare(after)).toBeLessThanOrEqual(0);
+  });
+
+  it('stamps exportedAt before any read starts, and seals it (§122 t-902)', async () => {
+    // Each read finishes a minute after it starts, on the faked clock: an
+    // exportedAt stamped after the reads would be at least a minute late.
+    const START = new Date('2026-10-22T12:00:00.000Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    try {
+      const later = <T>(value: T) => {
+        vi.setSystemTime(new Date(Date.now() + 60_000));
+        return Promise.resolve(value);
+      };
+      mockFindMany.mockImplementation(() => later([]));
+      mockFindUnique.mockImplementation(() => later(null));
+
+      const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+      expect(payload.exportedAt).toBe(START.toISOString());
+      expect(payload.exportSeal).toBe(sealExportedAt(START.toISOString()));
+      expect(isSealedByThisInstall(payload.exportedAt, payload.exportSeal)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      mockFindMany.mockReset();
+      mockFindUnique.mockReset();
+    }
   });
 
   it('maps agents array from DB rows', async () => {

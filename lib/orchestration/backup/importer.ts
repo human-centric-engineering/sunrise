@@ -58,9 +58,10 @@ import type { WorkflowDefinition } from '@/types/orchestration';
 import { isRecord } from '@/lib/utils';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
+import { isSealedByThisInstall } from '@/lib/orchestration/backup/export-seal';
 import {
-  COPY_CLOCK_SKEW_MS,
   findErasedSubjects,
+  matchErasedSubjects,
   WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
@@ -263,11 +264,9 @@ async function importParsed(
       // A backup from before an erasure would otherwise restore their address
       // or approver id into the escalation list, a subscription or a workflow.
       // Found once, under the locks erasure takes, and stripped from every
-      // write below with a warning — an import is not refused for it. Only
-      // erasures after the bundle's `exportedAt` count (§122 t-902): an address
-      // the bundle carries despite an older erasure was re-added on purpose.
-      const erased = await findErasedSubjects(tx, bundleRecipients(parsed.data, includeShared), {
-        since: bundleTakenAt(parsed.exportedAt, new Date()),
+      // write below with a warning — an import is not refused for it.
+      const erased = await erasedSinceBundle(tx, bundleRecipients(parsed.data, includeShared), {
+        since: bundleTakenAt(parsed.exportedAt, parsed.exportSeal, new Date()),
       });
 
       // Knowledge tags first — agents reference them by slug, so create/refresh
@@ -945,31 +944,40 @@ async function importedWorkflowProviderWarnings(
 }
 
 /**
- * When a bundle's copy was taken, for the erased-person check (§122 t-902).
+ * When a bundle's copy was taken, for the erased-person check (§122 t-902), or
+ * `undefined` to count every erasure.
  *
- * `exportedAt` is whatever the uploaded file says; the schema refuses a bundle
- * without one, as it always has. One that does not parse is read as the epoch,
- * so everyone ever erased is stripped — the check before t-902. So is one
- * further in the future than
- * {@link COPY_CLOCK_SKEW_MS}: no export was taken then, and read as it stands
- * it would leave out everyone erased before the import. One within that margin
- * is another host's clock running ahead, and is clamped to `now`.
- *
- * A past date an admin writes by hand still leaves out everyone erased before
- * it: the importer keeps an address re-added on purpose, and cannot tell a
- * genuine bundle's date from a typed one. Only an admin of the target scope can
- * import. Until t-899 and t-900 move the settings, subscription, schedule and
- * workflow routes onto the same since-anchor, those routes still refuse anyone
- * ever erased, so for now this is the one admin path that writes back an
- * address erased before the date given.
- *
- * A date before the epoch is the epoch: no receipt is older, and it keeps
- * `copyAnchor`'s subtraction inside the range a `Date` can hold.
+ * Only a date this install sealed is trusted (`export-seal.ts`): one from
+ * another environment, or edited, says nothing about when this install's
+ * erasures reached the copy. A sealed date ahead of `now` is this install's
+ * own clock having moved back, and is clamped to `now`.
  */
-export function bundleTakenAt(exportedAt: string, now: Date): Date {
+export function bundleTakenAt(
+  exportedAt: string,
+  seal: string | undefined,
+  now: Date
+): Date | undefined {
+  if (!isSealedByThisInstall(exportedAt, seal)) return undefined;
   const at = Date.parse(exportedAt);
-  if (Number.isNaN(at) || at > now.getTime() + COPY_CLOCK_SKEW_MS) return new Date(0);
-  return new Date(Math.max(0, Math.min(at, now.getTime())));
+  if (Number.isNaN(at)) return undefined;
+  return new Date(Math.min(at, now.getTime()));
+}
+
+/**
+ * The erased among a bundle's subjects, under erasure's locks. An address
+ * counts only if erased since `since`: one erased earlier that the copy still
+ * names was re-added on purpose. A user id counts whenever it was erased, as
+ * no one can re-add an account that is gone.
+ */
+async function erasedSinceBundle(
+  tx: Prisma.TransactionClient,
+  subjects: { addresses: string[]; userIds: string[] },
+  { since }: { since: Date | undefined }
+): Promise<ErasedSubjects> {
+  const found = await findErasedSubjects(tx, subjects, { since });
+  if (!since || subjects.userIds.length === 0) return found;
+  const ids = await matchErasedSubjects(tx, { addresses: [], userIds: subjects.userIds });
+  return { addresses: found.addresses, userIds: ids.userIds };
 }
 
 /**

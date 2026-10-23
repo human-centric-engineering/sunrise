@@ -201,6 +201,9 @@ export const IMPORTED_FROM_SLUG_KEY = 'importedFromSlug';
 export const backupSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   exportedAt: z.string(),
+  // This install's seal over `exportedAt` (§122 t-902, `export-seal.ts`). The
+  // importer trusts the date only when it verifies. Absent from older bundles.
+  exportSeal: z.string().optional(),
   data: z.object({
     agents: z.array(agentBackupSchema),
     capabilities: z.array(capabilityBackupSchema),
