@@ -137,6 +137,7 @@ const TWO_STEP_WORKFLOW = {
   draftDefinition: null,
   publishedVersionId: 'wfv-1',
   publishedVersion: { id: 'wfv-1', version: 1, snapshot: TWO_STEP_DEFINITION },
+  definitionVersion: '"v-loaded"',
   patternsUsed: [1, 2],
   isActive: true,
   isTemplate: false,
@@ -249,6 +250,10 @@ describe('EditWorkflowPage (server component)', () => {
 
     // Verify no dialog appeared
     expect(screen.queryByText(/workflow details/i)).not.toBeInTheDocument();
+    // The version the page loaded reaches the save as If-Match (§122 t-900).
+    const options = vi.mocked(apiClient.patch).mock.calls[0]?.[1] as
+      { options?: { headers?: Record<string, string> } } | undefined;
+    expect(options?.options?.headers).toEqual({ 'If-Match': '"v-loaded"' });
   });
 
   it('5.1b: PATCH body draftDefinition contains the serialised steps', async () => {
