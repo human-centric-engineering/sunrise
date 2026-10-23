@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  templateCatalogueSchema,
   templateMetadataSchema,
   toTemplateItem,
 } from '@/components/admin/orchestration/workflow-builder/template-types';
@@ -241,5 +242,28 @@ describe('toTemplateItem', () => {
       expect(result.metadata).not.toBeNull();
       expect(result.workflowDefinition).toBeDefined();
     });
+  });
+});
+
+describe('copySource (§122 t-900)', () => {
+  const ENTRY = {
+    source: 'custom',
+    slug: 'org-tpl',
+    name: 'Org template',
+    description: 'd',
+    workflowDefinition: { steps: [], entryStepId: '', errorStrategy: 'fail' },
+    patternsUsed: [],
+    metadata: null,
+  };
+  const COPY = { workflowId: 'cmjbv4i3x00003wslotemplate', definitionVersion: '"tpl-v1"' };
+
+  it("carries a custom template's copy source through the catalogue and onto the item", () => {
+    const [parsed] = templateCatalogueSchema.parse([{ ...ENTRY, copySource: COPY }]);
+    expect(toTemplateItem(parsed).copySource).toEqual(COPY);
+  });
+
+  it('gives a built-in no copy source', () => {
+    const [parsed] = templateCatalogueSchema.parse([{ ...ENTRY, source: 'builtin' }]);
+    expect(toTemplateItem(parsed)).not.toHaveProperty('copySource');
   });
 });

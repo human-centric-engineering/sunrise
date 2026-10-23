@@ -120,7 +120,7 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
@@ -318,6 +318,75 @@ describe('NewWorkflowPage', () => {
     expect(body.name).toBe(MOCK_TEMPLATE.name);
     expect(body.workflowDefinition.steps).toHaveLength(TEMPLATE_DEFINITION.steps.length);
     expect(body.workflowDefinition.entryStepId).toBe(TEMPLATE_DEFINITION.entryStepId);
+    // A built-in comes from code, which erasure never touches: no source to check.
+    expect(body).not.toHaveProperty('copiedFrom');
+  });
+
+  describe('a custom template, which erasure scrubs like any workflow (§122 t-900)', () => {
+    const COPY_SOURCE = { workflowId: 'cmjbv4i3x00003wslotemplate', definitionVersion: '"tpl-v1"' };
+    const CUSTOM_TEMPLATE = {
+      ...MOCK_TEMPLATE,
+      source: 'custom',
+      slug: 'org-escalation',
+      name: 'Org Escalation',
+      copySource: COPY_SOURCE,
+    };
+
+    async function createFromCustomTemplate(user: ReturnType<typeof userEvent.setup>) {
+      vi.mocked(serverFetch).mockImplementation(async (url: string) =>
+        url.startsWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES)
+          ? apiSuccess([CUSTOM_TEMPLATE])
+          : apiSuccess([])
+      );
+      const { default: NewWorkflowPage } =
+        await import('@/app/admin/orchestration/workflows/new/page');
+      render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+      await user.click(
+        await screen.findByRole('menuitem', { name: /org escalation/i, hidden: true })
+      );
+      await user.click(screen.getByRole('button', { name: /use this template/i }));
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('button', { name: /use this template/i })
+        ).not.toBeInTheDocument();
+      });
+      await user.click(
+        await screen.findByRole('button', { name: /create workflow/i, hidden: true })
+      );
+      await user.type(screen.getByRole('textbox', { name: /description/i }), 'From my template');
+      await user.click(screen.getByRole('button', { name: /save workflow/i }));
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+    }
+
+    it('names the template and the version it loaded as copiedFrom', async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-wf-1' });
+
+      await createFromCustomTemplate(user);
+
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      expect((options?.body as { copiedFrom?: unknown }).copiedFrom).toEqual(COPY_SOURCE);
+    });
+
+    it('shows the reload prompt, naming the template, when the template moved on', async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError(
+          'The workflow or template this was copied from changed',
+          'STALE_RECORD',
+          412
+        )
+      );
+
+      await createFromCustomTemplate(user);
+
+      expect(
+        await screen.findByText(/the template it was started from, changed since you opened it/i)
+      ).toBeInTheDocument();
+      expect(routerPushMock).not.toHaveBeenCalled();
+    });
   });
 
   it('confirming dialog with empty canvas shows an inline error (no nodes to save)', async () => {

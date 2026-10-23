@@ -44,6 +44,10 @@ const txMocks = {
   workflowUpdate: vi.fn(),
   workflowFindUniqueOrThrow: vi.fn(),
   versionCreate: vi.fn(),
+  // The copy-source check (§122 t-900): the source's row lock and its read
+  // under it, which sees the source as the route first read it.
+  queryRaw: vi.fn(async () => []),
+  workflowFindUnique: vi.fn(),
 };
 
 vi.mock('@/lib/db/client', () => ({
@@ -58,7 +62,9 @@ vi.mock('@/lib/db/client', () => ({
     },
     $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
+        $queryRaw: txMocks.queryRaw,
         aiWorkflow: {
+          findUnique: txMocks.workflowFindUnique,
           create: txMocks.workflowCreate,
           update: txMocks.workflowUpdate,
           findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
@@ -203,6 +209,9 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    txMocks.workflowFindUnique.mockImplementation(
+      async () => vi.mocked(prisma.aiWorkflow.findUnique).mock.results[0]?.value
+    );
 
     // Default: slug is unique (findUnique for slug returns null)
     vi.mocked(prisma.aiWorkflow.findUnique).mockImplementation((async (args: unknown) => {
@@ -498,6 +507,36 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       // The error.issues mapping (`i.path.join('.') + ': ' + i.message`) was
       // exercising fn 1 in coverage; the field-path string proves it ran.
       expect(body.error.details.publishedVersionId.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('a source that moved on since the route read it (§122 t-900)', () => {
+    it('copies at the version it read, checked under the source row lock', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makeRequest(), makeParams());
+
+      expect(response.status).toBe(200);
+      expect(txMocks.queryRaw).toHaveBeenCalled();
+      expect(txMocks.workflowFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: WORKFLOW_ID } })
+      );
+    });
+
+    it('412s, creating no version, when an erasure scrubbed the source in between', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const read = makeWorkflow();
+      txMocks.workflowFindUnique.mockResolvedValue({
+        ...read,
+        publishedVersion: { ...read.publishedVersion, snapshot: { steps: [], scrubbed: true } },
+      });
+
+      const response = await POST(makeRequest(), makeParams());
+
+      expect(response.status).toBe(412);
+      const body = await parseJson<ErrorBody>(response);
+      expect(body.error.code).toBe('STALE_RECORD');
+      expect(txMocks.versionCreate).not.toHaveBeenCalled();
     });
   });
 

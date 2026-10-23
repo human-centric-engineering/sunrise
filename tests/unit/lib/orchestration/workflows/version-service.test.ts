@@ -1095,3 +1095,94 @@ describe('org provider approval on publish and rollback (§120 t-743)', () => {
     });
   });
 });
+
+describe('createInitialVersion with a copy of a stored workflow (§122 t-900)', () => {
+  const SOURCE_ID = 'cmjbv4i3x00003wslotemplate';
+  const SOURCE = {
+    draftDefinition: null,
+    publishedVersionId: 'v1',
+    publishedVersion: { snapshot: VALID_DEF },
+  };
+  function copyTx(stored: unknown) {
+    return {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      dataErasureReceipt: { findMany: vi.fn().mockResolvedValue([]) },
+      user: { findMany: vi.fn().mockResolvedValue([]) },
+      aiWorkflow: { update: vi.fn(), findUnique: vi.fn().mockResolvedValue(stored) },
+      aiWorkflowVersion: { create: vi.fn().mockResolvedValue(makeVersion()) },
+    };
+  }
+  const copyOf = (definitionVersion: string) => ({ workflowId: SOURCE_ID, definitionVersion });
+
+  it('writes the copy when its source is still at the version it was copied at', async () => {
+    const tx = copyTx(SOURCE);
+
+    await createInitialVersion({
+      tx: tx as never,
+      workflowId: WORKFLOW_ID,
+      definition: ERASABLE,
+      copiedFrom: copyOf(workflowDefinitionVersion(SOURCE as never)),
+      userId: ADMIN_ID,
+    });
+
+    expect(tx.aiWorkflowVersion.create).toHaveBeenCalledOnce();
+    // Erasure's locks for the copy's addresses first, then the source's row.
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[0]
+    );
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.aiWorkflow.findUnique.mock.invocationCallOrder[0]
+    );
+    expect(tx.aiWorkflow.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: SOURCE_ID } })
+    );
+  });
+
+  it('refuses with 412, creating nothing, when the source moved on (an erasure scrubbed it)', async () => {
+    const scrubbed = { ...SOURCE, publishedVersion: { snapshot: ALT_DEF } };
+    const tx = copyTx(scrubbed);
+
+    const error = await createInitialVersion({
+      tx: tx as never,
+      workflowId: WORKFLOW_ID,
+      definition: ERASABLE,
+      copiedFrom: copyOf(workflowDefinitionVersion(SOURCE as never)),
+      userId: ADMIN_ID,
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(StaleRecordError);
+    expect((error as StaleRecordError).message).toMatch(/copied from changed/);
+    expect(tx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+    expect(tx.aiWorkflow.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a copy whose source this org cannot see, or that is gone', async () => {
+    const tx = copyTx(null);
+
+    await expect(
+      createInitialVersion({
+        tx: tx as never,
+        workflowId: WORKFLOW_ID,
+        definition: ERASABLE,
+        copiedFrom: copyOf('"any"'),
+        userId: ADMIN_ID,
+      })
+    ).rejects.toBeInstanceOf(StaleRecordError);
+    expect(tx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('checks no source for a create typed from scratch', async () => {
+    const tx = copyTx(SOURCE);
+
+    await createInitialVersion({
+      tx: tx as never,
+      workflowId: WORKFLOW_ID,
+      definition: ERASABLE,
+      userId: ADMIN_ID,
+    });
+
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.aiWorkflow.findUnique).not.toHaveBeenCalled();
+  });
+});

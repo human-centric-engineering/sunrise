@@ -180,6 +180,37 @@ describe('saveWorkflow', () => {
     });
   });
 
+  describe('a canvas copied from a custom template (§122 t-900)', () => {
+    const COPY = { workflowId: 'cmjbv4i3x00003wslotemplate', definitionVersion: '"tpl-v1"' };
+
+    it('sends copiedFrom with the create', async () => {
+      await saveWorkflow({
+        mode: 'create',
+        name: 'From template',
+        nodes: [makeNode('step-1')],
+        edges: [],
+        details: VALID_DETAILS,
+        copiedFrom: COPY,
+      });
+
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      expect((options?.body as Record<string, unknown>).copiedFrom).toEqual(COPY);
+    });
+
+    it('sends no copiedFrom with a create typed from scratch', async () => {
+      await saveWorkflow({
+        mode: 'create',
+        name: 'Scratch',
+        nodes: [makeNode('step-1')],
+        edges: [],
+        details: VALID_DETAILS,
+      });
+
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      expect(options?.body).not.toHaveProperty('copiedFrom');
+    });
+  });
+
   describe('edit mode', () => {
     it('calls apiClient.patch with the workflowById URL', async () => {
       const nodes: PatternNode[] = [makeNode('step-1')];

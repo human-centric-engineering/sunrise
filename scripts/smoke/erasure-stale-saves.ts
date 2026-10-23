@@ -19,7 +19,8 @@
  *
  * For the workflow it drives the real `saveDraft`, `publishDraft`,
  * `discardDraft` and `rollback` (`version-service.ts`): a stale save, publish
- * and discard are each refused, a rollback to a version that named her copies
+ * and discard are each refused, as is a new workflow copied from it before
+ * the erasure; a rollback to a version that named her copies
  * the scrubbed snapshot, and a builder reloaded after the erasure saves her
  * address typed back in.
  *
@@ -48,6 +49,7 @@ import {
   type VersionedRecord,
 } from '@/lib/orchestration/config-versions';
 import {
+  createInitialVersion,
   discardDraft,
   publishDraft,
   rollback,
@@ -344,6 +346,37 @@ async function main(): Promise<void> {
     check(
       !namesJane2(afterStale.draftDefinition) && afterStale.draftDefinition !== null,
       'and the draft is untouched: neither her address nor discarded'
+    );
+
+    // A new workflow copied from this one (a custom template, Duplicate)
+    // before the erasure names its source at the version it copied: refused,
+    // and nothing is created.
+    check(
+      await refusedStale(() =>
+        prisma.$transaction(async (tx) => {
+          const copy = await tx.aiWorkflow.create({
+            data: {
+              name: `${PREFIX} copy`,
+              slug: `${PREFIX}-copy-${stamp}`,
+              description: 'smoke',
+              orgId: INSTALL_ORG_ID,
+              createdBy: admin.id,
+            },
+          });
+          await createInitialVersion({
+            tx,
+            workflowId: copy.id,
+            definition: emailing(jane2.email),
+            copiedFrom: { workflowId: workflow.id, definitionVersion: builderLoaded },
+            userId: admin.id,
+          });
+        }, WRITER_TRANSACTION_OPTIONS)
+      ),
+      'a new workflow copied from it before the erasure is refused with 412'
+    );
+    check(
+      (await prisma.aiWorkflow.count({ where: { slug: `${PREFIX}-copy-${stamp}` } })) === 0,
+      'and no copy was created'
     );
 
     const rolledBack = await rollback({

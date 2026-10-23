@@ -24,6 +24,10 @@ const txMocks = {
   workflowUpdate: vi.fn(),
   workflowFindUniqueOrThrow: vi.fn(),
   versionCreate: vi.fn(),
+  // The copy-source check (§122 t-900): the source's row lock and its read
+  // under it, which sees the source as the route first read it.
+  queryRaw: vi.fn(async () => []),
+  workflowFindUnique: vi.fn(),
 };
 
 vi.mock('@/lib/db/client', () => ({
@@ -40,7 +44,9 @@ vi.mock('@/lib/db/client', () => ({
     },
     $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
+        $queryRaw: txMocks.queryRaw,
         aiWorkflow: {
+          findUnique: txMocks.workflowFindUnique,
           create: txMocks.workflowCreate,
           update: txMocks.workflowUpdate,
           findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
@@ -58,6 +64,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
@@ -145,6 +152,9 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  txMocks.workflowFindUnique.mockImplementation(
+    async () => vi.mocked(prisma.aiWorkflow.findUnique).mock.results[0]?.value
+  );
 });
 
 describe('GET /workflows/templates', () => {
@@ -160,6 +170,9 @@ describe('GET /workflows/templates', () => {
 
   function customRow(overrides: Record<string, unknown> = {}) {
     return {
+      id: 'cmjbv4i3x00003wslotemplate',
+      draftDefinition: null,
+      publishedVersionId: 'wfv-1',
       slug: 'my-template',
       name: 'My Template',
       description: 'An org template',
@@ -252,6 +265,11 @@ describe('GET /workflows/templates', () => {
         workflowDefinition: { steps: [], entryStepId: 's1', errorStrategy: 'fail' },
         patternsUsed: [3],
         metadata: { flowSummary: 'x' },
+        // What a workflow made from it sends back as copiedFrom (§122 t-900).
+        copySource: {
+          workflowId: 'cmjbv4i3x00003wslotemplate',
+          definitionVersion: workflowDefinitionVersion(customRow()),
+        },
       },
       expect.objectContaining({ slug: 'unpublished', workflowDefinition: null }),
     ]);

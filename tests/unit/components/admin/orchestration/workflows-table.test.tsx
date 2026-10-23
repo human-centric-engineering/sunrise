@@ -329,6 +329,7 @@ describe('WorkflowsTable', () => {
         patternsUsed: [1, 2],
         isTemplate: false,
         metadata: null,
+        definitionVersion: '"wf-1-v3"',
       });
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'wf-new-id' });
 
@@ -351,7 +352,11 @@ describe('WorkflowsTable', () => {
         expect(apiClient.post).toHaveBeenCalledWith(
           expect.stringContaining('/workflows'),
           expect.objectContaining({
-            body: expect.objectContaining({ name: 'Alpha Flow (copy)' }),
+            body: expect.objectContaining({
+              name: 'Alpha Flow (copy)',
+              // The source and the version its read returned (§122 t-900).
+              copiedFrom: { workflowId: 'wf-1', definitionVersion: '"wf-1-v3"' },
+            }),
           })
         );
       });
