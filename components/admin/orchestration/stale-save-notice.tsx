@@ -13,7 +13,7 @@
  * @see lib/api/record-version.ts
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Copy, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,9 @@ export interface StaleSaveNoticeProps {
 
 export function StaleSaveNotice({ what, onReload, onCopyChanges }: StaleSaveNoticeProps) {
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
+  // A page passes a new copier when its edits change (the builder's follows
+  // its canvas), so an earlier "Copied" no longer covers what is on screen.
+  useEffect(() => setCopy('idle'), [onCopyChanges]);
   return (
     <div
       role="alert"
@@ -61,10 +64,14 @@ export function StaleSaveNotice({ what, onReload, onCopyChanges }: StaleSaveNoti
           variant="outline"
           size="sm"
           onClick={() => {
-            onCopyChanges().then(
-              () => setCopy('copied'),
-              () => setCopy('failed')
-            );
+            // Started inside a promise, so a copier that throws before it has
+            // one (no clipboard outside a secure context) is reported too.
+            Promise.resolve()
+              .then(onCopyChanges)
+              .then(
+                () => setCopy('copied'),
+                () => setCopy('failed')
+              );
           }}
         >
           <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />

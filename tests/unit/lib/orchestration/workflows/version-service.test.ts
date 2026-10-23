@@ -22,6 +22,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 
 // ─── Mocks (must come before module imports) ───────────────────────────────
@@ -1184,5 +1185,71 @@ describe('createInitialVersion with a copy of a stored workflow (§122 t-900)', 
 
     expect(tx.$queryRaw).not.toHaveBeenCalled();
     expect(tx.aiWorkflow.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('the version each write leaves, and fields written alongside a draft (§122 t-900)', () => {
+  it('saveDraft writes the other fields in the same update, and returns the version read after it', async () => {
+    given(makeWorkflow());
+    const after = makeWorkflow({ draftDefinition: ALT_DEF });
+    txState.workflowFindUniqueOrThrow
+      .mockResolvedValueOnce(makeWorkflow()) // the check
+      .mockResolvedValueOnce(after); // the version left
+    txState.workflowUpdate.mockResolvedValue(after);
+
+    const result = await saveDraft({
+      workflowId: WORKFLOW_ID,
+      loadedAt: current(),
+      definition: ALT_DEF,
+      alongside: { name: 'Renamed' },
+      userId: ADMIN_ID,
+    });
+
+    expect(txState.workflowUpdate.mock.calls[0]?.[0]).toMatchObject({
+      data: { name: 'Renamed', draftDefinition: ALT_DEF },
+    });
+    expect(result.definitionVersion).toBe(versionOf(after));
+  });
+
+  it('discardDraft writes the other fields with the clear, and returns the version it left', async () => {
+    given(makeWorkflow({ draftDefinition: ALT_DEF }));
+    const after = makeWorkflow();
+    txState.workflowFindUniqueOrThrow
+      .mockResolvedValueOnce(makeWorkflow({ draftDefinition: ALT_DEF }))
+      .mockResolvedValueOnce(after);
+    txState.workflowUpdate.mockResolvedValue(after);
+
+    const result = await discardDraft({
+      workflowId: WORKFLOW_ID,
+      loadedAt: current(),
+      alongside: { name: 'Renamed' },
+      userId: ADMIN_ID,
+    });
+
+    expect(txState.workflowUpdate.mock.calls[0]?.[0]).toMatchObject({
+      data: { name: 'Renamed', draftDefinition: Prisma.DbNull },
+    });
+    expect(result.definitionVersion).toBe(versionOf(after));
+  });
+
+  it('publishDraft returns the version it left, read after its writes', async () => {
+    given(makeWorkflow({ draftDefinition: VALID_DEF }));
+    const after = makeWorkflow({ publishedVersionId: VERSION_ID_NEW });
+    txState.workflowFindUniqueOrThrow
+      .mockResolvedValueOnce(makeWorkflow({ draftDefinition: VALID_DEF }))
+      .mockResolvedValueOnce(after);
+    txState.versionCreate.mockResolvedValue(makeVersion({ id: VERSION_ID_NEW, version: 2 }));
+    txState.workflowUpdate.mockResolvedValue(after);
+
+    const result = await publishDraft({
+      workflowId: WORKFLOW_ID,
+      loadedAt: current(),
+      userId: ADMIN_ID,
+    });
+
+    expect(result.definitionVersion).toBe(versionOf(after));
+    expect(txState.workflowFindUniqueOrThrow.mock.invocationCallOrder[1]).toBeGreaterThan(
+      txState.workflowUpdate.mock.invocationCallOrder[0]
+    );
   });
 });

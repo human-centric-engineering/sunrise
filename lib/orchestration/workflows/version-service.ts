@@ -230,6 +230,12 @@ export interface SaveDraftArgs {
   workflowId: string;
   definition: WorkflowDefinition;
   loadedAt: LoadedAt;
+  /**
+   * Other fields the same request writes (name, slug, cost cap…), written in
+   * the same update, after the version check: a refused save writes none of
+   * them, and a slug conflict writes no draft.
+   */
+  alongside?: Prisma.AiWorkflowUpdateInput;
   userId: string;
   clientIp?: string | null;
 }
@@ -246,7 +252,7 @@ export interface SaveDraftArgs {
 export async function saveDraft(
   args: SaveDraftArgs
 ): Promise<AiWorkflow & { definitionVersion: string }> {
-  const { workflowId, definition, loadedAt, userId, clientIp } = args;
+  const { workflowId, definition, loadedAt, alongside, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
   // A builder tab opened before a person was erased saves the whole draft it
@@ -258,7 +264,7 @@ export async function saveDraft(
     await assertUnchangedSince(tx, record, loadedAt);
     const written = await tx.aiWorkflow.update({
       where: { id: workflowId },
-      data: { draftDefinition: toWrite as unknown as Prisma.InputJsonValue },
+      data: { ...alongside, draftDefinition: toWrite as unknown as Prisma.InputJsonValue },
     });
     // The version this write left, under the same lock: the builder's next
     // save is checked against it.
@@ -281,6 +287,8 @@ export async function saveDraft(
 export interface DiscardDraftArgs {
   workflowId: string;
   loadedAt: LoadedAt;
+  /** As {@link SaveDraftArgs.alongside}. */
+  alongside?: Prisma.AiWorkflowUpdateInput;
   userId: string;
   clientIp?: string | null;
 }
@@ -291,16 +299,20 @@ export interface DiscardDraftArgs {
  * Refused with 412 when the definition has moved on since the builder loaded
  * it: the draft it would discard is not the one the admin saw.
  */
-export async function discardDraft(args: DiscardDraftArgs): Promise<AiWorkflow> {
-  const { workflowId, loadedAt, userId, clientIp } = args;
+export async function discardDraft(
+  args: DiscardDraftArgs
+): Promise<AiWorkflow & { definitionVersion: string }> {
+  const { workflowId, loadedAt, alongside, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
   const updated = await prisma.$transaction(async (tx) => {
-    await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, loadedAt);
-    return tx.aiWorkflow.update({
+    const record = { kind: 'workflow-definition' as const, id: workflowId };
+    await assertUnchangedSince(tx, record, loadedAt);
+    const written = await tx.aiWorkflow.update({
       where: { id: workflowId },
-      data: { draftDefinition: Prisma.DbNull },
+      data: { ...alongside, draftDefinition: Prisma.DbNull },
     });
+    return { ...written, definitionVersion: await lockedVersion(tx, record) };
   }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({
@@ -326,6 +338,8 @@ export interface PublishDraftArgs {
 export interface PublishDraftResult {
   workflow: AiWorkflow;
   version: AiWorkflowVersion;
+  /** The definition version the publish left, read under its lock (§122 t-900). */
+  definitionVersion: string;
 }
 
 /**
@@ -386,7 +400,11 @@ export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraft
         draftDefinition: Prisma.DbNull,
       },
     });
-    return { workflow, version };
+    const definitionVersion = await lockedVersion(tx, {
+      kind: 'workflow-definition',
+      id: workflowId,
+    });
+    return { workflow, version, definitionVersion };
   }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({

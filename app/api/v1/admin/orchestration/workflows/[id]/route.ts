@@ -25,13 +25,8 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { requireIfMatch } from '@/lib/api/record-version';
-import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
-import {
-  assertUnchangedSince,
-  lockedVersion,
-  workflowDefinitionVersion,
-} from '@/lib/orchestration/config-versions';
-import { saveDraft } from '@/lib/orchestration/workflows/version-service';
+import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
+import { discardDraft, saveDraft } from '@/lib/orchestration/workflows/version-service';
 import { updateWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
@@ -117,70 +112,81 @@ export const PATCH = withAdminAuth<{ id: string }>(
       data.maxCostPerExecutionUsd = body.maxCostPerExecutionUsd;
     if (body.metadata !== undefined) data.metadata = body.metadata;
 
-    // Other fields first, so a slug conflict (409) is answered before the draft
-    // is written: the other way round, the draft would commit, the builder
-    // would keep the version it sent, and its retry would be refused as stale
-    // by its own save (§122 t-900). Skipped when only `draftDefinition` was
-    // sent — saveDraft emits its own audit, and an empty update would log a
-    // redundant `workflow.update`.
+    // A draft write takes the other fields with it, into the one update it
+    // makes after the version check (§122 t-900): a stale save writes none of
+    // them, and a slug conflict writes no draft. saveDraft and discardDraft
+    // emit their own audit; `workflow.update` below covers the other fields.
+    const fields = Object.keys(data).length > 0 ? data : undefined;
+    let written: (AiWorkflow & { definitionVersion: string }) | null = null;
     let updated: Awaited<ReturnType<typeof readWithVersion>> | null = null;
-    if (Object.keys(data).length > 0) {
-      try {
-        updated = await prisma.aiWorkflow.update({
-          where: { id },
-          data,
-          include: { publishedVersion: true },
-        });
-        log.info('Workflow updated', {
+    try {
+      if (body.draftDefinition === null) {
+        written = await discardDraft({
           workflowId: id,
-          adminId: session.user.id,
-          fieldsChanged: Object.keys(data),
-        });
-        logAdminAction({
+          loadedAt,
+          alongside: fields,
           userId: session.user.id,
-          action: 'workflow.update',
-          entityType: 'workflow',
-          entityId: id,
-          entityName: updated.name,
-          changes: computeChanges(current, updated, {
-            ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'],
-          }),
           clientIp: clientIP,
         });
-      } catch (err) {
-        if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
-          throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
-        }
-        throw err;
+      } else if (body.draftDefinition !== undefined) {
+        written = await saveDraft({
+          workflowId: id,
+          definition: body.draftDefinition,
+          loadedAt,
+          alongside: fields,
+          userId: session.user.id,
+          clientIp: clientIP,
+        });
+      } else if (fields) {
+        updated = await prisma.aiWorkflow.update({
+          where: { id },
+          data: fields,
+          include: { publishedVersion: true },
+        });
       }
+    } catch (err) {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
+        throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
+      }
+      throw err;
     }
 
-    // Definition edits go to `draftDefinition` only — published versions are
-    // promoted via POST /publish. The version returned is the one the write
-    // left, read in its own transaction: one read after it commits could
-    // already carry another admin's save or an erasure the builder's canvas
-    // has not seen, and its next save would then pass the check.
-    let definitionVersion: string | null = null;
-    if (body.draftDefinition === null) {
-      definitionVersion = await prisma.$transaction(async (tx) => {
-        const record = { kind: 'workflow-definition' as const, id };
-        await assertUnchangedSince(tx, record, loadedAt);
-        await tx.aiWorkflow.update({ where: { id }, data: { draftDefinition: Prisma.DbNull } });
-        return lockedVersion(tx, record);
-      }, WRITER_TRANSACTION_OPTIONS);
-    } else if (body.draftDefinition !== undefined) {
-      const saved = await saveDraft({
+    const after = updated ?? written;
+    if (fields && after) {
+      log.info('Workflow updated', {
         workflowId: id,
-        definition: body.draftDefinition,
-        loadedAt,
+        adminId: session.user.id,
+        fieldsChanged: Object.keys(fields),
+      });
+      logAdminAction({
         userId: session.user.id,
+        action: 'workflow.update',
+        entityType: 'workflow',
+        entityId: id,
+        entityName: after.name,
+        // The draft is the draft audit's; only the other fields belong here.
+        changes: computeChanges(current, after, {
+          ignoreKeys: [
+            'updatedAt',
+            'createdAt',
+            'publishedVersion',
+            'draftDefinition',
+            'definitionVersion',
+          ],
+        }),
         clientIp: clientIP,
       });
-      definitionVersion = saved.definitionVersion;
     }
 
-    if (definitionVersion !== null) {
-      return successResponse({ ...(await readWithVersion(id)), definitionVersion });
+    // The version a draft write returns was read in its own transaction: one
+    // read after it commits could already carry another admin's save or an
+    // erasure the builder's canvas has not seen, and its next save would then
+    // pass the check.
+    if (written) {
+      return successResponse({
+        ...(await readWithVersion(id)),
+        definitionVersion: written.definitionVersion,
+      });
     }
     return successResponse(withDefinitionVersion(updated ?? (await readWithVersion(id))));
   },

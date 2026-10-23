@@ -324,14 +324,11 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     expect(res.status).toBe(401);
   });
 
-  it('updates the other fields before the draft, auditing them against the workflow as loaded', async () => {
-    // A slug conflict must be answered before the draft is written (§122 t-900
-    // code review): the other way round the draft commits, the builder keeps
-    // the version it sent, and its retry is refused as stale by its own save.
+  it('writes the other fields in the same update as the draft, after the version check', async () => {
     const current = makeWorkflow();
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(current as never);
-    vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
-      makeWorkflow({ name: 'Renamed' }) as never
+    txMocks.workflowUpdate.mockResolvedValue(
+      makeWorkflow({ name: 'Renamed', draftDefinition: ALT_DEF })
     );
     vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(
       makeWorkflow({ name: 'Renamed', draftDefinition: ALT_DEF }) as never
@@ -349,19 +346,51 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(vi.mocked(prisma.aiWorkflow.update).mock.invocationCallOrder[0]).toBeLessThan(
+    expect(prisma.aiWorkflow.update).not.toHaveBeenCalled();
+    expect(txMocks.workflowUpdate).toHaveBeenCalledOnce();
+    expect(txMocks.workflowUpdate.mock.calls[0]?.[0]).toMatchObject({
+      data: { name: 'Renamed', draftDefinition: ALT_DEF },
+    });
+    // The version check (a read under the lock) came first.
+    expect(txMocks.workflowFindUniqueOrThrow.mock.invocationCallOrder[0]).toBeLessThan(
       txMocks.workflowUpdate.mock.invocationCallOrder[0]
     );
+    // The rename is audited against the workflow as loaded; the draft is not
+    // logged twice.
     expect(computeChanges).toHaveBeenCalledWith(
       expect.objectContaining({ id: current.id, name: current.name }),
       expect.any(Object),
-      { ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'] }
+      {
+        ignoreKeys: [
+          'updatedAt',
+          'createdAt',
+          'publishedVersion',
+          'draftDefinition',
+          'definitionVersion',
+        ],
+      }
     );
   });
 
-  it('writes no draft when the other fields hit a slug conflict', async () => {
+  it('writes neither the rename nor the draft from a stale tab', async () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
-    vi.mocked(prisma.aiWorkflow.update).mockRejectedValue(
+    const request = makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+      draftDefinition: ALT_DEF,
+      name: 'Renamed',
+    });
+    request.headers.set('If-Match', '"loaded-before"');
+
+    const res = await WORKFLOW_PATCH(request, makeParams());
+
+    expect(res.status).toBe(412);
+    expect(prisma.aiWorkflow.update).not.toHaveBeenCalled();
+    expect(txMocks.workflowUpdate).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('answers a slug conflict with 409, and logs neither the draft nor the rename', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    txMocks.workflowUpdate.mockRejectedValueOnce(
       uniqueViolationError({ index: 'ai_workflow_slug_key', modelName: 'AiWorkflow' })
     );
 
@@ -377,8 +406,7 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     expect(res.status).toBe(409);
-    expect(txMocks.workflowUpdate).not.toHaveBeenCalled();
-    vi.mocked(prisma.aiWorkflow.update).mockReset();
+    expect(logAdminAction).not.toHaveBeenCalled();
   });
 
   it('writes maxCostPerExecutionUsd to the DB update when supplied', async () => {
@@ -1066,7 +1094,16 @@ describe('a builder write carries the definition version it loaded (§122 t-900)
     expect(body.data.definitionVersion).toBe(workflowDefinitionVersion(written as never));
   });
 
-  it('returns from a publish the version a fresh read would give', async () => {
+  it('returns from a publish the version it left, read under its lock', async () => {
+    const published = {
+      draftDefinition: null,
+      publishedVersionId: VERSION_ID_NEW,
+      publishedVersion: { snapshot: VALID_DEF },
+    };
+    txMocks.workflowFindUniqueOrThrow
+      .mockResolvedValueOnce(STORED) // the version check
+      .mockResolvedValueOnce(published); // the version the publish left
+
     const res = await PUBLISH(
       loadedFrom(makeRequest('POST', `${PATH}/publish`, {}), STORED),
       makeParams()
@@ -1074,15 +1111,8 @@ describe('a builder write carries the definition version it loaded (§122 t-900)
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { definitionVersion: string } };
-    expect(body.data.definitionVersion).toBe(
-      workflowDefinitionVersion({
-        draftDefinition: null,
-        publishedVersionId: VERSION_ID_NEW,
-        publishedVersion: { snapshot: VALID_DEF },
-      })
-    );
+    expect(body.data.definitionVersion).toBe(workflowDefinitionVersion(published as never));
   });
-
   it('rolls back with no If-Match: it copies a stored snapshot, not a browser copy', async () => {
     const res = await ROLLBACK(
       makeRequest('POST', `${PATH}/rollback`, { targetVersionId: VERSION_ID_V1 }),

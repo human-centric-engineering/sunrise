@@ -76,4 +76,26 @@ describe('StaleSaveNotice', () => {
     expect(await screen.findByRole('button', { name: /copy failed/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^copied$/i })).not.toBeInTheDocument();
   });
+
+  it('reports a copier that throws before it has a promise (no clipboard)', async () => {
+    const onCopyChanges = vi.fn((): Promise<void> => {
+      throw new TypeError("Cannot read properties of undefined (reading 'writeText')");
+    });
+    render(<StaleSaveNotice what="This workflow" onCopyChanges={onCopyChanges} />);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /copy my changes/i }));
+
+    expect(await screen.findByRole('button', { name: /copy failed/i })).toBeInTheDocument();
+  });
+
+  it('stops saying "Copied" once the edits change (a new copier)', async () => {
+    const first = vi.fn(async () => undefined);
+    const { rerender } = render(<StaleSaveNotice what="This workflow" onCopyChanges={first} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: /copy my changes/i }));
+    expect(await screen.findByRole('button', { name: /^copied$/i })).toBeInTheDocument();
+
+    rerender(<StaleSaveNotice what="This workflow" onCopyChanges={vi.fn(async () => undefined)} />);
+
+    expect(screen.getByRole('button', { name: /copy my changes/i })).toBeInTheDocument();
+  });
 });

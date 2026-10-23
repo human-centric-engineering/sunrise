@@ -19,7 +19,6 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { requireIfMatch } from '@/lib/api/record-version';
-import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 import { publishDraft } from '@/lib/orchestration/workflows/version-service';
 import { publishWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -59,11 +58,7 @@ export const POST = withAdminAuth<{ id: string }>(
     return successResponse({
       workflow: result.workflow,
       version: result.version,
-      definitionVersion: workflowDefinitionVersion({
-        draftDefinition: result.workflow.draftDefinition,
-        publishedVersionId: result.workflow.publishedVersionId,
-        publishedVersion: { snapshot: result.version.snapshot },
-      }),
+      definitionVersion: result.definitionVersion,
     });
   },
   {
