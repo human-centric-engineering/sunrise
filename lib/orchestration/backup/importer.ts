@@ -62,7 +62,6 @@ import {
   bundleContacts,
   escalationAddresses,
   trustedExportedAt,
-  workflowAddresses,
 } from '@/lib/orchestration/backup/export-seal';
 import {
   lockSubjects,
@@ -686,9 +685,9 @@ async function importParsed(
           );
         }
         // Every path below writes the definition.
-        keptContacts += workflowAddresses(definition).filter((a) =>
-          erased.everContacts.includes(normaliseAddress(a))
-        ).length;
+        keptContacts += definitionRecipients(
+          definition as unknown as Prisma.JsonValue
+        ).addresses.filter((a) => erased.everContacts.includes(normaliseAddress(a))).length;
         if (existing) {
           // Promote the imported snapshot to a new version on the existing workflow.
           const lastVersion = await tx.aiWorkflowVersion.findFirst({
@@ -1032,19 +1031,17 @@ function bundleRecipients(
   },
   includeShared: boolean
 ): BundleSubjects {
-  const workflows = { addresses: [] as string[], userIds: [] as string[] };
-  const contacts: string[] = [];
+  // Addresses from the same lists the seal covers (`bundleContacts`), so the
+  // two cannot drift; approver ids, which the seal does not cover, alongside.
+  const { subscriptions, escalation, workflows: addresses } = bundleContacts(data);
+  const userIds: string[] = [];
   for (const wf of data.workflows) {
     const parsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
     if (!parsed.success) continue;
-    const named = definitionRecipients(parsed.data as unknown as Prisma.JsonValue);
-    workflows.addresses.push(...named.addresses);
-    workflows.userIds.push(...named.userIds);
+    userIds.push(...definitionRecipients(parsed.data as unknown as Prisma.JsonValue).userIds);
   }
-  // The same lists the seal covers (`bundleContacts`), so the two cannot drift.
-  const { subscriptions, escalation } = bundleContacts(data);
-  contacts.push(...subscriptions, ...(includeShared ? escalation : []));
-  return { workflows, contacts };
+  const contacts = [...subscriptions, ...(includeShared ? escalation : [])];
+  return { workflows: { addresses: [...addresses], userIds }, contacts };
 }
 
 /** The escalation config without erased addresses — the same object when none were. */

@@ -23,12 +23,16 @@ export interface StaleSaveNoticeProps {
   what: string;
   /** Called instead of reloading the page, for a list that can reload its own data. */
   onReload?: () => void;
-  /** Copies the unsaved edits somewhere they survive a reload, for a page that can. */
-  onCopyChanges?: () => void;
+  /**
+   * Copies the unsaved edits somewhere they survive a reload, for a page that
+   * can. Its promise says whether the copy landed: the button says so too,
+   * since an admin who trusts a failed copy and reloads loses the edits.
+   */
+  onCopyChanges?: () => Promise<void>;
 }
 
 export function StaleSaveNotice({ what, onReload, onCopyChanges }: StaleSaveNoticeProps) {
-  const [copied, setCopied] = useState(false);
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   return (
     <div
       role="alert"
@@ -57,12 +61,18 @@ export function StaleSaveNotice({ what, onReload, onCopyChanges }: StaleSaveNoti
           variant="outline"
           size="sm"
           onClick={() => {
-            onCopyChanges();
-            setCopied(true);
+            onCopyChanges().then(
+              () => setCopy('copied'),
+              () => setCopy('failed')
+            );
           }}
         >
           <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          {copied ? 'Copied' : 'Copy my changes'}
+          {copy === 'copied'
+            ? 'Copied'
+            : copy === 'failed'
+              ? 'Copy failed: try again'
+              : 'Copy my changes'}
         </Button>
       )}
       <Button

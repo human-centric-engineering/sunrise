@@ -41,7 +41,7 @@ export interface BuilderToolbarProps {
   onNameChange: (name: string) => void;
   mode: 'create' | 'edit';
   /** Called when the Copy JSON button is clicked. */
-  onCopyJson: () => void;
+  onCopyJson: () => unknown;
   /** Called when the Validate button is clicked. */
   onValidate: () => void;
   /** Called when the Save button is clicked. */

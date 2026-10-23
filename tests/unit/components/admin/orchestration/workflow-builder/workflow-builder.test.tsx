@@ -2143,6 +2143,31 @@ describe('WorkflowBuilder', () => {
       );
     });
 
+    it('keeps the version it holds when a rollback reloads a definition it cannot show', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
+        return Promise.resolve({
+          ...makeWorkflow({ id: 'wf-stale', draftDefinition: { steps: 'unreadable' } as never }),
+          definitionVersion: '"v-after-rollback"',
+        });
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        ...makeWorkflow(),
+        definitionVersion: '"v-saved"',
+      });
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(screen.getByTestId('mock-history-revert'));
+      await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledOnce());
+
+      // The canvas still holds the old copy, so the save carries the old
+      // version and is refused, rather than writing that copy over the rollback.
+      expect(ifMatch(vi.mocked(apiClient.patch).mock.calls[0]?.[1])).toBe('"v-loaded"');
+    });
+
     it('adopts the version a successful discard reloads with', async () => {
       const user = userEvent.setup();
       vi.stubGlobal(

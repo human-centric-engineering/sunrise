@@ -92,6 +92,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { semanticValidateWorkflow } from '@/lib/orchestration/workflows/semantic-validator';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 
 import {
@@ -323,20 +324,17 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     expect(res.status).toBe(401);
   });
 
-  it('falls back to current as baseline when the post-saveDraft re-read returns null', async () => {
-    // Sequence of prisma.aiWorkflow.findUnique calls inside PATCH + saveDraft:
-    //   Call 1 (route line 56):           load `current`            → returns workflow
-    //   Call 2 (saveDraft → loadWorkflow): internal existence check → returns workflow
-    //   Call 3 (route line 92):            post-draft re-read       → returns null (concurrent delete / transient miss)
-    // The `?? current` fallback must prevent a crash and the audit must still fire
-    // against the ORIGINAL `current` workflow, not against null.
+  it('updates the other fields before the draft, auditing them against the workflow as loaded', async () => {
+    // A slug conflict must be answered before the draft is written (§122 t-900
+    // code review): the other way round the draft commits, the builder keeps
+    // the version it sent, and its retry is refused as stale by its own save.
     const current = makeWorkflow();
-    vi.mocked(prisma.aiWorkflow.findUnique)
-      .mockResolvedValueOnce(current as never) // call 1: route — load current
-      .mockResolvedValueOnce(current as never) // call 2: saveDraft → loadWorkflow
-      .mockResolvedValueOnce(null); // call 3: route — re-read baseline → null triggers ?? current
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(current as never);
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
       makeWorkflow({ name: 'Renamed' }) as never
+    );
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(
+      makeWorkflow({ name: 'Renamed', draftDefinition: ALT_DEF }) as never
     );
 
     const res = await WORKFLOW_PATCH(
@@ -351,18 +349,36 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(logAdminAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'workflow.update' })
+    expect(vi.mocked(prisma.aiWorkflow.update).mock.invocationCallOrder[0]).toBeLessThan(
+      txMocks.workflowUpdate.mock.invocationCallOrder[0]
     );
-    // Load-bearing assertion: computeChanges must be called with the ORIGINAL
-    // `current` workflow as its first arg — proves `?? current` substituted for
-    // the null re-read. Without this, the test passes even when `?? current` is
-    // removed (the computeChanges mock accepts null without throwing).
     expect(computeChanges).toHaveBeenCalledWith(
       expect.objectContaining({ id: current.id, name: current.name }),
       expect.any(Object),
       { ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'] }
     );
+  });
+
+  it('writes no draft when the other fields hit a slug conflict', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    vi.mocked(prisma.aiWorkflow.update).mockRejectedValue(
+      uniqueViolationError({ index: 'ai_workflow_slug_key', modelName: 'AiWorkflow' })
+    );
+
+    const res = await WORKFLOW_PATCH(
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          draftDefinition: ALT_DEF,
+          slug: 'taken',
+        }),
+        makeWorkflow()
+      ),
+      makeParams()
+    );
+
+    expect(res.status).toBe(409);
+    expect(txMocks.workflowUpdate).not.toHaveBeenCalled();
+    vi.mocked(prisma.aiWorkflow.update).mockReset();
   });
 
   it('writes maxCostPerExecutionUsd to the DB update when supplied', async () => {
@@ -1029,12 +1045,17 @@ describe('a builder write carries the definition version it loaded (§122 t-900)
     expect(res.status).toBe(200);
   });
 
-  it('returns the version a save leaves, for the next save', async () => {
-    const after = {
-      ...makeWorkflow({ draftDefinition: VALID_DEF }),
-      publishedVersion: makeVersion(),
-    };
-    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(after as never);
+  it('returns the version its own save left, not one read after it commits', async () => {
+    // Under the lock, after the write: the draft as this save wrote it.
+    const written = { ...makeWorkflow({ draftDefinition: VALID_DEF }), publishedVersion: null };
+    txMocks.workflowFindUniqueOrThrow
+      .mockResolvedValueOnce(STORED) // the version check
+      .mockResolvedValueOnce(written); // the version the write left
+    // Read after the commit: another admin's draft has already landed.
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue({
+      ...makeWorkflow({ draftDefinition: ALT_DEF }),
+      publishedVersion: null,
+    } as never);
 
     const res = await WORKFLOW_PATCH(
       loadedFrom(makeRequest('PATCH', PATH, { draftDefinition: VALID_DEF }), STORED),
@@ -1042,13 +1063,7 @@ describe('a builder write carries the definition version it loaded (§122 t-900)
     );
 
     const body = (await res.json()) as { data: { definitionVersion: string } };
-    expect(body.data.definitionVersion).toBe(
-      workflowDefinitionVersion({
-        draftDefinition: VALID_DEF,
-        publishedVersionId: VERSION_ID_V1,
-        publishedVersion: { snapshot: VALID_DEF },
-      })
-    );
+    expect(body.data.definitionVersion).toBe(workflowDefinitionVersion(written as never));
   });
 
   it('returns from a publish the version a fresh read would give', async () => {

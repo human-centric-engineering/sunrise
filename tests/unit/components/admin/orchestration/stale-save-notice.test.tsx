@@ -52,7 +52,7 @@ describe('StaleSaveNotice', () => {
   });
 
   it('offers to copy the edits first, says a reload discards them, and copies without reloading (t-900)', async () => {
-    const onCopyChanges = vi.fn();
+    const onCopyChanges = vi.fn(async () => undefined);
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload });
     render(<StaleSaveNotice what="This workflow" onCopyChanges={onCopyChanges} />);
@@ -62,6 +62,18 @@ describe('StaleSaveNotice', () => {
 
     expect(onCopyChanges).toHaveBeenCalledOnce();
     expect(reload).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^copied$/i })).toBeInTheDocument();
+  });
+
+  it('says so when the copy did not land, rather than "Copied"', async () => {
+    const onCopyChanges = vi.fn(async () => {
+      throw new Error('clipboard denied');
+    });
+    render(<StaleSaveNotice what="This workflow" onCopyChanges={onCopyChanges} />);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /copy my changes/i }));
+
+    expect(await screen.findByRole('button', { name: /copy failed/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^copied$/i })).not.toBeInTheDocument();
   });
 });

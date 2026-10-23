@@ -28,12 +28,21 @@ import { requireIfMatch } from '@/lib/api/record-version';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import {
   assertUnchangedSince,
+  lockedVersion,
   workflowDefinitionVersion,
 } from '@/lib/orchestration/config-versions';
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
 import { updateWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
+
+/** The workflow with its published version, as the responses return it. */
+function readWithVersion(id: string) {
+  return prisma.aiWorkflow.findUniqueOrThrow({
+    where: { id },
+    include: { publishedVersion: true },
+  });
+}
 
 /**
  * A workflow with the version of what the builder edits: a field, not the
@@ -97,34 +106,6 @@ export const PATCH = withAdminAuth<{ id: string }>(
       }
     }
 
-    // Definition edits go to `draftDefinition` only — published versions are
-    // promoted via POST /publish. The `saveDraft` service emits its own audit
-    // entry; the `workflow.update` audit below covers other field changes.
-    let baseline = current;
-    if (body.draftDefinition !== undefined) {
-      if (body.draftDefinition === null) {
-        await prisma.$transaction(async (tx) => {
-          await assertUnchangedSince(tx, { kind: 'workflow-definition', id }, loadedAt);
-          await tx.aiWorkflow.update({
-            where: { id },
-            data: { draftDefinition: Prisma.DbNull },
-          });
-        }, WRITER_TRANSACTION_OPTIONS);
-      } else {
-        await saveDraft({
-          workflowId: id,
-          definition: body.draftDefinition,
-          loadedAt,
-          userId: session.user.id,
-          clientIp: clientIP,
-        });
-      }
-      // Re-read after the draft write so the workflow.update audit's
-      // computeChanges doesn't double-log draftDefinition (saveDraft already
-      // logged it via workflow.draft.save).
-      baseline = (await prisma.aiWorkflow.findUnique({ where: { id } })) ?? current;
-    }
-
     const data: Prisma.AiWorkflowUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.slug !== undefined) data.slug = body.slug;
@@ -136,49 +117,72 @@ export const PATCH = withAdminAuth<{ id: string }>(
       data.maxCostPerExecutionUsd = body.maxCostPerExecutionUsd;
     if (body.metadata !== undefined) data.metadata = body.metadata;
 
-    // Skip the workflow.update path entirely when only `draftDefinition` was
-    // sent — saveDraft / discardDraft has already emitted its own audit, and
-    // running an empty Prisma update + a redundant `workflow.update` audit
-    // double-logs the same change.
-    if (Object.keys(data).length === 0) {
-      const workflow = await prisma.aiWorkflow.findUniqueOrThrow({
-        where: { id },
-        include: { publishedVersion: true },
-      });
-      return successResponse(withDefinitionVersion(workflow));
+    // Other fields first, so a slug conflict (409) is answered before the draft
+    // is written: the other way round, the draft would commit, the builder
+    // would keep the version it sent, and its retry would be refused as stale
+    // by its own save (§122 t-900). Skipped when only `draftDefinition` was
+    // sent — saveDraft emits its own audit, and an empty update would log a
+    // redundant `workflow.update`.
+    let updated: Awaited<ReturnType<typeof readWithVersion>> | null = null;
+    if (Object.keys(data).length > 0) {
+      try {
+        updated = await prisma.aiWorkflow.update({
+          where: { id },
+          data,
+          include: { publishedVersion: true },
+        });
+        log.info('Workflow updated', {
+          workflowId: id,
+          adminId: session.user.id,
+          fieldsChanged: Object.keys(data),
+        });
+        logAdminAction({
+          userId: session.user.id,
+          action: 'workflow.update',
+          entityType: 'workflow',
+          entityId: id,
+          entityName: updated.name,
+          changes: computeChanges(current, updated, {
+            ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'],
+          }),
+          clientIp: clientIP,
+        });
+      } catch (err) {
+        if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
+          throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
+        }
+        throw err;
+      }
     }
 
-    try {
-      const workflow = await prisma.aiWorkflow.update({
-        where: { id },
-        data,
-        include: { publishedVersion: true },
-      });
-      log.info('Workflow updated', {
+    // Definition edits go to `draftDefinition` only — published versions are
+    // promoted via POST /publish. The version returned is the one the write
+    // left, read in its own transaction: one read after it commits could
+    // already carry another admin's save or an erasure the builder's canvas
+    // has not seen, and its next save would then pass the check.
+    let definitionVersion: string | null = null;
+    if (body.draftDefinition === null) {
+      definitionVersion = await prisma.$transaction(async (tx) => {
+        const record = { kind: 'workflow-definition' as const, id };
+        await assertUnchangedSince(tx, record, loadedAt);
+        await tx.aiWorkflow.update({ where: { id }, data: { draftDefinition: Prisma.DbNull } });
+        return lockedVersion(tx, record);
+      }, WRITER_TRANSACTION_OPTIONS);
+    } else if (body.draftDefinition !== undefined) {
+      const saved = await saveDraft({
         workflowId: id,
-        adminId: session.user.id,
-        fieldsChanged: Object.keys(data),
-      });
-
-      logAdminAction({
+        definition: body.draftDefinition,
+        loadedAt,
         userId: session.user.id,
-        action: 'workflow.update',
-        entityType: 'workflow',
-        entityId: id,
-        entityName: workflow.name,
-        changes: computeChanges(baseline, workflow, {
-          ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'],
-        }),
         clientIp: clientIP,
       });
-
-      return successResponse(withDefinitionVersion(workflow));
-    } catch (err) {
-      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
-        throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
-      }
-      throw err;
+      definitionVersion = saved.definitionVersion;
     }
+
+    if (definitionVersion !== null) {
+      return successResponse({ ...(await readWithVersion(id)), definitionVersion });
+    }
+    return successResponse(withDefinitionVersion(updated ?? (await readWithVersion(id))));
   },
   {
     tier: 'org',

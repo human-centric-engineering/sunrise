@@ -89,7 +89,7 @@ export function bundleContacts(data: ContactSource): BundleContacts {
 }
 
 /** A workflow definition's addresses, or none when it does not parse. */
-export function workflowAddresses(definition: unknown): string[] {
+function workflowAddresses(definition: unknown): string[] {
   const parsed = workflowDefinitionSchema.safeParse(definition);
   if (!parsed.success) return [];
   return definitionRecipients(parsed.data as unknown as Prisma.JsonValue).addresses;

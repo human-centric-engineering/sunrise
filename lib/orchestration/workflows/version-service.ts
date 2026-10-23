@@ -25,6 +25,7 @@ import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/erro
 import { assertCurrentVersion, recordVersion } from '@/lib/api/record-version';
 import {
   assertUnchangedSince,
+  lockedVersion,
   lockWorkflowRow,
   WORKFLOW_DEFINITION_VERSION_SELECT,
   workflowDefinitionVersion,
@@ -242,7 +243,9 @@ export interface SaveDraftArgs {
  * builder loaded it (`loadedAt`): another admin saved, published or rolled
  * back, or an erasure scrubbed a person out of it.
  */
-export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
+export async function saveDraft(
+  args: SaveDraftArgs
+): Promise<AiWorkflow & { definitionVersion: string }> {
   const { workflowId, definition, loadedAt, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
@@ -251,11 +254,15 @@ export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
   // erasure takes on the row (§122 t-900).
   const updated = await prisma.$transaction(async (tx) => {
     const toWrite = await lockedWithoutErasedApprovers(tx, definition);
-    await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, loadedAt);
-    return tx.aiWorkflow.update({
+    const record = { kind: 'workflow-definition' as const, id: workflowId };
+    await assertUnchangedSince(tx, record, loadedAt);
+    const written = await tx.aiWorkflow.update({
       where: { id: workflowId },
       data: { draftDefinition: toWrite as unknown as Prisma.InputJsonValue },
     });
+    // The version this write left, under the same lock: the builder's next
+    // save is checked against it.
+    return { ...written, definitionVersion: await lockedVersion(tx, record) };
   }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({

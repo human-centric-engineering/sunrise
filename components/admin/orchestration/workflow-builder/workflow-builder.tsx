@@ -507,7 +507,8 @@ function WorkflowBuilderInner({
       steps: def.steps.map((s) => ({ ...s, config: stripLayout(s.config) })),
     };
     const json = JSON.stringify(cleaned, null, 2);
-    void navigator.clipboard.writeText(json);
+    // Returned, so the reload prompt can say whether the copy really landed.
+    return navigator.clipboard.writeText(json);
   }, [nodes, edges, details?.errorStrategy]);
 
   const handleValidate = useCallback(() => {
@@ -697,12 +698,14 @@ function WorkflowBuilderInner({
         );
         setNodes(revertedNodes);
         setEdges(revertedEdges);
+        // Only with the canvas it describes: a version for content the canvas
+        // does not hold would let the next save write that over it.
+        setDefinitionVersion(fresh.definitionVersion);
       }
       // A rollback creates a new published version and clears the draft —
       // sync the toolbar pill to match.
       setPublishedVersion(fresh.publishedVersion?.version ?? null);
       setHasDraft(fresh.draftDefinition !== null && fresh.draftDefinition !== undefined);
-      setDefinitionVersion(fresh.definitionVersion);
     } catch (err) {
       logger.error('Failed to refresh canvas after revert', { err });
     }
@@ -773,9 +776,10 @@ function WorkflowBuilderInner({
         );
         setNodes(revertedNodes);
         setEdges(revertedEdges);
+        // As after a rollback: the version only with the canvas it describes.
+        setDefinitionVersion(fresh.definitionVersion);
       }
       setHasDraft(false);
-      setDefinitionVersion(fresh.definitionVersion);
       router.refresh();
     } catch (err) {
       if (isStale(err)) {
