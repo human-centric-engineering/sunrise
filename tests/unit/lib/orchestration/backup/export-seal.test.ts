@@ -25,7 +25,9 @@ import {
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 
 const AT = '2026-06-01T09:30:00.000Z';
-const FACTS = { exportedAt: AT, orgId: 'install', contacts: ['ops@example.com'] };
+const subs = (...subscriptions: string[]) => ({ subscriptions, escalation: [] as string[] });
+const FACTS = { exportedAt: AT, orgId: 'install', contacts: subs('ops@example.com') };
+const MESSAGE = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com'], []])}`;
 
 function macOf(secret: string, message: string): string {
   return createHmac('sha256', secret).update(message, 'utf8').digest('base64url');
@@ -37,26 +39,37 @@ describe('sealExport / isSealedByThisInstall', () => {
   });
 
   it('is an HMAC-SHA256 over the tag and the facts as one JSON array, keyed by the install secret', () => {
-    const message = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com']])}`;
-    expect(sealExport(FACTS)).toBe(macOf(SECRET, message));
+    expect(sealExport(FACTS)).toBe(macOf(SECRET, MESSAGE));
   });
 
-  it('seals the contacts as a set: case, spaces, order and repeats do not matter', () => {
+  it('reads case, spaces and order as the same list', () => {
     const seal = sealExport(FACTS);
+    expect(isSealedByThisInstall({ ...FACTS, contacts: subs(' OPS@example.com ') }, seal)).toBe(
+      true
+    );
+    const two = sealExport({ ...FACTS, contacts: subs('b@example.com', 'a@example.com') });
     expect(
-      isSealedByThisInstall({ ...FACTS, contacts: [' OPS@example.com ', 'ops@example.com'] }, seal)
-    ).toBe(true);
-    const two = sealExport({ ...FACTS, contacts: ['b@example.com', 'a@example.com'] });
-    expect(
-      isSealedByThisInstall({ ...FACTS, contacts: ['a@example.com', 'b@example.com'] }, two)
+      isSealedByThisInstall({ ...FACTS, contacts: subs('a@example.com', 'b@example.com') }, two)
     ).toBe(true);
   });
 
   it.each([
     ['another date', { ...FACTS, exportedAt: '2026-06-01T09:30:00.001Z' }],
     ['another org', { ...FACTS, orgId: 'org_customer' }],
-    ['an added contact', { ...FACTS, contacts: ['ops@example.com', 'gone@example.com'] }],
-    ['a removed contact', { ...FACTS, contacts: [] }],
+    ['an added contact', { ...FACTS, contacts: subs('ops@example.com', 'gone@example.com') }],
+    ['a removed contact', { ...FACTS, contacts: subs() }],
+    ['a repeat of a contact', { ...FACTS, contacts: subs('ops@example.com', 'ops@example.com') }],
+    [
+      'the contact moved to the escalation list',
+      { ...FACTS, contacts: { subscriptions: [], escalation: ['ops@example.com'] } },
+    ],
+    [
+      'the contact copied to the escalation list',
+      {
+        ...FACTS,
+        contacts: { subscriptions: ['ops@example.com'], escalation: ['ops@example.com'] },
+      },
+    ],
   ])('refuses a seal checked against %s', (_label, facts) => {
     expect(isSealedByThisInstall(facts, sealExport(FACTS))).toBe(false);
   });
@@ -74,7 +87,7 @@ describe('sealExport / isSealedByThisInstall', () => {
   });
 
   it('refuses a MAC over the facts without the scheme tag', () => {
-    const untagged = macOf(SECRET, JSON.stringify([AT, 'install', ['ops@example.com']]));
+    const untagged = macOf(SECRET, JSON.stringify([AT, 'install', ['ops@example.com'], []]));
     expect(isSealedByThisInstall(FACTS, untagged)).toBe(false);
   });
 
@@ -103,12 +116,13 @@ describe('bundleContacts', () => {
         ],
         settings: { escalationConfig: { emailAddresses: ['oncall@example.com', 7] } },
       })
-    ).toEqual(['ops@example.com', 'oncall@example.com']);
+    ).toEqual({ subscriptions: ['ops@example.com'], escalation: ['oncall@example.com'] });
   });
 
   it('reads no escalation list from a bundle without settings, or with a malformed one', () => {
-    expect(bundleContacts({ webhooks: [], settings: null })).toEqual([]);
-    expect(bundleContacts({ webhooks: [], settings: { escalationConfig: 'nope' } })).toEqual([]);
+    const none = { subscriptions: [], escalation: [] };
+    expect(bundleContacts({ webhooks: [], settings: null })).toEqual(none);
+    expect(bundleContacts({ webhooks: [], settings: { escalationConfig: 'nope' } })).toEqual(none);
   });
 });
 

@@ -214,7 +214,11 @@ describe('exportOrchestrationConfig', () => {
       expect(payload.exportedAt).toBe(START.toISOString());
       expect(
         isSealedByThisInstall(
-          { exportedAt: START.toISOString(), orgId: 'install', contacts: [] },
+          {
+            exportedAt: START.toISOString(),
+            orgId: 'install',
+            contacts: { subscriptions: [], escalation: [] },
+          },
           payload.exportSeal
         )
       ).toBe(true);
@@ -373,14 +377,17 @@ describe('exportOrchestrationConfig', () => {
     const facts = {
       exportedAt: payload.exportedAt,
       orgId: 'install',
-      contacts: ['oncall@example.com', 'ops@example.com'],
+      contacts: { subscriptions: ['ops@example.com'], escalation: ['oncall@example.com'] },
     };
     expect(isSealedByThisInstall(facts, payload.exportSeal)).toBe(true);
     expect(isSealedByThisInstall({ ...facts, orgId: 'org_customer' }, payload.exportSeal)).toBe(
       false
     );
     expect(
-      isSealedByThisInstall({ ...facts, contacts: ['ops@example.com'] }, payload.exportSeal)
+      isSealedByThisInstall(
+        { ...facts, contacts: { subscriptions: ['ops@example.com'], escalation: [] } },
+        payload.exportSeal
+      )
     ).toBe(false);
   });
 

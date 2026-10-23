@@ -14,9 +14,10 @@
  *
  *   • `exportedAt`;
  *   • the org it exported, which the import must target;
- *   • every contact address the bundle carries ({@link bundleContacts}):
- *     the email subscriptions' and the escalation list's, normalised and
- *     sorted. An address added to the bundle afterwards breaks the seal.
+ *   • every contact address the bundle carries ({@link bundleContacts}),
+ *     the email subscriptions' and the escalation list's as two lists,
+ *     normalised and sorted, repeats kept. An address added afterwards, or
+ *     moved or copied from one to the other, breaks the seal.
  *
  * The importer trusts the date only when the seal verifies against all three
  * ({@link trustedExportedAt}). Anything else counts every erasure, as imports
@@ -48,7 +49,13 @@ export interface SealedFacts {
   exportedAt: string;
   orgId: string;
   /** The bundle's contact addresses, as {@link bundleContacts} reads them. */
-  contacts: readonly string[];
+  contacts: BundleContacts;
+}
+
+/** A bundle's contact addresses, by the writer that imports them. */
+export interface BundleContacts {
+  subscriptions: readonly string[];
+  escalation: readonly string[];
 }
 
 /** The parts of a bundle {@link bundleContacts} reads. */
@@ -60,15 +67,15 @@ interface ContactSource {
 /**
  * Every contact address a bundle carries: its email subscriptions', and its
  * escalation list's when it has settings. Read from the bundle as it stands,
- * whatever part an import writes, so exporter and importer seal the same list.
+ * whatever part an import writes, so exporter and importer seal the same lists;
+ * the importer checks the same lists for erased people.
  */
-export function bundleContacts(data: ContactSource): string[] {
-  const contacts: string[] = [];
+export function bundleContacts(data: ContactSource): BundleContacts {
+  const subscriptions: string[] = [];
   for (const wh of data.webhooks) {
-    if (wh.channel === 'email' && wh.emailAddress) contacts.push(wh.emailAddress);
+    if (wh.channel === 'email' && wh.emailAddress) subscriptions.push(wh.emailAddress);
   }
-  contacts.push(...escalationAddresses(data.settings?.escalationConfig));
-  return contacts;
+  return { subscriptions, escalation: escalationAddresses(data.settings?.escalationConfig) };
 }
 
 /** The escalation list's addresses; non-strings are skipped, as the importer skips them. */
@@ -78,9 +85,10 @@ export function escalationAddresses(config: unknown): string[] {
 }
 
 function mac({ exportedAt, orgId, contacts }: SealedFacts): Buffer {
-  const addresses = [...new Set(contacts.map(normaliseAddress))].sort();
+  const sorted = (list: readonly string[]) => list.map(normaliseAddress).sort();
+  const fields = [exportedAt, orgId, sorted(contacts.subscriptions), sorted(contacts.escalation)];
   return createHmac('sha256', env.BETTER_AUTH_SECRET)
-    .update(`${SEAL_TYPE}\n${JSON.stringify([exportedAt, orgId, addresses])}`, 'utf8')
+    .update(`${SEAL_TYPE}\n${JSON.stringify(fields)}`, 'utf8')
     .digest();
 }
 

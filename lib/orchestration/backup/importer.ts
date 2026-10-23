@@ -58,7 +58,11 @@ import type { WorkflowDefinition } from '@/types/orchestration';
 import { isRecord } from '@/lib/utils';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
-import { escalationAddresses, trustedExportedAt } from '@/lib/orchestration/backup/export-seal';
+import {
+  bundleContacts,
+  escalationAddresses,
+  trustedExportedAt,
+} from '@/lib/orchestration/backup/export-seal';
 import {
   lockSubjects,
   matchErasedSubjects,
@@ -270,10 +274,14 @@ async function importParsed(
       // write below with a warning — an import is not refused for it. For the
       // subscriptions and escalation list, only erasures since a date this
       // install sealed count (§122 t-902); see erasedSinceBundle.
+      const since = trustedExportedAt(parsed, orgId, new Date());
+      if (parsed.exportSeal !== undefined && !since) result.warnings.push(SEAL_REJECTED_WARNING);
       const erased = await erasedSinceBundle(tx, bundleRecipients(parsed.data, includeShared), {
-        since: trustedExportedAt(parsed, orgId, new Date()),
+        since,
       });
-      if (erased.keptContacts > 0) result.warnings.push(keptContactsWarning(erased.keptContacts));
+      // Addresses erased before a sealed export that this import writes back,
+      // counted where each is written, so a skipped row is not counted.
+      let keptContacts = 0;
 
       // Knowledge tags first — agents reference them by slug, so create/refresh
       // them before the agent import so grant resolution succeeds.
@@ -797,6 +805,9 @@ async function importParsed(
           result.webhooks.skipped++;
           continue;
         }
+        if (channel === 'email' && erased.everContacts.includes(normaliseAddress(destination))) {
+          keptContacts++;
+        }
 
         if (channel === 'webhook') {
           result.warnings.push(
@@ -847,6 +858,9 @@ async function importParsed(
             'Escalation list: addresses belonging to people whose data was erased were removed'
           );
         }
+        keptContacts += escalationAddresses(escalationConfig).filter((a) =>
+          erased.everContacts.includes(normaliseAddress(a))
+        ).length;
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },
           create: {
@@ -891,6 +905,7 @@ async function importParsed(
         });
         result.settingsUpdated = true;
       }
+      if (keptContacts > 0) result.warnings.push(keptContactsWarning(keptContacts));
     },
     { timeout: IMPORT_TRANSACTION_TIMEOUT_MS }
   );
@@ -957,8 +972,8 @@ async function importedWorkflowProviderWarnings(
  *   erased since `since` (§122 t-902): the date this install sealed, over the
  *   bundle's contacts and this org (`export-seal.ts`). One erased earlier that
  *   such a copy still names was re-added on purpose. With no `since`, every
- *   erasure. **`keptContacts`** counts those re-added addresses, so the import
- *   says it kept them.
+ *   erasure. **`everContacts`** is every erased one, so the import can count
+ *   the re-added addresses it writes back.
  * - **`inWorkflows`**: the definitions' addresses and approver ids erased at
  *   any time. `createInitialVersion` refuses an ever-erased address until
  *   t-900 moves the workflow writers onto an anchor, so keeping one here would
@@ -969,7 +984,7 @@ async function erasedSinceBundle(
   tx: Prisma.TransactionClient,
   subjects: BundleSubjects,
   { since }: { since: Date | undefined }
-): Promise<{ inWorkflows: ErasedSubjects; contacts: string[]; keptContacts: number }> {
+): Promise<{ inWorkflows: ErasedSubjects; contacts: string[]; everContacts: string[] }> {
   await lockSubjects(tx, {
     addresses: [...subjects.workflows.addresses, ...subjects.contacts],
     userIds: subjects.workflows.userIds,
@@ -977,10 +992,16 @@ async function erasedSinceBundle(
   const inWorkflows = await matchErasedSubjects(tx, subjects.workflows);
   const contacts = { addresses: subjects.contacts, userIds: [] };
   const ever = (await matchErasedSubjects(tx, contacts)).addresses;
-  if (!since) return { inWorkflows, contacts: ever, keptContacts: 0 };
+  if (!since) return { inWorkflows, contacts: ever, everContacts: ever };
   const recent = (await matchErasedSubjects(tx, contacts, { since })).addresses;
-  return { inWorkflows, contacts: recent, keptContacts: ever.length - recent.length };
+  return { inWorkflows, contacts: recent, everContacts: ever };
 }
+
+/** The import's word when a bundle carries a seal this install does not accept. */
+const SEAL_REJECTED_WARNING =
+  "This backup's seal did not verify — it was edited, exported from another organisation or " +
+  'install, or the install secret has changed since — so everyone ever erased was removed ' +
+  'from its email subscriptions and escalation list';
 
 /** Says how many re-added addresses a sealed import kept, never which. */
 function keptContactsWarning(count: number): string {
@@ -1020,12 +1041,9 @@ function bundleRecipients(
     workflows.addresses.push(...named.addresses);
     workflows.userIds.push(...named.userIds);
   }
-  for (const wh of data.webhooks) {
-    if (wh.channel === 'email' && wh.emailAddress) contacts.push(wh.emailAddress);
-  }
-  if (includeShared && data.settings) {
-    contacts.push(...escalationAddresses(data.settings.escalationConfig));
-  }
+  // The same lists the seal covers (`bundleContacts`), so the two cannot drift.
+  const { subscriptions, escalation } = bundleContacts(data);
+  contacts.push(...subscriptions, ...(includeShared ? escalation : []));
   return { workflows, contacts };
 }
 

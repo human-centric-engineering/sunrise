@@ -2843,6 +2843,51 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     expect(result.warnings.some(keptWarning)).toBe(false);
   });
 
+  it('does not count a re-added address as kept when its subscription already exists', async () => {
+    erasedAt(new Date('2026-01-01T00:00:00Z'));
+    mockTx.aiWebhookSubscription.findFirst.mockResolvedValue({ id: 'already-here' });
+
+    const result = await importOrchestrationConfig(sealed(), 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    expect(result.webhooks.skipped).toBe(1);
+    expect(result.warnings.some(keptWarning)).toBe(false);
+  });
+
+  it('says when a seal is present but does not verify, and not for a bundle with none', async () => {
+    erasedAt(new Date('2026-01-01T00:00:00Z'));
+    const rejected = (w: string) => /seal did not verify/.test(w);
+
+    const edited = await importOrchestrationConfig(
+      bundle(DATA, sealFor(DATA, { orgId: 'org_customer' })),
+      'user-1',
+      SHARED_SCOPE
+    );
+    const unsealed = await importOrchestrationConfig(bundle(DATA, null), 'user-1', SHARED_SCOPE);
+
+    expect(edited.warnings.filter(rejected)).toHaveLength(1);
+    expect(unsealed.warnings.some(rejected)).toBe(false);
+  });
+
+  it('strips an address copied from a subscription into the escalation list after sealing', async () => {
+    erasedAt(new Date('2026-01-01T00:00:00Z'));
+    const copied: Data = {
+      ...DATA,
+      settings: {
+        ...makeSettings(),
+        escalationConfig: { emailAddresses: [ADDRESS], notifyOnPriority: 'high' },
+      },
+    };
+
+    await importOrchestrationConfig(bundle(copied, sealFor(DATA)), 'user-1', SHARED_SCOPE);
+
+    const upsert = mockTx.aiOrchestrationSettings.upsert.mock.calls[0]?.[0] as {
+      update: { escalationConfig: { emailAddresses: string[] } };
+    };
+    expect(upsert.update.escalationConfig.emailAddresses).toEqual([]);
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+  });
+
   describe('the escalation list', () => {
     const WITH_LIST: Data = {
       ...minPayload.data,
