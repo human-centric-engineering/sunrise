@@ -23,7 +23,7 @@ import {
   type AdminTier,
   type AdminViewerTier,
 } from '@/lib/auth/admin-tier';
-import { orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
+import { orgScopedAdminPages, orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
 import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -97,12 +97,13 @@ export default async function AdminLayout({
   //
   // Asked once for the platform tier and, for whoever that refuses, once for
   // the org tier (§111 t-810): an org OWNER/ADMIN may open a page listed in
-  // `ORG_TIER_ADMIN_PAGES` or by the fork (t-817), and no other. The page comes from the proxy's
+  // `ORG_TIER_ADMIN_PAGES` or by the fork (t-817), and no other, less any core
+  // section the fork closed (t-929). The page comes from the proxy's
   // header, because a layout is not handed a pathname; no header is no page,
   // and no page is the platform's. This runs on a full load only — Next.js
   // does not re-render a layout on in-app navigation — so `AdminTierGate`
   // below re-checks each navigation for the reader, and every API route the
-  // page calls checks for itself. The gate and the header judge by the list
+  // page calls checks for itself. The gate and the sidebar judge by the list
   // this read built, handed down, so the browser never builds its own.
   const requestHeaders = await headers();
   const orgTierPages = orgTierAdminPages();
@@ -143,10 +144,12 @@ export default async function AdminLayout({
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">
-      <AdminSidebar viewerTier={viewerTier} multiTenant={multiTenant} />
+      <AdminSidebar viewerTier={viewerTier} multiTenant={multiTenant} orgTierPages={orgTierPages} />
       <div className="flex flex-1 flex-col overflow-hidden">
         {supportSession && <SupportBanner view={supportSession} />}
-        <AdminHeader orgName={actingOrg?.name} orgTierPages={orgTierPages} />
+        {/* Every page of one org's rows, closed sections included: a platform
+            admin there is still looking at the entered org's. */}
+        <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />
         <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain">
           <div className="p-6">

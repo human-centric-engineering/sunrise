@@ -50,7 +50,7 @@ import {
   type NavSubgroup,
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
-import { viewerReaches, type AdminViewerTier } from '@/lib/auth/admin-tier';
+import { adminPageTier, viewerReaches, type AdminViewerTier } from '@/lib/auth/admin-tier';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
@@ -437,6 +437,13 @@ interface AdminSidebarProps {
    */
   viewerTier: AdminViewerTier;
   /**
+   * Every page an org admin may open, as the layout read it (t-929). An org
+   * viewer sees an item marked `tier: 'org'` only when its page is on this
+   * list, so a core section the fork closed drops out of the nav with its
+   * pages. Unread for a platform viewer.
+   */
+  orgTierPages: readonly string[];
+  /**
    * The install runs `TENANCY_MODE=multi`. Items that only mean something
    * with more than one org (`MULTI_TENANT_ONLY`) are hidden otherwise, so the
    * console at `single` is what it was before them.
@@ -564,17 +571,22 @@ function injectBadges(
 }
 
 /**
- * The sections an org viewer may see: the items marked `tier: 'org'`, and the
- * subgroups and sections that still hold one. A platform viewer gets the same
- * array back, untouched.
+ * The sections an org viewer may see: the items marked `tier: 'org'` whose
+ * page is on the org-tier list, and the subgroups and sections that still hold
+ * one. A platform viewer gets the same array back, untouched.
  */
 export function sectionsForViewer(
   sections: NavSection[],
-  viewerTier: AdminViewerTier
+  viewerTier: AdminViewerTier,
+  orgTierPages: readonly string[]
 ): NavSection[] {
   if (viewerTier === 'platform') return sections;
   const reachable = (items: NavItem[]) =>
-    items.filter((item) => viewerReaches(viewerTier, item.tier));
+    items.filter(
+      (item) =>
+        viewerReaches(viewerTier, item.tier) &&
+        adminPageTier(item.href.split(/[?#]/)[0], orgTierPages) === 'org'
+    );
   return sections.flatMap((section) => {
     const items = section.items ? reachable(section.items) : undefined;
     const subgroups = section.subgroups
@@ -591,7 +603,12 @@ export function sectionsForViewer(
   });
 }
 
-export function AdminSidebar({ className, viewerTier, multiTenant = false }: AdminSidebarProps) {
+export function AdminSidebar({
+  className,
+  viewerTier,
+  orgTierPages,
+  multiTenant = false,
+}: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const counts = useExecutionCounts(BADGE_STATUSES, viewerTier === 'platform');
@@ -605,14 +622,15 @@ export function AdminSidebar({ className, viewerTier, multiTenant = false }: Adm
       injectBadges(
         sectionsForViewer(
           sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
-          viewerTier
+          viewerTier,
+          orgTierPages
         ),
         {
           '/admin/orchestration/approvals': approvalCount,
           '/admin/orchestration/executions': inProgressCount,
         }
       ),
-    [approvalCount, inProgressCount, viewerTier, multiTenant]
+    [approvalCount, inProgressCount, viewerTier, orgTierPages, multiTenant]
   );
 
   return (

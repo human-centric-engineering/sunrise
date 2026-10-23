@@ -785,6 +785,28 @@ function threw. It runs on the server only — the admin layout runs it and
 hands the list to the browser-side tier gate — and if it throws, none of its
 pages open.
 
+**Keeping core's orchestration platform-only.** Core opens its orchestration
+sections (agents, workflows, knowledge, conversations, the dashboard, costs and
+the rest) to an org OWNER/ADMIN at `multi`. If your customers are clients of a
+finished product and the orchestration layer is yours, not theirs, close it in
+the same init:
+
+```ts
+// lib/app/admin-tier.ts
+import { closeCoreOrgTierSection, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+
+export function initAppOrgTierAdminPages(): void {
+  registerOrgTierAdminPage('/admin/leads');
+  closeCoreOrgTierSection('orchestration');
+}
+```
+
+The section's pages, nav items and admin API routes then admit platform admins
+only, as an undeclared surface does. Members and Support access stay open to
+org admins. A platform admin's console is unchanged. With no
+`appOrgAdminLandingRoute`, `/admin` sends an org admin to Members. If the init
+throws, nothing is closed.
+
 **Org-tier admin routes — `lib/app/admin-tier-routes.ts`.** A route opens to
 an org admin at its call site, `withAdminAuth(handler, { tier: 'org',
 ownership })`, and the roster test fails until it is listed. List yours here,

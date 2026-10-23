@@ -31,10 +31,19 @@
  *   page or nav item in a section the list does not name — the list is what
  *   keeps a fork's pages out of core's.
  *
+ * With core sections closed (`closeCoreOrgTierSection()`, t-929), a fork's nav
+ * item is judged against the narrowed list: one marked `tier: 'org'` over a
+ * closed core page is a link an org admin would follow to a redirect. Core's
+ * own items in a closed section are not reported — the sidebar hides them.
+ *
  * Uses the TypeScript parser, as `shared-settings-writes.ts` beside it does.
  */
 import ts from 'typescript';
-import { adminPageTier, matchesAdminPagePattern } from '@/lib/auth/admin-tier';
+import {
+  adminPageTier,
+  matchesAdminPagePattern,
+  withoutClosedSections,
+} from '@/lib/auth/admin-tier';
 
 export interface SourceFile {
   path: string;
@@ -236,6 +245,8 @@ export interface RosterInput {
   coreSections?: readonly string[];
   /** Core's sidebar hrefs alone, for the section check. */
   coreNavHrefs?: readonly string[];
+  /** The core sections the fork closed to org admins (`closedCoreOrgTierSections()`). */
+  closedSections?: readonly string[];
 }
 
 /** The URL pattern a page file serves: `app/admin/(g)/x/[id]/page.tsx` → `/admin/x/[id]`. */
@@ -360,12 +371,20 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     }
   }
 
+  const closed = input.closedSections ?? [];
+  const openPages = [...withoutClosedSections(input.listedPages, closed), ...appPages];
+  const coreHrefs = new Set(input.coreNavHrefs ?? []);
   for (const item of input.navItems) {
+    if (item.tier !== 'org') continue;
     // The page an href opens: a query string or fragment is not part of it.
     const page = item.href.split(/[?#]/)[0];
-    if (item.tier === 'org' && adminPageTier(page, allPages) !== 'org') {
+    if (adminPageTier(page, allPages) !== 'org') {
       problems.push(
         `nav item ${item.href}: marked tier 'org' over a page neither ORG_TIER_ADMIN_PAGES nor lib/app/admin-tier.ts lists, so an org admin would follow it to a redirect.`
+      );
+    } else if (!coreHrefs.has(item.href) && adminPageTier(page, openPages) !== 'org') {
+      problems.push(
+        `nav item ${item.href}: marked tier 'org' over a page in a core section lib/app/admin-tier.ts closed to org admins, so an org admin would follow it to a redirect.`
       );
     }
   }

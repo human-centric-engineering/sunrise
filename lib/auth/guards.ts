@@ -52,7 +52,8 @@ import {
   type SubjectFilter,
 } from '@/lib/auth/authorization';
 import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
-import type { AdminTier } from '@/lib/auth/admin-tier';
+import { effectiveRouteTier, type AdminTier } from '@/lib/auth/admin-tier';
+import { closedCoreOrgTierSections } from '@/lib/auth/org-tier-admin-pages';
 import { env } from '@/lib/env';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { runAsSubject } from '@/lib/auth/subject-context';
@@ -413,12 +414,29 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * `ORG_TIER_ADMIN_ROUTES` in `lib/auth/admin-tier.ts` for core's,
    * `APP_ORG_TIER_ADMIN_ROUTES` in `lib/app/admin-tier-routes.ts` for a
    * fork's — which `tests/unit/scripts/ci/admin-tier-roster.test.ts` holds to
-   * the tree. It
+   * the tree. A fork that closed the core section the route is in
+   * (`closeCoreOrgTierSection()`, t-929) turns the declaration off for that
+   * install, with the section's pages and nav items. It
    * widens admission only: the handler still runs in the entered org, so what
    * it reads is that org's by row isolation, and `writesSharedSettings` still
    * refuses a shared-settings write from outside the install org.
    */
   tier?: AdminTier;
+}
+
+/**
+ * The `tier` a route passes the policy: what it declared, unless the fork
+ * closed the core section the route is in (t-929,
+ * `closeCoreOrgTierSection()`), when it is the platform's like any undeclared
+ * route. Read from the same registration as the pages and the nav, so the
+ * three agree. With nothing closed it is the declaration, unchanged.
+ */
+function tierScope(
+  declared: AdminTier | undefined,
+  pathname: string | undefined
+): { tier?: AdminTier } {
+  const tier = effectiveRouteTier(declared, pathname, closedCoreOrgTierSections());
+  return tier ? { tier } : {};
 }
 
 /**
@@ -1396,7 +1414,7 @@ export function withAdminAuth(
           resource === UNRESOLVED ||
           !(await canAdminister(principal, resource, {
             ...orgScope(entry),
-            ...(options?.tier ? { tier: options.tier } : {}),
+            ...tierScope(options?.tier, (request as NextRequest).nextUrl?.pathname),
           }))
         ) {
           // Same reason as the `canRead` refusal above: the guard owns the

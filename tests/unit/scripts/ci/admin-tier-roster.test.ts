@@ -40,12 +40,13 @@ import {
 } from '@/lib/auth/admin-tier';
 import {
   appOrgTierAdminPagesInitState,
+  closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
-import { DEFAULT_ORG_ADMIN_LANDING, orgAdminLandingProblem } from '@/lib/auth/admin-landing';
+import { defaultOrgAdminLanding, orgAdminLandingProblem } from '@/lib/auth/admin-landing';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
 
@@ -86,6 +87,9 @@ const TREE: RosterInput = {
   navItems: NAV_ITEMS,
   coreSections: CORE_ADMIN_SECTIONS,
   coreNavHrefs: itemsOf(coreNavSections).map((item) => item.href),
+  // The core sections the fork closed, from lib/app/admin-tier.ts: its nav
+  // items are judged against what is left open.
+  closedSections: closedCoreOrgTierSections(),
 };
 
 describe('the pins', () => {
@@ -333,7 +337,7 @@ describe('the tree', () => {
   it('lands an org admin on a page they may open (t-928)', () => {
     // A landing outside the org tier turns an org admin away the moment they
     // arrive; /admin falls back to the default at runtime, and this says so in CI.
-    const landing = appOrgAdminLandingRoute ?? DEFAULT_ORG_ADMIN_LANDING;
+    const landing = appOrgAdminLandingRoute ?? defaultOrgAdminLanding(orgTierAdminPages());
     expect(orgAdminLandingProblem(landing, orgTierAdminPages())).toBeNull();
   });
 
@@ -673,6 +677,24 @@ describe('what it catches', () => {
         })
       )
     ).toEqual([]);
+  });
+
+  it('judges a fork’s nav item against the sections left open, and not core’s own (t-929)', () => {
+    const closing = input({
+      listedPages: ['/admin/orchestration/agents'],
+      navItems: [
+        { href: '/admin/orchestration/agents', tier: 'org' },
+        { href: '/admin/orchestration/agents?from=reports', tier: 'org' },
+      ],
+      coreNavHrefs: ['/admin/orchestration/agents'],
+    });
+    // Nothing closed: both items point at an open page.
+    expect(findAdminTierRosterProblems(closing)).toEqual([]);
+    // Orchestration closed: the sidebar hides core's item, so it is not
+    // reported; the fork's link to the same page would bounce an org admin.
+    expect(findAdminTierRosterProblems({ ...closing, closedSections: ['orchestration'] })).toEqual([
+      "nav item /admin/orchestration/agents?from=reports: marked tier 'org' over a page in a core section lib/app/admin-tier.ts closed to org admins, so an org admin would follow it to a redirect.",
+    ]);
   });
 
   it('reads one declaration per exported handler, by method', () => {

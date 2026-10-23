@@ -262,8 +262,8 @@ declare it at their call site and are listed in `lib/app/admin-tier-routes.ts`
 (t-927), so opening a fork page edits no core file.
 
 - **One realm.** The init runs lazily on the server, at the admin layout's
-  first read. The layout hands the list to `<AdminTierGate>` and
-  `<AdminHeader>` as a prop, so the browser never builds a list of its own
+  first read. The layout hands the list to `<AdminTierGate>`,
+  `<AdminSidebar>` and `<AdminHeader>` as a prop, so the browser never builds a list of its own
   that could disagree with the one the layout admitted by.
 - **Its own sections only.** The registrar throws on a dynamic first segment
   and on any of `CORE_ADMIN_SECTIONS`, so the fork's list cannot reach a core
@@ -294,6 +294,36 @@ of an `[x]` page, which is one org's). Otherwise `/admin` logs why and
 uses the default, since a page they cannot open would send them straight to
 the sign-in landing, and back to `/admin` if that is where it points. The
 roster test fails on the same check.
+
+**Keeping core's orchestration platform-only** (t-929). Some forks' customers
+are clients of a finished product, and the orchestration layer is the vendor's
+machinery, not part of the customer's console. A policy override cannot close
+it: `canAdminister` sees `scope.tier` but not which surface is asking. So the
+fork calls `closeCoreOrgTierSection('orchestration')` inside
+`initAppOrgTierAdminPages()`, and one registration narrows all three surfaces:
+
+| Surface                           | Reads                          | With orchestration closed                                                                |
+| --------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Pages (layout, `<AdminTierGate>`) | `orgTierAdminPages()`          | every `/admin/orchestration…` page is off the list                                       |
+| Nav (`<AdminSidebar>`)            | the same list, from the layout | an org viewer sees an `org` item only when its page is on the list                       |
+| Routes (`withAdminAuth`)          | `closedCoreOrgTierSections()`  | a route under `/api/v1/admin/orchestration/` acts as undeclared (`effectiveRouteTier()`) |
+
+- **Orchestration only** (`CLOSABLE_CORE_ORG_TIER_SECTIONS`). Members and
+  Support access stay open: a client needs Members to invite their own people,
+  and their routes (`/api/v1/orgs/[id]/…`) are admitted by the org arm, not by a
+  declared tier, so closing the pages alone would leave the API open.
+- **Behaviour-neutral when unused.** With nothing closed, the list is core's
+  and the fork's, whole, and every route keeps the tier it declared.
+- **The same rollback.** The init gate snapshots the fork's pages and its
+  closed sections together, so an init that throws closes nothing.
+- **The landing follows.** With orchestration closed and no
+  `appOrgAdminLandingRoute`, `/admin` sends an org admin to Members.
+- **The header does not.** It names the acting org on every page of one org's
+  rows (`orgScopedAdminPages()`), closed sections included, because a platform
+  admin there is still looking at the entered org's.
+- **The roster test judges the narrowed list.** A fork nav item marked `org`
+  over a closed core page fails it; core's own items there are hidden by the
+  sidebar and not reported.
 
 `lib/auth/admin-tier.ts` imports nothing, so the scaffold can import the
 registrar from it and `proxy.ts` its header name without either pulling the

@@ -3,7 +3,8 @@
  *
  * A platform admin lands on the overview, which is install-wide and theirs
  * alone. An org OWNER/ADMIN lands on the orchestration dashboard, unless the
- * fork names another page in `lib/app/admin-landing.ts`.
+ * fork names another page in `lib/app/admin-landing.ts` — or on Members, when
+ * the fork closed orchestration to org admins (t-929) and named nowhere else.
  *
  * The fork's page is used only if an org admin may open it: a path under
  * `/admin/` with literal segments, listed word for word on the org-tier roster
@@ -28,6 +29,13 @@ export const PLATFORM_ADMIN_LANDING = '/admin/overview';
 
 /** Where an org admin lands when the fork names nowhere else. */
 export const DEFAULT_ORG_ADMIN_LANDING = '/admin/orchestration';
+
+/**
+ * Where an org admin lands when the fork names nowhere else and has closed
+ * {@link DEFAULT_ORG_ADMIN_LANDING} to them (t-929). Members is in no section a
+ * fork may close, so it is always open to an org admin.
+ */
+export const CLOSED_DEFAULT_ORG_ADMIN_LANDING = '/admin/members';
 
 /** One literal segment of a URL path: no query, fragment, or `[x]`. */
 const LITERAL_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
@@ -56,14 +64,25 @@ export function orgAdminLandingProblem(route: unknown, pages: readonly string[])
   return null;
 }
 
+/**
+ * The platform default for an org admin on this install: the orchestration
+ * dashboard, or Members when the fork closed orchestration to org admins.
+ */
+export function defaultOrgAdminLanding(pages: readonly string[]): string {
+  return pages.includes(DEFAULT_ORG_ADMIN_LANDING)
+    ? DEFAULT_ORG_ADMIN_LANDING
+    : CLOSED_DEFAULT_ORG_ADMIN_LANDING;
+}
+
 /** Where an org admin lands: the fork's page if they may open it, else the platform default. */
 export function orgAdminLanding(): string {
+  const pages = orgTierAdminPages();
   const route = appOrgAdminLandingRoute;
-  if (route === null) return DEFAULT_ORG_ADMIN_LANDING;
-  const problem = orgAdminLandingProblem(route, orgTierAdminPages());
+  if (route === null) return defaultOrgAdminLanding(pages);
+  const problem = orgAdminLandingProblem(route, pages);
   if (problem) {
     logger.error('admin-landing: ignoring the app org-admin landing', { route, problem });
-    return DEFAULT_ORG_ADMIN_LANDING;
+    return defaultOrgAdminLanding(pages);
   }
   return route;
 }

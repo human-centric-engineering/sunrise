@@ -19,8 +19,10 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { logger } from '@/lib/logging';
-import { ORG_TIER_ADMIN_PAGES } from '@/lib/auth/admin-tier';
+import { ORG_TIER_ADMIN_PAGES, closeCoreOrgTierSection } from '@/lib/auth/admin-tier';
+import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
+  CLOSED_DEFAULT_ORG_ADMIN_LANDING,
   DEFAULT_ORG_ADMIN_LANDING,
   orgAdminLanding,
   orgAdminLandingProblem,
@@ -29,6 +31,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   app.route = null;
+  __resetAppOrgTierAdminPagesForTests();
 });
 
 describe('orgAdminLandingProblem', () => {
@@ -90,6 +93,27 @@ describe('orgAdminLanding', () => {
         route: '/admin/users',
         problem: expect.stringContaining('not a page an org admin may open'),
       })
+    );
+  });
+});
+
+describe('orgAdminLanding, with orchestration closed to org admins (t-929)', () => {
+  beforeEach(() => {
+    closeCoreOrgTierSection('orchestration');
+  });
+
+  it('is Members when the fork names nowhere, not the closed dashboard', () => {
+    expect(orgAdminLanding()).toBe('/admin/members');
+    expect(CLOSED_DEFAULT_ORG_ADMIN_LANDING).toBe('/admin/members');
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fork landing in the closed section, and falls back to Members', () => {
+    app.route = '/admin/orchestration/agents';
+    expect(orgAdminLanding()).toBe('/admin/members');
+    expect(logger.error).toHaveBeenCalledWith(
+      'admin-landing: ignoring the app org-admin landing',
+      expect.objectContaining({ route: '/admin/orchestration/agents' })
     );
   });
 });

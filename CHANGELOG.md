@@ -32,6 +32,16 @@ release process.
   where `/admin` sends an org OWNER/ADMIN. Used only if it is an org-tier page;
   otherwise `/admin` logs an error and keeps `/admin/orchestration`, and the
   roster test fails.
+- **A fork can keep core's orchestration platform-only (§111, t-929).**
+  `closeCoreOrgTierSection('orchestration')` from `lib/auth/admin-tier.ts`,
+  called in `initAppOrgTierAdminPages()`, closes the section's pages, nav items
+  and admin API routes to org admins on that install. They read one narrowed
+  answer: `orgTierAdminPages()` for pages and nav, `closedCoreOrgTierSections()`
+  for the guard. Members and Support access stay open. With no landing named,
+  `/admin` sends an org admin to Members. Behaviour-neutral when unused; rolled
+  back with the rest of the init on a throw. `AdminSidebar` now takes a
+  required `orgTierPages` prop. See `.context/auth/authorization.md`
+  ("Admin tiers").
 
 - **Stale-writer manifest for erasure (§122, t-887).** `lib/privacy/stale-writers.ts`
   lists every file that writes a column erasure scrubs in place, with how it

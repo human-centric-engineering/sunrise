@@ -109,11 +109,20 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/components/admin/admin-sidebar', () => ({
-  AdminSidebar: ({ viewerTier, multiTenant }: { viewerTier: string; multiTenant?: boolean }) => (
+  AdminSidebar: ({
+    viewerTier,
+    multiTenant,
+    orgTierPages,
+  }: {
+    viewerTier: string;
+    multiTenant?: boolean;
+    orgTierPages: readonly string[];
+  }) => (
     <div
       data-testid="admin-sidebar"
       data-viewer-tier={viewerTier}
       data-multi-tenant={String(!!multiTenant)}
+      data-org-tier-pages={orgTierPages.join(' ')}
     />
   ),
 }));
@@ -131,7 +140,11 @@ vi.mock('@/components/admin/admin-header', () => ({
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getServerSession } from '@/lib/auth/utils';
-import { ADMIN_PATHNAME_HEADER, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+import {
+  ADMIN_PATHNAME_HEADER,
+  closeCoreOrgTierSection,
+  registerOrgTierAdminPage,
+} from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
@@ -502,6 +515,61 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
       await expect(AdminLayout({ children: <div>reports</div> })).rejects.toThrow(
         `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
       );
+    });
+
+    describe('with orchestration closed to org admins (t-929)', () => {
+      beforeEach(() => {
+        fork.init = () => {
+          registerOrgTierAdminPage(FORK_PAGE);
+          closeCoreOrgTierSection('orchestration');
+        };
+      });
+
+      it('refuses an org OWNER a core orchestration page they could open before', async () => {
+        actingAs('OWNER');
+        onPage(ORG_PAGE);
+
+        await expect(AdminLayout({ children: <div>agents</div> })).rejects.toThrow(
+          `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+        );
+      });
+
+      it('opens the fork’s page and Members, and hands the sidebar the narrowed list', async () => {
+        actingAs('OWNER');
+        onPage(FORK_PAGE);
+
+        render(await AdminLayout({ children: <div data-testid="admin-content">reports</div> }));
+
+        expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+        const sidebarPages = screen
+          .getByTestId('admin-sidebar')
+          .getAttribute('data-org-tier-pages')
+          ?.split(' ');
+        expect(sidebarPages).toEqual([
+          '/admin',
+          '/admin/members',
+          '/admin/support-access',
+          FORK_PAGE,
+        ]);
+      });
+
+      it('leaves a platform admin’s console as it was, the header still naming the org', async () => {
+        const admin = createMockSession({ user: { role: 'ADMIN' } });
+        vi.mocked(getServerSession).mockResolvedValue({
+          ...admin,
+          session: { ...admin.session, activeOrgId: CUSTOMER },
+        });
+        membership.row = { orgId: CUSTOMER, role: 'OWNER', org: { status: 'ACTIVE' } };
+        onPage(ORG_PAGE);
+
+        render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
+
+        expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+        expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'platform');
+        expect(
+          screen.getByTestId('admin-header').getAttribute('data-org-tier-pages')?.split(' ')
+        ).toContain(ORG_PAGE);
+      });
     });
 
     it('stays the platform’s when the fork’s init throws after listing it', async () => {

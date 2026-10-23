@@ -1,10 +1,17 @@
 /**
- * Every org-tier admin page: core's roster, then the fork's (t-817).
+ * Every org-tier admin page: core's roster, then the fork's (t-817), less the
+ * core sections the fork closed (t-929).
  *
  * Core's list is the constant `ORG_TIER_ADMIN_PAGES`; the fork's comes from
  * `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`, run once through the
  * shared init gate at the top of the first read here — all-or-nothing, so an
- * init that throws part-way opens none of its pages.
+ * init that throws part-way opens none of its pages and closes none of core's
+ * sections.
+ *
+ * **One narrowed answer.** The layout, the client gate, the sidebar and the
+ * landing read {@link orgTierAdminPages}; the route guard reads
+ * {@link closedCoreOrgTierSections}. Both come from the same registration, so a
+ * closed section is closed on every surface or on none.
  *
  * **Server only, by design.** The admin layout reads this on a full load and
  * hands the list to `<AdminTierGate>` and `<AdminHeader>` as a prop. Nothing in
@@ -26,21 +33,37 @@ import { initAppOrgTierAdminPages } from '@/lib/app/admin-tier';
 import {
   ORG_TIER_ADMIN_PAGES,
   registeredAppOrgTierAdminPages,
+  registeredClosedCoreOrgTierSections,
   restoreAppOrgTierAdminPages,
+  restoreClosedCoreOrgTierSections,
+  withoutClosedSections,
+  type ClosableCoreOrgTierSection,
 } from '@/lib/auth/admin-tier';
 
 const appInit = createAppInitGate({
   label: 'admin-tier: initAppOrgTierAdminPages',
-  // Fail closed: with the init rolled back, every fork page is the platform's
-  // again, so an org admin is refused it rather than let into half a list.
-  subject: 'app org-tier admin pages',
+  // With the init rolled back, every fork page is the platform's again, so an
+  // org admin is refused it rather than let into half a list. A section it
+  // had closed opens again with it: core's default, as the log says.
+  subject: 'app org-tier admin pages and closed core sections',
   init: initAppOrgTierAdminPages,
-  snapshot: registeredAppOrgTierAdminPages,
-  restore: restoreAppOrgTierAdminPages,
+  // Both registries the init writes, so a throw rolls back both.
+  snapshot: () => ({
+    pages: registeredAppOrgTierAdminPages(),
+    closed: registeredClosedCoreOrgTierSections(),
+  }),
+  restore: ({ pages, closed }) => {
+    restoreAppOrgTierAdminPages(pages);
+    restoreClosedCoreOrgTierSections(closed);
+  },
 });
 
-/** The combined list, and the fork's list it was built from. */
-let combined: { from: readonly string[]; pages: readonly string[] } | null = null;
+/** The combined list, and the registrations it was built from. */
+let combined: {
+  from: readonly string[];
+  closed: readonly ClosableCoreOrgTierSection[];
+  pages: readonly string[];
+} | null = null;
 
 /** The fork's org-tier page patterns: what `lib/app/admin-tier.ts` registered. */
 export function getAppOrgTierAdminPages(): readonly string[] {
@@ -48,17 +71,42 @@ export function getAppOrgTierAdminPages(): readonly string[] {
   return registeredAppOrgTierAdminPages();
 }
 
+/** The core sections the fork closed to org admins (t-929): empty unless it closed one. */
+export function closedCoreOrgTierSections(): readonly ClosableCoreOrgTierSection[] {
+  appInit.ensure();
+  return registeredClosedCoreOrgTierSections();
+}
+
 /**
- * Every org-tier page pattern: core's roster, then the fork's. Built once and
- * reused until the fork's list changes, because the layout reads it on every
- * admin request.
+ * Every page an org admin may open on this install: core's roster less the
+ * sections the fork closed, then the fork's. Built once and reused until the
+ * fork's registrations change, because the layout reads it on every admin
+ * request.
  */
 export function orgTierAdminPages(): readonly string[] {
   const app = getAppOrgTierAdminPages();
-  if (combined?.from !== app) {
-    combined = { from: app, pages: Object.freeze([...ORG_TIER_ADMIN_PAGES, ...app]) };
+  const closed = registeredClosedCoreOrgTierSections();
+  if (combined?.from !== app || combined.closed !== closed) {
+    combined = {
+      from: app,
+      closed,
+      pages: Object.freeze([...withoutClosedSections(ORG_TIER_ADMIN_PAGES, closed), ...app]),
+    };
   }
   return combined.pages;
+}
+
+/**
+ * Every page that shows one org's rows, whether or not an org admin may open
+ * it here: core's roster and the fork's, with nothing closed. For the header,
+ * which names the acting org on those pages for a platform admin as well; a
+ * section closed to org admins still shows a platform admin one org's rows.
+ * Not an access answer — use {@link orgTierAdminPages} for that.
+ */
+export function orgScopedAdminPages(): readonly string[] {
+  const app = getAppOrgTierAdminPages();
+  if (registeredClosedCoreOrgTierSections().length === 0) return orgTierAdminPages();
+  return Object.freeze([...ORG_TIER_ADMIN_PAGES, ...app]);
 }
 
 /**
@@ -70,9 +118,10 @@ export function appOrgTierAdminPagesInitState(): AppInitState {
   return appInit.ensure();
 }
 
-/** Test-only: clear the fork's pages and re-arm the one-shot init. */
+/** Test-only: clear the fork's pages and closed sections, and re-arm the one-shot init. */
 export function __resetAppOrgTierAdminPagesForTests(): void {
   restoreAppOrgTierAdminPages([]);
+  restoreClosedCoreOrgTierSections([]);
   appInit.reset();
   combined = null;
 }

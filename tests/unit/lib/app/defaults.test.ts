@@ -115,6 +115,7 @@ import {
   getAppOrgTierAdminPages,
   orgTierAdminPages,
   __resetAppOrgTierAdminPagesForTests,
+  closedCoreOrgTierSections,
 } from '@/lib/auth/org-tier-admin-pages';
 import {
   appOwnerClassifications,
@@ -447,7 +448,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/admin-tier.ts',
-    risk: 'a stray pattern would open that admin page to every org OWNER/ADMIN on every install — the page only, since its API routes declare their own tier, but a page core meant for platform admins alone',
+    risk: 'a stray pattern would open that admin page to every org OWNER/ADMIN on every install — the page only, since its API routes declare their own tier, but a page core meant for platform admins alone; a stray closeCoreOrgTierSection() would shut orchestration to every org admin on every install',
     assert: () => {
       __resetAppOrgTierAdminPagesForTests();
       // The read triggers the lazy init, so this exercises the REAL seam.
@@ -455,6 +456,9 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // …and the roster the layout reads and hands the gate is exactly core's.
       expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
       expect(adminPageTier('/admin/users', orgTierAdminPages())).toBeNull();
+      // …and it closes none of core's sections (t-929), so the routes keep
+      // the tier they declare.
+      expect(closedCoreOrgTierSections()).toEqual([]);
     },
   },
   {

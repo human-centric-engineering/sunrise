@@ -13,6 +13,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 
 import {
   adminPageTier,
+  adminSectionOf,
+  CLOSABLE_CORE_ORG_TIER_SECTIONS,
+  closeCoreOrgTierSection,
+  effectiveRouteTier,
+  registeredClosedCoreOrgTierSections,
+  restoreClosedCoreOrgTierSections,
+  withoutClosedSections,
+  type ClosableCoreOrgTierSection,
   CORE_ADMIN_SECTIONS,
   matchesAdminPagePattern,
   ORG_TIER_ADMIN_PAGES,
@@ -24,6 +32,7 @@ import {
 
 afterEach(() => {
   restoreAppOrgTierAdminPages([]);
+  restoreClosedCoreOrgTierSections([]);
 });
 
 describe('matchesAdminPagePattern', () => {
@@ -160,5 +169,89 @@ describe('registerOrgTierAdminPage (t-817)', () => {
   it('accepts a dynamic segment below a static first one', () => {
     registerOrgTierAdminPage('/admin/reports/[id]/edit');
     expect(adminPageTier('/admin/reports/r1/edit', registeredAppOrgTierAdminPages())).toBe('org');
+  });
+});
+
+describe('closeCoreOrgTierSection (t-929)', () => {
+  it('closes orchestration and nothing else: Members and Support access stay openable', () => {
+    expect(CLOSABLE_CORE_ORG_TIER_SECTIONS).toEqual(['orchestration']);
+  });
+
+  it('records a section once however often it is closed', () => {
+    closeCoreOrgTierSection('orchestration');
+    closeCoreOrgTierSection('orchestration');
+    expect(registeredClosedCoreOrgTierSections()).toEqual(['orchestration']);
+  });
+
+  it.each(['members', 'support-access', 'users', 'Orchestration', ''])(
+    'refuses %j, so a typo closes nothing',
+    (name) => {
+      expect(() => closeCoreOrgTierSection(name as ClosableCoreOrgTierSection)).toThrow(
+        'not a core section a fork may close'
+      );
+      expect(registeredClosedCoreOrgTierSections()).toEqual([]);
+    }
+  );
+});
+
+describe('adminSectionOf', () => {
+  it.each([
+    ['/admin/orchestration', 'orchestration'],
+    ['/admin/orchestration/agents/[id]', 'orchestration'],
+    ['/api/v1/admin/orchestration/agents', 'orchestration'],
+    ['/api/v1/admin/orchestration', 'orchestration'],
+    ['/admin/members', 'members'],
+    ['/admin', null],
+    ['/api/v1/orgs/o1/members', null],
+    ['/api/v1/app/admin/orchestration', null],
+    ['/dashboard', null],
+    [null, null],
+  ])('%s is in %s', (path, section) => {
+    expect(adminSectionOf(path)).toBe(section);
+  });
+});
+
+describe('withoutClosedSections', () => {
+  it('returns the list it was handed when nothing is closed', () => {
+    expect(withoutClosedSections(ORG_TIER_ADMIN_PAGES, [])).toBe(ORG_TIER_ADMIN_PAGES);
+  });
+
+  it('drops the closed section’s pages and keeps the console index', () => {
+    expect(
+      withoutClosedSections(
+        ['/admin', '/admin/orchestration', '/admin/orchestration/agents', '/admin/members'],
+        ['orchestration']
+      )
+    ).toEqual(['/admin', '/admin/members']);
+  });
+});
+
+describe('effectiveRouteTier', () => {
+  const AGENTS = '/api/v1/admin/orchestration/agents';
+
+  it('is the declaration, untouched, when nothing is closed — a missing pathname included', () => {
+    expect(effectiveRouteTier('org', AGENTS, [])).toBe('org');
+    expect(effectiveRouteTier('org', undefined, [])).toBe('org');
+    expect(effectiveRouteTier(undefined, AGENTS, [])).toBeUndefined();
+  });
+
+  it('is the platform’s for a route in a closed section', () => {
+    expect(effectiveRouteTier('org', AGENTS, ['orchestration'])).toBeUndefined();
+    expect(
+      effectiveRouteTier('org', `${AGENTS}/a1/capabilities`, ['orchestration'])
+    ).toBeUndefined();
+  });
+
+  it('is the platform’s with a section closed and no pathname to judge', () => {
+    expect(effectiveRouteTier('org', undefined, ['orchestration'])).toBeUndefined();
+  });
+
+  it('leaves a route outside the closed section as it declared', () => {
+    expect(effectiveRouteTier('org', '/api/v1/admin/leads', ['orchestration'])).toBe('org');
+    expect(effectiveRouteTier('org', '/api/v1/app/leads', ['orchestration'])).toBe('org');
+  });
+
+  it('never widens an undeclared route', () => {
+    expect(effectiveRouteTier(undefined, '/api/v1/admin/leads', ['orchestration'])).toBeUndefined();
   });
 });

@@ -47,6 +47,8 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { withAuth, withAdminAuth } from '@/lib/auth/guards';
+import { closeCoreOrgTierSection } from '@/lib/auth/admin-tier';
+import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -693,5 +695,55 @@ describe('a route that declares the org tier (§111 t-810)', () => {
     expect(res.status).toBe(403);
     expect(body.error.message).toBe(SHARED_SETTINGS_REFUSAL);
     expect(ran).toEqual([]);
+  });
+
+  // A fork that keeps core's orchestration platform-only (t-929): the route's
+  // declaration stands, and this install treats it as undeclared.
+  describe('with orchestration closed to org admins (t-929)', () => {
+    const AGENTS = 'http://localhost:3000/api/v1/admin/orchestration/agents';
+    const LEADS = 'http://localhost:3000/api/v1/admin/leads';
+
+    beforeEach(() => {
+      mockEnv.TENANCY_MODE = 'multi';
+      closeCoreOrgTierSection('orchestration');
+    });
+    afterEach(() => {
+      __resetAppOrgTierAdminPagesForTests();
+    });
+
+    it('refuses an org OWNER a declared route in the closed section', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+      memberOf(ORG_OWNER_ROLE);
+      const { handler, ran } = orgTierRoute();
+
+      expect((await handler(new NextRequest(AGENTS))).status).toBe(403);
+      expect(ran).toEqual([]);
+    });
+
+    it('control: the same OWNER is admitted when nothing is closed', async () => {
+      __resetAppOrgTierAdminPagesForTests();
+      vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+      memberOf(ORG_OWNER_ROLE);
+      const { handler, ran } = orgTierRoute();
+
+      expect((await handler(new NextRequest(AGENTS))).status).toBe(200);
+      expect(ran).toEqual([OTHER]);
+    });
+
+    it('still admits an org OWNER to a declared route outside it — the fork’s own', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+      memberOf(ORG_OWNER_ROLE);
+      const { handler, ran } = orgTierRoute();
+
+      expect((await handler(new NextRequest(LEADS))).status).toBe(200);
+      expect(ran).toEqual([OTHER]);
+    });
+
+    it('leaves a platform admin’s console as it was', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', INSTALL_ORG_ID));
+      memberOf(ORG_OWNER_ROLE);
+
+      expect((await orgTierRoute().handler(new NextRequest(AGENTS))).status).toBe(200);
+    });
   });
 });

@@ -28,8 +28,14 @@
  *   which judges every in-app navigation against them
  *   (`components/admin/admin-tier-gate.tsx`), both through {@link adminPageTier}.
  * - **Nav items** carry `tier` (`lib/admin-nav/registry.ts`), and the sidebar
- *   shows an org admin only those. A core item marked `'org'` must point at a
- *   page listed here; the roster test holds that.
+ *   shows an org admin only those whose page is on the list the layout read.
+ *   A core item marked `'org'` must point at a page listed here; the roster
+ *   test holds that.
+ *
+ * A fork can also take core's orchestration off all three for its install
+ * ({@link closeCoreOrgTierSection}, t-929): the pages leave the list the
+ * layout and the sidebar read, and the guard treats the section's routes as
+ * undeclared ({@link effectiveRouteTier}).
  *
  * **Where the refusal actually happens.** The API is the authority: a page is
  * a shell over `serverFetch` calls, and every one of those reaches a guard that
@@ -241,6 +247,125 @@ export function restoreAppOrgTierAdminPages(pages: readonly string[]): void {
   appPages.clear();
   for (const pattern of pages) appPages.add(pattern);
   appPagesView = null;
+}
+
+/**
+ * The core sections a fork may keep platform-only (t-929): open to org admins
+ * by default, and closable with {@link closeCoreOrgTierSection}. Closing one
+ * removes its pages from the org-tier list, its nav items from an org
+ * viewer's sidebar, and the tier from every route under `/api/v1/admin/<section>/`,
+ * so the pages, the nav and the routes stay in step.
+ *
+ * Orchestration only. Members and Support access are not here: an org admin
+ * needs Members to invite their own people, and Support access is the org's
+ * consent to the vendor. Their routes (`/api/v1/orgs/[id]/…`) are admitted by
+ * the policy's org arm, not by a declared tier, so closing their pages would
+ * leave the API open anyway. `/admin` itself is in no section and stays open,
+ * so it can send an org admin to their landing.
+ */
+export const CLOSABLE_CORE_ORG_TIER_SECTIONS = Object.freeze(['orchestration'] as const);
+
+/** A core section a fork may close to org admins. */
+export type ClosableCoreOrgTierSection = (typeof CLOSABLE_CORE_ORG_TIER_SECTIONS)[number];
+
+/** The core sections the fork closed to org admins, in registration order. */
+const closedSections = new Set<ClosableCoreOrgTierSection>();
+/** {@link closedSections} as a frozen array, rebuilt only after it changes. */
+let closedSectionsView: readonly ClosableCoreOrgTierSection[] | null = null;
+
+/**
+ * Keep one of core's org-tier sections platform-only on this install. For a
+ * fork whose customers are clients of a finished product, where the
+ * orchestration layer is the vendor's, not the customer's.
+ *
+ * Call it from `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`, beside
+ * any pages the fork lists, so a throw part-way rolls both back. The section's
+ * pages, nav items and routes then admit a platform admin and nobody else,
+ * exactly as an undeclared surface does. A platform admin's console is
+ * unchanged.
+ *
+ * Throws on a name that is not in {@link CLOSABLE_CORE_ORG_TIER_SECTIONS}, so a
+ * typo closes nothing and the init gate logs why. Idempotent.
+ *
+ * Closing `orchestration` also closes the default landing for an org admin
+ * (`/admin/orchestration`); with no landing named in `lib/app/admin-landing.ts`
+ * they land on Members instead.
+ */
+export function closeCoreOrgTierSection(section: ClosableCoreOrgTierSection): void {
+  if (!(CLOSABLE_CORE_ORG_TIER_SECTIONS as readonly unknown[]).includes(section)) {
+    throw new TypeError(
+      `closeCoreOrgTierSection: ${JSON.stringify(section)} is not a core section a fork may close. Use one of: ${CLOSABLE_CORE_ORG_TIER_SECTIONS.join(', ')}.`
+    );
+  }
+  if (closedSections.has(section)) return;
+  closedSections.add(section);
+  closedSectionsView = null;
+}
+
+/**
+ * What the fork has closed so far, without running its init. For the init
+ * gate in `lib/auth/org-tier-admin-pages.ts`; read it through
+ * `closedCoreOrgTierSections()` there, which runs the init first.
+ *
+ * @internal
+ */
+export function registeredClosedCoreOrgTierSections(): readonly ClosableCoreOrgTierSection[] {
+  closedSectionsView ??= Object.freeze([...closedSections]);
+  return closedSectionsView;
+}
+
+/**
+ * Put the closed sections back to a list {@link registeredClosedCoreOrgTierSections}
+ * returned — the init gate's rollback, and the tests' reset.
+ *
+ * @internal
+ */
+export function restoreClosedCoreOrgTierSections(
+  sections: readonly ClosableCoreOrgTierSection[]
+): void {
+  closedSections.clear();
+  for (const section of sections) closedSections.add(section);
+  closedSectionsView = null;
+}
+
+/**
+ * The admin section a page or admin API path is in: `orchestration` for
+ * `/admin/orchestration/agents` and `/api/v1/admin/orchestration/agents`.
+ * `null` for `/admin` itself and for anything outside the admin tree.
+ */
+export function adminSectionOf(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const match = /^(?:\/api\/v1)?\/admin\/([^/?#]+)/.exec(path);
+  return match ? match[1] : null;
+}
+
+/** The page patterns left once the closed sections' pages are taken out. */
+export function withoutClosedSections(
+  pages: readonly string[],
+  closed: readonly string[]
+): readonly string[] {
+  if (closed.length === 0) return pages;
+  return pages.filter((pattern) => {
+    const section = adminSectionOf(pattern);
+    return section === null || !closed.includes(section);
+  });
+}
+
+/**
+ * The tier an admin API route acts with: what it declared, unless its section
+ * is closed (t-929). With a section closed and no pathname to judge, the
+ * route is the platform's — an unknown route is the one that must not open.
+ * With nothing closed, the declaration is returned as it is.
+ */
+export function effectiveRouteTier(
+  declared: AdminTier | undefined,
+  pathname: string | null | undefined,
+  closed: readonly string[]
+): AdminTier | undefined {
+  if (!declared || closed.length === 0) return declared;
+  const section = adminSectionOf(pathname);
+  if (!pathname || (section !== null && closed.includes(section))) return undefined;
+  return declared;
 }
 
 /**

@@ -20,15 +20,19 @@ vi.mock('@/lib/logging', () => ({
 import { logger } from '@/lib/logging';
 import {
   adminPageTier,
+  closeCoreOrgTierSection,
   ORG_TIER_ADMIN_PAGES,
   registerOrgTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import {
   __resetAppOrgTierAdminPagesForTests,
   appOrgTierAdminPagesInitState,
+  closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
+  orgScopedAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
+import type { ClosableCoreOrgTierSection } from '@/lib/auth/admin-tier';
 
 beforeEach(() => {
   fork.init = () => {};
@@ -107,6 +111,76 @@ describe('orgTierAdminPages', () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('initAppOrgTierAdminPages threw'),
       expect.objectContaining({ error: expect.stringContaining("which is core's") })
+    );
+  });
+});
+
+describe('closing a core section to org admins (t-929)', () => {
+  it('closes nothing as shipped: the list is core’s and the fork’s, whole', () => {
+    expect(closedCoreOrgTierSections()).toEqual([]);
+    expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
+    expect(orgScopedAdminPages()).toBe(orgTierAdminPages());
+  });
+
+  it('takes every orchestration page off the list, and keeps /admin, Members, Support access and the fork’s', () => {
+    fork.init = () => {
+      registerOrgTierAdminPage('/admin/leads');
+      closeCoreOrgTierSection('orchestration');
+    };
+
+    const pages = orgTierAdminPages();
+    // The population was non-empty before: core lists orchestration pages.
+    expect(ORG_TIER_ADMIN_PAGES.filter((p) => p.startsWith('/admin/orchestration')).length).toBe(
+      38
+    );
+    expect(pages).toEqual(['/admin', '/admin/members', '/admin/support-access', '/admin/leads']);
+    expect(adminPageTier('/admin/orchestration', pages)).toBeNull();
+    expect(adminPageTier('/admin/orchestration/agents/a1', pages)).toBeNull();
+    expect(adminPageTier('/admin/members', pages)).toBe('org');
+    expect(closedCoreOrgTierSections()).toEqual(['orchestration']);
+  });
+
+  it('still names the closed pages as one org’s, for the header', () => {
+    fork.init = () => closeCoreOrgTierSection('orchestration');
+
+    expect(adminPageTier('/admin/orchestration/agents', orgScopedAdminPages())).toBe('org');
+    expect(adminPageTier('/admin/orchestration/agents', orgTierAdminPages())).toBeNull();
+  });
+
+  it('rebuilds the list when a section is closed after the init settled', () => {
+    const first = orgTierAdminPages();
+    closeCoreOrgTierSection('orchestration');
+    expect(orgTierAdminPages()).not.toBe(first);
+    expect(adminPageTier('/admin/orchestration', orgTierAdminPages())).toBeNull();
+  });
+
+  it('closes nothing when the init throws after closing, and says so', () => {
+    fork.init = () => {
+      closeCoreOrgTierSection('orchestration');
+      throw new Error('boom');
+    };
+
+    expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
+    expect(closedCoreOrgTierSections()).toEqual([]);
+    expect(appOrgTierAdminPagesInitState()).toBe('failed');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('closed core sections rolled back'),
+      expect.anything()
+    );
+  });
+
+  it('closes nothing when the init names a section it may not close', () => {
+    fork.init = () => {
+      closeCoreOrgTierSection('orchestration');
+      closeCoreOrgTierSection('members' as ClosableCoreOrgTierSection);
+    };
+
+    expect(closedCoreOrgTierSections()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('initAppOrgTierAdminPages threw'),
+      expect.objectContaining({
+        error: expect.stringContaining('not a core section a fork may close'),
+      })
     );
   });
 });
