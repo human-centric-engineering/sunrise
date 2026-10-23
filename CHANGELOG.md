@@ -51,6 +51,15 @@ release process.
   `registerStaleWriter()` (`lib/privacy/erasure-hooks.ts`), called from
   `initAppErasureHooks()` in `lib/app/erasure.ts`. Nothing changes at runtime.
   See `.context/privacy/data-erasure.md`.
+- **Thinking blocks across a tool loop (t-897, t-908).** New type
+  `LlmReasoningBlock` on `@/lib/orchestration/llm`, and an optional `reasoning`
+  field on `LlmResponse`, `LlmMessage` and the `done` `StreamChunk`. The
+  Anthropic provider returns a turn's `thinking` / `redacted_thinking` blocks
+  there and replays an assistant message's blocks unchanged; the chat and
+  `agent_call` tool loops carry them between requests. Optional, so a fork's
+  `LlmProvider` that ignores the field is unaffected; a fork with its own
+  tool loop over Claude should copy `reasoning` from the response onto the
+  assistant message it appends. See `.context/orchestration/llm-providers.md`.
 
 ### Changed
 
