@@ -61,7 +61,9 @@ release process.
   Duplicate, save-as-template) sends `copiedFrom: { workflowId,
   definitionVersion }` on `POST /workflows` and is refused with 412 when that
   source moved on; `GET /workflows/templates` gives each of the org's own
-  templates its `copySource`. `AiWorkflowWithVersion` gains `definitionVersion`;
+  templates its `copySource`. A `PATCH` that sends a draft writes its
+  other fields in the same update, after the check, and one that clears the
+  draft is now audited as `workflow.draft.discard`. `AiWorkflowWithVersion` gains `definitionVersion`;
   `lib/orchestration/config-versions.ts` gains the workflow's version and
   lock. Backup seals now cover workflow definitions' addresses too, so a
   sealed import strips only people erased since its `exportedAt` from them,

@@ -974,6 +974,13 @@ the old copy back. So the builder works as the forms above do:
   sends with its next write; after a discard it reloads the workflow, version
   and all. A `PATCH` of other fields alone (the list's on/off toggle) needs
   none.
+- **One write per request.** A save carries the builder's name, slug and
+  cost cap with the draft. They go into the same update, after the version
+  check, so a refused save writes none of them, and a slug conflict (409)
+  writes no draft. The version returned is read in that transaction, not
+  after it commits, when it could already carry a change the canvas has not
+  seen. Clearing a draft by `PATCH` goes through `discardDraft`, and is
+  audited as a discard.
 - **Publish checks twice.** Once against the draft it reads, before
   validation, so a stale builder is told to reload rather than shown errors
   in a draft it has not seen; and again under the row lock, against that
