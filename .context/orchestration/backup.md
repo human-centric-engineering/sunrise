@@ -104,6 +104,7 @@ The importer accepts `schemaVersion` 1, 2, or 3. Version history:
 {
   "schemaVersion": 3,
   "exportedAt": "2026-04-22T10:00:00.000Z",
+  "exportSeal": "<HMAC over exportedAt — this install's; see below>",
   "data": {
     "agents":       [...],
     "capabilities": [...],
@@ -164,7 +165,7 @@ Response 200:
 - Webhooks: **created only** if no identical URL already exists; otherwise skipped with a warning
 - Settings: **fully replaced** with backup values if present and the shared part is written
 - Webhook secrets: always skipped (secret fields are never exported); import adds a warning
-- People erased **after the bundle was exported** are stripped from what it writes — workflow recipients and approvers, email subscriptions (skipped), the escalation list — each with a warning; the import goes ahead (t-805). The bundle's `exportedAt` is the anchor (§122 t-902): someone erased before it was taken and still named in it was re-added on purpose, and is kept. An `exportedAt` that does not parse, or lies more than five minutes in the future, counts every erasure. See [Data erasure → Backup import](../privacy/data-erasure.md#backup-import-taken-at-t-902)
+- People whose data was erased are stripped from what the import writes — workflow recipients and approvers, email subscriptions (skipped), the escalation list — each with a warning; the import goes ahead (t-805). For the email subscriptions and escalation list only, a bundle **this install sealed** counts only erasures since its `exportedAt` (§122 t-902): someone erased before it was taken and still named in it was re-added on purpose, and is kept. An unsealed bundle (any exported before t-902), another install's, or one whose date was edited counts every erasure. Workflow definitions count every erasure until t-900. See [Data erasure → Backup import](../privacy/data-erasure.md#backup-import-taken-at-t-902)
 - Agents naming a provider the org is not approved for (at `TENANCY_MODE=multi`): **imported, with a warning** naming the agent and the providers (§120 t-743). Not skipped: skipping would drop an agent other imported rows may reference, and the call-time gate refuses its calls until the org is granted the provider. `POST /agents/import` does the same. Workflows whose steps override to such a provider are imported with a warning naming the steps. The check runs once, before the import's transaction and inside the target org — so it asks about the org being restored into, not the admin's active org, and an unbound admin key's import is checked against the org it named; if the org's provider policy cannot be read, the import goes ahead with one general warning saying the check did not run.
 
 ### `ImportResult` shape

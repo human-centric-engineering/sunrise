@@ -29,14 +29,16 @@ release process.
 
 ### Changed
 
-- **A backup import strips only people erased after the bundle was exported
-  (§122, t-902).** `POST /backup/import` used to strip every erased person's
-  address and approver id from what it wrote, however long ago they were
-  erased, including an address an admin re-added on purpose after the erasure.
-  It now counts only erasures since the bundle's `exportedAt`, less five
-  minutes for clock skew. An `exportedAt` that does not parse, or lies further
-  in the future than that, counts every erasure, as before. A bundle with no
-  `exportedAt` is still refused. See `.context/privacy/data-erasure.md`
+- **A backup this install sealed keeps contacts re-added after an erasure
+  (§122, t-902).** Exports now stamp `exportedAt` before reading and carry
+  `exportSeal`, an HMAC over it keyed by `BETTER_AUTH_SECRET`
+  (`lib/orchestration/backup/export-seal.ts`). On import, when the seal
+  verifies, the email subscriptions and escalation list are stripped only of
+  people erased since `exportedAt`, so an address an admin re-added after an
+  older erasure survives a restore. Unsealed bundles (every one exported before
+  this), another install's, and edited ones still strip anyone ever erased, as
+  do workflow definitions until t-900. Environments sharing a
+  `BETTER_AUTH_SECRET` share seals. See `.context/privacy/data-erasure.md`
   ("Backup import").
 
 - **Actions on a run read and write it under its row lock (§122, t-901).**

@@ -937,28 +937,40 @@ removes by construction.
 
 ### Backup import (`taken-at`, t-902)
 
-A bundle is a copy taken at its `exportedAt`. Someone erased before then is
-not in it, so a bundle that names them had them added back after the erasure,
-on purpose, and the import keeps them. Only people erased **since**
-`exportedAt`, less `COPY_CLOCK_SKEW_MS`, are stripped from the workflows,
-email subscriptions and escalation list it writes, with the same warnings as
-before (`bundleTakenAt` in `lib/orchestration/backup/importer.ts`).
+A bundle is a copy. Someone erased before it was taken is not in it, so a
+bundle that still names them had them added back after the erasure, on
+purpose. The importer keeps them, but only when it can trust the bundle's
+date, which means only when **this install** sealed it.
 
-`exportedAt` is whatever the uploaded file says:
+The date alone cannot be trusted. Suppose a staging copy never ran
+production's erasure, or a bundle was round-tripped through one, or its date
+was edited. Each of those names people nobody re-added, and a date check would
+let them back silently (owner ruling 2026-10-23).
 
-- **Missing**: the schema refuses the bundle, as it always has.
-- **Does not parse**: read as the epoch, so everyone ever erased is stripped.
-- **In the future by more than the skew margin**: also the epoch. No export was
-  taken then, and read as it stands it would leave out everyone erased before
-  the import. Within the margin, it is another host's clock running ahead and
-  is clamped to the import's time.
-- **Before the epoch**: the epoch.
-- **A past date written by hand** leaves out everyone erased before it; the
-  importer cannot tell it from a genuine bundle's. Only an admin of the target
-  scope can import. Until t-899 and t-900 move the settings, subscription,
-  schedule and workflow routes onto the same since-anchor, those routes still
-  refuse anyone ever erased, so for now a hand-dated bundle is the one admin
-  path that writes back an address erased before the date it gives.
+So the exporter stamps `exportedAt` **before** it reads, and seals it with an
+HMAC keyed by this install's `BETTER_AUTH_SECRET` (`exportSeal`,
+`lib/orchestration/backup/export-seal.ts`). The signed bytes carry their own
+scheme tag, so neither the approval-token scheme nor the storage-token
+scheme, which share the secret, can mint one.
+
+| Bundle                                                   | Email subscriptions, escalation list                                  | Workflow definitions        |
+| -------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------- |
+| Sealed by this install, date untouched                   | people erased since `exportedAt` (less `COPY_CLOCK_SKEW_MS`) stripped | anyone ever erased stripped |
+| Unsealed (older bundles), another install's, date edited | anyone ever erased stripped                                           | anyone ever erased stripped |
+
+Workflow definitions keep the all-time check until t-900. `createInitialVersion`
+still refuses an ever-erased address, so keeping one would fail the whole
+import, and an existing workflow's new version follows the same rule so the
+two agree. An approver's user id is stripped whenever it was erased: nobody
+can re-add an account that is gone.
+
+Each strip carries the warning it always has. A bundle with no `exportedAt` is
+still refused by the schema.
+
+**An install that shares its secret with another shares its seals.** A
+staging copy configured from production's environment would seal bundles
+production trusts. Give each environment its own `BETTER_AUTH_SECRET`; the
+seal cannot tell two installs with one key apart.
 
 ### Deliveries and emails sent from a copy (`taken-at`, t-886)
 
