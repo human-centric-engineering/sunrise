@@ -2757,3 +2757,164 @@ describe('AnthropicProvider — thinking blocks across a tool loop (t-897, t-908
     expect(response.reasoning).toBeUndefined();
   });
 });
+
+describe('AnthropicProvider — structured output review fixes', () => {
+  const schema = { type: 'object', properties: { name: { type: 'string' } } };
+
+  it('drops a preamble the model writes before calling the extraction tool', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        { type: 'text', text: 'Here is the result:' },
+        { type: 'tool_use', id: 's1', name: '__structured_profile', input: { name: 'A' } },
+      ],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-4-7',
+      stop_reason: 'tool_use',
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-opus-4-7',
+      reasoningEffort: 'medium',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    });
+
+    expect(response.content).toBe('{"name":"A"}');
+  });
+
+  it('holds streamed preamble text back on the extraction path', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Sure: ' } },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'tool_use', id: 's1', name: '__structured_profile', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index: 1,
+          delta: { type: 'input_json_delta', partial_json: '{"name":"A"}' },
+        },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 4 } },
+      ])
+    );
+
+    const chunks = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-7',
+      reasoningEffort: 'medium',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    })) {
+      chunks.push(chunk);
+    }
+
+    const text = chunks
+      .filter((c) => c.type === 'text')
+      .map((c) => (c as { content: string }).content)
+      .join('');
+    expect(text).toBe('{"name":"A"}');
+  });
+
+  it('releases held text when the model never calls the extraction tool', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: '{"name":"B"}' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } },
+      ])
+    );
+
+    const chunks = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-7',
+      reasoningEffort: 'medium',
+      responseFormat: { type: 'json_schema', name: 'profile', schema },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.filter((c) => c.type === 'text')).toEqual([
+      { type: 'text', content: '{"name":"B"}' },
+    ]);
+  });
+
+  it.each([
+    { label: 'an object with no properties', meta: { type: 'object' } },
+    {
+      label: 'a record-style object',
+      meta: { type: 'object', properties: {}, additionalProperties: { type: 'string' } },
+    },
+  ])('keeps the extraction tool for a schema with $label', async ({ meta }) => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 's1', name: '__structured_open', input: { meta: {} } }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-5',
+      stop_reason: 'tool_use',
+    });
+
+    await makeProvider().chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-opus-5',
+      responseFormat: {
+        type: 'json_schema',
+        name: 'open',
+        schema: { type: 'object', properties: { meta } },
+      },
+    });
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.output_config).toBeUndefined();
+    expect(callArgs.tools[0].name).toBe('__structured_open');
+  });
+
+  it('offers the extraction tool with auto on a model that refuses a forced one', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 's1', name: '__structured_open', input: {} }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-fable-5-1',
+      stop_reason: 'tool_use',
+    });
+
+    await makeProvider().chat([{ role: 'user', content: 'extract' }], {
+      model: 'claude-fable-5-1',
+      responseFormat: {
+        type: 'json_schema',
+        name: 'open',
+        schema: { type: 'object', properties: { meta: { type: 'object' } } },
+      },
+    });
+
+    expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' });
+  });
+
+  it('treats a caller tool that happens to use the extraction prefix as a tool call', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 'c1', name: '__structured_lookup', input: { q: 'x' } }],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'tool_use',
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-6',
+      tools: [
+        { name: '__structured_lookup', description: 'Look up', parameters: { type: 'object' } },
+      ],
+    });
+
+    expect(response.toolCalls).toEqual([
+      { id: 'c1', name: '__structured_lookup', arguments: { q: 'x' } },
+    ]);
+    expect(response.finishReason).toBe('tool_use');
+  });
+});

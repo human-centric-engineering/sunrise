@@ -372,7 +372,7 @@ interface ClaudeVersion {
  */
 function claudeVersion(id: string): ClaudeVersion | undefined {
   const match =
-    /^claude-(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2})(?!\d))?(?:$|[-.@:])/.exec(
+    /^claude-(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2})(?!\d))?(?:$|[-.@:[_])/.exec(
       id
     );
   if (!match) return undefined;

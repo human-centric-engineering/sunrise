@@ -179,10 +179,11 @@ export class AnthropicProvider implements LlmProvider {
     const content: string[] = [];
     const toolCalls: LlmToolCall[] = [];
     const reasoning: LlmReasoningBlock[] = [];
+    let extracted: string | undefined;
     // Gates the extraction-tool -> JSON-text conversion below. True only when
     // buildBaseParams installed the extraction tool; a `json_schema` request
     // sent as native structured output comes back as ordinary text.
-    const isStructuredExtraction = installsExtractionTool(params);
+    const isStructuredExtraction = installsExtractionTool(params) && !options.tools?.length;
     /**
      * Any JSON-shaped request, for the truncation guard only — `json_object`
      * as well as `json_schema`.
@@ -209,14 +210,17 @@ export class AnthropicProvider implements LlmProvider {
       } else if (block.type === 'tool_use') {
         if (isStructuredExtraction && block.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
           // Structured output extraction — convert tool arguments to JSON text
-          content.push(JSON.stringify(block.input));
+          extracted = JSON.stringify(block.input);
         } else {
           toolCalls.push(toolUseBlockToToolCall(block));
         }
       }
     }
 
-    const joinedContent = content.join('');
+    // The extraction tool's arguments are the whole result. With the tool
+    // offered under `auto` (thinking on), the model may also write a line of
+    // text before calling it; joining that in would break the JSON.
+    const joinedContent = extracted ?? content.join('');
 
     // Truncation guard. Anthropic returns `stop_reason: 'max_tokens'`
     // when the model hits the cap; with extended thinking turned on
@@ -296,7 +300,7 @@ export class AnthropicProvider implements LlmProvider {
 
     // Gates the extraction-tool -> text conversion below; true only when
     // buildBaseParams installed the extraction tool.
-    const isStructuredExtraction = installsExtractionTool(params);
+    const isStructuredExtraction = installsExtractionTool(params) && !options.tools?.length;
     /** Any JSON-shaped request, for the truncation guard only (#594). */
     const wantsParseableJson =
       (options.responseFormat?.type === 'json_object' ||
@@ -308,6 +312,12 @@ export class AnthropicProvider implements LlmProvider {
     // is narrower than its guard, the guard reads an empty string,
     // `isCompleteJson('')` is false, and it fires on every capped turn.
     let streamedText = '';
+    // On the extraction path, text is held back rather than streamed: if the
+    // model calls the extraction tool, its arguments are the whole result and
+    // the text is dropped (it is only a preamble, possible under `auto`); if
+    // it never calls the tool, the text is released at the end.
+    let heldText = '';
+    let extractedViaTool = false;
 
     let inputTokens = 0;
     let outputTokens = 0;
@@ -351,7 +361,8 @@ export class AnthropicProvider implements LlmProvider {
           case 'content_block_delta': {
             if (event.delta.type === 'text_delta') {
               if (wantsParseableJson) streamedText += event.delta.text;
-              yield { type: 'text', content: event.delta.text };
+              if (isStructuredExtraction) heldText += event.delta.text;
+              else yield { type: 'text', content: event.delta.text };
             } else if (event.delta.type === 'input_json_delta') {
               const buf = toolBuffers.get(event.index);
               if (buf) buf.partial += event.delta.partial_json;
@@ -371,6 +382,7 @@ export class AnthropicProvider implements LlmProvider {
               if (isStructuredExtraction && buf.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
                 // Structured output — emit the JSON as text content
                 const parsed = safeParseJson(buf.partial);
+                extractedViaTool = true;
                 yield { type: 'text', content: JSON.stringify(parsed) };
               } else {
                 yield {
@@ -434,6 +446,10 @@ export class AnthropicProvider implements LlmProvider {
           ...(inputTokens > 0 || outputTokens > 0 ? { usage: { inputTokens, outputTokens } } : {}),
         }
       );
+    }
+
+    if (isStructuredExtraction && !extractedViaTool && heldText) {
+      yield { type: 'text', content: heldText };
     }
 
     const reasoning = [...reasoningBlocks.entries()]
@@ -611,9 +627,10 @@ export class AnthropicProvider implements LlmProvider {
     if (options.responseFormat && !options.tools?.length) {
       if (options.responseFormat.type === 'json_schema') {
         const inputSchema = buildToolInputSchema(options.responseFormat.schema);
-        const nativeSchema = acceptsNativeStructuredOutput(options.model)
-          ? toNativeOutputSchema(inputSchema)
-          : undefined;
+        const nativeSchema =
+          acceptsNativeStructuredOutput(options.model) && !hasOpenObject(inputSchema)
+            ? toNativeOutputSchema(inputSchema)
+            : undefined;
         if (nativeSchema) {
           params.output_config = {
             ...params.output_config,
@@ -628,7 +645,7 @@ export class AnthropicProvider implements LlmProvider {
               input_schema: inputSchema,
             },
           ];
-          if (thinkingEnabled) {
+          if (thinkingEnabled || refusesForcedToolChoice(options.model)) {
             params.tool_choice = { type: 'auto' };
             const instruction = `Respond only by calling the ${extractionToolName} tool with the result.`;
             params.system = system ? `${system}\n\n${instruction}` : instruction;
@@ -786,6 +803,27 @@ function installsExtractionTool(params: { tools?: ReadonlyArray<object> }): bool
     typeof only.name === 'string' &&
     only.name.startsWith(EXTRACTION_TOOL_PREFIX)
   );
+}
+
+/**
+ * Does the schema hold an object that accepts keys it doesn't list — no
+ * `properties`, or `additionalProperties` other than `false`? Native
+ * structured output forces `additionalProperties: false` on every object,
+ * so such a schema would silently lose its free-form data there; it keeps
+ * the extraction tool, which takes the schema as written.
+ */
+function hasOpenObject(schema: unknown): boolean {
+  if (Array.isArray(schema)) return schema.some(hasOpenObject);
+  if (schema === null || typeof schema !== 'object') return false;
+  const node = schema as Record<string, unknown>;
+  if (
+    node.type === 'object' &&
+    (node.properties === undefined ||
+      (node.additionalProperties !== undefined && node.additionalProperties !== false))
+  ) {
+    return true;
+  }
+  return Object.values(node).some(hasOpenObject);
 }
 
 /**

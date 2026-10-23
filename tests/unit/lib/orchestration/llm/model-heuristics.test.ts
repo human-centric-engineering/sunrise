@@ -597,6 +597,7 @@ describe('refusesForcedToolChoice', () => {
     'claude-mythos-5-1',
     'claude-opus-6',
     'anthropic.claude-opus-5-5',
+    'claude-opus-5-5[1m]',
   ])('refuses on %s', (id) => {
     expect(refusesForcedToolChoice(id)).toBe(true);
   });
