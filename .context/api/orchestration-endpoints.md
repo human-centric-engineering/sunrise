@@ -61,9 +61,9 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/cost-estimate`            | GET                | Planning-grade USD estimate (any workflow) — see [cost-estimation.md](../orchestration/cost-estimation.md)                                                                                                                 | 5.4     |
 | `/workflows/:id/versions`                 | GET                | List published versions (paginated, desc by version)                                                                                                                                                                       | 5.1     |
 | `/workflows/:id/versions/:version`        | GET                | Single-version snapshot read                                                                                                                                                                                               | 5.1     |
-| `/workflows/:id/publish`                  | POST               | Promote `draftDefinition` to a new published version                                                                                                                                                                       | 5.1     |
-| `/workflows/:id/discard-draft`            | POST               | Clear `draftDefinition`; published version unchanged                                                                                                                                                                       | 5.1     |
-| `/workflows/:id/rollback`                 | POST               | Create a NEW version copied from a target version                                                                                                                                                                          | 5.1     |
+| `/workflows/:id/publish`                  | POST               | Promote `draftDefinition` to a new published version. Requires `If-Match`: the `definitionVersion` from `GET /workflows/:id` (428 without, 412 `STALE_RECORD` once it moved on, §122 t-900); returns the new one           | 5.1     |
+| `/workflows/:id/discard-draft`            | POST               | Clear `draftDefinition`; published version unchanged. Requires `If-Match` as `/publish` does                                                                                                                               | 5.1     |
+| `/workflows/:id/rollback`                 | POST               | Create a NEW version copied from a target version. No `If-Match`: it re-reads the target under erasure's locks                                                                                                             | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace + `currentRunningSteps[]` for live indicator                                                                                                                                                 | 3.2     |
 | `/executions/:id/status`                  | GET                | Lightweight status read (no trace, polling-friendly)                                                                                                                                                                       | —       |
 | `/executions/:id/live`                    | GET                | Snapshot + trace + cost entries + `currentRunningSteps[]` (1 s-poll friendly)                                                                                                                                              | —       |
@@ -428,7 +428,14 @@ CRUD. The body is a `WorkflowDefinition` — a DAG of step nodes. Stored as `Jso
 
 ### `GET / PATCH / DELETE /workflows/:id`
 
-Standard CRUD.
+Standard CRUD, with one rule (§122 t-900): `GET` returns `definitionVersion`,
+and a `PATCH` that sends `draftDefinition` (a draft, or `null` to clear it)
+must send it back as `If-Match`. Without one it is refused with 428
+`PRECONDITION_REQUIRED`; when the draft or the published version has moved on
+since (another admin, or an erasure), with 412 `STALE_RECORD`, nothing
+written. The response carries the new `definitionVersion`. A `PATCH` of other
+fields alone (name, `isActive`, cost cap) needs no `If-Match`. See
+[Data erasure → The workflow builder](../privacy/data-erasure.md#the-workflow-builder-version-t-900).
 
 ### `POST /workflows/:id/validate`
 

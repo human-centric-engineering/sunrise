@@ -765,19 +765,19 @@ backup taken before the erasure (t-805). The read is long over by then, so
 row locks cannot stop it.
 
 The settings form, the webhook subscription edit and the schedule edit refuse
-such a save by **version** since t-899: see
-[Saves of a record that moved on](#saves-of-a-record-that-moved-on-version-t-899).
+such a save by **version** since t-899, and the workflow builder since t-900:
+see [Saves of a record that moved on](#saves-of-a-record-that-moved-on-version-t-899)
+and [The workflow builder](#the-workflow-builder-version-t-900).
 The writers below still ask, inside the transaction that writes, whether
 what they are about to write names an erased person —
 `lib/privacy/erased-subjects.ts`, from the erasure receipt
 (`subjectUserId`, and `subjectEmailHash` of the normalised address):
 
-| Writer                                                                     | Names it checks                                                                                                                                           | On a match                                                                                                                                                                                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition                                                                                         | an erased address: `ValidationError`, nothing written; an erased approver id: stripped, the rest written (an opaque id the builder cannot show, and a workflow naming someone erased before t-791 would otherwise never save again) |
-| `rollback`                                                                 | the same, in the target snapshot                                                                                                                          | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
-| Backup import                                                              | all of the above in the bundle; for its email subscriptions and escalation list, only erasures since its `exportedAt` when this install sealed it (t-902) | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
-| Scheduler tick (`processDueSchedules`)                                     | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version                                                 | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                   |
+| Writer                                                                                            | Names it checks                                                                                                                                                                                 | On a match                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workflow writers (`version-service.ts`): save, publish, discard, rollback, `createInitialVersion` | every approver id in the definition                                                                                                                                                             | stripped, the rest written: an id is never issued again, so nobody can re-add one. Addresses are not checked (t-900): a stale builder is refused by version, a rollback reads its target again under erasure's locks, and a create is intent |
+| Backup import                                                                                     | all of the above in the bundle; for its addresses (email subscriptions, escalation list, workflow definitions), only erasures since its `exportedAt` when this install sealed it (t-902, t-900) | stripped, with a warning; the import goes ahead                                                                                                                                                                                              |
+| Scheduler tick (`processDueSchedules`)                                                            | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version                                                                                       | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                            |
 
 The tick reads its schedules at the top of the tick, and an erasure can commit
 before it creates the run. So it creates the run, and claims the schedule's
@@ -858,10 +858,12 @@ the stale-writer manifest (below).
 
 ## Writers of scrubbed data (the stale-writer manifest)
 
-The checks above refuse anyone **ever** erased. §122 (`f-erasure-stale-writes`)
-replaces them with a check against **how old the writer's copy is**, so a stale
-tab is refused and an address re-entered on purpose is not. Step one is
-knowing every writer. That list is `lib/privacy/stale-writers.ts`:
+Before §122 (`f-erasure-stale-writes`) every one of these writers refused or
+stripped anyone **ever** erased. §122 replaced that with a check against **how
+old the writer's copy is**, so a stale tab is refused and an address re-entered
+on purpose is not; an approver id is still stripped whenever its account was
+erased. Step one was knowing every writer. That list is
+`lib/privacy/stale-writers.ts`:
 
 - **`SCRUBBED_COLUMNS`** is every column erasure rewrites in place, by model.
   A column added to erasure goes here in the same change, with its writers.
@@ -876,7 +878,10 @@ knowing every writer. That list is `lib/privacy/stale-writers.ts`:
 | `intent`   | Writes only what arrives in the request, typed by an admin or sent from outside. Not checked.                                   |
 | `erasure`  | Erasure itself.                                                                                                                 |
 | `seed`     | A seed unit, run at deploy.                                                                                                     |
-| `pending`  | Not converted yet. Names the §122 task that converts it; §122's last task removes the anchor.                                   |
+
+Until §122's last task (t-900) there was a seventh anchor, `pending`, for a
+writer not converted yet. It is gone from the type: a new writer takes one of
+the six.
 
 `tests/unit/lib/privacy/stale-writers.test.ts` parses the tree with
 `scripts/ci/scrubbed-column-writes.ts`. It fails on any file that writes a
@@ -949,6 +954,55 @@ records: return a version from the read, `requireIfMatch` on the save, and
 version) before the write. It then declares the writer `version` in the
 manifest.
 
+### The workflow builder (`version`, t-900)
+
+The builder holds a workflow's definition for as long as its tab is open, and
+erasure scrubs the person out of the stored draft and out of every version.
+A save, publish or discard from a tab opened before the erasure would write
+the old copy back. So the builder works as the forms above do:
+
+- **Read.** `GET /workflows/:id` returns `definitionVersion`: a hash of what
+  the builder loaded (the draft, or the published snapshot when there is
+  none) and of which version is published
+  (`workflowDefinitionVersion`, `config-versions.ts`). Erasure scrubbing either
+  moves it; so does another admin's save, publish, discard or rollback. The
+  name, toggles and cost cap are left out: nothing erasure scrubs.
+- **Save, publish, discard.** `PATCH /workflows/:id` with a
+  `draftDefinition` (a draft, or `null` to clear it), `POST .../publish` and
+  `POST .../discard-draft` send it back as `If-Match`: 428 without, 412
+  `STALE_RECORD` once it has moved on, nothing written. A save and a publish return the version they leave, which the builder
+  sends with its next write; after a discard it reloads the workflow, version
+  and all. A `PATCH` of other fields alone (the list's on/off toggle) needs
+  none.
+- **Publish checks twice.** Once against the draft it reads, before
+  validation, so a stale builder is told to reload rather than shown errors
+  in a draft it has not seen; and again under the row lock, against that
+  read, so what was validated is what is published.
+- **Rollback takes no `If-Match`.** It copies a stored snapshot, not the
+  browser's, so only its own read of the target can be stale. It takes
+  erasure's locks for everyone that read names, then reads the target again:
+  an erasure has either finished, and the second read differs (refused with
+  412, "try the rollback again"), or waits and scrubs the new version too.
+- **A create** (`POST /workflows`, `createInitialVersion`) is intent, and an
+  address in it is written.
+
+Each of these writers takes erasure's locks for everyone its definition names
+before its row lock, the order erasure takes them in. A publish, rollback or
+create inserts a new version row, which an erasure already scanning the
+versions would not see; with the locks, the erasure scans after the insert
+commits. Erased approver ids are stripped from all of them, as before.
+
+**The reload prompt keeps the canvas.** The builder has no record of which
+edits are unsaved, so the 412 notice says plainly that reloading discards the
+canvas, and offers **Copy my changes** first (the canvas as JSON, as
+**Copy JSON** gives it). It never reloads by itself.
+
+`npm run smoke:erasure-stale-saves` loads a workflow whose draft and
+published version email the person, erases them, shows a save, publish and
+discard from that builder each refused with the draft untouched, rolls back
+to the version that named them and gets it without them, then reloads and
+saves their address typed back in.
+
 ### Actions on a run (`row-lock`, t-901)
 
 **Approve, reject and retry-step** read a run's trace and write it back whole,
@@ -973,9 +1027,9 @@ written since, terminal ones included.
   engine's own writes do). Its other repair writes are fixed messages.
 - **The scheduler's run creation** blanks anyone erased **since the tick read
   the schedule**, not ever: an address re-entered in an input template after
-  an older erasure is the admin's, on purpose, and will reach the run. The
-  schedule routes still refuse any address ever erased until t-899 converts
-  them, so nothing reaches a template that way yet.
+  an older erasure is the admin's, on purpose, and will reach the run. Since
+  t-899 the schedule routes save such an address typed into a freshly loaded
+  form, so this is how it reaches a template.
 - **Waiting for the row** past `RUN_ROW_WRITE_OPTIONS` (an erasure holding it,
   a busy pool) answers 409, "the run is busy; nothing was changed".
 - **A crash repair that fails** sends its hook a fixed message, since the
@@ -1017,17 +1071,17 @@ That is why it is sealed (code review, owner ruling 2026-10-23).
 So the exporter stamps `exportedAt` **before** it reads, and seals
 (`exportSeal`, `lib/orchestration/backup/export-seal.ts`) the date, the org it
 exported, and every contact address the bundle carries: the email
-subscriptions' and the escalation list's as two lists, normalised and sorted,
-repeats kept, so an address moved or copied from one to the other breaks it
-too. It is an HMAC
+subscriptions', the escalation list's and the workflow definitions' (t-900) as
+three lists, normalised and sorted, repeats kept, so an address moved or
+copied from one to another breaks it too. It is an HMAC
 keyed by this install's `BETTER_AUTH_SECRET`, and the signed bytes carry their
 own scheme tag, so neither scheme that shares the secret (approval tokens,
 storage tokens) can mint one.
 
-| Bundle                                                                                           | Email subscriptions, escalation list                                                                               | Workflow definitions        |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | --------------------------- |
-| Sealed by this install, imported into the org it came from, date and addresses untouched         | people erased since `exportedAt` (less `COPY_CLOCK_SKEW_MS`) stripped; the rest kept, with a warning counting them | anyone ever erased stripped |
-| Anything else: unsealed (every bundle exported before t-902), another install's or org's, edited | anyone ever erased stripped                                                                                        | anyone ever erased stripped |
+| Bundle                                                                                                                | Addresses: email subscriptions, escalation list, workflow definitions                                              | Approver ids in workflows   |
+| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| Sealed by this install, imported into the org it came from, date and addresses untouched                              | people erased since `exportedAt` (less `COPY_CLOCK_SKEW_MS`) stripped; the rest kept, with a warning counting them | anyone ever erased stripped |
+| Anything else: unsealed (every bundle exported before t-902), sealed before t-900, another install's or org's, edited | anyone ever erased stripped                                                                                        | anyone ever erased stripped |
 
 A sealed import that keeps an address erased before the export says so in its
 warnings, counting the ones it wrote back and never naming them. A bundle that
@@ -1043,11 +1097,11 @@ counted in the warning. A contact with no account cannot be erased a second
 time, so only the admin's restore choice stands between them. Strip it after
 the restore, or restore from a backup taken after it was removed.
 
-Workflow definitions keep the all-time check until t-900, and are not sealed.
-`createInitialVersion` still refuses an ever-erased address, so keeping one
-would fail the whole import; an existing workflow's new version follows the
-same rule so the two agree. An approver's user id is stripped whenever it was
-erased: nobody can re-add an account that is gone.
+Workflow definitions joined the seal in t-900, once `createInitialVersion`
+stopped refusing an ever-erased address. A bundle sealed before then covers
+no workflow addresses, so it no longer verifies, and its import counts every
+erasure, as an unsealed one does. An approver's user id is stripped whenever
+it was erased: nobody can re-add an account that is gone.
 
 A bundle with no `exportedAt` is still refused by the schema.
 

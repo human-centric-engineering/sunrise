@@ -30,13 +30,14 @@ The publish/draft/rollback model addresses three concrete needs:
   restore the address, and old snapshots would keep their personal data. Only
   those values change; no version is added or renumbered. See
   [Data erasure, step 8](../privacy/data-erasure.md#what-eraseuser-does-beyond-the-cascade).
-- **And no writer puts them back** (t-805). `saveDraft`, `publishDraft`,
-  `rollback` and `createInitialVersion` each refuse, inside their
-  transaction, a definition that names an erased person — so a builder tab, a
-  publish or a rollback that read a copy from before the erasure fails with a
-  `ValidationError` rather than restoring them. Reload and the stripped
-  definition saves. See
-  [Writers that read before an erasure](../privacy/data-erasure.md#writers-that-read-before-an-erasure).
+- **And no writer puts them back** (t-805, §122 t-900). A builder tab opened
+  before the erasure holds the old copy, so its save, publish and discard
+  carry the `definitionVersion` it loaded as `If-Match`, and are refused with
+  412 once erasure (or another admin) has moved the draft or the published
+  version. A rollback reads its target again under erasure's locks. An
+  address typed into a freshly loaded builder saves, erased or not; an erased
+  approver id is always stripped. See
+  [The workflow builder](../privacy/data-erasure.md#the-workflow-builder-version-t-900).
 
 ## Data model
 
@@ -135,16 +136,26 @@ locks this in.
 
 All routes live under `app/api/v1/admin/orchestration/workflows/[id]/`.
 
-| Method  | Path                          | Notes                                                                       |
-| ------- | ----------------------------- | --------------------------------------------------------------------------- |
-| `PATCH` | `/`                           | Definition edits write to `draftDefinition`. Other field updates unchanged. |
-| `POST`  | `/publish`                    | Body `{ changeSummary?: string }`. Returns the new version.                 |
-| `POST`  | `/discard-draft`              | No body. Clears `draftDefinition`. Published version unaffected.            |
-| `POST`  | `/rollback`                   | Body `{ targetVersionId, changeSummary? }`. Creates a NEW version.          |
-| `GET`   | `/versions`                   | Paginated. Returns `{ versions, publishedVersionId, nextCursor }`.          |
-| `GET`   | `/versions/:version`          | Single-version read by integer label.                                       |
-| `POST`  | `/dry-run`                    | Optional `target: 'published' \| 'draft' \| 'version'`. Default published.  |
-| `POST`  | `/execute`, `/execute-stream` | Stamp `versionId` on the new execution row.                                 |
+| Method  | Path                          | Notes                                                                                                   |
+| ------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `PATCH` | `/`                           | Definition edits write to `draftDefinition`, with `If-Match` (below). Other field updates unchanged.    |
+| `POST`  | `/publish`                    | Body `{ changeSummary?: string }`, `If-Match` (below). Returns the new version and `definitionVersion`. |
+| `POST`  | `/discard-draft`              | No body, `If-Match` (below). Clears `draftDefinition`. Published version unaffected.                    |
+| `POST`  | `/rollback`                   | Body `{ targetVersionId, changeSummary? }`. Creates a NEW version. No `If-Match`.                       |
+| `GET`   | `/versions`                   | Paginated. Returns `{ versions, publishedVersionId, nextCursor }`.                                      |
+| `GET`   | `/versions/:version`          | Single-version read by integer label.                                                                   |
+| `POST`  | `/dry-run`                    | Optional `target: 'published' \| 'draft' \| 'version'`. Default published.                              |
+| `POST`  | `/execute`, `/execute-stream` | Stamp `versionId` on the new execution row.                                                             |
+
+**`If-Match`** (§122 t-900). `GET /workflows/:id` returns `definitionVersion`,
+the version of what the builder edits: the draft, or the published snapshot
+when there is none, and which version is published. A `PATCH` that sends
+`draftDefinition` (including `null`), `/publish` and `/discard-draft` send it
+back as `If-Match`: 428 `PRECONDITION_REQUIRED` without one, 412
+`STALE_RECORD` once it has moved on, nothing written. A `PATCH` and a publish
+return the version they leave. A rollback copies a stored snapshot rather than
+a browser copy, and takes none. See
+[Data erasure → The workflow builder](../privacy/data-erasure.md#the-workflow-builder-version-t-900).
 
 POST `/workflows` (create) seeds v1 atomically inside a transaction. The
 created workflow is immediately runnable — admins do not need to publish

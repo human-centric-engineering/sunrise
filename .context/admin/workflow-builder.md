@@ -79,6 +79,17 @@ safe.
 
 Both actions update the status pill in place without a hard refresh.
 
+**A workflow that moved on** (§122 t-900). The builder holds the
+`definitionVersion` it loaded and sends it as `If-Match` on save, publish and
+discard, adopting the one each returns (or reloads, after a discard or a
+rollback). When another admin or an erasure has changed the draft or the
+published version since, the write is refused with 412 and the builder shows
+`<StaleSaveNotice>` above the canvas instead of a red error. The canvas is
+untouched. The builder does not track which edits are unsaved, so the notice
+says reloading discards them and offers **Copy my changes** (the canvas JSON,
+as **Copy JSON** gives it) before **Reload**. See
+[Data erasure → The workflow builder](../privacy/data-erasure.md#the-workflow-builder-version-t-900).
+
 ## Step registry
 
 `lib/orchestration/engine/step-registry.ts` is the data-driven source of truth for pattern step types. The palette iterates over `STEP_REGISTRY` and renders one draggable block per entry; the `PatternNode` custom node looks entries up by `type` for its icon and colour, and calls `getStepOutputs(type, config)` for dynamic output handle counts and labels.
