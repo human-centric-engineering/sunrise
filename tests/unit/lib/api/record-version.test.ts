@@ -43,6 +43,10 @@ describe('recordVersion', () => {
 });
 
 describe('requireIfMatch', () => {
+  it('drops weak tags beside a strong one', () => {
+    expect(requireIfMatch(withIfMatch('W/"cache", "v1"'))).toEqual(['"v1"']);
+  });
+
   it('returns the versions the header names', () => {
     expect(requireIfMatch(withIfMatch('"one"'))).toEqual(['"one"']);
     expect(requireIfMatch(withIfMatch(' "one" , "two" '))).toEqual(['"one"', '"two"']);
@@ -54,6 +58,8 @@ describe('requireIfMatch', () => {
     ['only commas', ' , '],
     ['*', '*'],
     ['* among others', '"one", *'],
+    ["only a weak tag (the settings GET's ETag)", 'W/"abc"'],
+    ['only weak tags', 'W/"a", W/"b"'],
   ])('throws 428 when the header is %s', (_label, value) => {
     expect(() => requireIfMatch(withIfMatch(value))).toThrow(PreconditionRequiredError);
     try {

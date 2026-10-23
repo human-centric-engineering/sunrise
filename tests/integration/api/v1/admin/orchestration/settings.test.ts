@@ -1253,6 +1253,24 @@ describe('Admin Orchestration — /settings', () => {
       expect(body.data.escalationVersion).toBe(escalationVersion(NEXT));
     });
 
+    it('writes the list on a first save that creates the row, as well as on an update', async () => {
+      await PATCH(makePatch({ escalationConfig: NEXT }, escalationVersion(LOADED)));
+
+      const upsert = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0] as {
+        create: { escalationConfig?: unknown };
+        update: { escalationConfig?: unknown };
+      };
+      expect(upsert.create.escalationConfig).toEqual(NEXT);
+      expect(upsert.update.escalationConfig).toEqual(NEXT);
+    });
+
+    it("answers a weak tag sent as If-Match (the GET's ETag) with 428, not as stale", async () => {
+      const res = await PATCH(makePatch({ escalationConfig: NEXT }, 'W/"whole-body"'));
+
+      expect(res.status).toBe(428);
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    });
+
     it('refuses a save of the list with no If-Match with 428, writing nothing', async () => {
       const res = await PATCH(makePatch({ escalationConfig: NEXT }));
       const body = await parseJson<{ error: { code: string } }>(res);

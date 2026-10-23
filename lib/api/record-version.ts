@@ -60,8 +60,8 @@ function stableJson(value: unknown): string {
 }
 
 /**
- * The versions a save's `If-Match` names. Throws 428 when there is none, or
- * when it is `*`.
+ * The versions a save's `If-Match` names. Throws 428 when there is none, when
+ * it is `*`, or when it names only weak tags.
  */
 export function requireIfMatch(request: Request): string[] {
   const header = request.headers.get('If-Match');
@@ -70,7 +70,12 @@ export function requireIfMatch(request: Request): string[] {
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
   if (versions.length === 0 || versions.includes('*')) throw new PreconditionRequiredError();
-  return versions;
+  // A weak tag is a cache validator (`GET /settings` sends one for its whole
+  // body), never a version: sent alone it would be refused as stale on every
+  // try, so it is answered as the missing version it is.
+  const strong = versions.filter((v) => !v.startsWith('W/'));
+  if (strong.length === 0) throw new PreconditionRequiredError();
+  return strong;
 }
 
 /** Throws 412 unless `current` is among the versions the save was loaded at. */

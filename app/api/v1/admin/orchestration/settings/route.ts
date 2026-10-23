@@ -355,6 +355,11 @@ export const PATCH = withAdminAuth(
           searchConfig: body.searchConfig
             ? (body.searchConfig as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          // A first save of the list writes it, so the version this answers
+          // with is the list's, not an empty row's (t-899).
+          ...(updateData.escalationConfig !== undefined
+            ? { escalationConfig: updateData.escalationConfig }
+            : {}),
         },
         update: updateData,
       });

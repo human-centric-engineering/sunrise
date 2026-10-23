@@ -200,6 +200,21 @@ function guardModeToApi(v: string): string | null {
   return v === 'none' ? null : v;
 }
 
+/**
+ * The escalation config a save of these values sends: `null` when escalation
+ * is off. Enabled with no recipients never reaches a save: the schema refuses it.
+ */
+function escalationConfigFrom(
+  enabled: boolean,
+  emailAddresses: string[],
+  notifyOnPriority: (typeof ESCALATION_PRIORITY_FILTERS)[number],
+  webhookUrl: string
+): EscalationConfig | null {
+  return enabled && emailAddresses.length > 0
+    ? { emailAddresses, notifyOnPriority, ...(webhookUrl ? { webhookUrl } : {}) }
+    : null;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function SettingsForm({
@@ -221,6 +236,24 @@ export function SettingsForm({
   );
   // The list changed since this page loaded it, and the save was refused.
   const [escalationStale, setEscalationStale] = React.useState(false);
+  // What the list was when this page loaded it, or last saved it (§122 t-899).
+  // A save sends the list only when it differs: measured against this, not the
+  // form's defaults, which a save does not move on.
+  const [savedEscalation, setSavedEscalation] = React.useState(() => {
+    // As stored, in the shape `escalationConfigFrom` builds: a config with no
+    // recipients left (an erasure took the last, t-791) is still a config, so
+    // turning escalation off is a change.
+    const stored = initialSettings.escalationConfig;
+    return JSON.stringify(
+      stored
+        ? {
+            emailAddresses: stored.emailAddresses,
+            notifyOnPriority: stored.notifyOnPriority,
+            ...(stored.webhookUrl ? { webhookUrl: stored.webhookUrl } : {}),
+          }
+        : null
+    );
+  });
 
   // Mirror the server's SSRF refine so an unsafe webhook is caught beside the
   // field. Without it the PATCH 400s and, because this page saves every
@@ -333,7 +366,7 @@ export function SettingsForm({
     reset,
     watch,
     clearErrors,
-    formState: { errors, isDirty, isSubmitting, dirtyFields },
+    formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: defaults,
@@ -354,13 +387,16 @@ export function SettingsForm({
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
     setError(null);
     setEscalationStale(false);
-    // The list is sent only when it was changed here, so a save of anything
-    // else is not refused because the list moved on (§122 t-899).
-    const escalationChanged =
-      emailsChanged ||
-      !!dirtyFields.escalationEnabled ||
-      !!dirtyFields.escalationPriorityFilter ||
-      !!dirtyFields.escalationWebhookUrl;
+    const escalationConfig = escalationConfigFrom(
+      values.escalationEnabled,
+      escalationEmails,
+      values.escalationPriorityFilter,
+      values.escalationWebhookUrl ?? ''
+    );
+    // The list is sent only when it differs from what this page last loaded or
+    // saved, so a save of anything else is not refused because the list moved
+    // on (§122 t-899).
+    const escalationChanged = JSON.stringify(escalationConfig) !== savedEscalation;
     try {
       // Send searchConfig if the admin has set anything non-default — including
       // just toggling hybrid on with no explicit weights. The Zod schema makes
@@ -386,16 +422,6 @@ export function SettingsForm({
                 : {}),
           }
         : null;
-
-      // Enabled with no recipients never reaches here: the schema refuses it.
-      const escalationConfig =
-        values.escalationEnabled && escalationEmails.length > 0
-          ? {
-              emailAddresses: escalationEmails,
-              notifyOnPriority: values.escalationPriorityFilter,
-              ...(values.escalationWebhookUrl ? { webhookUrl: values.escalationWebhookUrl } : {}),
-            }
-          : null;
 
       const saved = await apiClient.patch<{ escalationVersion?: string }>(
         API.ADMIN.ORCHESTRATION.SETTINGS,
@@ -437,8 +463,9 @@ export function SettingsForm({
       // Only a save that wrote the list moves this page's copy of it on. One
       // that left it alone returns the list's current version, which may
       // already be past an erasure this page still shows the person from.
-      if (escalationChanged && saved.escalationVersion) {
-        setEscalationVersion(saved.escalationVersion);
+      if (escalationChanged) {
+        setSavedEscalation(JSON.stringify(escalationConfig));
+        if (saved.escalationVersion) setEscalationVersion(saved.escalationVersion);
       }
       setSavedAt(new Date());
     } catch (err) {

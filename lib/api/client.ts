@@ -146,6 +146,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
   throw new APIClientError(apiError.message, apiError.code, response.status, apiError.details);
 }
 
+/** Any `HeadersInit` as a plain record; a plain object keeps its keys' case. */
+function headerRecord(init: HeadersInit | undefined): Record<string, string> {
+  if (!init) return {};
+  if (init instanceof Headers || Array.isArray(init)) {
+    return Object.fromEntries(new Headers(init).entries());
+  }
+  return { ...init };
+}
+
 /**
  * Generic HTTP request function
  *
@@ -163,13 +172,14 @@ async function request<T>(method: string, path: string, options?: RequestOptions
 
   // Caller headers are merged in after the rest of their options are spread,
   // so passing one (an If-Match, say) keeps the JSON content type (t-899).
+  // Read through `Headers`, so every form `HeadersInit` takes survives.
   const fetchOptions: RequestInit = {
     method,
     credentials: 'same-origin',
     ...options?.options,
     headers: {
       'Content-Type': 'application/json',
-      ...options?.options?.headers,
+      ...headerRecord(options?.options?.headers),
     },
   };
 

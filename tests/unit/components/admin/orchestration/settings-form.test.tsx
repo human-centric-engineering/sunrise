@@ -985,6 +985,47 @@ describe('SettingsForm', () => {
         expect(options.options?.headers?.['If-Match']).toBe('"v1"');
       });
 
+      it('sends the list again when it is changed back after a save (measured from the last save)', async () => {
+        // Round 3: the form's defaults stay at page load after a save, so a
+        // change back to the loaded value must still be seen as a change.
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ escalationVersion: '"v2"' });
+        const user = userEvent.setup();
+        render(<SettingsForm initialSettings={WITH_LIST} />);
+        const toggle = () =>
+          user.click(screen.getByRole('checkbox', { name: /enable escalation notifications/i }));
+
+        await toggle();
+        await submit();
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+        await toggle();
+        await submit();
+
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(2));
+        const [, options] = await lastPatch();
+        expect(options.body.escalationConfig).toMatchObject({
+          emailAddresses: ['admin@example.com'],
+        });
+        expect(options.options?.headers?.['If-Match']).toBe('"v2"');
+      });
+
+      it('does not resend the list on a later save that leaves it as last saved', async () => {
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ escalationVersion: '"v2"' });
+        const user = userEvent.setup();
+        render(<SettingsForm initialSettings={WITH_LIST} />);
+
+        await addEmail(user, 'ops@example.com');
+        await submit();
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+        await submit();
+
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(2));
+        const [, options] = await lastPatch();
+        expect(options.body).not.toHaveProperty('escalationConfig');
+        expect(options.options?.headers?.['If-Match']).toBeUndefined();
+      });
+
       it('says the list changed, and keeps what was typed, when the save is refused as stale', async () => {
         const { apiClient, APIClientError } = await import('@/lib/api/client');
         vi.mocked(apiClient.patch).mockRejectedValue(
