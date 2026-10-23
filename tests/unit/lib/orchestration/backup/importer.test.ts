@@ -9,7 +9,7 @@
  * @see lib/orchestration/backup/importer.ts
  */
 
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The org's provider policy (§120 t-743): approves everything unless a test
@@ -132,11 +132,10 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', async (importOriginal) => (
 import {
   IMPORTED_FROM_SLUG_KEY,
   IMPORT_TRANSACTION_TIMEOUT_MS,
-  bundleTakenAt,
   importOrchestrationConfig,
   isWorkflowSlugConflict,
 } from '@/lib/orchestration/backup/importer';
-import { sealExportedAt } from '@/lib/orchestration/backup/export-seal';
+import { bundleContacts, sealExport } from '@/lib/orchestration/backup/export-seal';
 import { COPY_CLOCK_SKEW_MS, SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -2731,39 +2730,6 @@ describe('isWorkflowSlugConflict', () => {
   });
 });
 
-describe('bundleTakenAt (§122 t-902)', () => {
-  const NOW = new Date('2026-10-22T12:00:00Z');
-  const AT = '2026-06-01T09:30:00.000Z';
-
-  it("trusts a date this install sealed as the bundle's age", () => {
-    expect(bundleTakenAt(AT, sealExportedAt(AT), NOW)).toEqual(new Date(AT));
-  });
-
-  it('counts every erasure for an unsealed bundle', () => {
-    expect(bundleTakenAt(AT, undefined, NOW)).toBeUndefined();
-  });
-
-  it('counts every erasure when the date was edited after sealing', () => {
-    expect(bundleTakenAt('2026-09-01T09:30:00.000Z', sealExportedAt(AT), NOW)).toBeUndefined();
-  });
-
-  it('counts every erasure for a seal another install made', () => {
-    const elsewhere = createHmac('sha256', 'another-install-secret-at-least-32-chars')
-      .update(`orchestration-backup-exported-at\n${AT}`, 'utf8')
-      .digest('base64url');
-    expect(bundleTakenAt(AT, elsewhere, NOW)).toBeUndefined();
-  });
-
-  it('counts every erasure for a sealed string that is not a date', () => {
-    expect(bundleTakenAt('not a date', sealExportedAt('not a date'), NOW)).toBeUndefined();
-  });
-
-  it('clamps a sealed date ahead of now to now', () => {
-    const ahead = '2026-10-22T12:03:00.000Z';
-    expect(bundleTakenAt(ahead, sealExportedAt(ahead), NOW)).toEqual(NOW);
-  });
-});
-
 describe("importOrchestrationConfig — only people erased after a sealed bundle's exportedAt (§122 t-902)", () => {
   const EXPORTED_AT = '2026-06-01T00:00:00.000Z';
   const ADDRESS = 'readded@example.com';
@@ -2790,18 +2756,35 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     }) as never);
   }
 
-  function bundle(exportedAt: string, exportSeal: string | undefined) {
-    return {
-      ...minPayload,
-      exportedAt,
-      ...(exportSeal === undefined ? {} : { exportSeal }),
-      data: {
-        ...minPayload.data,
-        webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: ADDRESS })],
-      },
-    };
+  type Data = Omit<typeof minPayload.data, 'webhooks' | 'settings'> & {
+    webhooks: Array<ReturnType<typeof makeWebhook> & { channel?: string; emailAddress?: string }>;
+    settings:
+      | (Omit<ReturnType<typeof makeSettings>, 'escalationConfig'> & {
+          escalationConfig: unknown;
+        })
+      | null;
+  };
+  const DATA: Data = {
+    ...minPayload.data,
+    webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: ADDRESS })],
+  };
+
+  /** This install's seal, as the exporter makes it. */
+  function sealFor(data: Data, { exportedAt = EXPORTED_AT, orgId = 'install' } = {}) {
+    return sealExport({ exportedAt, orgId, contacts: bundleContacts(data) });
   }
-  const sealed = () => bundle(EXPORTED_AT, sealExportedAt(EXPORTED_AT));
+
+  function bundle(
+    data: Data = DATA,
+    exportSeal: string | null = sealFor(data),
+    exportedAt = EXPORTED_AT
+  ) {
+    return { ...minPayload, exportedAt, ...(exportSeal === null ? {} : { exportSeal }), data };
+  }
+  const sealed = () => bundle();
+
+  const keptWarning = (w: string) => /Kept \d+ contact address/.test(w);
+  const strippedWarning = (w: string) => /person whose data was erased/.test(w);
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -2810,19 +2793,22 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
     mockTx.aiWebhookSubscription.create.mockReset();
     mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+    mockTx.aiOrchestrationSettings.upsert.mockReset();
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('asks about the contacts only for erasures since the export, less the clock-skew margin', async () => {
+  it('asks about the contacts both ever and since the export, less the clock-skew margin', async () => {
     erasedAt(new Date('2026-01-01T00:00:00Z'));
 
     await importOrchestrationConfig(sealed(), 'user-1', SHARED_SCOPE);
 
-    // First every erasure (the workflows' question, and the locks), then the
-    // contacts' question, anchored.
+    // Locked first, for everyone; then every erasure (to count what is kept),
+    // then the contacts' question, anchored.
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
     expect(mockTx.dataErasureReceipt.findMany).toHaveBeenCalledTimes(2);
     expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).not.toHaveProperty(
       'where.erasedAt'
@@ -2834,42 +2820,97 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     });
   });
 
-  it('keeps an address erased before the export: it was re-added on purpose', async () => {
+  it('keeps a subscription whose address was erased before the export, and says so without naming it', async () => {
     erasedAt(new Date('2026-01-01T00:00:00Z'));
 
     const result = await importOrchestrationConfig(sealed(), 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
     expect(result.webhooks.created).toBe(1);
-    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(false);
+    expect(result.warnings.some(strippedWarning)).toBe(false);
+    const kept = result.warnings.filter(keptWarning);
+    expect(kept).toEqual([expect.stringMatching(/^Kept 1 contact address belonging/)]);
+    expect(kept[0]).not.toContain(ADDRESS);
   });
 
-  it('strips an address erased after the export, and warns', async () => {
+  it('strips a subscription whose address was erased after the export, and warns', async () => {
     erasedAt(new Date('2026-07-01T00:00:00Z'));
 
     const result = await importOrchestrationConfig(sealed(), 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
-    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
+    expect(result.warnings.some(strippedWarning)).toBe(true);
+    expect(result.warnings.some(keptWarning)).toBe(false);
+  });
+
+  describe('the escalation list', () => {
+    const WITH_LIST: Data = {
+      ...minPayload.data,
+      webhooks: [],
+      settings: {
+        ...makeSettings(),
+        escalationConfig: {
+          emailAddresses: [ADDRESS, 'keep@example.com'],
+          notifyOnPriority: 'high',
+        },
+      },
+    };
+    const written = () =>
+      (
+        mockTx.aiOrchestrationSettings.upsert.mock.calls[0]?.[0] as {
+          update: { escalationConfig: { emailAddresses: string[] } };
+        }
+      ).update.escalationConfig.emailAddresses;
+
+    it('keeps an address erased before a sealed export', async () => {
+      erasedAt(new Date('2026-01-01T00:00:00Z'));
+
+      const result = await importOrchestrationConfig(bundle(WITH_LIST), 'user-1', SHARED_SCOPE);
+
+      expect(written()).toEqual([ADDRESS, 'keep@example.com']);
+      expect(result.warnings.some(keptWarning)).toBe(true);
+    });
+
+    it('strips an address erased after a sealed export', async () => {
+      erasedAt(new Date('2026-07-01T00:00:00Z'));
+
+      const result = await importOrchestrationConfig(bundle(WITH_LIST), 'user-1', SHARED_SCOPE);
+
+      expect(written()).toEqual(['keep@example.com']);
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringMatching(/Escalation list.*were removed/)])
+      );
+    });
+
+    it('strips an address erased before the export when the bundle is unsealed', async () => {
+      erasedAt(new Date('2026-01-01T00:00:00Z'));
+
+      await importOrchestrationConfig(bundle(WITH_LIST, null), 'user-1', SHARED_SCOPE);
+
+      expect(written()).toEqual(['keep@example.com']);
+    });
   });
 
   it.each([
-    ['unsealed', () => bundle(EXPORTED_AT, undefined)],
+    ['unsealed', () => bundle(DATA, null)],
+    ['sealed over another date', () => bundle(DATA, sealFor(DATA), '2026-09-01T00:00:00.000Z')],
+    ['sealed for another org', () => bundle(DATA, sealFor(DATA, { orgId: 'org_customer' }))],
     [
-      'sealed over another date',
-      () => bundle('2026-09-01T00:00:00.000Z', sealExportedAt(EXPORTED_AT)),
+      'given the address after it was sealed',
+      () => bundle(DATA, sealFor({ ...DATA, webhooks: [] })),
     ],
-    ['sealed with garbage', () => bundle(EXPORTED_AT, 'not-a-seal')],
+    ['sealed with garbage', () => bundle(DATA, 'not-a-seal')],
   ])('strips an address erased before the export when the bundle is %s', async (_label, make) => {
     erasedAt(new Date('2026-01-01T00:00:00Z'));
 
     const result = await importOrchestrationConfig(make(), 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
-    expect(result.warnings.some((w) => /person whose data was erased/.test(w))).toBe(true);
-    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).not.toHaveProperty(
-      'where.erasedAt'
-    );
+    expect(result.warnings.some(strippedWarning)).toBe(true);
+    expect(result.warnings.some(keptWarning)).toBe(false);
+    for (const [args] of mockTx.dataErasureReceipt.findMany.mock.calls) {
+      expect(args).not.toHaveProperty('where.erasedAt');
+    }
   });
 
   describe('a workflow definition, which keeps the all-time check until t-900', () => {

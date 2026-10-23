@@ -17,7 +17,7 @@
 import { prisma } from '@/lib/db/client';
 import { runAsOrg } from '@/lib/tenancy/context';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
-import { sealExportedAt } from '@/lib/orchestration/backup/export-seal';
+import { bundleContacts, sealExport } from '@/lib/orchestration/backup/export-seal';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
@@ -39,10 +39,10 @@ function withoutImportMarker(metadata: unknown): unknown {
 }
 
 export function exportOrchestrationConfig(scope: BackupScope): Promise<BackupPayload> {
-  return runAsOrg(scope.orgId, () => readConfig(scope.includeShared));
+  return runAsOrg(scope.orgId, () => readConfig(scope.includeShared, scope.orgId));
 }
 
-async function readConfig(includeShared: boolean): Promise<BackupPayload> {
+async function readConfig(includeShared: boolean, orgId: string): Promise<BackupPayload> {
   // Stamped before the reads start, so the copy is no older than the date the
   // importer trusts (§122 t-902): the reads share no snapshot, and one that
   // ran before an erasure committed may still name the person.
@@ -274,7 +274,11 @@ async function readConfig(includeShared: boolean): Promise<BackupPayload> {
   return {
     schemaVersion: 3 as const,
     exportedAt,
-    exportSeal: sealExportedAt(exportedAt),
+    exportSeal: sealExport({
+      exportedAt,
+      orgId,
+      contacts: bundleContacts({ webhooks: exportedWebhooks, settings }),
+    }),
     data: {
       agents: flattenedAgents,
       capabilities,

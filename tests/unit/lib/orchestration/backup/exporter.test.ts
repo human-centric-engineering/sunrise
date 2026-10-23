@@ -48,7 +48,7 @@ vi.mock('@/lib/db/client', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
-import { isSealedByThisInstall, sealExportedAt } from '@/lib/orchestration/backup/export-seal';
+import { isSealedByThisInstall } from '@/lib/orchestration/backup/export-seal';
 import { getTenantContext } from '@/lib/tenancy/context';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
@@ -212,8 +212,12 @@ describe('exportOrchestrationConfig', () => {
       const payload = await exportOrchestrationConfig(SHARED_SCOPE);
 
       expect(payload.exportedAt).toBe(START.toISOString());
-      expect(payload.exportSeal).toBe(sealExportedAt(START.toISOString()));
-      expect(isSealedByThisInstall(payload.exportedAt, payload.exportSeal)).toBe(true);
+      expect(
+        isSealedByThisInstall(
+          { exportedAt: START.toISOString(), orgId: 'install', contacts: [] },
+          payload.exportSeal
+        )
+      ).toBe(true);
     } finally {
       vi.useRealTimers();
       mockFindMany.mockReset();
@@ -348,6 +352,36 @@ describe('exportOrchestrationConfig', () => {
     const payload = await exportOrchestrationConfig(SHARED_SCOPE);
 
     expect(payload.data.webhooks[0].channel).toBe('email');
+  });
+
+  it('seals the org and every contact address it exports, so neither can change (§122 t-902)', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([
+        { ...webhookRow, channel: 'email', emailAddress: 'Ops@Example.com' },
+      ]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({
+      ...settingsRow,
+      escalationConfig: { emailAddresses: ['oncall@example.com'], notifyOnPriority: 'high' },
+    });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    const facts = {
+      exportedAt: payload.exportedAt,
+      orgId: 'install',
+      contacts: ['oncall@example.com', 'ops@example.com'],
+    };
+    expect(isSealedByThisInstall(facts, payload.exportSeal)).toBe(true);
+    expect(isSealedByThisInstall({ ...facts, orgId: 'org_customer' }, payload.exportSeal)).toBe(
+      false
+    );
+    expect(
+      isSealedByThisInstall({ ...facts, contacts: ['ops@example.com'] }, payload.exportSeal)
+    ).toBe(false);
   });
 
   it('returns all four data collections in the correct positions', async () => {

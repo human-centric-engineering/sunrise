@@ -16,54 +16,131 @@ const { SECRET } = vi.hoisted(() => ({
 
 vi.mock('@/lib/env', () => ({ env: { BETTER_AUTH_SECRET: SECRET } }));
 
-import { isSealedByThisInstall, sealExportedAt } from '@/lib/orchestration/backup/export-seal';
+import {
+  bundleContacts,
+  isSealedByThisInstall,
+  sealExport,
+  trustedExportedAt,
+} from '@/lib/orchestration/backup/export-seal';
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 
 const AT = '2026-06-01T09:30:00.000Z';
+const FACTS = { exportedAt: AT, orgId: 'install', contacts: ['ops@example.com'] };
 
-describe('export seal', () => {
-  it('verifies the seal this install made over the same date', () => {
-    expect(isSealedByThisInstall(AT, sealExportedAt(AT))).toBe(true);
+function macOf(secret: string, message: string): string {
+  return createHmac('sha256', secret).update(message, 'utf8').digest('base64url');
+}
+
+describe('sealExport / isSealedByThisInstall', () => {
+  it('verifies the seal this install made over the same facts', () => {
+    expect(isSealedByThisInstall(FACTS, sealExport(FACTS))).toBe(true);
   });
 
-  it('is an HMAC-SHA256 over the scheme tag and the date, keyed by the install secret', () => {
-    const expected = createHmac('sha256', SECRET)
-      .update(`orchestration-backup-exported-at\n${AT}`, 'utf8')
-      .digest('base64url');
-    expect(sealExportedAt(AT)).toBe(expected);
+  it('is an HMAC-SHA256 over the tag and the facts as one JSON array, keyed by the install secret', () => {
+    const message = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com']])}`;
+    expect(sealExport(FACTS)).toBe(macOf(SECRET, message));
+  });
+
+  it('seals the contacts as a set: case, spaces, order and repeats do not matter', () => {
+    const seal = sealExport(FACTS);
+    expect(
+      isSealedByThisInstall({ ...FACTS, contacts: [' OPS@example.com ', 'ops@example.com'] }, seal)
+    ).toBe(true);
+    const two = sealExport({ ...FACTS, contacts: ['b@example.com', 'a@example.com'] });
+    expect(
+      isSealedByThisInstall({ ...FACTS, contacts: ['a@example.com', 'b@example.com'] }, two)
+    ).toBe(true);
+  });
+
+  it.each([
+    ['another date', { ...FACTS, exportedAt: '2026-06-01T09:30:00.001Z' }],
+    ['another org', { ...FACTS, orgId: 'org_customer' }],
+    ['an added contact', { ...FACTS, contacts: ['ops@example.com', 'gone@example.com'] }],
+    ['a removed contact', { ...FACTS, contacts: [] }],
+  ])('refuses a seal checked against %s', (_label, facts) => {
+    expect(isSealedByThisInstall(facts, sealExport(FACTS))).toBe(false);
   });
 
   it('refuses a missing or empty seal', () => {
-    expect(isSealedByThisInstall(AT, undefined)).toBe(false);
-    expect(isSealedByThisInstall(AT, '')).toBe(false);
-  });
-
-  it('refuses a seal over a different date', () => {
-    expect(isSealedByThisInstall('2026-06-01T09:30:00.001Z', sealExportedAt(AT))).toBe(false);
+    expect(isSealedByThisInstall(FACTS, undefined)).toBe(false);
+    expect(isSealedByThisInstall(FACTS, '')).toBe(false);
   });
 
   it('refuses a seal another install made, with its own secret', () => {
-    const elsewhere = createHmac('sha256', 'another-install-secret-at-least-32-chars')
-      .update(`orchestration-backup-exported-at\n${AT}`, 'utf8')
-      .digest('base64url');
-    expect(isSealedByThisInstall(AT, elsewhere)).toBe(false);
+    const message = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com']])}`;
+    expect(
+      isSealedByThisInstall(FACTS, macOf('another-install-secret-at-least-32-chars', message))
+    ).toBe(false);
   });
 
-  it('refuses a MAC over the bare date, without the scheme tag', () => {
-    const untagged = createHmac('sha256', SECRET).update(AT, 'utf8').digest('base64url');
-    expect(isSealedByThisInstall(AT, untagged)).toBe(false);
+  it('refuses a MAC over the facts without the scheme tag', () => {
+    const untagged = macOf(SECRET, JSON.stringify([AT, 'install', ['ops@example.com']]));
+    expect(isSealedByThisInstall(FACTS, untagged)).toBe(false);
   });
 
   it("refuses an approval token's signature, made with the same secret", () => {
     const { token } = generateApprovalToken('cmjbv4i3x00003wsloputgwul', 'approve', 60);
     const [payload, signature] = token.split('.');
-    expect(isSealedByThisInstall(payload, signature)).toBe(false);
+    expect(isSealedByThisInstall({ ...FACTS, exportedAt: payload }, signature)).toBe(false);
   });
 
-  it('refuses a truncated seal and one of the wrong length, without throwing', () => {
-    const seal = sealExportedAt(AT);
-    expect(isSealedByThisInstall(AT, seal.slice(0, -2))).toBe(false);
-    expect(isSealedByThisInstall(AT, `${seal}AA`)).toBe(false);
-    expect(isSealedByThisInstall(AT, '!!!not base64!!!')).toBe(false);
+  it('refuses a truncated seal, one of the wrong length, and junk, without throwing', () => {
+    const seal = sealExport(FACTS);
+    expect(isSealedByThisInstall(FACTS, seal.slice(0, -2))).toBe(false);
+    expect(isSealedByThisInstall(FACTS, `${seal}AA`)).toBe(false);
+    expect(isSealedByThisInstall(FACTS, '!!!not base64!!!')).toBe(false);
+  });
+});
+
+describe('bundleContacts', () => {
+  it('reads the email subscriptions and the escalation list, and nothing else', () => {
+    expect(
+      bundleContacts({
+        webhooks: [
+          { channel: 'email', emailAddress: 'ops@example.com' },
+          { channel: 'webhook', emailAddress: 'ignored@example.com' },
+          { channel: 'email', emailAddress: null },
+        ],
+        settings: { escalationConfig: { emailAddresses: ['oncall@example.com', 7] } },
+      })
+    ).toEqual(['ops@example.com', 'oncall@example.com']);
+  });
+
+  it('reads no escalation list from a bundle without settings, or with a malformed one', () => {
+    expect(bundleContacts({ webhooks: [], settings: null })).toEqual([]);
+    expect(bundleContacts({ webhooks: [], settings: { escalationConfig: 'nope' } })).toEqual([]);
+  });
+});
+
+describe('trustedExportedAt', () => {
+  const NOW = new Date('2026-10-22T12:00:00Z');
+  const DATA = {
+    webhooks: [{ channel: 'email', emailAddress: 'ops@example.com' }],
+    settings: null,
+  };
+  const bundle = (exportSeal: string | undefined, exportedAt = AT) => ({
+    exportedAt,
+    exportSeal,
+    data: DATA,
+  });
+
+  it("trusts a date this install sealed over this org and the bundle's contacts", () => {
+    expect(trustedExportedAt(bundle(sealExport(FACTS)), 'install', NOW)).toEqual(new Date(AT));
+  });
+
+  it('counts every erasure for an unsealed bundle, or one imported into another org', () => {
+    expect(trustedExportedAt(bundle(undefined), 'install', NOW)).toBeUndefined();
+    expect(trustedExportedAt(bundle(sealExport(FACTS)), 'org_customer', NOW)).toBeUndefined();
+  });
+
+  it('counts every erasure for a sealed string that is not a date', () => {
+    const seal = sealExport({ ...FACTS, exportedAt: 'not a date' });
+    expect(trustedExportedAt(bundle(seal, 'not a date'), 'install', NOW)).toBeUndefined();
+  });
+
+  it('clamps a sealed date ahead of now to now', () => {
+    const ahead = '2026-10-22T12:03:00.000Z';
+    const seal = sealExport({ ...FACTS, exportedAt: ahead });
+    expect(trustedExportedAt(bundle(seal, ahead), 'install', NOW)).toEqual(NOW);
   });
 });
