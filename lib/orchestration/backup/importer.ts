@@ -280,8 +280,15 @@ async function importParsed(
         since,
       });
       // Addresses erased before a sealed export that this import writes back,
-      // counted where each is written, so a skipped row is not counted.
-      let keptContacts = 0;
+      // noted where each is written, so a skipped row is not counted; and
+      // counted once each, however many places it appears.
+      const keptContacts = new Set<string>();
+      const noteKept = (addresses: Iterable<string>) => {
+        for (const a of addresses) {
+          const address = normaliseAddress(a);
+          if (erased.everContacts.includes(address)) keptContacts.add(address);
+        }
+      };
 
       // Knowledge tags first — agents reference them by slug, so create/refresh
       // them before the agent import so grant resolution succeeds.
@@ -685,9 +692,7 @@ async function importParsed(
           );
         }
         // Every path below writes the definition.
-        keptContacts += definitionRecipients(
-          definition as unknown as Prisma.JsonValue
-        ).addresses.filter((a) => erased.everContacts.includes(normaliseAddress(a))).length;
+        noteKept(definitionRecipients(definition as unknown as Prisma.JsonValue).addresses);
         if (existing) {
           // Promote the imported snapshot to a new version on the existing workflow.
           const lastVersion = await tx.aiWorkflowVersion.findFirst({
@@ -809,9 +814,7 @@ async function importParsed(
           result.webhooks.skipped++;
           continue;
         }
-        if (channel === 'email' && erased.everContacts.includes(normaliseAddress(destination))) {
-          keptContacts++;
-        }
+        if (channel === 'email') noteKept([destination]);
 
         if (channel === 'webhook') {
           result.warnings.push(
@@ -862,9 +865,7 @@ async function importParsed(
             'Escalation list: addresses belonging to people whose data was erased were removed'
           );
         }
-        keptContacts += escalationAddresses(escalationConfig).filter((a) =>
-          erased.everContacts.includes(normaliseAddress(a))
-        ).length;
+        noteKept(escalationAddresses(escalationConfig));
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },
           create: {
@@ -909,7 +910,7 @@ async function importParsed(
         });
         result.settingsUpdated = true;
       }
-      if (keptContacts > 0) result.warnings.push(keptContactsWarning(keptContacts));
+      if (keptContacts.size > 0) result.warnings.push(keptContactsWarning(keptContacts.size));
     },
     { timeout: IMPORT_TRANSACTION_TIMEOUT_MS }
   );

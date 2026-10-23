@@ -1478,19 +1478,19 @@ export const dryRunWorkflowBodySchema = z
   });
 
 /**
- * Create workflow schema (POST /api/v1/admin/orchestration/workflows)
- */
-/**
- * The stored workflow a definition was copied from, and the
- * `definitionVersion` it was copied at (§122 t-900): a custom template applied
- * in the builder, or a duplicated workflow. Checked under erasure's locks, so
- * a copy taken before an erasure scrubbed its source is refused with 412.
+ * The stored workflow a definition was copied from, and the version it was
+ * copied at (§122 t-900): a custom template applied in the builder, a
+ * duplicated workflow. Checked under erasure's locks, so a copy taken before
+ * an erasure scrubbed its source is refused with 412.
  */
 export const copiedFromSchema = z.object({
   workflowId: cuidSchema,
   definitionVersion: z.string().min(1).max(200),
 });
 
+/**
+ * Create workflow schema (POST /api/v1/admin/orchestration/workflows)
+ */
 export const createWorkflowSchema = z.object({
   name: z
     .string()

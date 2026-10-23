@@ -121,6 +121,22 @@ export function workflowDefinitionVersion(row: WorkflowDefinitionVersioned): str
   ]);
 }
 
+/**
+ * The version of a workflow's published snapshot alone, for a copy of it (a
+ * custom template applied in the builder, save-as-template): a draft saved on
+ * the source since does not change what was copied, so it does not refuse the
+ * copy. Its own prefix, so it never equals a {@link workflowDefinitionVersion}.
+ */
+export function publishedSnapshotVersion(
+  row: Pick<WorkflowDefinitionVersioned, 'publishedVersionId' | 'publishedVersion'>
+): string {
+  return recordVersion([
+    'workflow-published',
+    row.publishedVersionId,
+    row.publishedVersion?.snapshot ?? null,
+  ]);
+}
+
 /** Lock a subscription for a versioned save. A missing row takes nothing. */
 export async function lockSubscriptionRow(tx: LockClient, id: string): Promise<void> {
   await tx.$queryRaw`SELECT id FROM ai_webhook_subscription WHERE id = ${id} FOR NO KEY UPDATE`;

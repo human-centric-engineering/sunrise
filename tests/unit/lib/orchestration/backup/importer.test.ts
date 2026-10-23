@@ -3034,6 +3034,21 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
       ]);
     });
 
+    it('counts a kept address once, however many places it is written', async () => {
+      const both: Data = {
+        ...WORKFLOW_DATA,
+        webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: ADDRESS })],
+      };
+
+      const result = await importOrchestrationConfig(bundle(both), 'user-1', SHARED_SCOPE);
+
+      // In the workflow's recipients and in an email subscription: one address.
+      expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
+      expect(result.warnings.filter(keptWarning)).toEqual([
+        expect.stringMatching(/^Kept 1 contact address belonging/),
+      ]);
+    });
+
     it('still strips an erased approver id: nobody can re-add an id', async () => {
       const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
 

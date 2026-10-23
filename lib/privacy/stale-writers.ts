@@ -147,15 +147,6 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
       'subscription has moved on, checked under the row lock erasure takes (t-899).',
   },
   {
-    file: 'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
-    model: 'AiWorkflow',
-    anchor: 'version',
-    how:
-      'Clears the draft to null when the builder sends the definition version it loaded ' +
-      '(If-Match) and the workflow has not moved on, under the row lock erasure takes (t-900). ' +
-      'Edits go through `saveDraft` in `version-service`.',
-  },
-  {
     file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.ts',
     model: 'AiWorkflowSchedule',
     anchor: 'version',
@@ -304,6 +295,15 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     model: 'AiWorkflowSchedule',
     anchor: 'intent',
     how: 'Creates a schedule from the request. Nothing stored is copied (t-899).',
+  },
+  {
+    file: 'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
+    model: 'AiWorkflow',
+    anchor: 'intent',
+    how:
+      "Writes only the request's name, slug, toggles and cost cap (`data: fields`, which the " +
+      'scanner cannot read), none of which erasure scrubs. Draft saves and clears go through ' +
+      '`saveDraft` and `discardDraft` in `version-service`, checked by version (t-900).',
   },
   {
     file: 'lib/privacy/config-recipients.ts',

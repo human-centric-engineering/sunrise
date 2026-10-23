@@ -64,7 +64,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
-import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
+import { publishedSnapshotVersion } from '@/lib/orchestration/config-versions';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
@@ -268,7 +268,7 @@ describe('GET /workflows/templates', () => {
         // What a workflow made from it sends back as copiedFrom (§122 t-900).
         copySource: {
           workflowId: 'cmjbv4i3x00003wslotemplate',
-          definitionVersion: workflowDefinitionVersion(customRow()),
+          definitionVersion: publishedSnapshotVersion(customRow()),
         },
       },
       expect.objectContaining({ slug: 'unpublished', workflowDefinition: null }),

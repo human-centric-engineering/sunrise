@@ -701,6 +701,8 @@ function WorkflowBuilderInner({
         // Only with the canvas it describes: a version for content the canvas
         // does not hold would let the next save write that over it.
         setDefinitionVersion(fresh.definitionVersion);
+        // The canvas is current again, so the reload prompt no longer applies.
+        setStale(false);
       }
       // A rollback creates a new published version and clears the draft —
       // sync the toolbar pill to match.
@@ -778,6 +780,8 @@ function WorkflowBuilderInner({
         setEdges(revertedEdges);
         // As after a rollback: the version only with the canvas it describes.
         setDefinitionVersion(fresh.definitionVersion);
+        // The canvas is current again, so the reload prompt no longer applies.
+        setStale(false);
       }
       setHasDraft(false);
       router.refresh();

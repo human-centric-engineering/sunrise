@@ -95,7 +95,10 @@ import {
   getVersion,
 } from '@/lib/orchestration/workflows/version-service';
 import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
-import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
+import {
+  publishedSnapshotVersion,
+  workflowDefinitionVersion,
+} from '@/lib/orchestration/config-versions';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -1252,4 +1255,74 @@ describe('the version each write leaves, and fields written alongside a draft (�
       txState.workflowUpdate.mock.invocationCallOrder[0]
     );
   });
+});
+
+describe('a copy of the published snapshot ignores a draft saved on its source (§122 t-900 review)', () => {
+  const SOURCE_ID = 'cmjbv4i3x00003wslotemplate';
+  const PUBLISHED = { publishedVersionId: 'v1', publishedVersion: { snapshot: VALID_DEF } };
+  function copyTx(stored: unknown) {
+    return {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      dataErasureReceipt: { findMany: vi.fn().mockResolvedValue([]) },
+      user: { findMany: vi.fn().mockResolvedValue([]) },
+      aiWorkflow: { update: vi.fn(), findUnique: vi.fn().mockResolvedValue(stored) },
+      aiWorkflowVersion: { create: vi.fn().mockResolvedValue(makeVersion()) },
+    };
+  }
+  const create = (tx: unknown, definitionVersion: string) =>
+    createInitialVersion({
+      tx: tx as never,
+      workflowId: WORKFLOW_ID,
+      definition: ERASABLE,
+      copiedFrom: { workflowId: SOURCE_ID, definitionVersion },
+      userId: ADMIN_ID,
+    });
+
+  it('accepts a template copy after someone saved a draft on the template', async () => {
+    const copiedAt = publishedSnapshotVersion(PUBLISHED as never);
+    const tx = copyTx({ ...PUBLISHED, draftDefinition: ALT_DEF });
+
+    await create(tx, copiedAt);
+
+    expect(tx.aiWorkflowVersion.create).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a template copy once the published snapshot moved on', async () => {
+    const copiedAt = publishedSnapshotVersion(PUBLISHED as never);
+    const tx = copyTx({
+      draftDefinition: null,
+      publishedVersionId: 'v1',
+      publishedVersion: { snapshot: ALT_DEF },
+    });
+
+    await expect(create(tx, copiedAt)).rejects.toBeInstanceOf(StaleRecordError);
+  });
+
+  it('still refuses a Duplicate copy once the draft it copied moved on', async () => {
+    const copiedAt = workflowDefinitionVersion({
+      ...PUBLISHED,
+      draftDefinition: VALID_DEF,
+    } as never);
+    const tx = copyTx({ ...PUBLISHED, draftDefinition: ALT_DEF });
+
+    await expect(create(tx, copiedAt)).rejects.toBeInstanceOf(StaleRecordError);
+  });
+});
+
+it('audits a draft save under the name it wrote, when the save renames the workflow', async () => {
+  given(makeWorkflow());
+  txState.workflowUpdate.mockResolvedValue(makeWorkflow({ name: 'Renamed' }));
+
+  await saveDraft({
+    workflowId: WORKFLOW_ID,
+    loadedAt: current(),
+    definition: ALT_DEF,
+    alongside: { name: 'Renamed' },
+    userId: ADMIN_ID,
+  });
+
+  expect(logAdminAction).toHaveBeenCalledWith(
+    expect.objectContaining({ action: 'workflow.draft.save', entityName: 'Renamed' })
+  );
 });

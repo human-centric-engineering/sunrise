@@ -27,6 +27,7 @@ import {
   assertUnchangedSince,
   lockedVersion,
   lockWorkflowRow,
+  publishedSnapshotVersion,
   WORKFLOW_DEFINITION_VERSION_SELECT,
   workflowDefinitionVersion,
 } from '@/lib/orchestration/config-versions';
@@ -154,9 +155,11 @@ async function lockedWithoutErasedApprovers(
 }
 
 /**
- * The stored workflow a definition was copied from, at the
- * `definitionVersion` it was copied at (§122 t-900): a custom template applied
- * in the builder, a duplicated workflow, a workflow saved as a template.
+ * The stored workflow a definition was copied from, and the version it was
+ * copied at (§122 t-900): `publishedSnapshotVersion` for a copy of the
+ * published snapshot (a custom template applied in the builder, a workflow
+ * saved as a template), `workflowDefinitionVersion` for a copy of what the
+ * builder shows (Duplicate). Either is accepted while it is current.
  */
 export interface CopySource {
   workflowId: string;
@@ -185,7 +188,8 @@ async function assertCopySourceUnchanged(
     where: { id: source.workflowId },
     select: WORKFLOW_DEFINITION_VERSION_SELECT,
   });
-  if (!row || workflowDefinitionVersion(row) !== source.definitionVersion) {
+  const current = row && [workflowDefinitionVersion(row), publishedSnapshotVersion(row)];
+  if (!current?.includes(source.definitionVersion)) {
     throw new StaleRecordError(COPY_SOURCE_MOVED_MESSAGE);
   }
 }
@@ -253,7 +257,7 @@ export async function saveDraft(
   args: SaveDraftArgs
 ): Promise<AiWorkflow & { definitionVersion: string }> {
   const { workflowId, definition, loadedAt, alongside, userId, clientIp } = args;
-  const wf = await loadWorkflow(prisma, workflowId);
+  await loadWorkflow(prisma, workflowId);
 
   // A builder tab opened before a person was erased saves the whole draft it
   // loaded, their address included: refused by its version, under the lock
@@ -276,7 +280,8 @@ export async function saveDraft(
     action: 'workflow.draft.save',
     entityType: 'workflow',
     entityId: workflowId,
-    entityName: wf.name,
+    // As written: a save can rename the workflow alongside the draft.
+    entityName: updated.name,
     metadata: { hasDraft: true },
     clientIp: clientIp ?? null,
   });
@@ -303,7 +308,7 @@ export async function discardDraft(
   args: DiscardDraftArgs
 ): Promise<AiWorkflow & { definitionVersion: string }> {
   const { workflowId, loadedAt, alongside, userId, clientIp } = args;
-  const wf = await loadWorkflow(prisma, workflowId);
+  await loadWorkflow(prisma, workflowId);
 
   const updated = await prisma.$transaction(async (tx) => {
     const record = { kind: 'workflow-definition' as const, id: workflowId };
@@ -320,7 +325,7 @@ export async function discardDraft(
     action: 'workflow.draft.discard',
     entityType: 'workflow',
     entityId: workflowId,
-    entityName: wf.name,
+    entityName: updated.name,
     clientIp: clientIp ?? null,
   });
 

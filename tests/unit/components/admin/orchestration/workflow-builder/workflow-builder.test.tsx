@@ -2168,6 +2168,27 @@ describe('WorkflowBuilder', () => {
       expect(ifMatch(vi.mocked(apiClient.patch).mock.calls[0]?.[1])).toBe('"v-loaded"');
     });
 
+    it('clears the reload prompt once a rollback has given it a current canvas', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.patch).mockRejectedValueOnce(STALE());
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
+        return Promise.resolve({
+          ...makeWorkflow({ id: 'wf-stale' }),
+          definitionVersion: '"v-after-rollback"',
+        });
+      });
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      expect(await screen.findByText(/changed since you opened it/i)).toBeInTheDocument();
+      await user.click(screen.getByTestId('mock-history-revert'));
+
+      await waitFor(() =>
+        expect(screen.queryByText(/changed since you opened it/i)).not.toBeInTheDocument()
+      );
+    });
+
     it('adopts the version a successful discard reloads with', async () => {
       const user = userEvent.setup();
       vi.stubGlobal(

@@ -19,7 +19,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
+import { publishedSnapshotVersion } from '@/lib/orchestration/config-versions';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { findFreeWorkflowSlug } from '@/lib/orchestration/workflows/slug-availability';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -112,7 +112,7 @@ export const POST = withAdminAuth<{ id: string }>(
           definition: sourceDefinition,
           copiedFrom: {
             workflowId: workflow.id,
-            definitionVersion: workflowDefinitionVersion(workflow),
+            definitionVersion: publishedSnapshotVersion(workflow),
           },
           userId: session.user.id,
         });
