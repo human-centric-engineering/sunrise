@@ -61,8 +61,9 @@ export const GET = withAdminAuth<{ id: string }>(
     });
     if (!webhook) throw new NotFoundError('Webhook not found');
 
-    const version = subscriptionVersion(webhook);
-    return successResponse({ ...webhook, version }, undefined, { headers: { ETag: version } });
+    // The version is a field, not the ETag: it covers only what a save
+    // writes, so it would not change with the rest of this body.
+    return successResponse({ ...webhook, version: subscriptionVersion(webhook) });
   },
   {
     tier: 'org',

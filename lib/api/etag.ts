@@ -22,8 +22,15 @@ import { DEFAULT_CACHE_CONTROL } from '@/lib/api/responses';
  * risk is negligible for cache-busting purposes.
  */
 export function computeETag(data: unknown): string {
-  const hash = createHash('sha256').update(JSON.stringify(data)).digest('base64url').slice(0, 27);
-  return `W/"${hash}"`;
+  return `W/"${contentHash(JSON.stringify(data))}"`;
+}
+
+/**
+ * SHA-256 of `text`, truncated to 27 base64url chars (~162 bits). Shared by
+ * {@link computeETag} and `recordVersion` (`lib/api/record-version.ts`).
+ */
+export function contentHash(text: string): string {
+  return createHash('sha256').update(text).digest('base64url').slice(0, 27);
 }
 
 /**

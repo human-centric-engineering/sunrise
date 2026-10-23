@@ -93,6 +93,9 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   const [listError, setListError] = useState<string | null>(null);
   // A toggle refused because the row changed since the list loaded it.
   const [stale, setStale] = useState(false);
+  // Rows with a toggle in flight: a second click would carry the version from
+  // before the first, and be refused as stale by the change it just made.
+  const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<WebhookListItem | null>(null);
 
   const fetchPage = useCallback(
@@ -141,6 +144,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   };
 
   const handleToggleActive = useCallback(async (wh: WebhookListItem, nextActive: boolean) => {
+    setToggling((prev) => new Set(prev).add(wh.id));
     setWebhooks((prev) => prev.map((w) => (w.id === wh.id ? { ...w, isActive: nextActive } : w)));
     try {
       const saved = await apiClient.patch<{ version: string }>(
@@ -163,6 +167,12 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           ? `Could not update webhook: ${err.message}`
           : 'Could not update webhook. Try again.'
       );
+    } finally {
+      setToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(wh.id);
+        return next;
+      });
     }
   }, []);
 
@@ -273,6 +283,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                   <TableCell className="text-center">
                     <Switch
                       checked={wh.isActive}
+                      disabled={toggling.has(wh.id)}
                       onCheckedChange={(v) => void handleToggleActive(wh, v)}
                       aria-label={`Toggle ${truncateUrl(wh.url, 30)} active`}
                     />

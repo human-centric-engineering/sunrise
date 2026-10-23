@@ -45,11 +45,9 @@ async function resolveSchedule(rawId: string, rawScheduleId: string) {
 export const GET = withAdminAuth<Params>(async (_request, _session, { params }) => {
   const { id, scheduleId } = await params;
   const schedule = await resolveSchedule(id, scheduleId);
-  const version = scheduleVersion(schedule);
-
-  return successResponse({ schedule: { ...schedule, version } }, undefined, {
-    headers: { ETag: version },
-  });
+  // The version is a field, not the ETag: it covers only what a save writes,
+  // and `nextRunAt` and `lastRunAt` move without it.
+  return successResponse({ schedule: { ...schedule, version: scheduleVersion(schedule) } });
 });
 
 export const PATCH = withAdminAuth<Params>(

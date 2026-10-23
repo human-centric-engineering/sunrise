@@ -40,6 +40,7 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import {
   getOrchestrationSettings,
   hydrateSettings,
+  parseEscalationConfig,
   parseStoredDefaults,
 } from '@/lib/orchestration/settings';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
@@ -47,15 +48,20 @@ import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 export const GET = withAdminAuth(async (request) => {
   const log = await getRouteLogger(request);
   const settings = await getOrchestrationSettings();
-  // The escalation list's version, for a save of it to send as If-Match
-  // (§122 t-899). Read from the row, not the 30 s cache above, and from the
-  // column as stored, as the PATCH reads it: a stale version would refuse
-  // every save until the cache turned over.
+  // The escalation list, and its version for a save of it to send as If-Match
+  // (§122 t-899), both from one read of the row rather than the 30 s cache
+  // above: the cache is per process, so on another instance it can still hold
+  // a list an erasure has since scrubbed, and a stale list beside a current
+  // version would pass the save's check and write the person back.
   const stored = await prisma.aiOrchestrationSettings.findUnique({
     where: { slug: 'global' },
     select: { escalationConfig: true },
   });
-  const body = { ...settings, escalationVersion: escalationVersion(stored?.escalationConfig) };
+  const body = {
+    ...settings,
+    escalationConfig: parseEscalationConfig(stored?.escalationConfig),
+    escalationVersion: escalationVersion(stored?.escalationConfig),
+  };
 
   const etag = computeETag(body);
   const notModified = checkConditional(request, etag);

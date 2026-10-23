@@ -161,14 +161,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
 async function request<T>(method: string, path: string, options?: RequestOptions): Promise<T> {
   const url = buildURL(path, options?.params);
 
+  // Caller headers are merged in after the rest of their options are spread,
+  // so passing one (an If-Match, say) keeps the JSON content type (t-899).
   const fetchOptions: RequestInit = {
     method,
+    credentials: 'same-origin',
+    ...options?.options,
     headers: {
       'Content-Type': 'application/json',
       ...options?.options?.headers,
     },
-    credentials: 'same-origin',
-    ...options?.options,
   };
 
   // Add body for non-GET requests

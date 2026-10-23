@@ -230,6 +230,34 @@ describe('WebhooksTable', () => {
     });
   });
 
+  it('disables the switch while its toggle is in flight, then takes the version it returns (t-899)', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let settle: (v: unknown) => void = () => undefined;
+    vi.mocked(apiClient.patch).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+    const switches = screen.getAllByRole('switch');
+
+    await user.click(switches[0]);
+    expect(switches[0]).toBeDisabled();
+    settle({ version: '"after"' });
+
+    await waitFor(() => expect(switches[0]).not.toBeDisabled());
+    vi.mocked(apiClient.patch).mockResolvedValue({ version: '"later"' });
+    await user.click(switches[0]);
+    expect(vi.mocked(apiClient.patch).mock.calls[1]?.[1]).toMatchObject({
+      options: { headers: { 'If-Match': '"after"' } },
+    });
+  });
+
   it('reverts the switch and offers to reload the list when the toggle is refused as stale (t-899)', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(

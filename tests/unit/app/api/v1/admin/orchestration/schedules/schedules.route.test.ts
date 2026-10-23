@@ -364,7 +364,7 @@ describe('Schedule CRUD API', () => {
       expect(res.status).toBe(200);
       expect(json.data.schedule.id).toBe(VALID_SCHED_ID);
       expect(json.data.schedule.version).toBe(LOADED_VERSION);
-      expect(res.headers.get('ETag')).toBe(LOADED_VERSION);
+      expect(res.headers.get('ETag')).toBeNull();
     });
 
     it('returns 404 when schedule not found', async () => {

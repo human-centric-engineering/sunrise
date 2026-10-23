@@ -210,7 +210,7 @@ describe('GET /api/v1/admin/orchestration/webhooks/:id', () => {
       expect(data.data.url).toBe('https://example.com/webhook');
     });
 
-    it('returns the version a save sends back, in the body and as the ETag (t-899)', async () => {
+    it('returns the version a save sends back, in the body and not as the ETag (t-899)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
         makeWebhookRow() as never
@@ -220,7 +220,8 @@ describe('GET /api/v1/admin/orchestration/webhooks/:id', () => {
 
       const data = await parseJson<{ data: { version: string } }>(response);
       expect(data.data.version).toBe(LOADED_VERSION);
-      expect(response.headers.get('ETag')).toBe(LOADED_VERSION);
+      // It covers only what a save writes, so it is no ETag for this body.
+      expect(response.headers.get('ETag')).toBeNull();
     });
 
     it('does not return the secret field', async () => {

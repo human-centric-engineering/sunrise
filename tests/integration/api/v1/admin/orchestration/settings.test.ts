@@ -1215,6 +1215,27 @@ describe('Admin Orchestration — /settings', () => {
       } as never);
     });
 
+    it('returns the list from the same read as its version, not from the cache', async () => {
+      // The cache (filled on first read) holds the list with Jane in it; the
+      // row has since been scrubbed. The page must see the row's list with
+      // the row's version, or its save would carry Jane back past the check.
+      const withJane = {
+        emailAddresses: ['ops@example.com', 'jane@example.com'],
+        notifyOnPriority: 'all',
+      };
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique)
+        .mockResolvedValueOnce({ ...makeSettingsRow(), escalationConfig: withJane } as never)
+        .mockResolvedValue({ ...makeSettingsRow(), escalationConfig: LOADED } as never);
+
+      const res = await GET(makeGet());
+      const body = await parseJson<{
+        data: { escalationConfig: { emailAddresses: string[] }; escalationVersion: string };
+      }>(res);
+
+      expect(body.data.escalationConfig.emailAddresses).toEqual(['ops@example.com']);
+      expect(body.data.escalationVersion).toBe(escalationVersion(LOADED));
+    });
+
     it("returns the list's version from GET, read from the row", async () => {
       const res = await GET(makeGet());
       const body = await parseJson<{ data: { escalationVersion: string } }>(res);

@@ -48,6 +48,7 @@ vi.mock('@/lib/api/client', () => ({
 }));
 
 const FULL_SETTINGS: OrchestrationSettings = {
+  escalationVersion: '"v0"',
   inputGuardMode: 'log_only',
   outputGuardMode: 'warn_and_continue',
   citationGuardMode: 'log_only',
@@ -71,6 +72,7 @@ const FULL_SETTINGS: OrchestrationSettings = {
 };
 
 const EMPTY_SETTINGS: OrchestrationSettings = {
+  escalationVersion: '"v0"',
   inputGuardMode: null,
   outputGuardMode: null,
   citationGuardMode: null,
@@ -963,6 +965,24 @@ describe('SettingsForm', () => {
         await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(2));
         const [, options] = await lastPatch();
         expect(options.options?.headers?.['If-Match']).toBe('"v2"');
+      });
+
+      it('keeps the version it loaded after a save that left the list alone', async () => {
+        // The response to an unrelated save carries the list's current
+        // version, which may be past an erasure this page still shows.
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ escalationVersion: '"after-erasure"' });
+        const user = userEvent.setup();
+        render(<SettingsForm initialSettings={WITH_LIST} />);
+
+        await submit();
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+        await addEmail(user, 'ops@example.com');
+        await submit();
+
+        await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(2));
+        const [, options] = await lastPatch();
+        expect(options.options?.headers?.['If-Match']).toBe('"v1"');
       });
 
       it('says the list changed, and keeps what was typed, when the save is refused as stale', async () => {

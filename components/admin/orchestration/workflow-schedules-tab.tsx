@@ -81,6 +81,9 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   const [error, setError] = useState<string | null>(null);
   // A toggle refused because the schedule changed since the tab loaded it.
   const [stale, setStale] = useState(false);
+  // The schedule whose toggle is in flight: a second click before the list
+  // reloads would carry the version from before the first, and be refused.
+  const [toggling, setToggling] = useState<string | null>(null);
 
   // Create dialog state
   const [showCreate, setShowCreate] = useState(false);
@@ -167,18 +170,22 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   };
 
   const handleToggle = async (schedule: Schedule) => {
+    setToggling(schedule.id);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.workflowScheduleById(workflowId, schedule.id), {
         body: { isEnabled: !schedule.isEnabled },
         options: { headers: { 'If-Match': schedule.version } },
       });
-      void fetchSchedules();
+      // Awaited, so the switch stays disabled until the row's new version is in.
+      await fetchSchedules();
     } catch (err) {
       if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
         setStale(true);
         return;
       }
       // Otherwise silent — the UI still shows the old state
+    } finally {
+      setToggling(null);
     }
   };
 
@@ -259,6 +266,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
               <div className="flex items-center gap-2">
                 <Switch
                   checked={s.isEnabled}
+                  disabled={toggling === s.id}
                   onCheckedChange={() => void handleToggle(s)}
                   aria-label={`Toggle ${s.name}`}
                 />

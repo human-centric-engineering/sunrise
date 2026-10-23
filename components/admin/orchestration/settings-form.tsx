@@ -82,8 +82,9 @@ export interface OrchestrationSettings {
   /**
    * The escalation list's version, sent back as If-Match when a save changes
    * the list (§122 t-899). A save that leaves the list alone does not send it.
+   * Required: without it the form could not save the list at all.
    */
-  escalationVersion?: string;
+  escalationVersion: string;
   voiceInputGloballyEnabled?: boolean;
   imageInputGloballyEnabled?: boolean;
   documentInputGloballyEnabled?: boolean;
@@ -399,9 +400,7 @@ export function SettingsForm({
       const saved = await apiClient.patch<{ escalationVersion?: string }>(
         API.ADMIN.ORCHESTRATION.SETTINGS,
         {
-          ...(escalationChanged && escalationVersion
-            ? { options: { headers: { 'If-Match': escalationVersion } } }
-            : {}),
+          ...(escalationChanged ? { options: { headers: { 'If-Match': escalationVersion } } } : {}),
           body: {
             inputGuardMode: guardModeToApi(values.inputGuardMode),
             outputGuardMode: guardModeToApi(values.outputGuardMode),
@@ -435,7 +434,12 @@ export function SettingsForm({
       );
       reset(undefined, { keepValues: true });
       setSavedEmails([...escalationEmails]);
-      if (saved.escalationVersion) setEscalationVersion(saved.escalationVersion);
+      // Only a save that wrote the list moves this page's copy of it on. One
+      // that left it alone returns the list's current version, which may
+      // already be past an erasure this page still shows the person from.
+      if (escalationChanged && saved.escalationVersion) {
+        setEscalationVersion(saved.escalationVersion);
+      }
       setSavedAt(new Date());
     } catch (err) {
       if (err instanceof APIClientError && err.code === 'STALE_RECORD') {

@@ -299,6 +299,29 @@ describe('WorkflowSchedulesTab', () => {
     expect(apiClient.get).toHaveBeenCalledTimes(2);
   });
 
+  it('toggle in flight — the switch stays disabled until the list has reloaded (t-899)', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.get).mockResolvedValue(POPULATED_DATA);
+    let settle: (v: unknown) => void = () => undefined;
+    vi.mocked(apiClient.patch).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    render(<WorkflowSchedulesTab workflowId="wf-1" />);
+    await waitFor(() => {
+      expect(screen.getByText('Daily Morning Run')).toBeInTheDocument();
+    });
+    const toggle = screen.getByRole('switch', { name: /toggle daily morning run/i });
+
+    await user.click(toggle);
+
+    expect(toggle).toBeDisabled();
+    settle({});
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /toggle daily morning run/i })).not.toBeDisabled()
+    );
+  });
+
   it('toggle refused as stale — says the schedule changed, and reloads the list on request (t-899)', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue(POPULATED_DATA);

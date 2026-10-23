@@ -15,8 +15,9 @@
  * changes nothing.
  *
  * **The protocol.**
- *   • A read returns the version, as a `version` field (and `ETag` where it
- *     reads a single record).
+ *   • A read returns the version, as a `version` field. Not as the `ETag`: it
+ *     covers only what a save writes, so the rest of the body can change
+ *     without it.
  *   • A save sends it back as `If-Match`. Without one it is refused with 428
  *     ({@link PreconditionRequiredError}); `*` is refused the same way, since
  *     it would match any version. Required, not optional (owner ruling,
@@ -32,7 +33,7 @@
  * @see .context/privacy/data-erasure.md — "Saves of a record that moved on"
  */
 
-import { createHash } from 'crypto';
+import { contentHash } from '@/lib/api/etag';
 import { PreconditionRequiredError, StaleRecordError } from '@/lib/api/errors';
 
 /**
@@ -40,14 +41,17 @@ import { PreconditionRequiredError, StaleRecordError } from '@/lib/api/errors';
  * quoted. Pass the same fields, picked the same way, wherever it is computed.
  */
 export function recordVersion(content: unknown): string {
-  const hash = createHash('sha256').update(stableJson(content)).digest('base64url').slice(0, 27);
-  return `"${hash}"`;
+  return `"${contentHash(stableJson(content))}"`;
 }
 
-/** JSON with object keys sorted, so a JSONB column's key order cannot change a version. */
+/**
+ * JSON with object keys sorted, so a JSONB column's key order cannot change a
+ * version. A Date has already become its ISO string by the time the replacer
+ * sees it (`toJSON` runs first).
+ */
 function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) =>
-    v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)
+    v !== null && typeof v === 'object' && !Array.isArray(v)
       ? Object.fromEntries(
           Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))
         )
