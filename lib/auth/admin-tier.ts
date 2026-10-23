@@ -363,8 +363,19 @@ export function effectiveRouteTier(
   closed: readonly string[]
 ): AdminTier | undefined {
   if (!declared || closed.length === 0) return declared;
-  const section = adminSectionOf(pathname);
-  if (!pathname || (section !== null && closed.includes(section))) return undefined;
+  if (!pathname) return undefined;
+  // Judged decoded: `/api/v1/admin/%6Frchestration/…` names the same section.
+  // Next 16 does not route that spelling to the handler today, but a rewrite
+  // or a later router might, and the raw string would not match. A pathname
+  // that will not decode is one this cannot judge, so it opens nothing.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return undefined;
+  }
+  const section = adminSectionOf(decoded);
+  if (section !== null && closed.includes(section)) return undefined;
   return declared;
 }
 

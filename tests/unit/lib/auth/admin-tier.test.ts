@@ -242,6 +242,24 @@ describe('effectiveRouteTier', () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    ['an encoded letter', '/api/v1/admin/%6Frchestration/agents'],
+    ['an encoded slash', '/api/v1/admin/orchestration%2Fagents'],
+  ])('reads the section through %s, which names the same route', (_l, path) => {
+    expect(effectiveRouteTier('org', path, ['orchestration'])).toBeUndefined();
+    // Control: the same spelling outside a closed section keeps its tier.
+    expect(
+      effectiveRouteTier('org', path.replace('rchestration', 'thers'), ['orchestration'])
+    ).toBe('org');
+  });
+
+  it('is the platform’s for a pathname that will not decode', () => {
+    expect(
+      effectiveRouteTier('org', '/api/v1/admin/%E0%A4%A/agents', ['orchestration'])
+    ).toBeUndefined();
+    expect(effectiveRouteTier('org', '/api/v1/admin/%E0%A4%A/agents', [])).toBe('org');
+  });
+
   it('is the platform’s with a section closed and no pathname to judge', () => {
     expect(effectiveRouteTier('org', undefined, ['orchestration'])).toBeUndefined();
   });
