@@ -997,8 +997,11 @@ the old copy back. So the builder works as the forms above do:
   it is open, **Duplicate** in the list, and **save-as-template** each copy a
   definition erasure scrubs. So the copy names its source as `copiedFrom:
 { workflowId, definitionVersion }`: the catalogue gives each custom template
-  its `copySource`, Duplicate sends the version its read returned, and
-  save-as-template the version of the row it read. `createInitialVersion`
+  its `copySource`, and save-as-template uses the row it read, each the
+  version of the published snapshot alone (`publishedSnapshotVersion`), since
+  that is what they copy and a draft saved on the source changes nothing in
+  it; Duplicate sends the `definitionVersion` its read returned, since it
+  copies the draft when there is one. `createInitialVersion`
   checks it under the source's row lock, after erasure's locks, and refuses a
   source that has moved on (or that the org cannot see) with 412. Built-in
   templates come from code, which erasure never touches, and carry none.
