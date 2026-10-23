@@ -956,7 +956,9 @@ That is why it is sealed (code review, owner ruling 2026-10-23).
 So the exporter stamps `exportedAt` **before** it reads, and seals
 (`exportSeal`, `lib/orchestration/backup/export-seal.ts`) the date, the org it
 exported, and every contact address the bundle carries: the email
-subscriptions' and the escalation list's, normalised and sorted. It is an HMAC
+subscriptions' and the escalation list's as two lists, normalised and sorted,
+repeats kept, so an address moved or copied from one to the other breaks it
+too. It is an HMAC
 keyed by this install's `BETTER_AUTH_SECRET`, and the signed bytes carry their
 own scheme tag, so neither scheme that shares the secret (approval tokens,
 storage tokens) can mint one.
@@ -967,8 +969,18 @@ storage tokens) can mint one.
 | Anything else: unsealed (every bundle exported before t-902), another install's or org's, edited | anyone ever erased stripped                                                                                        | anyone ever erased stripped |
 
 A sealed import that keeps an address erased before the export says so in its
-warnings, counting them and never naming them. Each strip carries the warning
-it always has.
+warnings, counting the ones it wrote back and never naming them. A bundle that
+carries a seal this install does not accept says that too: it was edited,
+came from another org or install, or **the install's `BETTER_AUTH_SECRET` has
+been rotated since**, which unseals every bundle exported before. Each strip
+carries the warning it always has.
+
+**A sealed bundle restores what it held.** Suppose an address was re-added
+after its erasure and then sealed into a backup. If it is later taken out
+again by hand, without a new erasure, restoring that backup brings it back,
+counted in the warning. A contact with no account cannot be erased a second
+time, so only the admin's restore choice stands between them. Strip it after
+the restore, or restore from a backup taken after it was removed.
 
 Workflow definitions keep the all-time check until t-900, and are not sealed.
 `createInitialVersion` still refuses an ever-erased address, so keeping one

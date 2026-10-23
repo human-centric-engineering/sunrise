@@ -32,15 +32,16 @@ release process.
 - **A backup this install sealed keeps contacts re-added after an erasure
   (§122, t-902).** Exports now stamp `exportedAt` before reading and carry
   `exportSeal`: an HMAC keyed by `BETTER_AUTH_SECRET` over `exportedAt`, the
-  exporting org and every contact address in the bundle
+  exporting org, and the subscriptions' and escalation list's addresses
   (`lib/orchestration/backup/export-seal.ts`). Imported into the same org with
   the seal intact, the email subscriptions and escalation list are stripped
   only of people erased since `exportedAt`, so an address an admin re-added
   after an older erasure survives a restore, with a warning counting such
   addresses. Unsealed bundles (every one exported before this), another
   install's or org's, and edited ones still strip anyone ever erased, as do
-  workflow definitions until t-900. Environments sharing a
-  `BETTER_AUTH_SECRET` share seals. See `.context/privacy/data-erasure.md`
+  workflow definitions until t-900; a seal that does not verify is reported.
+  Rotating `BETTER_AUTH_SECRET` unseals earlier bundles, and environments
+  sharing one share seals. See `.context/privacy/data-erasure.md`
   ("Backup import").
 
 - **Actions on a run read and write it under its row lock (§122, t-901).**
