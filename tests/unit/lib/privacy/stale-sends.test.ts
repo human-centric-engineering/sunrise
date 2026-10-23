@@ -27,6 +27,7 @@ import {
   SENDER_LOCK_WAIT_MS,
   decideDeliveryUnderLocks,
   sendHoldingSubjects,
+  settleStoppedDelivery,
 } from '@/lib/privacy/stale-sends';
 import { COPY_CLOCK_SKEW_MS, subjectEmailHash } from '@/lib/privacy/erased-subjects';
 
@@ -263,5 +264,98 @@ describe('decideDeliveryUnderLocks: two anchors (code review round 3)', () => {
     // Re-entered on the subscription after that erasure: sent.
     expect(result).toBe('sent');
     expect(settle).toHaveBeenCalledWith(tx, { kind: 'send', payload: null });
+  });
+});
+
+describe('settleStoppedDelivery (t-926)', () => {
+  function client() {
+    return {
+      aiWebhookDelivery: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      aiEventHookDelivery: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+  }
+  const where = { id: 'd-1', status: { in: ['pending', 'failed'] } };
+
+  it('stops a hook row as erasure stops one, redacted payload included', async () => {
+    const c = client();
+    const payload = { event: 'message.created', data: { userId: null } };
+
+    await settleStoppedDelivery(
+      c as never,
+      'hook',
+      { id: 'd-1', lastError: null },
+      { reason: 'subject erased', payload }
+    );
+
+    expect(c.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
+    expect(c.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+      where,
+      data: {
+        status: 'exhausted',
+        nextRetryAt: null,
+        stoppedByErasure: true,
+        lastError: 'Not retried: subject erased',
+        payload,
+      },
+    });
+  });
+
+  it('stops a webhook row, clearing its address when given, and leaves a null payload alone', async () => {
+    const c = client();
+
+    await settleStoppedDelivery(
+      c as never,
+      'webhook',
+      { id: 'd-1', lastError: 'HTTP 500' },
+      { reason: 'recipient erased', payload: null },
+      { destination: '[erased]', destinationFingerprint: null }
+    );
+
+    expect(c.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
+    const [args] = c.aiWebhookDelivery.updateMany.mock.calls[0] as [
+      { where: unknown; data: Record<string, unknown> },
+    ];
+    expect(args.where).toEqual(where);
+    expect(args.data).toMatchObject({
+      status: 'exhausted',
+      stoppedByErasure: true,
+      destination: '[erased]',
+      destinationFingerprint: null,
+    });
+    expect(args.data.lastError).toMatch(/HTTP 500.*recipient erased/);
+    expect(args.data).not.toHaveProperty('payload');
+  });
+});
+
+describe('decideDeliveryUnderLocks with subjects already resolved (t-926)', () => {
+  it('uses them, looking nothing up', async () => {
+    const lookups = { conversation: vi.fn(), execution: vi.fn() };
+    Object.assign(prismaMock, {
+      aiConversation: { findUnique: lookups.conversation },
+      aiWorkflowExecution: { findUnique: lookups.execution },
+    });
+
+    const result = await decideDeliveryUnderLocks(
+      {
+        eventType: 'budget_exceeded',
+        payload: { event: 'budget_exceeded', data: { conversationId: 'conv-1' } },
+        createdAt: takenAt,
+      },
+      null,
+      takenAt,
+      {
+        sendTimeoutMs: 15_000,
+        holdAcrossSend: false,
+        subjects: { userIds: new Map([['u-9', 'activity']]), dangling: false, runStartedAt: null },
+      },
+      vi.fn().mockResolvedValue(undefined),
+      async () => 'sent'
+    );
+
+    expect(result).toBe('sent');
+    expect(lookups.conversation).not.toHaveBeenCalled();
+    expect(lookups.execution).not.toHaveBeenCalled();
+    // The resolved owner is still locked and checked.
+    expect(tx.dataErasureReceipt.findMany).toHaveBeenCalled();
   });
 });

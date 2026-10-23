@@ -2021,6 +2021,22 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
     expect(takenAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
+  it('resolves who the payload names once for an event fanning out to many hooks (t-926)', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ id: 'hook-1', eventType: 'workflow.failed' }),
+      makeHook({ id: 'hook-2', eventType: 'workflow.failed' }),
+      makeHook({ id: 'hook-3', eventType: 'workflow.failed' }),
+    ] as never);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      userId: 'owner-1',
+    } as never);
+
+    emitHookEvent('workflow.failed', { executionId: 'exec-1' });
+
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3));
+    expect(prisma.aiWorkflowExecution.findUnique).toHaveBeenCalledTimes(1);
+  });
+
   it('does not post an event about the activity of a person erased since, and stops the row', async () => {
     erasedSince.userIds = ['u-1'];
     vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
