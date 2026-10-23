@@ -100,7 +100,7 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
 export type StaleWriteAnchor = 'version' | 'row-lock' | 'taken-at' | 'intent' | 'erasure' | 'seed';
 
 /** The §122 tasks that convert a `pending` writer. */
-export type StaleWriterTask = 't-899' | 't-900';
+export type StaleWriterTask = 't-900';
 
 interface StaleWriterBase {
   /** Repo-relative path of the file that writes. */
@@ -137,6 +137,31 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
   // ---------------------------------------------------------------------
   // Settled.
   // ---------------------------------------------------------------------
+  {
+    file: 'app/api/v1/admin/orchestration/settings/route.ts',
+    model: 'AiOrchestrationSettings',
+    anchor: 'version',
+    how:
+      'A save of the escalation list sends the version it loaded (If-Match) and is refused with ' +
+      '412 once the list has moved on, checked under the row lock erasure takes ' +
+      '(`config-versions.ts`, t-899). Saves of other fields never write the list.',
+  },
+  {
+    file: 'app/api/v1/admin/orchestration/webhooks/[id]/route.ts',
+    model: 'AiWebhookSubscription',
+    anchor: 'version',
+    how:
+      'An edit sends the version it loaded (If-Match) and is refused with 412 once the ' +
+      'subscription has moved on, checked under the row lock erasure takes (t-899).',
+  },
+  {
+    file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.ts',
+    model: 'AiWorkflowSchedule',
+    anchor: 'version',
+    how:
+      'An edit sends the version it loaded (If-Match) and is refused with 412 once the schedule ' +
+      'has moved on, checked under the row lock erasure takes (t-899).',
+  },
   {
     file: 'lib/orchestration/backup/importer.ts',
     model: 'AiWebhookSubscription',
@@ -239,6 +264,18 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     how: 'Creates a run from the request body. Nothing stored is copied.',
   },
   {
+    file: 'app/api/v1/admin/orchestration/webhooks/route.ts',
+    model: 'AiWebhookSubscription',
+    anchor: 'intent',
+    how: 'Creates a subscription from the request. Nothing stored is copied (t-899).',
+  },
+  {
+    file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/route.ts',
+    model: 'AiWorkflowSchedule',
+    anchor: 'intent',
+    how: 'Creates a schedule from the request. Nothing stored is copied (t-899).',
+  },
+  {
     file: 'lib/privacy/config-recipients.ts',
     model: 'AiOrchestrationSettings',
     anchor: 'erasure',
@@ -318,41 +355,6 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
   // ---------------------------------------------------------------------
   // Pending — converted by the named §122 task.
   // ---------------------------------------------------------------------
-  {
-    file: 'app/api/v1/admin/orchestration/settings/route.ts',
-    model: 'AiOrchestrationSettings',
-    anchor: 'pending',
-    task: 't-899',
-    how: 'Saves the escalation list. Refuses any address ever erased (`refuseErasedSubjects`).',
-  },
-  {
-    file: 'app/api/v1/admin/orchestration/webhooks/route.ts',
-    model: 'AiWebhookSubscription',
-    anchor: 'pending',
-    task: 't-899',
-    how: 'Creates a subscription. Refuses any address ever erased (`refuseErasedSubjects`).',
-  },
-  {
-    file: 'app/api/v1/admin/orchestration/webhooks/[id]/route.ts',
-    model: 'AiWebhookSubscription',
-    anchor: 'pending',
-    task: 't-899',
-    how: 'Edits a subscription. Refuses any address ever erased (`refuseErasedSubjects`).',
-  },
-  {
-    file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/route.ts',
-    model: 'AiWorkflowSchedule',
-    anchor: 'pending',
-    task: 't-899',
-    how: 'Creates a schedule. Refuses any address ever erased (`refuseErasedSubjects`).',
-  },
-  {
-    file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.ts',
-    model: 'AiWorkflowSchedule',
-    anchor: 'pending',
-    task: 't-899',
-    how: 'Edits a schedule. Refuses any address ever erased (`refuseErasedSubjects`).',
-  },
   {
     file: 'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
     model: 'AiWorkflow',

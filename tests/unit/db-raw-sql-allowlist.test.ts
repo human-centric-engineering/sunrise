@@ -121,6 +121,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'message-embedding vector INSERT/UPDATE (Prisma cannot write vector columns)',
   },
   {
+    file: 'lib/orchestration/config-versions.ts',
+    calls: 3,
+    why: "a versioned save of a webhook subscription, a schedule or the escalation list locks its row before it reads the version it checks (§122 t-899): `SELECT id … FOR NO KEY UPDATE`, as erasure takes on the same rows; Prisma has no row-lock call. Keyed on the row's id (the settings row on its slug), in the caller's org context, and it returns nothing",
+  },
+  {
     file: 'lib/orchestration/engine/run-row-lock.ts',
     calls: 1,
     why: "an action on a run takes the run's row lock before it reads the trace it writes back (§122 t-901): `SELECT id … FOR NO KEY UPDATE`, as erasure and the engine's writes take; Prisma has no row-lock call. Keyed on the run's id, in the caller's org context, and it returns nothing",
