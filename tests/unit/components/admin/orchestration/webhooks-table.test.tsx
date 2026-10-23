@@ -77,6 +77,7 @@ const MOCK_WEBHOOKS: WebhookListItem[] = [
     createdAt: '2026-01-15T00:00:00Z',
     updatedAt: '2026-01-15T00:00:00Z',
     _count: { deliveries: 12 },
+    version: '"v1"',
   },
   {
     id: 'wh-2',
@@ -89,6 +90,7 @@ const MOCK_WEBHOOKS: WebhookListItem[] = [
     createdAt: '2026-02-01T00:00:00Z',
     updatedAt: '2026-02-01T00:00:00Z',
     _count: { deliveries: 0 },
+    version: '"v2"',
   },
 ];
 
@@ -219,9 +221,36 @@ describe('WebhooksTable', () => {
     await waitFor(() => {
       expect(apiClient.patch).toHaveBeenCalledWith(
         expect.stringContaining('/webhooks/wh-1'),
-        expect.objectContaining({ body: { isActive: false } })
+        expect.objectContaining({
+          body: { isActive: false },
+          // The row's version from the list, as If-Match (t-899)
+          options: { headers: { 'If-Match': '"v1"' } },
+        })
       );
     });
+  });
+
+  it('reverts the switch and offers to reload the list when the toggle is refused as stale (t-899)', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(
+      new APIClientError('This changed since you opened it.', 'STALE_RECORD', 412)
+    );
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+    const switches = screen.getAllByRole('switch');
+
+    await user.click(switches[0]);
+
+    const notice = await screen.findByRole('alert');
+    expect(notice).toHaveTextContent(/that subscription changed since you opened it/i);
+    expect(switches[0]).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByText(/could not update webhook/i)).not.toBeInTheDocument();
   });
 
   // ── New tests ────────────────────────────────────────────────────────────────
@@ -245,6 +274,7 @@ describe('WebhooksTable', () => {
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
       _count: { deliveries: 0 },
+      version: '"v3"',
     };
 
     render(
@@ -281,6 +311,7 @@ describe('WebhooksTable', () => {
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
       _count: { deliveries: 0 },
+      version: '"v4"',
     };
 
     render(
@@ -645,6 +676,7 @@ describe('WebhooksTable', () => {
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
       _count: { deliveries: 0 },
+      version: '"v5"',
     };
 
     render(
@@ -674,6 +706,7 @@ describe('WebhooksTable', () => {
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
       _count: { deliveries: 0 },
+      version: '"v6"',
     };
 
     render(

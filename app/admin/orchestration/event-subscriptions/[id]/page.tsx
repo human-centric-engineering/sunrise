@@ -26,6 +26,8 @@ interface WebhookDetail {
   retryBackoffMs: number[];
   createdAt: string;
   updatedAt: string;
+  /** Sent back as If-Match by the edit form's save (§122 t-899). */
+  version: string;
 }
 
 export default async function WebhookDetailPage({ params }: { params: Promise<{ id: string }> }) {

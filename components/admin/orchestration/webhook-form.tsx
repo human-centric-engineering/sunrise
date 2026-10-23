@@ -40,6 +40,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
 import {
   WEBHOOK_EVENT_TYPES,
   WEBHOOK_MAX_ATTEMPTS_MIN,
@@ -174,6 +175,8 @@ export interface WebhookFormProps {
     description: string | null;
     maxAttempts: number;
     retryBackoffMs: number[];
+    /** The version this page loaded, sent back as If-Match on save (§122 t-899). */
+    version: string;
   };
 }
 
@@ -195,6 +198,8 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The subscription changed since this page loaded it, and the save was refused.
+  const [stale, setStale] = useState(false);
   const [secretRevealed, setSecretRevealed] = useState(false);
   // Briefly latched to give the copy button a "✓ Copied" affordance.
   const [secretCopied, setSecretCopied] = useState(false);
@@ -363,6 +368,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   const onSubmit = async (data: WebhookFormData) => {
     setSubmitting(true);
     setError(null);
+    setStale(false);
     try {
       // Convert the seconds-string the form uses into the ms-array the API expects.
       const retryBackoffMs = parseBackoffSeconds(data.retryBackoffSeconds).map((s) => s * 1000);
@@ -392,6 +398,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
       if (isEdit && webhook) {
         await apiClient.patch(API.ADMIN.ORCHESTRATION.webhookById(webhook.id), {
           body: payload,
+          options: { headers: { 'If-Match': webhook.version } },
         });
         router.push('/admin/orchestration/event-subscriptions');
       } else {
@@ -401,6 +408,10 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         router.push('/admin/orchestration/event-subscriptions');
       }
     } catch (err) {
+      if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
+        setStale(true);
+        return;
+      }
       setError(
         err instanceof APIClientError
           ? err.message
@@ -444,6 +455,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
           {error}
         </div>
       )}
+      {stale && <StaleSaveNotice what="This subscription" />}
 
       {/* Channel selector */}
       <div className="grid gap-2">

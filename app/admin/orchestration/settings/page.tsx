@@ -31,10 +31,11 @@ export const metadata: Metadata = {
  * the error boundary: pre-filling the forms with defaults would let an admin
  * save those defaults over the real settings (#518).
  */
-async function getSettings(): Promise<FullOrchestrationSettings> {
-  const { data } = await requireServerData<FullOrchestrationSettings>(
-    API.ADMIN.ORCHESTRATION.SETTINGS
-  );
+/** The singleton, with the escalation list's version a save of it sends back (§122 t-899). */
+type LoadedSettings = FullOrchestrationSettings & { escalationVersion: string };
+
+async function getSettings(): Promise<LoadedSettings> {
+  const { data } = await requireServerData<LoadedSettings>(API.ADMIN.ORCHESTRATION.SETTINGS);
   return data;
 }
 

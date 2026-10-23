@@ -173,6 +173,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 5,
       retryBackoffMs: [15_000, 60_000, 120_000, 600_000],
+      version: '"v1"',
     };
     render(<WebhookForm mode="edit" webhook={webhook} />);
 
@@ -320,6 +321,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
 
     // Act
@@ -366,6 +368,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -388,7 +391,44 @@ describe('WebhookForm', () => {
       unknown
     >;
     expect(patchBody).toMatchObject({ url: 'https://x.com', isActive: true });
+    // The version the page loaded, as If-Match (t-899)
+    expect(vi.mocked(apiClient.patch).mock.calls[0]?.[1]?.options?.headers).toEqual({
+      'If-Match': '"v1"',
+    });
     expect(pushMock).toHaveBeenCalledWith('/admin/orchestration/event-subscriptions');
+  });
+
+  it('edit mode: says the subscription changed, stays on the page and keeps the edits, when refused as stale (t-899)', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(
+      new APIClientError('This changed since you opened it.', 'STALE_RECORD', 412)
+    );
+    const webhook = {
+      id: 'wh-stale',
+      url: 'https://x.com',
+      events: ['budget_exceeded'],
+      isActive: true,
+      description: 'note',
+      channel: 'webhook' as const,
+      emailAddress: null,
+      agentIds: [],
+      workflowIds: [],
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
+      version: '"v1"',
+    };
+    const user = userEvent.setup();
+    render(<WebhookForm mode="edit" webhook={webhook} />);
+    const description = screen.getByDisplayValue('note');
+    await user.clear(description);
+    await user.type(description, 'edited note');
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    const notice = await screen.findByRole('alert');
+    expect(notice).toHaveTextContent(/this subscription changed since you opened it/i);
+    expect(screen.getByDisplayValue('edited note')).toBeInTheDocument();
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it('edit mode: includes new secret in PATCH body when the user changes it', async () => {
@@ -407,6 +447,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -450,6 +491,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -549,6 +591,7 @@ describe('WebhookForm', () => {
       workflowIds: [],
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -823,6 +866,7 @@ describe('WebhookForm', () => {
       description: null,
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
 
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -904,6 +948,7 @@ describe('WebhookForm', () => {
       description: null,
       maxAttempts: 3,
       retryBackoffMs: [10000, 60000],
+      version: '"v1"',
     };
 
     render(<WebhookForm mode="edit" webhook={webhook} />);
