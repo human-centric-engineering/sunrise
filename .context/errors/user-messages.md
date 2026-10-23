@@ -64,21 +64,23 @@ function getUserFriendlyMessage(
 
 All supported error codes and their user-friendly messages:
 
-| Error Code               | User-Friendly Message                                  |
-| ------------------------ | ------------------------------------------------------ |
-| `UNAUTHORIZED`           | Please sign in to continue.                            |
-| `FORBIDDEN`              | You don't have permission to access this resource.     |
-| `NOT_FOUND`              | The requested resource could not be found.             |
-| `VALIDATION_ERROR`       | Please check your input and try again.                 |
-| `EMAIL_TAKEN`            | This email address is already registered.              |
-| `RATE_LIMIT_EXCEEDED`    | Too many requests. Please try again later.             |
-| `INTERNAL_ERROR`         | Something went wrong. Please try again.                |
-| `CONFLICT`               | This resource already exists.                          |
-| `INVITATION_EXPIRED`     | This invitation has expired. Please request a new one. |
-| `FILE_TOO_LARGE`         | The file is too large. Please choose a smaller file.   |
-| `INVALID_FILE_TYPE`      | This file type is not supported.                       |
-| `UPLOAD_FAILED`          | Failed to upload file. Please try again.               |
-| `STORAGE_NOT_CONFIGURED` | File uploads are not available at this time.           |
+| Error Code               | User-Friendly Message                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `UNAUTHORIZED`           | Please sign in to continue.                                                                       |
+| `FORBIDDEN`              | You don't have permission to access this resource.                                                |
+| `NOT_FOUND`              | The requested resource could not be found.                                                        |
+| `VALIDATION_ERROR`       | Please check your input and try again.                                                            |
+| `EMAIL_TAKEN`            | This email address is already registered.                                                         |
+| `RATE_LIMIT_EXCEEDED`    | Too many requests. Please try again later.                                                        |
+| `INTERNAL_ERROR`         | Something went wrong. Please try again.                                                           |
+| `CONFLICT`               | This resource already exists.                                                                     |
+| `STALE_RECORD`           | This changed since you opened it. Reload to see the current version, then make your change again. |
+| `PRECONDITION_REQUIRED`  | This save did not say which version it was based on. Reload and try again.                        |
+| `INVITATION_EXPIRED`     | This invitation has expired. Please request a new one.                                            |
+| `FILE_TOO_LARGE`         | The file is too large. Please choose a smaller file.                                              |
+| `INVALID_FILE_TYPE`      | This file type is not supported.                                                                  |
+| `UPLOAD_FAILED`          | Failed to upload file. Please try again.                                                          |
+| `STORAGE_NOT_CONFIGURED` | File uploads are not available at this time.                                                      |
 
 ## getContextualErrorMessage()
 

@@ -764,18 +764,18 @@ tab, a publish or rollback in flight, a webhook or schedule edit page — or a
 backup taken before the erasure (t-805). The read is long over by then, so
 row locks cannot stop it.
 
-So each of those writers asks, inside the transaction that writes, whether
-what it is about to write names an erased person —
+The settings form, the webhook subscription edit and the schedule edit refuse
+such a save by **version** since t-899: see
+[Saves of a record that moved on](#saves-of-a-record-that-moved-on-version-t-899).
+The writers below still ask, inside the transaction that writes, whether
+what they are about to write names an erased person —
 `lib/privacy/erased-subjects.ts`, from the erasure receipt
 (`subjectUserId`, and `subjectEmailHash` of the normalised address):
 
 | Writer                                                                     | Names it checks                                                                                                                                           | On a match                                                                                                                                                                                                                          |
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                                                                                                         | 400 on the field                                                                                                                                                                                                                    |
 | `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition                                                                                         | an erased address: `ValidationError`, nothing written; an erased approver id: stripped, the rest written (an opaque id the builder cannot show, and a workflow naming someone erased before t-791 would otherwise never save again) |
 | `rollback`                                                                 | the same, in the target snapshot                                                                                                                          | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
-| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                                                                                                            | 400 on the field                                                                                                                                                                                                                    |
-| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                                                                                                           | 400 on the field                                                                                                                                                                                                                    |
 | Backup import                                                              | all of the above in the bundle; for its email subscriptions and escalation list, only erasures since its `exportedAt` when this install sealed it (t-902) | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
 | Scheduler tick (`processDueSchedules`)                                     | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version                                                 | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                   |
 
@@ -850,9 +850,11 @@ longer than erasure's 60 s and checks that the erasure completes after it. It
 takes a little over a minute.
 
 **A fork's own writer** of a recipient — a module that stores an address or
-user id it notifies — calls `refuseErasedSubjects(tx, { addresses, userIds },
-field)` inside its write transaction, and the same guarantee holds. It also
-declares itself in the stale-writer manifest (below).
+user id it notifies — refuses a stale save by version (`lib/api/record-version.ts`,
+[below](#saves-of-a-record-that-moved-on-version-t-899)), or, where it holds no
+loaded copy to compare, asks `findErasedSubjects(tx, { addresses, userIds })`
+inside its write transaction under the same locks. It also declares itself in
+the stale-writer manifest (below).
 
 ## Writers of scrubbed data (the stale-writer manifest)
 
@@ -887,6 +889,62 @@ cannot put anyone back. Its header says plainly what it still cannot see.
 `scripts/smoke/` and `scripts/spikes/` are not scanned: their fixtures are written to be erased.
 An entry is a file and a model, not a write, so a new write added to a file
 already listed passes: review a change to a listed file against its entry.
+
+### Saves of a record that moved on (`version`, t-899)
+
+An admin opens the escalation settings at 9:00 with Jane on the list. Jane is
+erased at 9:30. At 11:00 the admin saves, and the form sends the list it
+loaded: Jane goes back in. Before t-899 these routes refused any address ever
+erased, which also refused an admin typing Jane's address into a fresh form on
+purpose, for good. Now a save says **which version of the record it loaded**,
+and is refused when the record has moved on, whoever moved it:
+
+- **Read.** `GET /settings` returns `escalationVersion`. A webhook
+  subscription and a schedule carry `version`, in their list and on their own
+  `GET`, where it is also the `ETag`.
+- **Save.** `PATCH /settings` with an `escalationConfig`, `PATCH /webhooks/:id`
+  and `PATCH .../schedules/:scheduleId` send it back as `If-Match`.
+  - Without one, the save is refused with **428** `PRECONDITION_REQUIRED`.
+    `*` is refused the same way. The header is required, not optional (owner
+    ruling, 2026-10-23): a header any client may leave off is a check any
+    client skips.
+  - When the record has moved on, the save is refused with **412**
+    `STALE_RECORD` and nothing is written. The form says so, keeps the
+    admin's edits on the page, and leaves the reload to them
+    (`StaleSaveNotice`).
+  - A settings save that does not write `escalationConfig` needs no
+    `If-Match`. The settings form sends the list only when it changed it, so
+    an erasure that moved the list does not refuse a change to a guard mode.
+- **Create.** `POST /webhooks` and `POST .../schedules` write only what the
+  request carries, and are not checked (`intent`). An address typed in is
+  saved, erased or not.
+
+**The version is the record's content**: a hash of the fields a save of it
+can write (`recordVersion`, `lib/api/record-version.ts`; the picks are in
+`lib/orchestration/config-versions.ts`). Erasure changes those fields, so it
+changes the version, with no column to bump and nothing a raw-SQL writer can
+forget. A field no save writes is left out, so it cannot refuse a save it has
+nothing to do with:
+
+- a schedule's `nextRunAt` and `lastRunAt`, which the tick moves on every
+  firing;
+- a subscription's `secret`, never returned;
+- every settings field but `escalationConfig`.
+
+**The check is under the row lock erasure takes.** `assertUnchangedSince`
+locks the row `FOR NO KEY UPDATE`, reads its current version, and refuses a
+mismatch, inside the transaction that writes. Either the save reads the row
+erasure already scrubbed, and is refused, or erasure waits and scrubs what the
+save wrote. `npm run smoke:erasure-stale-saves` loads each record, erases the
+person, shows the save from that form refused and the row still scrubbed, then
+reloads and saves the address typed back in.
+
+**For an API client** this is a change: read the record, then save it with the
+version the read returned. A fork applies the same three steps to its own
+records: return a version from the read, `requireIfMatch` on the save, and
+`assertUnchangedSince` (or `assertCurrentVersion` over its own lock and
+version) before the write. It then declares the writer `version` in the
+manifest.
 
 ### Actions on a run (`row-lock`, t-901)
 

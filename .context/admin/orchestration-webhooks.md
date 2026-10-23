@@ -199,7 +199,7 @@ Uses admin orchestration webhook endpoints:
 - `GET /webhooks` — list (includes `_count.deliveries`)
 - `POST /webhooks` — create
 - `GET /webhooks/:id` — get
-- `PATCH /webhooks/:id` — update
+- `PATCH /webhooks/:id` — update; sends the `version` its read returned as `If-Match` (428 without one, 412 `STALE_RECORD` when the subscription changed since, an erasure included — t-899). The edit form and the list's active toggle show a notice saying so and keep the admin's edits; see [Saves of a record that moved on](../privacy/data-erasure.md#saves-of-a-record-that-moved-on-version-t-899)
 - `DELETE /webhooks/:id` — delete (its deliveries are kept; see [Where a delivery went](#where-a-delivery-went))
 - `POST /webhooks/:id/test` — send test ping event
 - `GET /webhooks/:id/deliveries` — delivery history (scoped to the caller's own subscriptions, plus ones whose creator was erased where the policy permits)

@@ -143,7 +143,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/templates`                    | GET                | Built-in templates (from code) + the org's own; `?source=`                                                                                                                                                                 | 5.1     |
 | `/workflows/:id/save-as-template`         | POST               | Save a workflow as a reusable template                                                                                                                                                                                     | 5.1     |
 | `/workflows/:id/schedules`                | GET, POST          | List / create cron schedules for a workflow                                                                                                                                                                                | 5.1     |
-| `/workflows/:id/schedules/:scheduleId`    | GET, PATCH, DELETE | Read / update / delete a workflow schedule                                                                                                                                                                                 | 5.1     |
+| `/workflows/:id/schedules/:scheduleId`    | GET, PATCH, DELETE | Read / update / delete a workflow schedule; PATCH needs `If-Match` with the `version` the read returned (428 without, 412 when changed — t-899)                                                                            | 5.1     |
 
 **Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`. Create/update accept an optional `scope` (a flat string→string map stamped onto fired runs; `null` on update clears it via `Prisma.DbNull`) — see [Scheduling — Static scope carrier](../orchestration/scheduling.md#static-scope-carrier). The `POST /triggers` + `PATCH /triggers/:id` inbound-trigger routes accept the same `scope` field.
 
@@ -1165,6 +1165,8 @@ Body for PATCH (`updateOrchestrationSettingsSchema`):
 }
 ```
 
+**A save of `escalationConfig` is versioned** (§122 t-899). `GET` returns `escalationVersion`; a `PATCH` whose body carries `escalationConfig` must send it back as `If-Match`, or it is refused with `428 PRECONDITION_REQUIRED`, and is refused with `412 STALE_RECORD` (nothing written) when the list changed since that read, an erasure included. A `PATCH` that does not write `escalationConfig` needs no `If-Match`. See [Saves of a record that moved on](../privacy/data-erasure.md#saves-of-a-record-that-moved-on-version-t-899).
+
 At least one top-level field must be present. Every model id is validated against the in-memory registry — unknown ids return `400`. `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000.
 
 `voiceInputGloballyEnabled` is the org-wide kill switch for the voice-input feature (default `true`). When `false`, every agent's `enableVoiceInput` flag is treated as off regardless of its own value: the mic surface disappears from admin chat / embed widgets and the transcribe endpoints reject with `VOICE_DISABLED`. Use this for incident response or compliance pause without editing each agent.
@@ -1357,7 +1359,7 @@ Create an event subscription. Channel-discriminated body:
 
 ### `GET / PATCH / DELETE /webhooks/:id`
 
-Standard CRUD for a single event subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ channel?, url?, secret?, emailAddress?, events?, description?, isActive?, maxAttempts?, retryBackoffMs? }`. Channel coherence is enforced: if the patch flips the row's channel, the destination field for the new channel must be present (either in the patch or already on the row). `DELETE` is a hard delete of the subscription; its deliveries are kept, with `subscriptionId` set to null, as the record of where its events went (see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went)).
+Standard CRUD for a single event subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ channel?, url?, secret?, emailAddress?, events?, description?, isActive?, maxAttempts?, retryBackoffMs? }`. Channel coherence is enforced: if the patch flips the row's channel, the destination field for the new channel must be present (either in the patch or already on the row). **`PATCH` is versioned** (§122 t-899): `GET` (and each row of `GET /webhooks`) carries `version`, also the `ETag` on `GET /webhooks/:id`; send it as `If-Match`. No `If-Match` → `428 PRECONDITION_REQUIRED`; a subscription changed since that read, an erasure included → `412 STALE_RECORD`, nothing written. `POST /webhooks` is not checked. See [Saves of a record that moved on](../privacy/data-erasure.md#saves-of-a-record-that-moved-on-version-t-899). `DELETE` is a hard delete of the subscription; its deliveries are kept, with `subscriptionId` set to null, as the record of where its events went (see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went)).
 
 ### `DELETE /webhooks/deliveries/:id`
 

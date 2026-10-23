@@ -44,6 +44,24 @@ release process.
 
 ### Changed
 
+- **Saves of the escalation list, a webhook subscription and a schedule are
+  versioned, and `If-Match` is required (§122, t-899).** `GET /settings`
+  returns `escalationVersion`; webhook subscriptions and schedules carry
+  `version` in their lists and single reads (also the `ETag`). `PATCH
+  /settings` with `escalationConfig`, `PATCH /webhooks/:id` and `PATCH
+  /workflows/:id/schedules/:scheduleId` must send it back as `If-Match`:
+  without it they answer `428 PRECONDITION_REQUIRED`, and when the record
+  changed since it was read, an erasure included, `412 STALE_RECORD` with
+  nothing written. **API clients must read before they save.** A settings
+  PATCH that does not write `escalationConfig` is unchanged. These routes no
+  longer refuse an address ever erased: one typed into a freshly loaded form,
+  or a create, is saved. New `StaleRecordError`, `PreconditionRequiredError`
+  and their codes in `lib/api/errors.ts`; the mechanism, for forks, is
+  `lib/api/record-version.ts`. `refuseErasedSubjects` is removed from
+  `lib/privacy/erased-subjects.ts`: use the versioned save, or
+  `findErasedSubjects`. See `.context/privacy/data-erasure.md` ("Saves of a
+  record that moved on").
+
 - **A backup this install sealed keeps contacts re-added after an erasure
   (§122, t-902).** Exports now stamp `exportedAt` before reading and carry
   `exportSeal`: an HMAC keyed by `BETTER_AUTH_SECRET` over `exportedAt`, the

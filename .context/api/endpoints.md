@@ -162,20 +162,22 @@ The outer route `try-catch` is reserved for fatal errors that return 4xx/5xx. Th
 
 ## Error Codes
 
-| Code                     | HTTP Status | Meaning                             |
-| ------------------------ | ----------- | ----------------------------------- |
-| `UNAUTHORIZED`           | 401         | No valid session                    |
-| `FORBIDDEN`              | 403         | Authenticated but lacks permissions |
-| `NOT_FOUND`              | 404         | Resource doesn't exist              |
-| `VALIDATION_ERROR`       | 400         | Input validation failed             |
-| `EMAIL_TAKEN`            | 400         | Email already registered            |
-| `INVITATION_EXPIRED`     | 400         | Invitation token has expired        |
-| `CONFLICT`               | 409         | Resource already exists             |
-| `FILE_TOO_LARGE`         | 400         | File exceeds max upload size        |
-| `INVALID_FILE_TYPE`      | 400         | Unsupported file format             |
-| `STORAGE_NOT_CONFIGURED` | 503         | File storage backend not available  |
-| `RATE_LIMIT_EXCEEDED`    | 429         | Too many requests                   |
-| `INTERNAL_ERROR`         | 500         | Server error                        |
+| Code                     | HTTP Status | Meaning                                                                               |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------- |
+| `UNAUTHORIZED`           | 401         | No valid session                                                                      |
+| `FORBIDDEN`              | 403         | Authenticated but lacks permissions                                                   |
+| `NOT_FOUND`              | 404         | Resource doesn't exist                                                                |
+| `VALIDATION_ERROR`       | 400         | Input validation failed                                                               |
+| `EMAIL_TAKEN`            | 400         | Email already registered                                                              |
+| `INVITATION_EXPIRED`     | 400         | Invitation token has expired                                                          |
+| `CONFLICT`               | 409         | Resource already exists                                                               |
+| `STALE_RECORD`           | 412         | The record changed since it was loaded; nothing written (`lib/api/record-version.ts`) |
+| `PRECONDITION_REQUIRED`  | 428         | A versioned save sent no `If-Match`                                                   |
+| `FILE_TOO_LARGE`         | 400         | File exceeds max upload size                                                          |
+| `INVALID_FILE_TYPE`      | 400         | Unsupported file format                                                               |
+| `STORAGE_NOT_CONFIGURED` | 503         | File storage backend not available                                                    |
+| `RATE_LIMIT_EXCEEDED`    | 429         | Too many requests                                                                     |
+| `INTERNAL_ERROR`         | 500         | Server error                                                                          |
 
 ## Decision History & Trade-offs
 
