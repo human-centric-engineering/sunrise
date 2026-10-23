@@ -157,6 +157,10 @@ return the version they leave. A rollback copies a stored snapshot rather than
 a browser copy, and takes none. See
 [Data erasure → The workflow builder](../privacy/data-erasure.md#the-workflow-builder-version-t-900).
 
+A create copied from a stored workflow (a custom template, Duplicate,
+save-as-template) sends `copiedFrom: { workflowId, definitionVersion }`, and
+is refused with 412 when that source has moved on since, an erasure included.
+
 POST `/workflows` (create) seeds v1 atomically inside a transaction. The
 created workflow is immediately runnable — admins do not need to publish
 before the first execute.

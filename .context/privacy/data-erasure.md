@@ -983,8 +983,20 @@ the old copy back. So the builder works as the forms above do:
   erasure's locks for everyone that read names, then reads the target again:
   an erasure has either finished, and the second read differs (refused with
   412, "try the rollback again"), or waits and scrubs the new version too.
-- **A create** (`POST /workflows`, `createInitialVersion`) is intent, and an
-  address in it is written.
+- **A create typed from scratch** (`POST /workflows`, `createInitialVersion`)
+  is intent, and an address in it is written.
+- **A create copied from a stored workflow is not** (security review). A
+  custom template applied in the builder, which the page holds for as long as
+  it is open, **Duplicate** in the list, and **save-as-template** each copy a
+  definition erasure scrubs. So the copy names its source as `copiedFrom:
+{ workflowId, definitionVersion }`: the catalogue gives each custom template
+  its `copySource`, Duplicate sends the version its read returned, and
+  save-as-template the version of the row it read. `createInitialVersion`
+  checks it under the source's row lock, after erasure's locks, and refuses a
+  source that has moved on (or that the org cannot see) with 412. Built-in
+  templates come from code, which erasure never touches, and carry none.
+  Templates cannot be applied in the edit page, so a draft save needs no such
+  check.
 
 Each of these writers takes erasure's locks for everyone its definition names
 before its row lock, the order erasure takes them in. A publish, rollback or

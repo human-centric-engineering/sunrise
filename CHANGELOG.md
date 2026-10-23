@@ -57,7 +57,11 @@ release process.
   with a **Copy my changes** option (`StaleSaveNotice` gains
   `onCopyChanges`). An address typed into a freshly loaded builder is now
   saved even if its owner was once erased; an erased approver id is still
-  stripped. `AiWorkflowWithVersion` gains `definitionVersion`;
+  stripped. A new workflow copied from a stored one (a custom template,
+  Duplicate, save-as-template) sends `copiedFrom: { workflowId,
+  definitionVersion }` on `POST /workflows` and is refused with 412 when that
+  source moved on; `GET /workflows/templates` gives each of the org's own
+  templates its `copySource`. `AiWorkflowWithVersion` gains `definitionVersion`;
   `lib/orchestration/config-versions.ts` gains the workflow's version and
   lock. Backup seals now cover workflow definitions' addresses too, so a
   sealed import strips only people erased since its `exportedAt` from them,

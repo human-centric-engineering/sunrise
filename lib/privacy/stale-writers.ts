@@ -179,8 +179,9 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     how:
       'Publishes a versioned draft (above). A rollback copies a stored snapshot, not the ' +
       "browser's: it reads it again under erasure's locks and is refused if erasure changed it. " +
-      "`createInitialVersion` writes a create's own definition (intent). Erased approver ids " +
-      'are stripped from all three (t-900).',
+      "`createInitialVersion` writes a create's own definition (intent), unless it was copied " +
+      'from a stored workflow (template, Duplicate, save-as-template): then it names its source ' +
+      'and is refused once that moved on. Erased approver ids are stripped from all (t-900).',
   },
   {
     file: 'lib/orchestration/backup/importer.ts',
