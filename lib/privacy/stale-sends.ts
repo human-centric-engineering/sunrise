@@ -52,8 +52,17 @@ import {
   type ErasedSubjects,
   type NamedSubjects,
 } from '@/lib/privacy/erased-subjects';
-import { subjectsOfPayload, withoutErasedSubjects } from '@/lib/privacy/delivery-payloads';
-import { RECIPIENT_ERASED, SUBJECT_ERASED } from '@/lib/orchestration/webhooks/not-retried';
+import {
+  subjectsOfPayload,
+  withoutErasedSubjects,
+  type PayloadSubjects,
+} from '@/lib/privacy/delivery-payloads';
+import {
+  AWAITING_RETRY_STATUSES,
+  RECIPIENT_ERASED,
+  SUBJECT_ERASED,
+  notRetried,
+} from '@/lib/orchestration/webhooks/not-retried';
 
 /**
  * How long a sender waits for erasure's locks before giving up on this attempt
@@ -134,6 +143,49 @@ export interface DeliverySendOptions {
    * the receiver gets an event decided a moment before it.
    */
   holdAcrossSend: boolean;
+  /**
+   * Who the row's payload names, when the caller has already resolved it: an
+   * event's first attempts share one payload, so its fan-out resolves it once
+   * (t-926). A retry leaves it out, and it is resolved from the row it
+   * claimed, which an erasure may have redacted since.
+   */
+  subjects?: PayloadSubjects;
+}
+
+/** The delivery tables a stopped attempt is settled in. */
+export type DeliveryTable = 'webhook' | 'hook';
+
+/**
+ * Settle a delivery attempt that was not sent as erasure settles a row it
+ * stops (t-793): `exhausted`, `stoppedByErasure`, so no retry or replay sends
+ * it, the not-retried reason appended to its error, and its payload redacted
+ * when there is one. Only a row still waiting to send is written: one already
+ * settled stays as it is. `extra` is what one table also clears (the webhook
+ * row's address, when that is what was erased). The one place both delivery
+ * tables write a stop (t-926).
+ */
+export async function settleStoppedDelivery(
+  tx: Pick<Prisma.TransactionClient, 'aiWebhookDelivery' | 'aiEventHookDelivery'>,
+  table: DeliveryTable,
+  record: { id: string; lastError: string | null },
+  stop: {
+    reason: typeof RECIPIENT_ERASED | typeof SUBJECT_ERASED;
+    payload: Prisma.JsonValue | null;
+  },
+  extra: { destination?: string; destinationFingerprint?: null } = {}
+): Promise<void> {
+  const where = { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } };
+  const payload = stop.payload;
+  const data = {
+    status: 'exhausted',
+    nextRetryAt: null,
+    stoppedByErasure: true,
+    lastError: notRetried(record.lastError, stop.reason),
+    ...(payload !== null ? { payload } : {}),
+    ...extra,
+  };
+  if (table === 'webhook') await tx.aiWebhookDelivery.updateMany({ where, data });
+  else await tx.aiEventHookDelivery.updateMany({ where, data });
 }
 
 /**
@@ -167,7 +219,8 @@ export async function decideDeliveryUnderLocks<T>(
   settle: (tx: Prisma.TransactionClient, decision: DeliveryDecision) => Promise<void>,
   send: (decision: Extract<DeliveryDecision, { kind: 'send' }>) => Promise<T>
 ): Promise<T | null> {
-  const named = await subjectsOfPayload(prisma, delivery.eventType, delivery.payload);
+  const named =
+    options.subjects ?? (await subjectsOfPayload(prisma, delivery.eventType, delivery.payload));
   const since = new Date(
     Math.min(
       takenAt.getTime(),

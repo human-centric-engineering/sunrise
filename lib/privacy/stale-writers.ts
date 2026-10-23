@@ -205,6 +205,24 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
       "caller's input, which it holds now.",
   },
   {
+    file: 'lib/privacy/stale-sends.ts',
+    model: 'AiEventHookDelivery',
+    anchor: 'taken-at',
+    how:
+      'Settles a hook delivery attempt stopped for naming someone erased since its copy was ' +
+      "taken: decided and written under erasure's locks, redacted payload included " +
+      '(`settleStoppedDelivery`, t-926; the decision is t-886).',
+  },
+  {
+    file: 'lib/privacy/stale-sends.ts',
+    model: 'AiWebhookDelivery',
+    anchor: 'taken-at',
+    how:
+      'Settles a webhook delivery attempt stopped for naming someone erased since its copy ' +
+      "was taken, address and payload redacted, under erasure's locks " +
+      '(`settleStoppedDelivery`, t-926; the decision is t-886).',
+  },
+  {
     file: 'lib/orchestration/hooks/registry.ts',
     model: 'AiEventHookDelivery',
     anchor: 'taken-at',

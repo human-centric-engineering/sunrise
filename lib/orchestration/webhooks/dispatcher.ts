@@ -52,7 +52,8 @@ import {
   subscriptionDestination,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
-import { decideDeliveryUnderLocks } from '@/lib/privacy/stale-sends';
+import { decideDeliveryUnderLocks, settleStoppedDelivery } from '@/lib/privacy/stale-sends';
+import { subjectsOfPayload, type PayloadSubjects } from '@/lib/privacy/delivery-payloads';
 
 /** Safely extract a JSON object from a Prisma Json field, falling back to empty object. */
 function toJsonRecord(value: unknown): Record<string, unknown> {
@@ -212,6 +213,15 @@ export async function deliverToSubscribers(
     timestamp: new Date().toISOString(),
     data: payload,
   });
+  const stored = { event: eventType, data: payload };
+  // Who the payload names, once for every subscription: each row is created
+  // from this same payload (t-926). A failed lookup fails each attempt as its
+  // own lookup would, uncounted, and the retry resolves it again.
+  const subjects = await subjectsOfPayload(
+    prisma,
+    eventType,
+    stored as unknown as Prisma.JsonValue
+  ).catch(() => undefined);
 
   await Promise.allSettled(
     matched.map(async (sub) => {
@@ -220,16 +230,13 @@ export async function deliverToSubscribers(
         data: {
           subscriptionId: sub.id,
           eventType,
-          payload: {
-            event: eventType,
-            data: payload,
-          } as unknown as Prisma.InputJsonValue,
+          payload: stored as unknown as Prisma.InputJsonValue,
           status: 'pending',
           ...subscriptionDestination(sub),
         },
       });
 
-      await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt);
+      await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt, subjects);
     })
   );
 }
@@ -461,13 +468,16 @@ type AttemptRecord = DeliveryLike & {
  * One attempt at a delivery. `takenAt` is when the copy it sends from was
  * read — the subscription, and the event its payload came from — which an
  * erasure since may have overtaken (t-886, {@link sendUnlessErased}).
+ * `subjects`, on an event's first attempts, is who its payload names, resolved
+ * once for the whole fan-out (t-926); a retry leaves it out.
  */
 async function attemptDelivery(
   record: AttemptRecord,
   sub: SubscriptionLike,
   body: string,
   policy: RetryPolicy,
-  takenAt: Date
+  takenAt: Date,
+  subjects?: PayloadSubjects
 ): Promise<void> {
   const deliveryId = record.id;
   const now = new Date();
@@ -476,7 +486,7 @@ async function attemptDelivery(
   // the row's history rather than overwriting it.
   const recordDestination = destinationUpdate(record, subscriptionDestination(sub), now);
 
-  const outcome = await sendUnlessErased(record, sub, body, takenAt);
+  const outcome = await sendUnlessErased(record, sub, body, takenAt, subjects);
   // Left out: recorded as stopped, in the decision's transaction.
   if (outcome === null) return;
 
@@ -576,7 +586,8 @@ async function sendUnlessErased(
   record: AttemptRecord,
   sub: SubscriptionLike,
   body: string,
-  takenAt: Date
+  takenAt: Date,
+  subjects: PayloadSubjects | undefined
 ): Promise<DeliveryOutcome | null> {
   const email = sub.channel === 'email';
   const address = email && sub.emailAddress ? normaliseAddress(sub.emailAddress) : null;
@@ -587,22 +598,22 @@ async function sendUnlessErased(
       takenAt,
       // An email reaches the person: sent under the locks. A webhook post is
       // sent once the decision has committed (owner ruling, 2026-10-22).
-      { sendTimeoutMs: DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'], holdAcrossSend: email },
+      {
+        sendTimeoutMs: DISPATCH_TIMEOUT_MS[email ? 'email' : 'webhook'],
+        holdAcrossSend: email,
+        subjects,
+      },
       async (tx, decision) => {
         if (decision.kind === 'stop') {
-          await tx.aiWebhookDelivery.updateMany({
-            where: { id: record.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
-            data: {
-              status: 'exhausted',
-              nextRetryAt: null,
-              stoppedByErasure: true,
-              lastError: notRetried(record.lastError, decision.reason),
-              ...(decision.payload !== null ? { payload: decision.payload } : {}),
-              ...(decision.recipientErased && record.destination === address
-                ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
-                : {}),
-            },
-          });
+          await settleStoppedDelivery(
+            tx,
+            'webhook',
+            record,
+            decision,
+            decision.recipientErased && record.destination === address
+              ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
+              : {}
+          );
           // Never the address or the person: they are what was erased.
           logger.warn('Webhook delivery left out: it names a person erased since it was read', {
             deliveryId: record.id,

@@ -368,24 +368,28 @@ export async function subjectsOfPayload(
   await runAcrossOwners(
     'erasure check before a delivery: the owner its payload names',
     async () => {
-      if (typeof conversationId === 'string') {
-        const conversation = await client.aiConversation.findUnique({
-          where: { id: conversationId },
-          select: { userId: true },
-        });
-        if (conversation) name(conversation.userId, 'activity');
-        else dangling = true;
-      }
-      if (typeof executionId === 'string') {
-        const execution = await client.aiWorkflowExecution.findUnique({
-          where: { id: executionId },
-          select: { userId: true, startedAt: true, createdAt: true },
-        });
-        if (execution) {
-          name(execution.userId, 'activity');
-          runStartedAt = execution.startedAt ?? execution.createdAt;
-        } else dangling = true;
-      }
+      // Side by side (t-926); named in the same order as before, conversation
+      // first, once both are back.
+      const [conversation, execution] = await Promise.all([
+        typeof conversationId === 'string'
+          ? client.aiConversation.findUnique({
+              where: { id: conversationId },
+              select: { userId: true },
+            })
+          : undefined,
+        typeof executionId === 'string'
+          ? client.aiWorkflowExecution.findUnique({
+              where: { id: executionId },
+              select: { userId: true, startedAt: true, createdAt: true },
+            })
+          : undefined,
+      ]);
+      if (conversation) name(conversation.userId, 'activity');
+      else if (conversation === null) dangling = true;
+      if (execution) {
+        name(execution.userId, 'activity');
+        runStartedAt = execution.startedAt ?? execution.createdAt;
+      } else if (execution === null) dangling = true;
     }
   );
   name(data.userId, 'activity');
