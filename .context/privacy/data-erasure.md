@@ -769,15 +769,15 @@ what it is about to write names an erased person —
 `lib/privacy/erased-subjects.ts`, from the erasure receipt
 (`subjectUserId`, and `subjectEmailHash` of the normalised address):
 
-| Writer                                                                     | Names it checks                                                                                           | On a match                                                                                                                                                                                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                                                         | 400 on the field                                                                                                                                                                                                                    |
-| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition                                         | an erased address: `ValidationError`, nothing written; an erased approver id: stripped, the rest written (an opaque id the builder cannot show, and a workflow naming someone erased before t-791 would otherwise never save again) |
-| `rollback`                                                                 | the same, in the target snapshot                                                                          | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
-| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                                                            | 400 on the field                                                                                                                                                                                                                    |
-| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                                                           | 400 on the field                                                                                                                                                                                                                    |
-| Backup import                                                              | all of the above in the bundle, against erasures since its `exportedAt` (t-902)                           | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
-| Scheduler tick (`processDueSchedules`)                                     | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                   |
+| Writer                                                                     | Names it checks                                                                                                                                           | On a match                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                                                                                                         | 400 on the field                                                                                                                                                                                                                    |
+| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition                                                                                         | an erased address: `ValidationError`, nothing written; an erased approver id: stripped, the rest written (an opaque id the builder cannot show, and a workflow naming someone erased before t-791 would otherwise never save again) |
+| `rollback`                                                                 | the same, in the target snapshot                                                                                                                          | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
+| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                                                                                                            | 400 on the field                                                                                                                                                                                                                    |
+| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                                                                                                           | 400 on the field                                                                                                                                                                                                                    |
+| Backup import                                                              | all of the above in the bundle; for its email subscriptions and escalation list, only erasures since its `exportedAt` when this install sealed it (t-902) | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
+| Scheduler tick (`processDueSchedules`)                                     | every string in the schedule's `inputTemplate`, and every recipient and approver in its published version                                                 | the address blanked in the run's input and the person left out of the definition the engine runs, as erasure does to the rows; logged without the address (t-839)                                                                   |
 
 The tick reads its schedules at the top of the tick, and an erasure can commit
 before it creates the run. So it creates the run, and claims the schedule's
@@ -939,39 +939,44 @@ removes by construction.
 
 A bundle is a copy. Someone erased before it was taken is not in it, so a
 bundle that still names them had them added back after the erasure, on
-purpose. The importer keeps them, but only when it can trust the bundle's
-date, which means only when **this install** sealed it.
+purpose. The importer keeps them, but only when it can trust the bundle,
+which means only when **this install** sealed it, for **this org**, with
+**these** addresses in it.
 
-The date alone cannot be trusted. Suppose a staging copy never ran
-production's erasure, or a bundle was round-tripped through one, or its date
-was edited. Each of those names people nobody re-added, and a date check would
-let them back silently (owner ruling 2026-10-23).
+The date alone cannot be trusted. Several kinds of bundle name people nobody
+re-added, and a date check would let every one of them back silently:
 
-So the exporter stamps `exportedAt` **before** it reads, and seals it with an
-HMAC keyed by this install's `BETTER_AUTH_SECRET` (`exportSeal`,
-`lib/orchestration/backup/export-seal.ts`). The signed bytes carry their own
-scheme tag, so neither the approval-token scheme nor the storage-token
-scheme, which share the secret, can mint one.
+- one from a staging copy that never ran production's erasure;
+- one round-tripped through such a copy;
+- one exported from another org;
+- one whose date or addresses were edited.
 
-| Bundle                                                   | Email subscriptions, escalation list                                  | Workflow definitions        |
-| -------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------- |
-| Sealed by this install, date untouched                   | people erased since `exportedAt` (less `COPY_CLOCK_SKEW_MS`) stripped | anyone ever erased stripped |
-| Unsealed (older bundles), another install's, date edited | anyone ever erased stripped                                           | anyone ever erased stripped |
+That is why it is sealed (code review, owner ruling 2026-10-23).
 
-Workflow definitions keep the all-time check until t-900. `createInitialVersion`
-still refuses an ever-erased address, so keeping one would fail the whole
-import, and an existing workflow's new version follows the same rule so the
-two agree. An approver's user id is stripped whenever it was erased: nobody
-can re-add an account that is gone.
+So the exporter stamps `exportedAt` **before** it reads, and seals
+(`exportSeal`, `lib/orchestration/backup/export-seal.ts`) the date, the org it
+exported, and every contact address the bundle carries: the email
+subscriptions' and the escalation list's, normalised and sorted. It is an HMAC
+keyed by this install's `BETTER_AUTH_SECRET`, and the signed bytes carry their
+own scheme tag, so neither scheme that shares the secret (approval tokens,
+storage tokens) can mint one.
 
-Each strip carries the warning it always has. A bundle with no `exportedAt` is
-still refused by the schema.
+| Bundle                                                                                           | Email subscriptions, escalation list                                                                               | Workflow definitions        |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| Sealed by this install, imported into the org it came from, date and addresses untouched         | people erased since `exportedAt` (less `COPY_CLOCK_SKEW_MS`) stripped; the rest kept, with a warning counting them | anyone ever erased stripped |
+| Anything else: unsealed (every bundle exported before t-902), another install's or org's, edited | anyone ever erased stripped                                                                                        | anyone ever erased stripped |
 
-**The seal covers the date, not the contents.** An admin who edits a sealed
-bundle, or moves its seal onto another, is typing those addresses in, as they
-could on the subscription or settings page once t-899 lets an address be
-re-entered there. What the seal rules out is the accident: a bundle that names
-an erased person because it came from somewhere their erasure never reached.
+A sealed import that keeps an address erased before the export says so in its
+warnings, counting them and never naming them. Each strip carries the warning
+it always has.
+
+Workflow definitions keep the all-time check until t-900, and are not sealed.
+`createInitialVersion` still refuses an ever-erased address, so keeping one
+would fail the whole import; an existing workflow's new version follows the
+same rule so the two agree. An approver's user id is stripped whenever it was
+erased: nobody can re-add an account that is gone.
+
+A bundle with no `exportedAt` is still refused by the schema.
 
 **An install that shares its secret with another shares its seals.** A
 staging copy configured from production's environment would seal bundles

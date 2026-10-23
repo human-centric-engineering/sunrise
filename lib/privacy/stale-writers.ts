@@ -127,8 +127,8 @@ export type StaleWriter = AnchoredStaleWriter | PendingStaleWriter;
 /** The backup importer's two contact writers share one rule (t-902). */
 const IMPORTED_CONTACTS =
   "Imports email subscriptions or the escalation list. Strips anyone erased since the bundle's " +
-  '`exportedAt` when this install sealed it (`export-seal.ts`), else anyone ever erased; under ' +
-  "erasure's locks (t-902).";
+  '`exportedAt` when this install sealed it, for this org and these addresses ' +
+  "(`export-seal.ts`), else anyone ever erased; under erasure's locks (t-902).";
 
 const RUN_ROUTES = 'app/api/v1/admin/orchestration/executions/[id]';
 
