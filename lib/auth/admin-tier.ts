@@ -364,19 +364,21 @@ export function effectiveRouteTier(
 ): AdminTier | undefined {
   if (!declared || closed.length === 0) return declared;
   if (!pathname) return undefined;
+  const raw = adminSectionOf(pathname);
+  if (raw === null) return declared;
   // Judged decoded: `/api/v1/admin/%6Frchestration/…` names the same section.
   // Next 16 does not route that spelling to the handler today, but a rewrite
-  // or a later router might, and the raw string would not match. A pathname
-  // that will not decode is one this cannot judge, so it opens nothing.
-  let decoded: string;
+  // or a later router might, and the raw string would not match. Only the
+  // section segment is decoded, so a stray `%` deeper in the path (an id) is
+  // not mistaken for a closed section; a section segment that will not
+  // decode is one this cannot judge, so it opens nothing.
+  let section: string;
   try {
-    decoded = decodeURIComponent(pathname);
+    section = decodeURIComponent(raw).split('/')[0];
   } catch {
     return undefined;
   }
-  const section = adminSectionOf(decoded);
-  if (section !== null && closed.includes(section)) return undefined;
-  return declared;
+  return closed.includes(section) ? undefined : declared;
 }
 
 /**

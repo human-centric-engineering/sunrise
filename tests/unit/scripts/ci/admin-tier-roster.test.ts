@@ -697,6 +697,17 @@ describe('what it catches', () => {
     ]);
   });
 
+  it('reports a fork route declared org-tier in a core section the fork closed (t-929)', () => {
+    const fork = input({
+      routes: [route(`{ tier: 'org', ${OWNED} }`)],
+      appListedRoutes: [`${ROUTE}#GET`],
+    });
+    expect(findAdminTierRosterProblems(fork)).toEqual([]);
+    expect(findAdminTierRosterProblems({ ...fork, closedSections: ['orchestration'] })).toEqual([
+      `${ROUTE}#GET: declared tier 'org' in a core section lib/app/admin-tier.ts closed to org admins, so the guard refuses org admins it. Move the route out of the section or drop its tier.`,
+    ]);
+  });
+
   it('reads one declaration per exported handler, by method', () => {
     expect(tierDeclarations(route(`{ tier: 'org', ${OWNED} }`))).toEqual([
       { at: `${ROUTE}#GET`, literal: true, declaresOwnership: true },

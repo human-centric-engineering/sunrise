@@ -119,7 +119,7 @@ describe('closing a core section to org admins (t-929)', () => {
   it('closes nothing as shipped: the list is core’s and the fork’s, whole', () => {
     expect(closedCoreOrgTierSections()).toEqual([]);
     expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
-    expect(orgScopedAdminPages()).toBe(orgTierAdminPages());
+    expect(orgScopedAdminPages()).toEqual(orgTierAdminPages());
   });
 
   it('takes every orchestration page off the list, and keeps /admin, Members, Support access and the fork’s', () => {
@@ -145,6 +145,8 @@ describe('closing a core section to org admins (t-929)', () => {
 
     expect(adminPageTier('/admin/orchestration/agents', orgScopedAdminPages())).toBe('org');
     expect(adminPageTier('/admin/orchestration/agents', orgTierAdminPages())).toBeNull();
+    // Built once with the narrowed list, not on every read.
+    expect(orgScopedAdminPages()).toBe(orgScopedAdminPages());
   });
 
   it('rebuilds the list when a section is closed after the init settled', () => {

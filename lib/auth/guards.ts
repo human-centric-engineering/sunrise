@@ -435,6 +435,9 @@ function tierScope(
   declared: AdminTier | undefined,
   pathname: string | undefined
 ): { tier?: AdminTier } {
+  // An undeclared route is the platform's whatever is closed: no need to run
+  // the fork's init to learn that.
+  if (!declared) return {};
   const tier = effectiveRouteTier(declared, pathname, closedCoreOrgTierSections());
   return tier ? { tier } : {};
 }

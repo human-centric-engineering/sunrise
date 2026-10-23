@@ -63,6 +63,8 @@ let combined: {
   from: readonly string[];
   closed: readonly ClosableCoreOrgTierSection[];
   pages: readonly string[];
+  /** Core's roster and the fork's with nothing closed, for {@link orgScopedAdminPages}. */
+  scoped: readonly string[];
 } | null = null;
 
 /** The fork's org-tier page patterns: what `lib/app/admin-tier.ts` registered. */
@@ -84,6 +86,11 @@ export function closedCoreOrgTierSections(): readonly ClosableCoreOrgTierSection
  * request.
  */
 export function orgTierAdminPages(): readonly string[] {
+  return current().pages;
+}
+
+/** The cached lists, rebuilt when the fork's registrations change. */
+function current(): NonNullable<typeof combined> {
   const app = getAppOrgTierAdminPages();
   const closed = registeredClosedCoreOrgTierSections();
   if (combined?.from !== app || combined.closed !== closed) {
@@ -91,9 +98,10 @@ export function orgTierAdminPages(): readonly string[] {
       from: app,
       closed,
       pages: Object.freeze([...withoutClosedSections(ORG_TIER_ADMIN_PAGES, closed), ...app]),
+      scoped: Object.freeze([...ORG_TIER_ADMIN_PAGES, ...app]),
     };
   }
-  return combined.pages;
+  return combined;
 }
 
 /**
@@ -104,9 +112,7 @@ export function orgTierAdminPages(): readonly string[] {
  * Not an access answer — use {@link orgTierAdminPages} for that.
  */
 export function orgScopedAdminPages(): readonly string[] {
-  const app = getAppOrgTierAdminPages();
-  if (registeredClosedCoreOrgTierSections().length === 0) return orgTierAdminPages();
-  return Object.freeze([...ORG_TIER_ADMIN_PAGES, ...app]);
+  return current().scoped;
 }
 
 /**

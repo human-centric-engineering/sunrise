@@ -260,6 +260,13 @@ describe('effectiveRouteTier', () => {
     expect(effectiveRouteTier('org', '/api/v1/admin/%E0%A4%A/agents', [])).toBe('org');
   });
 
+  it('judges only the section segment, so a stray `%` deeper in the path closes nothing', () => {
+    expect(effectiveRouteTier('org', '/api/v1/admin/reports/50%', ['orchestration'])).toBe('org');
+    expect(
+      effectiveRouteTier('org', '/api/v1/admin/orchestration/50%', ['orchestration'])
+    ).toBeUndefined();
+  });
+
   it('is the platform’s with a section closed and no pathname to judge', () => {
     expect(effectiveRouteTier('org', undefined, ['orchestration'])).toBeUndefined();
   });

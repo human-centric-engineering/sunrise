@@ -41,6 +41,7 @@
 import ts from 'typescript';
 import {
   adminPageTier,
+  adminSectionOf,
   matchesAdminPagePattern,
   withoutClosedSections,
 } from '@/lib/auth/admin-tier';
@@ -259,12 +260,6 @@ function pagePattern(file: string): string {
     .join('/');
 }
 
-/** The first segment under `/admin` of a path, or `null` for `/admin` itself or a path outside it. */
-function sectionOf(path: string): string | null {
-  const match = /^\/admin\/([^/?#]+)/.exec(path);
-  return match ? match[1] : null;
-}
-
 /** Everything about the roster that does not match the tree, one sentence each. */
 export function findAdminTierRosterProblems(input: RosterInput): string[] {
   const problems: string[] = [];
@@ -362,7 +357,7 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       }
     }
     for (const path of [...input.listedPages, ...(input.coreNavHrefs ?? [])]) {
-      const section = sectionOf(path);
+      const section = adminSectionOf(path);
       if (section !== null && !sections.has(section)) {
         problems.push(
           `${path}: core's, in a section CORE_ADMIN_SECTIONS does not name, so a fork could list pages in it. Add ${section}.`
@@ -372,6 +367,15 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   }
 
   const closed = input.closedSections ?? [];
+  for (const at of appListed) {
+    // `app/api/v1/admin/orchestration/x/route.ts#GET` → `orchestration`.
+    const section = adminSectionOf(at.replace(/^app/, ''));
+    if (section !== null && closed.includes(section) && declared.has(at)) {
+      problems.push(
+        `${at}: declared tier 'org' in a core section lib/app/admin-tier.ts closed to org admins, so the guard refuses org admins it. Move the route out of the section or drop its tier.`
+      );
+    }
+  }
   const openPages = [...withoutClosedSections(input.listedPages, closed), ...appPages];
   const coreHrefs = new Set(input.coreNavHrefs ?? []);
   for (const item of input.navItems) {
