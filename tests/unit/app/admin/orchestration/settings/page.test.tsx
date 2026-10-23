@@ -25,13 +25,21 @@ vi.mock('@/components/admin/orchestration/default-models-form', () => ({
     models: unknown;
     providers: unknown;
     embeddingModels: unknown;
+    audioModels: unknown;
   }) => (
     <div
       data-testid="default-models-form"
       data-models={JSON.stringify(props.models)}
       data-providers={JSON.stringify(props.providers)}
       data-embeddings={JSON.stringify(props.embeddingModels)}
+      data-audio={JSON.stringify(props.audioModels)}
     />
+  ),
+}));
+
+vi.mock('@/components/admin/orchestration/active-embedding-model-form', () => ({
+  ActiveEmbeddingModelForm: (props: { options: unknown }) => (
+    <div data-testid="active-embedding-model-form" data-options={JSON.stringify(props.options)} />
   ),
 }));
 
@@ -282,6 +290,67 @@ describe('OrchestrationSettingsPage', () => {
     });
     expect(JSON.parse(form.getAttribute('data-providers') ?? '[]')).toEqual(providers);
     expect(JSON.parse(form.getAttribute('data-embeddings') ?? '[]')).toEqual(embeddingModels);
+  });
+
+  it('reshapes audio matrix rows into the audio model summaries DefaultModelsForm takes', async () => {
+    answer({
+      audio: [
+        { modelId: 'whisper-1', name: 'Whisper', providerSlug: 'openai', tierRole: 'worker' },
+      ],
+    });
+
+    render(await OrchestrationSettingsPage());
+
+    const form = screen.getByTestId('default-models-form');
+    expect(JSON.parse(form.getAttribute('data-audio') ?? '[]')).toEqual([
+      { model: 'whisper-1', name: 'Whisper', providerSlug: 'openai' },
+    ]);
+  });
+
+  it('passes only embedding rows with a positive dimension count to the active-model picker', async () => {
+    answer({
+      embeddingMatrix: [
+        {
+          id: 'pm-1',
+          modelId: 'text-embedding-3-small',
+          providerSlug: 'openai',
+          name: 'Small',
+          dimensions: 1536,
+        },
+        {
+          id: 'pm-2',
+          modelId: 'no-dims',
+          providerSlug: 'openai',
+          name: 'No dims',
+          dimensions: null,
+        },
+        { id: 'pm-3', modelId: 'zero-dims', providerSlug: 'openai', name: 'Zero', dimensions: 0 },
+      ],
+    });
+
+    render(await OrchestrationSettingsPage());
+
+    const picker = screen.getByTestId('active-embedding-model-form');
+    expect(JSON.parse(picker.getAttribute('data-options') ?? '[]')).toEqual([
+      {
+        id: 'pm-1',
+        name: 'Small',
+        modelId: 'text-embedding-3-small',
+        providerSlug: 'openai',
+        dimensions: 1536,
+      },
+    ]);
+  });
+
+  it("passes the escalation list's version through to SettingsForm, for its save (t-899)", async () => {
+    answer({ settings: { ...mockSettings, escalationVersion: '"v1"' } });
+
+    render(await OrchestrationSettingsPage());
+
+    const form = screen.getByTestId('settings-form');
+    expect(JSON.parse(form.getAttribute('data-settings') ?? '{}')).toMatchObject({
+      escalationVersion: '"v1"',
+    });
   });
 
   // 7. Renders breadcrumb link to /admin/orchestration
