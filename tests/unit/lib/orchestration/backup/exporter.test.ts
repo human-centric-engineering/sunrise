@@ -217,7 +217,7 @@ describe('exportOrchestrationConfig', () => {
           {
             exportedAt: START.toISOString(),
             orgId: 'install',
-            contacts: { subscriptions: [], escalation: [] },
+            contacts: { subscriptions: [], escalation: [], workflows: [] },
           },
           payload.exportSeal
         )
@@ -358,11 +358,24 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.webhooks[0].channel).toBe('email');
   });
 
-  it('seals the org and every contact address it exports, so neither can change (§122 t-902)', async () => {
+  it('seals the org and every contact address it exports, so neither can change (§122 t-902, t-900)', async () => {
+    const emailing = {
+      steps: [
+        {
+          id: 'n',
+          name: 'N',
+          type: 'send_notification',
+          config: { channel: 'email', to: 'Flow@Example.com', subject: 's', bodyTemplate: 'b' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'n',
+      errorStrategy: 'fail',
+    };
     mockFindMany
       .mockResolvedValueOnce([]) // agents
       .mockResolvedValueOnce([]) // capabilities
-      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([{ ...workflowRow, publishedVersion: { snapshot: emailing } }])
       .mockResolvedValueOnce([
         { ...webhookRow, channel: 'email', emailAddress: 'Ops@Example.com' },
       ]);
@@ -377,7 +390,11 @@ describe('exportOrchestrationConfig', () => {
     const facts = {
       exportedAt: payload.exportedAt,
       orgId: 'install',
-      contacts: { subscriptions: ['ops@example.com'], escalation: ['oncall@example.com'] },
+      contacts: {
+        subscriptions: ['ops@example.com'],
+        escalation: ['oncall@example.com'],
+        workflows: ['flow@example.com'],
+      },
     };
     expect(isSealedByThisInstall(facts, payload.exportSeal)).toBe(true);
     expect(isSealedByThisInstall({ ...facts, orgId: 'org_customer' }, payload.exportSeal)).toBe(
@@ -385,7 +402,13 @@ describe('exportOrchestrationConfig', () => {
     );
     expect(
       isSealedByThisInstall(
-        { ...facts, contacts: { subscriptions: ['ops@example.com'], escalation: [] } },
+        { ...facts, contacts: { ...facts.contacts, escalation: [] } },
+        payload.exportSeal
+      )
+    ).toBe(false);
+    expect(
+      isSealedByThisInstall(
+        { ...facts, contacts: { ...facts.contacts, workflows: [] } },
         payload.exportSeal
       )
     ).toBe(false);

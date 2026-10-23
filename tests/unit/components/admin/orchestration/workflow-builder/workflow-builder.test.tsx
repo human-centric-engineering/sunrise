@@ -207,6 +207,7 @@ vi.mock('@/components/admin/orchestration/workflow-builder/use-workflow-cost-est
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { useWorkflowCostEstimate } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
 import type { WorkflowCostEstimateWithCap } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
 import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
@@ -306,6 +307,7 @@ function makeWorkflow(overrides: AiWorkflowOverrides = {}): AiWorkflowWithVersio
     draftDefinition: null,
     publishedVersionId: publishedVersion?.id ?? null,
     publishedVersion,
+    definitionVersion: '"v-loaded"',
     patternsUsed: [1, 2],
     isActive: true,
     isTemplate: false,
@@ -2012,6 +2014,161 @@ describe('WorkflowBuilder', () => {
       // of those was loaded (proves the published snapshot was used).
       const seededIds = (lastNodesStateArg as Array<{ id?: string }>).map((n) => n?.id);
       expect(seededIds).toContain('step-1');
+    });
+  });
+
+  describe('a workflow that moved on since the builder loaded it (§122 t-900)', () => {
+    const STALE = () =>
+      new APIClientError('This changed since you opened it.', 'STALE_RECORD', 412);
+    const ifMatch = (options: unknown) =>
+      (options as { options?: { headers?: Record<string, string> } } | undefined)?.options
+        ?.headers?.['If-Match'];
+    function workflowWithDraft(): AiWorkflowWithVersion {
+      return makeWorkflow({
+        id: 'wf-stale',
+        draftDefinition: TWO_STEP_DEFINITION as unknown as never,
+      });
+    }
+
+    it('sends the loaded version on save, and publishes next with the version the save returned', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        ...makeWorkflow(),
+        definitionVersion: '"v-saved"',
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        version: { id: 'wfv-2', version: 2, snapshot: TWO_STEP_DEFINITION },
+        workflow: {},
+        definitionVersion: '"v-published"',
+      });
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-stale' })} />);
+
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+      await user.click(
+        await screen.findByRole('button', { name: /publish the current draft as a new version/i })
+      );
+      await user.click(await screen.findByRole('button', { name: /^publish$/i }));
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledOnce());
+
+      expect(ifMatch(vi.mocked(apiClient.patch).mock.calls[0]?.[1])).toBe('"v-loaded"');
+      expect(ifMatch(vi.mocked(apiClient.post).mock.calls[0]?.[1])).toBe('"v-saved"');
+    });
+
+    it('shows the reload prompt on a refused save, keeps the canvas, and offers to copy it first', async () => {
+      const user = userEvent.setup();
+      const clipboardSpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+      vi.mocked(apiClient.patch).mockRejectedValue(STALE());
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+
+      const notice = await screen.findByText(/This workflow changed since you opened it/i);
+      expect(notice).toBeInTheDocument();
+      expect(screen.getByText(/reloading discards them/i)).toBeInTheDocument();
+      // Not the generic red error: the notice replaces it.
+      expect(screen.queryByText('This changed since you opened it.')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /copy my changes/i }));
+      expect(clipboardSpy).toHaveBeenCalledTimes(1);
+      const copied = JSON.parse(clipboardSpy.mock.calls[0]?.[0] ?? '{}') as {
+        steps?: unknown[];
+      };
+      // The canvas the admin had, not a reloaded one.
+      expect(copied.steps).toHaveLength(TWO_STEP_DEFINITION.steps.length);
+      expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+    });
+
+    it('publishes with the loaded version, and saves next with the version the publish returned', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.post).mockResolvedValue({
+        version: { id: 'wfv-2', version: 2, snapshot: TWO_STEP_DEFINITION },
+        workflow: {},
+        definitionVersion: '"v-published"',
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        ...makeWorkflow(),
+        definitionVersion: '"v-saved"',
+      });
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(
+        screen.getByRole('button', { name: /publish the current draft as a new version/i })
+      );
+      await user.click(await screen.findByRole('button', { name: /^publish$/i }));
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledOnce());
+      expect(ifMatch(vi.mocked(apiClient.post).mock.calls[0]?.[1])).toBe('"v-loaded"');
+
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledOnce());
+      expect(ifMatch(vi.mocked(apiClient.patch).mock.calls[0]?.[1])).toBe('"v-published"');
+    });
+
+    it('closes the publish dialog and shows the reload prompt on a refused publish', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.post).mockRejectedValue(STALE());
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(
+        screen.getByRole('button', { name: /publish the current draft as a new version/i })
+      );
+      await user.click(await screen.findByRole('button', { name: /^publish$/i }));
+
+      expect(
+        await screen.findByText(/This workflow changed since you opened it/i)
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^publish$/i })).not.toBeInTheDocument()
+      );
+    });
+
+    it('discards with the loaded version, and shows the reload prompt when refused', async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
+      vi.mocked(apiClient.post).mockRejectedValue(STALE());
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(screen.getByRole('button', { name: /discard draft/i }));
+
+      expect(
+        await screen.findByText(/This workflow changed since you opened it/i)
+      ).toBeInTheDocument();
+      expect(ifMatch(vi.mocked(apiClient.post).mock.calls[0]?.[1])).toBe('"v-loaded"');
+      // Nothing was refetched over the canvas.
+      expect(apiClient.get).not.toHaveBeenCalledWith(
+        API.ADMIN.ORCHESTRATION.workflowById('wf-stale')
+      );
+    });
+
+    it('adopts the version a successful discard reloads with', async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
+      vi.mocked(apiClient.post).mockResolvedValue({});
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
+        return Promise.resolve({
+          ...makeWorkflow({ id: 'wf-stale', draftDefinition: null }),
+          definitionVersion: '"v-discarded"',
+        });
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        ...makeWorkflow(),
+        definitionVersion: '"v-saved"',
+      });
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      await user.click(screen.getByRole('button', { name: /discard draft/i }));
+      await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledOnce());
+
+      expect(ifMatch(vi.mocked(apiClient.patch).mock.calls[0]?.[1])).toBe('"v-discarded"');
     });
   });
 });

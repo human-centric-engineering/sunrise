@@ -1,5 +1,5 @@
 /**
- * Tests for `lib/orchestration/config-versions.ts` (§122 t-899).
+ * Tests for `lib/orchestration/config-versions.ts` (§122 t-899, t-900).
  *
  * Each version must change on what erasure does to its record, and on what a
  * save could overwrite, and must not change on fields no save writes.
@@ -9,8 +9,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { StaleRecordError } from '@/lib/api/errors';
 import {
+  assertUnchangedSince,
   escalationVersion,
+  lockedVersion,
+  lockWorkflowRow,
   lockScheduleRow,
   lockSettingsRow,
   lockSubscriptionRow,
@@ -18,6 +22,8 @@ import {
   SCHEDULE_VERSION_SELECT,
   subscriptionVersion,
   SUBSCRIPTION_VERSION_SELECT,
+  WORKFLOW_DEFINITION_VERSION_SELECT,
+  workflowDefinitionVersion,
 } from '@/lib/orchestration/config-versions';
 
 const SUBSCRIPTION = {
@@ -93,8 +99,108 @@ describe('escalationVersion', () => {
   });
 });
 
+describe('workflowDefinitionVersion (t-900)', () => {
+  const emailing = (to: string) => ({
+    steps: [{ id: 'n', type: 'send_notification', config: { channel: 'email', to } }],
+  });
+  const WORKFLOW = {
+    draftDefinition: emailing('jane@example.com'),
+    publishedVersionId: 'v1',
+    publishedVersion: { snapshot: emailing('jane@example.com') },
+  };
+
+  it('changes when erasure scrubs the draft', () => {
+    expect(workflowDefinitionVersion({ ...WORKFLOW, draftDefinition: emailing('') })).not.toBe(
+      workflowDefinitionVersion(WORKFLOW)
+    );
+  });
+
+  it('changes when erasure scrubs the published snapshot, which a builder with no draft shows', () => {
+    const noDraft = { ...WORKFLOW, draftDefinition: null };
+    expect(
+      workflowDefinitionVersion({ ...noDraft, publishedVersion: { snapshot: emailing('') } })
+    ).not.toBe(workflowDefinitionVersion(noDraft));
+  });
+
+  it('changes when another version is published, whatever its content', () => {
+    expect(workflowDefinitionVersion({ ...WORKFLOW, publishedVersionId: 'v2' })).not.toBe(
+      workflowDefinitionVersion(WORKFLOW)
+    );
+  });
+
+  it('changes when a draft is discarded', () => {
+    expect(workflowDefinitionVersion({ ...WORKFLOW, draftDefinition: null })).not.toBe(
+      workflowDefinitionVersion(WORKFLOW)
+    );
+  });
+
+  it('selects only the draft, the published id and its snapshot: not the name or toggles', () => {
+    expect(WORKFLOW_DEFINITION_VERSION_SELECT).toEqual({
+      draftDefinition: true,
+      publishedVersionId: true,
+      publishedVersion: { select: { snapshot: true } },
+    });
+  });
+
+  it('reads no published version as null either way', () => {
+    expect(
+      workflowDefinitionVersion({
+        draftDefinition: null,
+        publishedVersionId: null,
+        publishedVersion: null,
+      })
+    ).toBe(
+      workflowDefinitionVersion({
+        draftDefinition: null,
+        publishedVersionId: null,
+        publishedVersion: { snapshot: null },
+      })
+    );
+  });
+});
+
+describe('lockedVersion / assertUnchangedSince for a workflow (t-900)', () => {
+  const STORED = {
+    draftDefinition: { steps: [] },
+    publishedVersionId: null,
+    publishedVersion: null,
+  };
+  function client() {
+    const $queryRaw = vi.fn(async () => []);
+    const findUniqueOrThrow = vi.fn(async () => STORED);
+    return { $queryRaw, findUniqueOrThrow, tx: { $queryRaw, aiWorkflow: { findUniqueOrThrow } } };
+  }
+
+  it('locks the workflow row before it reads the version', async () => {
+    const { $queryRaw, findUniqueOrThrow, tx } = client();
+
+    const version = await lockedVersion(tx as never, { kind: 'workflow-definition', id: 'wf-1' });
+
+    expect(version).toBe(workflowDefinitionVersion(STORED));
+    expect($queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      findUniqueOrThrow.mock.invocationCallOrder[0]
+    );
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: 'wf-1' },
+      select: WORKFLOW_DEFINITION_VERSION_SELECT,
+    });
+  });
+
+  it('passes a save loaded at the stored version, and refuses another with 412', async () => {
+    const record = { kind: 'workflow-definition' as const, id: 'wf-1' };
+
+    await expect(
+      assertUnchangedSince(client().tx as never, record, [workflowDefinitionVersion(STORED)])
+    ).resolves.toBeUndefined();
+    await expect(
+      assertUnchangedSince(client().tx as never, record, ['"older"'])
+    ).rejects.toBeInstanceOf(StaleRecordError);
+  });
+});
+
 describe('row locks', () => {
   it.each([
+    ['workflow', lockWorkflowRow, /FROM ai_workflow WHERE id = \? FOR NO KEY UPDATE/],
     [
       'subscription',
       lockSubscriptionRow,

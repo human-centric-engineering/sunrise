@@ -25,9 +25,13 @@ import {
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 
 const AT = '2026-06-01T09:30:00.000Z';
-const subs = (...subscriptions: string[]) => ({ subscriptions, escalation: [] as string[] });
+const subs = (...subscriptions: string[]) => ({
+  subscriptions,
+  escalation: [] as string[],
+  workflows: [] as string[],
+});
 const FACTS = { exportedAt: AT, orgId: 'install', contacts: subs('ops@example.com') };
-const MESSAGE = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com'], []])}`;
+const MESSAGE = `orchestration-backup-exported-at\n${JSON.stringify([AT, 'install', ['ops@example.com'], [], []])}`;
 
 function macOf(secret: string, message: string): string {
   return createHmac('sha256', secret).update(message, 'utf8').digest('base64url');
@@ -61,13 +65,25 @@ describe('sealExport / isSealedByThisInstall', () => {
     ['a repeat of a contact', { ...FACTS, contacts: subs('ops@example.com', 'ops@example.com') }],
     [
       'the contact moved to the escalation list',
-      { ...FACTS, contacts: { subscriptions: [], escalation: ['ops@example.com'] } },
+      { ...FACTS, contacts: { subscriptions: [], escalation: ['ops@example.com'], workflows: [] } },
+    ],
+    [
+      'the contact moved into a workflow (t-900)',
+      { ...FACTS, contacts: { subscriptions: [], escalation: [], workflows: ['ops@example.com'] } },
+    ],
+    [
+      'a workflow recipient added (t-900)',
+      { ...FACTS, contacts: { ...subs('ops@example.com'), workflows: ['gone@example.com'] } },
     ],
     [
       'the contact copied to the escalation list',
       {
         ...FACTS,
-        contacts: { subscriptions: ['ops@example.com'], escalation: ['ops@example.com'] },
+        contacts: {
+          subscriptions: ['ops@example.com'],
+          escalation: ['ops@example.com'],
+          workflows: [],
+        },
       },
     ],
   ])('refuses a seal checked against %s', (_label, facts) => {
@@ -87,7 +103,7 @@ describe('sealExport / isSealedByThisInstall', () => {
   });
 
   it('refuses a MAC over the facts without the scheme tag', () => {
-    const untagged = macOf(SECRET, JSON.stringify([AT, 'install', ['ops@example.com'], []]));
+    const untagged = macOf(SECRET, JSON.stringify([AT, 'install', ['ops@example.com'], [], []]));
     expect(isSealedByThisInstall(FACTS, untagged)).toBe(false);
   });
 
@@ -106,7 +122,7 @@ describe('sealExport / isSealedByThisInstall', () => {
 });
 
 describe('bundleContacts', () => {
-  it('reads the email subscriptions and the escalation list, and nothing else', () => {
+  it("reads the email subscriptions, the escalation list and the workflows' addresses, and nothing else", () => {
     expect(
       bundleContacts({
         webhooks: [
@@ -115,14 +131,52 @@ describe('bundleContacts', () => {
           { channel: 'email', emailAddress: null },
         ],
         settings: { escalationConfig: { emailAddresses: ['oncall@example.com', 7] } },
+        workflows: [
+          {
+            workflowDefinition: {
+              steps: [
+                {
+                  id: 'n',
+                  name: 'N',
+                  type: 'send_notification',
+                  config: {
+                    channel: 'email',
+                    to: ['flow@example.com'],
+                    subject: 's',
+                    bodyTemplate: 'b',
+                  },
+                  nextSteps: [],
+                },
+                {
+                  id: 'a',
+                  name: 'A',
+                  type: 'human_approval',
+                  config: { prompt: 'ok?', approverUserIds: ['cmjbv4i3x00003wsloputuser'] },
+                  nextSteps: [],
+                },
+              ],
+              entryStepId: 'n',
+              errorStrategy: 'fail',
+            },
+          },
+          // Does not parse, so the importer skips it and so does the seal.
+          { workflowDefinition: { steps: 'nope' } },
+        ],
       })
-    ).toEqual({ subscriptions: ['ops@example.com'], escalation: ['oncall@example.com'] });
+    ).toEqual({
+      subscriptions: ['ops@example.com'],
+      escalation: ['oncall@example.com'],
+      // An approver id is not an address.
+      workflows: ['flow@example.com'],
+    });
   });
 
   it('reads no escalation list from a bundle without settings, or with a malformed one', () => {
-    const none = { subscriptions: [], escalation: [] };
-    expect(bundleContacts({ webhooks: [], settings: null })).toEqual(none);
-    expect(bundleContacts({ webhooks: [], settings: { escalationConfig: 'nope' } })).toEqual(none);
+    const none = { subscriptions: [], escalation: [], workflows: [] };
+    expect(bundleContacts({ webhooks: [], settings: null, workflows: [] })).toEqual(none);
+    expect(
+      bundleContacts({ webhooks: [], settings: { escalationConfig: 'nope' }, workflows: [] })
+    ).toEqual(none);
   });
 });
 
@@ -131,6 +185,7 @@ describe('trustedExportedAt', () => {
   const DATA = {
     webhooks: [{ channel: 'email', emailAddress: 'ops@example.com' }],
     settings: null,
+    workflows: [],
   };
   const bundle = (exportSeal: string | undefined, exportedAt = AT) => ({
     exportedAt,

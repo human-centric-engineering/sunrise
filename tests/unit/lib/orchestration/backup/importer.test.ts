@@ -1037,16 +1037,21 @@ describe('importOrchestrationConfig — people whose data was erased (t-805)', (
         expect.stringMatching(/onboarding-flow.*people whose data was erased were removed/i),
       ])
     );
-    // Asked up front, under the locks, about the address and the approver together
+    // Asked up front, under the locks, about the approvers and the addresses
     expect(mockTx.$executeRaw).toHaveBeenCalled();
-    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).toMatchObject({
-      where: {
-        OR: [
-          { subjectEmailHash: { in: expect.arrayContaining([expect.any(String)]) } },
-          { subjectUserId: { in: expect.arrayContaining([ERASED_ID, 'live-approver']) } },
-        ],
-      },
-    });
+    const asked = mockTx.dataErasureReceipt.findMany.mock.calls.map((c) => c[0]);
+    expect(asked).toContainEqual(
+      expect.objectContaining({
+        where: {
+          OR: [{ subjectUserId: { in: expect.arrayContaining([ERASED_ID, 'live-approver']) } }],
+        },
+      })
+    );
+    expect(asked).toContainEqual(
+      expect.objectContaining({
+        where: { OR: [{ subjectEmailHash: { in: expect.arrayContaining([expect.any(String)]) } }] },
+      })
+    );
   });
 
   it('strips the erased person from a new version of an existing workflow too', async () => {
@@ -2756,7 +2761,8 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     }) as never);
   }
 
-  type Data = Omit<typeof minPayload.data, 'webhooks' | 'settings'> & {
+  type Data = Omit<typeof minPayload.data, 'webhooks' | 'settings' | 'workflows'> & {
+    workflows: Array<ReturnType<typeof makeWorkflow>>;
     webhooks: Array<ReturnType<typeof makeWebhook> & { channel?: string; emailAddress?: string }>;
     settings:
       | (Omit<ReturnType<typeof makeSettings>, 'escalationConfig'> & {
@@ -2958,7 +2964,7 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     }
   });
 
-  describe('a workflow definition, which keeps the all-time check until t-900', () => {
+  describe("a workflow definition, sealed with the bundle's other contacts (t-900)", () => {
     function workflowNaming() {
       return makeWorkflow({
         workflowDefinition: {
@@ -3007,10 +3013,9 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
       mockOrgWorkflowFindMany.mockResolvedValue([]);
     });
 
-    const payload = () => ({
-      ...sealed(),
-      data: { ...sealed().data, webhooks: [], workflows: [workflowNaming()] },
-    });
+    const WORKFLOW_DATA: Data = { ...DATA, webhooks: [], workflows: [workflowNaming()] };
+    /** Sealed over its own definitions, as the exporter seals it. */
+    const payload = () => bundle(WORKFLOW_DATA);
 
     function snapshotSteps() {
       const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
@@ -3019,23 +3024,53 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
       return created.data.snapshot.steps;
     }
 
-    it('creates a new workflow with people erased before a sealed export stripped, rather than failing the import', async () => {
+    it('creates a new workflow keeping an address erased before a sealed export, and counts it', async () => {
       const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
 
       expect(result.workflows.created).toBe(1);
-      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(snapshotSteps()[0].config.to).toEqual([ADDRESS, 'keep@example.com']);
+      expect(result.warnings.filter(keptWarning)).toEqual([
+        expect.stringMatching(/^Kept 1 contact address belonging/),
+      ]);
+    });
+
+    it('still strips an erased approver id: nobody can re-add an id', async () => {
+      const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
+
       expect(snapshotSteps()[1].config.approverUserIds).toEqual(['live-approver']);
       expect(result.warnings.some((w) => /were removed/.test(w))).toBe(true);
     });
 
-    it('strips them from a new version of an existing workflow too', async () => {
+    it('strips an address erased after the sealed export', async () => {
+      erasedAt(new Date('2026-07-01T00:00:00Z'));
+
+      const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
+
+      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(result.warnings.some(keptWarning)).toBe(false);
+    });
+
+    it('strips an address erased before the export when its definition was edited after sealing', async () => {
+      const sealedWithout = sealFor({ ...WORKFLOW_DATA, workflows: [] });
+
+      const result = await importOrchestrationConfig(
+        bundle(WORKFLOW_DATA, sealedWithout),
+        'user-1',
+        SHARED_SCOPE
+      );
+
+      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(result.warnings.some(keptWarning)).toBe(false);
+    });
+
+    it('keeps it in a new version of an existing workflow too', async () => {
       mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-existing' });
       mockTx.aiWorkflowVersion.findFirst.mockResolvedValue({ version: 1 });
 
       const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
 
       expect(result.workflows.updated).toBe(1);
-      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(snapshotSteps()[0].config.to).toEqual([ADDRESS, 'keep@example.com']);
       expect(snapshotSteps()[1].config.approverUserIds).toEqual(['live-approver']);
     });
   });

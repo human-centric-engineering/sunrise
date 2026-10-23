@@ -45,4 +45,23 @@ describe('StaleSaveNotice', () => {
 
     expect(reload).toHaveBeenCalledOnce();
   });
+
+  it('offers no copy when the page cannot copy its edits', () => {
+    render(<StaleSaveNotice what="This subscription" />);
+    expect(screen.queryByRole('button', { name: /copy my changes/i })).not.toBeInTheDocument();
+  });
+
+  it('offers to copy the edits first, says a reload discards them, and copies without reloading (t-900)', async () => {
+    const onCopyChanges = vi.fn();
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload });
+    render(<StaleSaveNotice what="This workflow" onCopyChanges={onCopyChanges} />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/reloading discards them/);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /copy my changes/i }));
+
+    expect(onCopyChanges).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+  });
 });

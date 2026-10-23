@@ -188,6 +188,7 @@ describe('saveWorkflow', () => {
       await saveWorkflow({
         mode: 'edit',
         workflowId: 'wf-edit-1',
+        definitionVersion: '"v-loaded"',
         name: 'My Workflow',
         nodes,
         edges,
@@ -206,6 +207,7 @@ describe('saveWorkflow', () => {
       await saveWorkflow({
         mode: 'edit',
         workflowId: 'wf-edit-1',
+        definitionVersion: '"v-loaded"',
         name: 'Updated Workflow',
         nodes,
         edges,
@@ -230,6 +232,7 @@ describe('saveWorkflow', () => {
       await saveWorkflow({
         mode: 'edit',
         workflowId: 'wf-edit-1',
+        definitionVersion: '"v-loaded"',
         name: 'My Workflow',
         nodes,
         edges,
@@ -244,8 +247,44 @@ describe('saveWorkflow', () => {
       const edges: Edge[] = [];
 
       await expect(
-        saveWorkflow({ mode: 'edit', name: 'My Workflow', nodes, edges, details: VALID_DETAILS })
-      ).rejects.toThrow('workflowId is required when saving in edit mode');
+        saveWorkflow({
+          mode: 'edit',
+          definitionVersion: '"v-loaded"',
+          name: 'My Workflow',
+          nodes,
+          edges,
+          details: VALID_DETAILS,
+        })
+      ).rejects.toThrow('workflowId and definitionVersion are required when saving in edit mode');
+    });
+
+    it('throws rather than send a save with no definition version (§122 t-900)', async () => {
+      await expect(
+        saveWorkflow({
+          mode: 'edit',
+          workflowId: 'wf-edit-1',
+          name: 'My Workflow',
+          nodes: [makeNode('step-1')],
+          edges: [],
+          details: VALID_DETAILS,
+        })
+      ).rejects.toThrow('workflowId and definitionVersion are required');
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('sends the definition version it loaded as If-Match (§122 t-900)', async () => {
+      await saveWorkflow({
+        mode: 'edit',
+        workflowId: 'wf-edit-1',
+        definitionVersion: '"v-loaded"',
+        name: 'My Workflow',
+        nodes: [makeNode('step-1')],
+        edges: [],
+        details: VALID_DETAILS,
+      });
+
+      const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
+      expect(options?.options?.headers).toEqual({ 'If-Match': '"v-loaded"' });
     });
   });
 
@@ -273,6 +312,7 @@ describe('saveWorkflow', () => {
         saveWorkflow({
           mode: 'edit',
           workflowId: 'wf-edit-1',
+          definitionVersion: '"v-loaded"',
           name: 'My Workflow',
           nodes,
           edges,

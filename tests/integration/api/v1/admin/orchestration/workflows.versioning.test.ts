@@ -26,8 +26,13 @@ import {
 
 const txMocks = {
   workflowUpdate: vi.fn(),
+  workflowFindUniqueOrThrow: vi.fn(),
   versionFindFirst: vi.fn(),
   versionCreate: vi.fn(),
+  versionFindUnique: vi.fn(),
+  queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
+  receiptFindMany: vi.fn(),
 };
 
 vi.mock('@/lib/auth/config', () => ({
@@ -53,10 +58,18 @@ vi.mock('@/lib/db/client', () => ({
     },
     $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
-        aiWorkflow: { update: txMocks.workflowUpdate },
+        $queryRaw: txMocks.queryRaw,
+        $executeRaw: txMocks.executeRaw,
+        dataErasureReceipt: { findMany: txMocks.receiptFindMany },
+        user: { findMany: vi.fn(async () => []) },
+        aiWorkflow: {
+          update: txMocks.workflowUpdate,
+          findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
+        },
         aiWorkflowVersion: {
           findFirst: txMocks.versionFindFirst,
           create: txMocks.versionCreate,
+          findUnique: txMocks.versionFindUnique,
         },
       })
     ),
@@ -79,6 +92,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { semanticValidateWorkflow } from '@/lib/orchestration/workflows/semantic-validator';
+import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 
 import {
   PATCH as WORKFLOW_PATCH,
@@ -161,12 +175,35 @@ function makeRequest(method: 'POST' | 'PATCH' | 'GET', path: string, body?: unkn
   });
 }
 
+/** The request as a builder that loaded `workflow` sends it (§122 t-900). */
+function loadedFrom(request: NextRequest, workflow: Record<string, unknown>): NextRequest {
+  request.headers.set(
+    'If-Match',
+    workflowDefinitionVersion({
+      draftDefinition: workflow.draftDefinition ?? null,
+      publishedVersionId: (workflow.publishedVersionId ?? null) as string | null,
+      publishedVersion: null,
+    })
+  );
+  return request;
+}
+
 function makeParams(workflowId: string = WORKFLOW_ID) {
   return { params: Promise.resolve({ id: workflowId }) };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  txMocks.queryRaw.mockResolvedValue([]);
+  txMocks.executeRaw.mockResolvedValue(1);
+  txMocks.receiptFindMany.mockResolvedValue([]);
+  // Under the lock, the workflow and a rollback's target are as first read.
+  txMocks.workflowFindUniqueOrThrow.mockImplementation(
+    async () => vi.mocked(prisma.aiWorkflow.findUnique).mock.results[0]?.value
+  );
+  txMocks.versionFindUnique.mockImplementation(
+    async () => vi.mocked(prisma.aiWorkflowVersion.findUnique).mock.results[0]?.value
+  );
   vi.mocked(semanticValidateWorkflow).mockResolvedValue({ ok: true, errors: [] });
   vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 });
@@ -184,9 +221,12 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     const res = await WORKFLOW_PATCH(
-      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
-        draftDefinition: ALT_DEF,
-      }),
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          draftDefinition: ALT_DEF,
+        }),
+        makeWorkflow()
+      ),
       makeParams()
     );
 
@@ -205,9 +245,12 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
 
     const res = await WORKFLOW_PATCH(
-      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
-        draftDefinition: null,
-      }),
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          draftDefinition: null,
+        }),
+        makeWorkflow({ draftDefinition: ALT_DEF })
+      ),
       makeParams()
     );
 
@@ -227,9 +270,12 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     const res = await WORKFLOW_PATCH(
-      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
-        draftDefinition: ALT_DEF,
-      }),
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          draftDefinition: ALT_DEF,
+        }),
+        makeWorkflow()
+      ),
       makeParams()
     );
 
@@ -248,10 +294,13 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     const res = await WORKFLOW_PATCH(
-      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
-        name: 'Renamed',
-        draftDefinition: ALT_DEF,
-      }),
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          name: 'Renamed',
+          draftDefinition: ALT_DEF,
+        }),
+        makeWorkflow()
+      ),
       makeParams()
     );
 
@@ -291,10 +340,13 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     const res = await WORKFLOW_PATCH(
-      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
-        draftDefinition: ALT_DEF,
-        name: 'Renamed',
-      }),
+      loadedFrom(
+        makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+          draftDefinition: ALT_DEF,
+          name: 'Renamed',
+        }),
+        current
+      ),
       makeParams()
     );
 
@@ -309,7 +361,7 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     expect(computeChanges).toHaveBeenCalledWith(
       expect.objectContaining({ id: current.id, name: current.name }),
       expect.any(Object),
-      { ignoreKeys: ['updatedAt', 'createdAt'] }
+      { ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'] }
     );
   });
 
@@ -352,9 +404,12 @@ describe('POST /workflows/:id/publish', () => {
 
   it('happy path: draft → vN+1 with workflow.publish audit', async () => {
     const res = await PUBLISH(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {
-        changeSummary: 'Tweak',
-      }),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {
+          changeSummary: 'Tweak',
+        }),
+        makeWorkflow({ draftDefinition: ALT_DEF })
+      ),
       makeParams()
     );
 
@@ -374,7 +429,10 @@ describe('POST /workflows/:id/publish', () => {
       makeWorkflow({ draftDefinition: null }) as never
     );
     const res = await PUBLISH(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+        makeWorkflow({ draftDefinition: null })
+      ),
       makeParams()
     );
     expect(res.status).toBe(400);
@@ -385,7 +443,10 @@ describe('POST /workflows/:id/publish', () => {
       makeWorkflow({ draftDefinition: { steps: [] } }) as never // entryStepId missing
     );
     const res = await PUBLISH(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+        makeWorkflow({ draftDefinition: { steps: [] } })
+      ),
       makeParams()
     );
     expect(res.status).toBe(400);
@@ -398,7 +459,10 @@ describe('POST /workflows/:id/publish', () => {
       errors: [{ stepId: 'step-1', code: 'INACTIVE_AGENT', message: 'Agent inactive' }],
     });
     const res = await PUBLISH(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+        makeWorkflow({ draftDefinition: ALT_DEF })
+      ),
       makeParams()
     );
     expect(res.status).toBe(400);
@@ -408,7 +472,10 @@ describe('POST /workflows/:id/publish', () => {
   it('does not partially commit if the transaction throws', async () => {
     vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('connection lost'));
     const res = await PUBLISH(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/publish`, {}),
+        makeWorkflow({ draftDefinition: ALT_DEF })
+      ),
       makeParams()
     );
     expect(res.status).toBe(500);
@@ -452,7 +519,10 @@ describe('POST /workflows/:id/discard-draft', () => {
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
 
     const res = await DISCARD(
-      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/discard-draft`),
+      loadedFrom(
+        makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/discard-draft`),
+        makeWorkflow({ draftDefinition: ALT_DEF })
+      ),
       makeParams()
     );
 
@@ -871,5 +941,152 @@ describe('PATCH /workflows/:id — catch-block rethrow (non-P2002)', () => {
     if (status !== undefined) {
       expect(status).toBeGreaterThanOrEqual(500);
     }
+  });
+});
+
+// ─── Versioned writes (§122 t-900) ─────────────────────────────────────────
+
+describe('a builder write carries the definition version it loaded (§122 t-900)', () => {
+  const PATH = `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`;
+  const STORED = makeWorkflow({ draftDefinition: ALT_DEF });
+  const stale = (request: NextRequest) => {
+    request.headers.set('If-Match', '"loaded-before"');
+    return request;
+  };
+  async function errorCode(res: Response): Promise<string | undefined> {
+    const body = (await res.json()) as { error?: { code?: string } };
+    return body.error?.code;
+  }
+
+  beforeEach(() => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(STORED as never);
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(STORED as never);
+    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue(makeVersion() as never);
+    txMocks.versionFindFirst.mockResolvedValue(makeVersion({ version: 1 }));
+    txMocks.versionCreate.mockResolvedValue(makeVersion({ id: VERSION_ID_NEW, version: 2 }));
+    txMocks.workflowUpdate.mockResolvedValue(
+      makeWorkflow({ publishedVersionId: VERSION_ID_NEW, draftDefinition: null })
+    );
+  });
+
+  it.each([
+    [
+      'a draft save',
+      () =>
+        WORKFLOW_PATCH(makeRequest('PATCH', PATH, { draftDefinition: VALID_DEF }), makeParams()),
+    ],
+    [
+      'a draft clear',
+      () => WORKFLOW_PATCH(makeRequest('PATCH', PATH, { draftDefinition: null }), makeParams()),
+    ],
+    ['a publish', () => PUBLISH(makeRequest('POST', `${PATH}/publish`, {}), makeParams())],
+    ['a discard', () => DISCARD(makeRequest('POST', `${PATH}/discard-draft`), makeParams())],
+  ])('428s %s with no If-Match, writing nothing', async (_label, call) => {
+    const res = await call();
+
+    expect(res.status).toBe(428);
+    expect(await errorCode(res)).toBe('PRECONDITION_REQUIRED');
+    expect(txMocks.workflowUpdate).not.toHaveBeenCalled();
+    expect(txMocks.versionCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a draft save',
+      () =>
+        WORKFLOW_PATCH(
+          stale(makeRequest('PATCH', PATH, { draftDefinition: VALID_DEF })),
+          makeParams()
+        ),
+    ],
+    [
+      'a draft clear',
+      () =>
+        WORKFLOW_PATCH(stale(makeRequest('PATCH', PATH, { draftDefinition: null })), makeParams()),
+    ],
+    ['a publish', () => PUBLISH(stale(makeRequest('POST', `${PATH}/publish`, {})), makeParams())],
+    ['a discard', () => DISCARD(stale(makeRequest('POST', `${PATH}/discard-draft`)), makeParams())],
+  ])(
+    '412s %s loaded at a version the workflow has moved on from, writing nothing',
+    async (_label, call) => {
+      const res = await call();
+
+      expect(res.status).toBe(412);
+      expect(await errorCode(res)).toBe('STALE_RECORD');
+      expect(txMocks.workflowUpdate).not.toHaveBeenCalled();
+      expect(txMocks.versionCreate).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('asks no If-Match of a PATCH that does not touch the definition (the list toggle)', async () => {
+    vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
+      makeWorkflow({ isActive: false, publishedVersion: null }) as never
+    );
+
+    const res = await WORKFLOW_PATCH(makeRequest('PATCH', PATH, { isActive: false }), makeParams());
+
+    expect(res.status).toBe(200);
+  });
+
+  it('returns the version a save leaves, for the next save', async () => {
+    const after = {
+      ...makeWorkflow({ draftDefinition: VALID_DEF }),
+      publishedVersion: makeVersion(),
+    };
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(after as never);
+
+    const res = await WORKFLOW_PATCH(
+      loadedFrom(makeRequest('PATCH', PATH, { draftDefinition: VALID_DEF }), STORED),
+      makeParams()
+    );
+
+    const body = (await res.json()) as { data: { definitionVersion: string } };
+    expect(body.data.definitionVersion).toBe(
+      workflowDefinitionVersion({
+        draftDefinition: VALID_DEF,
+        publishedVersionId: VERSION_ID_V1,
+        publishedVersion: { snapshot: VALID_DEF },
+      })
+    );
+  });
+
+  it('returns from a publish the version a fresh read would give', async () => {
+    const res = await PUBLISH(
+      loadedFrom(makeRequest('POST', `${PATH}/publish`, {}), STORED),
+      makeParams()
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { definitionVersion: string } };
+    expect(body.data.definitionVersion).toBe(
+      workflowDefinitionVersion({
+        draftDefinition: null,
+        publishedVersionId: VERSION_ID_NEW,
+        publishedVersion: { snapshot: VALID_DEF },
+      })
+    );
+  });
+
+  it('rolls back with no If-Match: it copies a stored snapshot, not a browser copy', async () => {
+    const res = await ROLLBACK(
+      makeRequest('POST', `${PATH}/rollback`, { targetVersionId: VERSION_ID_V1 }),
+      makeParams()
+    );
+
+    expect(res.status).toBe(200);
+    expect(txMocks.versionCreate).toHaveBeenCalledOnce();
+  });
+
+  it('412s a rollback whose target an erasure changed between its two reads', async () => {
+    txMocks.versionFindUnique.mockResolvedValue({ snapshot: ALT_DEF });
+
+    const res = await ROLLBACK(
+      makeRequest('POST', `${PATH}/rollback`, { targetVersionId: VERSION_ID_V1 }),
+      makeParams()
+    );
+
+    expect(res.status).toBe(412);
+    expect(txMocks.versionCreate).not.toHaveBeenCalled();
   });
 });
