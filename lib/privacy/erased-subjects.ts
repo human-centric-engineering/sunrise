@@ -9,12 +9,15 @@
  * erasure audit trail. Row locks cannot stop that: the writer's read is long
  * over by the time it writes.
  *
- * So every such writer asks, in the transaction that writes: **does anything I
+ * So such a writer asks, in the transaction that writes: **does anything I
  * am about to write name a person who has been erased?** The erasure receipt
  * is the record of who that is — `subjectUserId`, and `subjectEmailHash` (the
- * same trimmed, lower-cased form erasure matches on). A writer that would write
- * one back is refused (interactive writers, with a 400 naming the field), or
- * strips it (the backup importer, with a warning).
+ * same trimmed, lower-cased form erasure matches on). A writer holding a copy
+ * asks only about erasures since the copy was taken ({@link FindOptions.since}),
+ * and strips who it finds: the backup importer, the scheduler, deliveries. The
+ * admin forms and the workflow builder refuse a stale copy by its version
+ * instead (§122 t-899, t-900, `lib/api/record-version.ts`), and the workflow
+ * writers still strip an erased approver id.
  *
  * **Why a lock.** A check alone races the erasure: a writer could check, find
  * no receipt, and write after an erasure that had already started — and that
