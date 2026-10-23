@@ -1145,8 +1145,13 @@ and the **escalation email** run through `sendHoldingSubjects()`
 (`lib/privacy/stale-sends.ts`): in one transaction it
 takes erasure's locks, shared, for the email address and everyone the payload
 names (`subjectsOfPayload`: `userId`, `actorUserId`, `approverUserIds`, and
-the owners of its `conversationId` and `executionId`), asks who among them was
-erased **since the copy was taken**, and writes what it decided under them.
+the owners of its `conversationId` and `executionId`, looked up side by
+side), asks who among them was erased **since the copy was taken**, and
+writes what it decided under them. An event's first attempts share one
+payload, so its fan-out resolves who it names once and hands that to each
+attempt; a retry resolves it again, from the row it claimed (t-926). A
+stopped attempt is written by `settleStoppedDelivery()`, the one place both
+delivery tables settle a stop.
 **An email is sent under the locks**, held until it settles: it reaches the
 person and cannot be recalled. **A webhook or hook post goes after the
 decision commits** (owner ruling, 2026-10-22): no pooled connection waits on a
