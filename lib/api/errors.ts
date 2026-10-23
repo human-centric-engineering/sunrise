@@ -189,11 +189,15 @@ export class StaleRecordError extends APIError {
 /**
  * A save that did not say which version of the record it was loaded at (428).
  *
+ * The message is written for the admin who sees it, since forms show a
+ * route's message as it stands; an API client acts on the code, and the
+ * docs say what to send (`If-Match`, with the version its read returned).
+ *
  * @see lib/api/record-version.ts
  */
 export class PreconditionRequiredError extends APIError {
   constructor(
-    message: string = 'Send the version you loaded in an If-Match header: read the record, then save it.'
+    message: string = 'This save did not say which version it was based on. Reload and try again.'
   ) {
     super(message, ErrorCodes.PRECONDITION_REQUIRED, 428);
     this.name = 'PreconditionRequiredError';

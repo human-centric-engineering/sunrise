@@ -47,16 +47,18 @@ import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 export const GET = withAdminAuth(async (request) => {
   const log = await getRouteLogger(request);
-  const settings = await getOrchestrationSettings();
   // The escalation list, and its version for a save of it to send as If-Match
-  // (§122 t-899), both from one read of the row rather than the 30 s cache
-  // above: the cache is per process, so on another instance it can still hold
+  // (§122 t-899), both from one read of the row rather than from the 30 s
+  // cache `getOrchestrationSettings` serves the rest from: the cache is per process, so on another instance it can still hold
   // a list an erasure has since scrubbed, and a stale list beside a current
   // version would pass the save's check and write the person back.
-  const stored = await prisma.aiOrchestrationSettings.findUnique({
-    where: { slug: 'global' },
-    select: { escalationConfig: true },
-  });
+  const [settings, stored] = await Promise.all([
+    getOrchestrationSettings(),
+    prisma.aiOrchestrationSettings.findUnique({
+      where: { slug: 'global' },
+      select: { escalationConfig: true },
+    }),
+  ]);
   const body = {
     ...settings,
     escalationConfig: parseEscalationConfig(stored?.escalationConfig),

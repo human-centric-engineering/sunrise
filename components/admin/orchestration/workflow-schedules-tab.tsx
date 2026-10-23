@@ -81,9 +81,9 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   const [error, setError] = useState<string | null>(null);
   // A toggle refused because the schedule changed since the tab loaded it.
   const [stale, setStale] = useState(false);
-  // The schedule whose toggle is in flight: a second click before the list
-  // reloads would carry the version from before the first, and be refused.
-  const [toggling, setToggling] = useState<string | null>(null);
+  // Schedules with a toggle in flight: a second click before the list reloads
+  // would carry the version from before the first, and be refused.
+  const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
 
   // Create dialog state
   const [showCreate, setShowCreate] = useState(false);
@@ -170,7 +170,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   };
 
   const handleToggle = async (schedule: Schedule) => {
-    setToggling(schedule.id);
+    setToggling((prev) => new Set(prev).add(schedule.id));
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.workflowScheduleById(workflowId, schedule.id), {
         body: { isEnabled: !schedule.isEnabled },
@@ -185,7 +185,11 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       }
       // Otherwise silent — the UI still shows the old state
     } finally {
-      setToggling(null);
+      setToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(schedule.id);
+        return next;
+      });
     }
   };
 
@@ -266,7 +270,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
               <div className="flex items-center gap-2">
                 <Switch
                   checked={s.isEnabled}
-                  disabled={toggling === s.id}
+                  disabled={toggling.has(s.id)}
                   onCheckedChange={() => void handleToggle(s)}
                   aria-label={`Toggle ${s.name}`}
                 />

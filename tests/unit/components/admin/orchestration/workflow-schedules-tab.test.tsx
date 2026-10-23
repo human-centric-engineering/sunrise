@@ -322,6 +322,31 @@ describe('WorkflowSchedulesTab', () => {
     );
   });
 
+  it('toggles on two schedules keep each other’s switches disabled until each settles (t-899)', async () => {
+    const user = userEvent.setup();
+    const two = {
+      schedules: [
+        POPULATED_DATA.schedules[0],
+        { ...POPULATED_DATA.schedules[0], id: 'sched-2', name: 'Evening Run', version: '"v2"' },
+      ],
+    };
+    vi.mocked(apiClient.get).mockResolvedValue(two);
+    const settles: Array<(v: unknown) => void> = [];
+    vi.mocked(apiClient.patch).mockImplementation(
+      () => new Promise((resolve) => settles.push(resolve))
+    );
+    render(<WorkflowSchedulesTab workflowId="wf-1" />);
+    await waitFor(() => expect(screen.getByText('Evening Run')).toBeInTheDocument());
+    const morning = screen.getByRole('switch', { name: /toggle daily morning run/i });
+    const evening = screen.getByRole('switch', { name: /toggle evening run/i });
+
+    await user.click(morning);
+    await user.click(evening);
+
+    expect(morning).toBeDisabled();
+    expect(evening).toBeDisabled();
+  });
+
   it('toggle refused as stale — says the schedule changed, and reloads the list on request (t-899)', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue(POPULATED_DATA);

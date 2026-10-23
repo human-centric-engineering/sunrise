@@ -901,7 +901,10 @@ and is refused when the record has moved on, whoever moved it:
 
 - **Read.** `GET /settings` returns `escalationVersion`. A webhook
   subscription and a schedule carry `version`, in their list and on their own
-  `GET`, where it is also the `ETag`.
+  `GET`. Each is a field, never an `ETag` header: a version covers only what a
+  save writes, so it is not a tag for the whole body. The `ETag` that
+  `GET /settings` does send covers the whole body, and as an `If-Match` it
+  never matches.
 - **Save.** `PATCH /settings` with an `escalationConfig`, `PATCH /webhooks/:id`
   and `PATCH .../schedules/:scheduleId` send it back as `If-Match`.
   - Without one, the save is refused with **428** `PRECONDITION_REQUIRED`.

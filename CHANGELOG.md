@@ -47,7 +47,7 @@ release process.
 - **Saves of the escalation list, a webhook subscription and a schedule are
   versioned, and `If-Match` is required (§122, t-899).** `GET /settings`
   returns `escalationVersion`; webhook subscriptions and schedules carry
-  `version` in their lists and single reads (also the `ETag`). `PATCH
+  `version` in their lists and single reads (a field, not an `ETag`). `PATCH
   /settings` with `escalationConfig`, `PATCH /webhooks/:id` and `PATCH
   /workflows/:id/schedules/:scheduleId` must send it back as `If-Match`:
   without it they answer `428 PRECONDITION_REQUIRED`, and when the record
