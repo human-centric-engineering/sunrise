@@ -2816,12 +2816,18 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     vi.useRealTimers();
   });
 
-  it('asks only for erasures since the export, less the clock-skew margin', async () => {
+  it('asks about the contacts only for erasures since the export, less the clock-skew margin', async () => {
     erasedAt(new Date('2026-01-01T00:00:00Z'));
 
     await importOrchestrationConfig(sealed(), 'user-1', SHARED_SCOPE);
 
-    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).toMatchObject({
+    // First every erasure (the workflows' question, and the locks), then the
+    // contacts' question, anchored.
+    expect(mockTx.dataErasureReceipt.findMany).toHaveBeenCalledTimes(2);
+    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).not.toHaveProperty(
+      'where.erasedAt'
+    );
+    expect(mockTx.dataErasureReceipt.findMany.mock.calls[1]?.[0]).toMatchObject({
       where: {
         erasedAt: { gte: new Date(Date.parse(EXPORTED_AT) - COPY_CLOCK_SKEW_MS) },
       },
@@ -2866,46 +2872,86 @@ describe("importOrchestrationConfig — only people erased after a sealed bundle
     );
   });
 
-  it('strips an approver erased before a sealed export: no one can re-add a deleted account', async () => {
-    erasedAt(new Date('2026-01-01T00:00:00Z'));
-    mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
-    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
-    mockTx.aiWorkflowVersion.create.mockReset();
-    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
-    mockTx.knowledgeTag.findMany.mockResolvedValue([]);
-    mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
-    mockOrgWorkflowFindMany.mockResolvedValue([]);
-    const payload = {
-      ...sealed(),
-      data: {
-        ...sealed().data,
-        webhooks: [],
-        workflows: [
-          makeWorkflow({
-            workflowDefinition: {
-              steps: [
-                {
-                  id: 'approve',
-                  name: 'Approve',
-                  type: 'human_approval',
-                  config: { prompt: 'OK?', approverUserIds: [APPROVER, 'live-approver'] },
-                  nextSteps: [],
-                },
-              ],
-              entryStepId: 'approve',
-              errorStrategy: 'fail',
+  describe('a workflow definition, which keeps the all-time check until t-900', () => {
+    function workflowNaming() {
+      return makeWorkflow({
+        workflowDefinition: {
+          steps: [
+            {
+              id: 'notify',
+              name: 'Notify',
+              type: 'send_notification',
+              config: {
+                channel: 'email',
+                to: [ADDRESS, 'keep@example.com'],
+                subject: 'Hi',
+                bodyTemplate: 'x',
+              },
+              nextSteps: [{ targetStepId: 'approve' }],
             },
-          }),
-        ],
-      },
-    };
+            {
+              id: 'approve',
+              name: 'Approve',
+              type: 'human_approval',
+              config: { prompt: 'OK?', approverUserIds: [APPROVER, 'live-approver'] },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'notify',
+          errorStrategy: 'fail',
+        },
+      });
+    }
 
-    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+    beforeEach(() => {
+      erasedAt(new Date('2026-01-01T00:00:00Z'));
+      mockTx.aiWorkflow.findUnique.mockReset();
+      mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
+      mockTx.aiWorkflow.create.mockReset();
+      mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
+      mockTx.aiWorkflow.update.mockReset();
+      mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
+      mockTx.aiWorkflowVersion.findFirst.mockReset();
+      mockTx.aiWorkflowVersion.create.mockReset();
+      mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+      mockTx.knowledgeTag.findMany.mockResolvedValue([]);
+      mockWorkflowSlugsHeldAnywhere.mockReset();
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
+      mockOrgWorkflowFindMany.mockReset();
+      mockOrgWorkflowFindMany.mockResolvedValue([]);
+    });
 
-    const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
-      data: { snapshot: { steps: Array<{ config: Record<string, unknown> }> } };
-    };
-    expect(created.data.snapshot.steps[0].config.approverUserIds).toEqual(['live-approver']);
+    const payload = () => ({
+      ...sealed(),
+      data: { ...sealed().data, webhooks: [], workflows: [workflowNaming()] },
+    });
+
+    function snapshotSteps() {
+      const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
+        data: { snapshot: { steps: Array<{ config: Record<string, unknown> }> } };
+      };
+      return created.data.snapshot.steps;
+    }
+
+    it('creates a new workflow with people erased before a sealed export stripped, rather than failing the import', async () => {
+      const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
+
+      expect(result.workflows.created).toBe(1);
+      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(snapshotSteps()[1].config.approverUserIds).toEqual(['live-approver']);
+      expect(result.warnings.some((w) => /were removed/.test(w))).toBe(true);
+    });
+
+    it('strips them from a new version of an existing workflow too', async () => {
+      mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-existing' });
+      mockTx.aiWorkflowVersion.findFirst.mockResolvedValue({ version: 1 });
+
+      const result = await importOrchestrationConfig(payload(), 'user-1', SHARED_SCOPE);
+
+      expect(result.workflows.updated).toBe(1);
+      expect(snapshotSteps()[0].config.to).toEqual(['keep@example.com']);
+      expect(snapshotSteps()[1].config.approverUserIds).toEqual(['live-approver']);
+    });
   });
 
   it('refuses a bundle with no exportedAt, as before, importing nothing', async () => {

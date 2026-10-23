@@ -264,7 +264,9 @@ async function importParsed(
       // A backup from before an erasure would otherwise restore their address
       // or approver id into the escalation list, a subscription or a workflow.
       // Found once, under the locks erasure takes, and stripped from every
-      // write below with a warning — an import is not refused for it.
+      // write below with a warning — an import is not refused for it. For the
+      // subscriptions and escalation list, only erasures since a date this
+      // install sealed count (§122 t-902); see erasedSinceBundle.
       const erased = await erasedSinceBundle(tx, bundleRecipients(parsed.data, includeShared), {
         since: bundleTakenAt(parsed.exportedAt, parsed.exportSeal, new Date()),
       });
@@ -664,7 +666,7 @@ async function importParsed(
         }
         const unapprovedSteps = workflowProviders.bySlug.get(wf.slug);
         if (unapprovedSteps) result.warnings.push(unapprovedSteps);
-        const definition = withoutErasedRecipients(defParsed.data, erased);
+        const definition = withoutErasedRecipients(defParsed.data, erased.inWorkflows);
         if (definition !== defParsed.data) {
           result.warnings.push(
             `Workflow '${wf.slug}': recipients or approvers belonging to people whose data was erased were removed`
@@ -776,7 +778,7 @@ async function importParsed(
           continue;
         }
 
-        if (channel === 'email' && erased.addresses.includes(normaliseAddress(destination))) {
+        if (channel === 'email' && erased.contacts.includes(normaliseAddress(destination))) {
           // Not echoed: it is the address being kept out.
           result.warnings.push(
             'Skipped an email subscription — its address belongs to a person whose data was erased'
@@ -835,7 +837,7 @@ async function importParsed(
       // Import settings — the shared part.
       if (includeShared && parsed.data.settings) {
         const s = parsed.data.settings;
-        const escalationConfig = escalationWithoutErased(s.escalationConfig, erased);
+        const escalationConfig = escalationWithoutErased(s.escalationConfig, erased.contacts);
         if (escalationConfig !== s.escalationConfig) {
           result.warnings.push(
             'Escalation list: addresses belonging to people whose data was erased were removed'
@@ -964,20 +966,44 @@ export function bundleTakenAt(
 }
 
 /**
- * The erased among a bundle's subjects, under erasure's locks. An address
- * counts only if erased since `since`: one erased earlier that the copy still
- * names was re-added on purpose. A user id counts whenever it was erased, as
- * no one can re-add an account that is gone.
+ * The erased among a bundle's subjects, found once under erasure's locks.
+ *
+ * - **`contacts`**: the email subscriptions' and escalation list's addresses
+ *   erased since `since` (§122 t-902). One erased earlier that a sealed copy
+ *   still names was re-added on purpose. With no `since`, every erasure.
+ * - **`inWorkflows`**: the definitions' addresses and approver ids erased at
+ *   any time. `createInitialVersion` refuses an ever-erased address until
+ *   t-900 moves the workflow writers onto an anchor, so keeping one here would
+ *   fail the whole import; an existing workflow's new version is held to the
+ *   same rule so the two agree. A user id has nobody to re-add it in any case.
  */
 async function erasedSinceBundle(
   tx: Prisma.TransactionClient,
-  subjects: { addresses: string[]; userIds: string[] },
+  subjects: BundleSubjects,
   { since }: { since: Date | undefined }
-): Promise<ErasedSubjects> {
-  const found = await findErasedSubjects(tx, subjects, { since });
-  if (!since || subjects.userIds.length === 0) return found;
-  const ids = await matchErasedSubjects(tx, { addresses: [], userIds: subjects.userIds });
-  return { addresses: found.addresses, userIds: ids.userIds };
+): Promise<{ inWorkflows: ErasedSubjects; contacts: string[] }> {
+  const ever = await findErasedSubjects(tx, {
+    addresses: [...subjects.workflows.addresses, ...subjects.contacts],
+    userIds: subjects.workflows.userIds,
+  });
+  const inWorkflows = {
+    addresses: ever.addresses.filter((a) =>
+      subjects.workflows.addresses.some((w) => normaliseAddress(w) === a)
+    ),
+    userIds: ever.userIds,
+  };
+  const contacts = since
+    ? (await matchErasedSubjects(tx, { addresses: subjects.contacts, userIds: [] }, { since }))
+        .addresses
+    : ever.addresses.filter((a) => subjects.contacts.some((c) => normaliseAddress(c) === a));
+  return { inWorkflows, contacts };
+}
+
+interface BundleSubjects {
+  /** Every address and approver id the workflow definitions name. */
+  workflows: { addresses: string[]; userIds: string[] };
+  /** The email subscriptions' addresses, and the escalation list's when imported. */
+  contacts: string[];
 }
 
 /**
@@ -992,23 +1018,23 @@ function bundleRecipients(
     settings?: { escalationConfig: unknown } | null;
   },
   includeShared: boolean
-): { addresses: string[]; userIds: string[] } {
-  const addresses: string[] = [];
-  const userIds: string[] = [];
+): BundleSubjects {
+  const workflows = { addresses: [] as string[], userIds: [] as string[] };
+  const contacts: string[] = [];
   for (const wf of data.workflows) {
     const parsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
     if (!parsed.success) continue;
     const named = definitionRecipients(parsed.data as unknown as Prisma.JsonValue);
-    addresses.push(...named.addresses);
-    userIds.push(...named.userIds);
+    workflows.addresses.push(...named.addresses);
+    workflows.userIds.push(...named.userIds);
   }
   for (const wh of data.webhooks) {
-    if (wh.channel === 'email' && wh.emailAddress) addresses.push(wh.emailAddress);
+    if (wh.channel === 'email' && wh.emailAddress) contacts.push(wh.emailAddress);
   }
   if (includeShared && data.settings) {
-    addresses.push(...escalationAddresses(data.settings.escalationConfig));
+    contacts.push(...escalationAddresses(data.settings.escalationConfig));
   }
-  return { addresses, userIds };
+  return { workflows, contacts };
 }
 
 function escalationAddresses(config: unknown): string[] {
@@ -1017,12 +1043,10 @@ function escalationAddresses(config: unknown): string[] {
 }
 
 /** The escalation config without erased addresses — the same object when none were. */
-function escalationWithoutErased(config: unknown, erased: ErasedSubjects): unknown {
-  if (erased.addresses.length === 0 || !isRecord(config)) return config;
+function escalationWithoutErased(config: unknown, erased: string[]): unknown {
+  if (erased.length === 0 || !isRecord(config)) return config;
   const list = config.emailAddresses;
   if (!Array.isArray(list)) return config;
-  const kept = list.filter(
-    (a) => typeof a !== 'string' || !erased.addresses.includes(normaliseAddress(a))
-  );
+  const kept = list.filter((a) => typeof a !== 'string' || !erased.includes(normaliseAddress(a)));
   return kept.length === list.length ? config : { ...config, emailAddresses: kept };
 }
