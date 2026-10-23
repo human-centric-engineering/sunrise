@@ -17,7 +17,7 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 import { auditableSubscriptionName } from '@/lib/orchestration/webhooks/destination';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
-import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { subscriptionVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
@@ -59,6 +59,9 @@ export const GET = withAdminAuth(
           createdAt: true,
           updatedAt: true,
           _count: { select: { deliveries: true } },
+          // The rest of what the version covers (§122 t-899).
+          maxAttempts: true,
+          retryBackoffMs: true,
         },
       }),
       prisma.aiWebhookSubscription.count({ where }),
@@ -66,7 +69,10 @@ export const GET = withAdminAuth(
 
     log.info('Webhooks listed', { count: webhooks.length, total });
 
-    return paginatedResponse(webhooks, { page, limit, total });
+    // Each row's version, for a save from the list (the active toggle) to
+    // send as If-Match (§122 t-899).
+    const rows = webhooks.map((row) => ({ ...row, version: subscriptionVersion(row) }));
+    return paginatedResponse(rows, { page, limit, total });
   },
   {
     tier: 'org',
@@ -107,13 +113,10 @@ export const POST = withAdminAuth(
       createData.emailAddress = body.emailAddress;
     }
 
-    // A form opened before a person was erased can still hold their address
-    // (t-805): refused under the lock erasure takes.
-    const webhook = await prisma.$transaction(async (tx) => {
-      if (createData.emailAddress) {
-        await refuseErasedSubjects(tx, { addresses: [createData.emailAddress] }, 'emailAddress');
-      }
-      return tx.aiWebhookSubscription.create({
+    // A create is new intent, not a copy of anything stored, so an address an
+    // admin types is saved even if its owner was once erased (§122 t-899).
+    const webhook = await prisma.aiWebhookSubscription
+      .create({
         data: createData,
         select: {
           id: true,
@@ -130,8 +133,8 @@ export const POST = withAdminAuth(
           createdAt: true,
           updatedAt: true,
         },
-      });
-    }, WRITER_TRANSACTION_OPTIONS);
+      })
+      .then((row) => ({ ...row, version: subscriptionVersion(row) }));
 
     log.info('Webhook created', {
       webhookId: webhook.id,

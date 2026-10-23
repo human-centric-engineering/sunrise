@@ -14,16 +14,13 @@ import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Prisma } from '@prisma/client';
 
-import { ValidationError } from '@/lib/api/errors';
 import {
   anyoneErasedSince,
   COPY_CLOCK_SKEW_MS,
-  ERASED_SUBJECT_MESSAGE,
   findErasedSubjects,
   lockSubjects,
   matchErasedSubjects,
   namesAnyone,
-  refuseErasedSubjects,
   stringsIn,
   subjectEmailHash,
   SUBJECT_LOCK_WAIT_MS,
@@ -560,51 +557,6 @@ describe('erasures since a copy was taken (§122 t-886)', () => {
     [{}, false],
   ])('namesAnyone(%j) is %s', (subjects, expected) => {
     expect(namesAnyone(subjects)).toBe(expected);
-  });
-});
-
-describe('refuseErasedSubjects', () => {
-  it('throws a ValidationError keyed by the field when a user id was erased', async () => {
-    const { tx, receiptFindMany } = makeTx();
-    receiptFindMany.mockResolvedValue([
-      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
-    ]);
-
-    const error = await refuseErasedSubjects(
-      tx,
-      { userIds: ['gone-user'] },
-      'approverUserIds'
-    ).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(ValidationError);
-    expect((error as ValidationError).status).toBe(400);
-    expect((error as ValidationError).details).toEqual({
-      approverUserIds: [ERASED_SUBJECT_MESSAGE],
-    });
-  });
-
-  it('throws when an erased verified address is named', async () => {
-    const { tx, receiptFindMany } = makeTx();
-    receiptFindMany.mockResolvedValue([
-      {
-        subjectUserId: 'gone',
-        subjectEmailHash: sha256Hex('gone@example.com'),
-        metadata: { addressVerified: true },
-      },
-    ]);
-
-    await expect(
-      refuseErasedSubjects(tx, { addresses: ['Gone@example.com'] }, 'emailAddress')
-    ).rejects.toMatchObject({ details: { emailAddress: [ERASED_SUBJECT_MESSAGE] } });
-  });
-
-  it('resolves when nothing named is erased', async () => {
-    const { tx, receiptFindMany } = makeTx();
-
-    await expect(
-      refuseErasedSubjects(tx, { addresses: ['fine@example.com'], userIds: ['u1'] }, 'f')
-    ).resolves.toBeUndefined();
-    expect(receiptFindMany).toHaveBeenCalledTimes(1);
   });
 });
 

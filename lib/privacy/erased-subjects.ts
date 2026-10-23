@@ -53,7 +53,6 @@
 
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { ValidationError } from '@/lib/api/errors';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 
 /** The addresses and user ids a write would name. Raw: normalised here. */
@@ -377,38 +376,21 @@ function addressWasVerified(metadata: Prisma.JsonValue): boolean {
 }
 
 /**
- * Options for a writer's transaction that calls {@link refuseErasedSubjects}.
+ * Options for a writer's transaction that waits on erasure: for its subject
+ * locks ({@link findErasedSubjects}), or for a row it holds (a versioned save,
+ * `lib/orchestration/config-versions.ts`).
  *
- * The check waits on erasure's lock, and an erasure may hold it for its whole
- * transaction — up to `ERASURE_TRANSACTION_TIMEOUT_MS` (60 s, in
- * `lib/privacy/erase-user.ts`). Under Prisma's 5 s default a writer queued
- * behind a slow erasure would time out with a 500 instead of being refused
- * with the 400 the field shows. Ten seconds of headroom past erasure's own
- * limit; `erased-subjects.test.ts` holds the two apart.
+ * An erasure may hold either for its whole transaction — up to
+ * `ERASURE_TRANSACTION_TIMEOUT_MS` (60 s, in `lib/privacy/erase-user.ts`).
+ * Under Prisma's 5 s default a writer queued behind a slow erasure would time
+ * out with a 500 instead of being answered. Ten seconds of headroom past
+ * erasure's own limit; `erased-subjects.test.ts` holds the two apart.
  */
 export const WRITER_TRANSACTION_OPTIONS = { timeout: 70_000 } as const;
 
-/** The message a refused field carries. */
+/** The message a field refused for naming an erased person carries. */
 export const ERASED_SUBJECT_MESSAGE =
   'This names a person whose data was erased. Remove it, or reload to see the current value.';
-
-/**
- * Refuse the write when anything in `subjects` names an erased person: a
- * `ValidationError` (400) whose `details` put {@link ERASED_SUBJECT_MESSAGE}
- * on `field`, so the form shows it beside the value. Call inside the
- * transaction that writes, before the write.
- */
-export async function refuseErasedSubjects(
-  tx: CheckClient,
-  subjects: NamedSubjects,
-  field: string
-): Promise<void> {
-  const erased = await findErasedSubjects(tx, subjects);
-  if (erased.addresses.length === 0 && erased.userIds.length === 0) return;
-  throw new ValidationError('A recipient belongs to a person whose data was erased', {
-    [field]: [ERASED_SUBJECT_MESSAGE],
-  });
-}
 
 /** Every string in a JSON value, for a free-form one such as a schedule's input template. */
 export function stringsIn(value: unknown): string[] {

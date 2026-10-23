@@ -45,6 +45,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCodes.INTERNAL_ERROR]: 'Something went wrong. Please try again.',
   // Conflict errors
   [ErrorCodes.CONFLICT]: 'This resource already exists.',
+  [ErrorCodes.STALE_RECORD]:
+    'This changed since you opened it. Reload to see the current version, then make your change again.',
+  [ErrorCodes.PRECONDITION_REQUIRED]:
+    'This save did not say which version it was based on. Reload and try again.',
   // File upload errors
   [ErrorCodes.FILE_TOO_LARGE]: 'The file is too large. Please choose a smaller file.',
   [ErrorCodes.INVALID_FILE_TYPE]: 'This file type is not supported.',

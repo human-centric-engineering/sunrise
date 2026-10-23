@@ -33,6 +33,10 @@ export const ErrorCodes = {
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   // Conflict errors
   CONFLICT: 'CONFLICT',
+  // A save of a record that changed since it was loaded (412), or one that did
+  // not say which version it was loaded at (428) — `lib/api/record-version.ts`
+  STALE_RECORD: 'STALE_RECORD',
+  PRECONDITION_REQUIRED: 'PRECONDITION_REQUIRED',
   // File upload errors
   FILE_TOO_LARGE: 'FILE_TOO_LARGE',
   INVALID_FILE_TYPE: 'INVALID_FILE_TYPE',
@@ -161,6 +165,38 @@ export class ConflictError extends APIError {
   constructor(message: string = 'Resource already exists', details?: Record<string, unknown>) {
     super(message, ErrorCodes.CONFLICT, 409, details);
     this.name = 'ConflictError';
+  }
+}
+
+/**
+ * A save of a record that has changed since the caller loaded it (412).
+ *
+ * The caller's `If-Match` names the version it loaded, and the record has
+ * moved on: another admin saved it, or an erasure scrubbed it. Nothing was
+ * written. The client reloads and makes its change again.
+ *
+ * @see lib/api/record-version.ts
+ */
+export class StaleRecordError extends APIError {
+  constructor(
+    message: string = 'This changed since you opened it. Reload to see the current version, then make your change again.'
+  ) {
+    super(message, ErrorCodes.STALE_RECORD, 412);
+    this.name = 'StaleRecordError';
+  }
+}
+
+/**
+ * A save that did not say which version of the record it was loaded at (428).
+ *
+ * @see lib/api/record-version.ts
+ */
+export class PreconditionRequiredError extends APIError {
+  constructor(
+    message: string = 'Send the version you loaded in an If-Match header: read the record, then save it.'
+  ) {
+    super(message, ErrorCodes.PRECONDITION_REQUIRED, 428);
+    this.name = 'PreconditionRequiredError';
   }
 }
 

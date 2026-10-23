@@ -12,11 +12,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
-import {
-  refuseErasedSubjects,
-  stringsIn,
-  WRITER_TRANSACTION_OPTIONS,
-} from '@/lib/privacy/erased-subjects';
+import { scheduleVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { createScheduleSchema } from '@/lib/validations/orchestration';
@@ -39,7 +35,11 @@ export const GET = withAdminAuth<{ id: string }>(
       orderBy: { createdAt: 'desc' },
     });
 
-    return successResponse({ schedules });
+    // Each schedule's version, for a save from the tab to send as If-Match
+    // (§122 t-899).
+    return successResponse({
+      schedules: schedules.map((schedule) => ({ ...schedule, version: scheduleVersion(schedule) })),
+    });
   },
   {
     tier: 'org',
@@ -86,13 +86,12 @@ export const POST = withAdminAuth<{ id: string }>(
 
     const nextRunAt = body.isEnabled !== false ? getNextRunAt(body.cronExpression) : null;
 
-    // An input template is where a per-user schedule keeps a literal address
-    // (t-804); one copied from before a person was erased must not bring them
-    // back (t-805). Refused under the lock erasure takes.
+    // A create is new intent, not a copy of anything stored, so an address an
+    // admin types into the template is saved even if its owner was once
+    // erased (§122 t-899).
     const inputTemplate = (body.inputTemplate ?? {}) as Prisma.InputJsonValue;
-    const schedule = await prisma.$transaction(async (tx) => {
-      await refuseErasedSubjects(tx, { addresses: stringsIn(inputTemplate) }, 'inputTemplate');
-      return tx.aiWorkflowSchedule.create({
+    const schedule = await prisma.aiWorkflowSchedule
+      .create({
         data: {
           workflowId: parsed.data,
           name: body.name,
@@ -103,8 +102,8 @@ export const POST = withAdminAuth<{ id: string }>(
           nextRunAt,
           createdBy: session.user.id,
         },
-      });
-    }, WRITER_TRANSACTION_OPTIONS);
+      })
+      .then((row) => ({ ...row, version: scheduleVersion(row) }));
 
     // A new schedule can be due sooner than an already-armed idle gate would next
     // sweep, so disarm it and let the next tick recompute the horizon (#442).

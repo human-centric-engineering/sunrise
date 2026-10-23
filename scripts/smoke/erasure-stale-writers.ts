@@ -11,9 +11,11 @@
  *     for it, then sees the committed write and strips it — the address does
  *     not survive.
  *   • **Erasure first.** A writer with a copy read before the erasure (a
- *     subscription edit, a workflow draft emailing the person) is refused with
- *     a 400 once the erasure has committed; a draft naming them only as an
- *     approver id saves with the id stripped.
+ *     workflow draft emailing the person, or any write making the all-time
+ *     check) is refused with a 400 once the erasure has committed; a draft
+ *     naming them only as an approver id saves with the id stripped. The
+ *     config routes refuse a stale save by version instead since t-899:
+ *     `smoke:erasure-stale-saves`.
  *   • **Re-registered.** Someone who signs up again with the erased address,
  *     and verifies it, may be named again.
  *   • **Unverified.** An unverified account's erased address is not refused:
@@ -40,13 +42,30 @@
 import { prisma } from '@/lib/db/client';
 import { ValidationError } from '@/lib/api/errors';
 import { eraseUser } from '@/lib/privacy/erase-user';
-import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { holdWorkflowRow, lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+
+/**
+ * A writer's all-time check, as `withoutErasedOrRefused` (`version-service.ts`)
+ * and the scheduler still make one: under erasure's lock, refuse a write that
+ * names anyone erased. The config routes moved off it to versioned saves in
+ * t-899 (`smoke:erasure-stale-saves`); what these cases prove is the lock and
+ * the matching underneath, which those writers still share.
+ */
+async function refuseIfErased(
+  tx: Parameters<typeof findErasedSubjects>[0],
+  addresses: string[]
+): Promise<void> {
+  const erased = await findErasedSubjects(tx, { addresses });
+  if (erased.addresses.length > 0) {
+    throw new ValidationError('A recipient belongs to a person whose data was erased');
+  }
+}
 
 const PREFIX = 'smoke-test-writers';
 const stamp = Date.now();
@@ -120,7 +139,7 @@ async function main(): Promise<void> {
 
     let writerCommittedAt = 0;
     const writer = prisma.$transaction(async (tx) => {
-      await refuseErasedSubjects(tx, { addresses: [early.email] }, 'emailAddress');
+      await refuseIfErased(tx, [early.email]);
       await tx.aiWebhookSubscription.update({
         where: { id: sub.id },
         data: { emailAddress: early.email },
@@ -203,12 +222,8 @@ async function main(): Promise<void> {
     userIds.splice(userIds.indexOf(late.id), 1);
 
     check(
-      await refused(() =>
-        prisma.$transaction((tx) =>
-          refuseErasedSubjects(tx, { addresses: [staleAddress] }, 'emailAddress')
-        )
-      ),
-      'a subscription edit holding their address (another case, padded) is refused'
+      await refused(() => prisma.$transaction((tx) => refuseIfErased(tx, [staleAddress]))),
+      'a write holding their address (another case, padded) is refused'
     );
     const addressedDef = workflowDefinitionSchema.parse({
       steps: [
@@ -247,11 +262,7 @@ async function main(): Promise<void> {
     console.log('re-registered');
     await person('late-again', true, late.email);
     check(
-      !(await refused(() =>
-        prisma.$transaction((tx) =>
-          refuseErasedSubjects(tx, { addresses: [late.email] }, 'emailAddress')
-        )
-      )),
+      !(await refused(() => prisma.$transaction((tx) => refuseIfErased(tx, [late.email])))),
       'a verified account holding the address again lifts the refusal'
     );
 
@@ -266,11 +277,7 @@ async function main(): Promise<void> {
     receiptIds.push(unverifiedResult.receiptId);
     userIds.splice(userIds.indexOf(unverified.id), 1);
     check(
-      !(await refused(() =>
-        prisma.$transaction((tx) =>
-          refuseErasedSubjects(tx, { addresses: [unverified.email] }, 'emailAddress')
-        )
-      )),
+      !(await refused(() => prisma.$transaction((tx) => refuseIfErased(tx, [unverified.email])))),
       'an unverified account’s address is not refused'
     );
 

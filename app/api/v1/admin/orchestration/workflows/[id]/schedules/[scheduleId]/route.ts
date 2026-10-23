@@ -13,11 +13,13 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
 import {
-  refuseErasedSubjects,
-  stringsIn,
-  WRITER_TRANSACTION_OPTIONS,
-} from '@/lib/privacy/erased-subjects';
+  lockScheduleRow,
+  SCHEDULE_VERSION_SELECT,
+  scheduleVersion,
+} from '@/lib/orchestration/config-versions';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateScheduleSchema } from '@/lib/validations/orchestration';
@@ -47,8 +49,11 @@ async function resolveSchedule(rawId: string, rawScheduleId: string) {
 export const GET = withAdminAuth<Params>(async (_request, _session, { params }) => {
   const { id, scheduleId } = await params;
   const schedule = await resolveSchedule(id, scheduleId);
+  const version = scheduleVersion(schedule);
 
-  return successResponse({ schedule });
+  return successResponse({ schedule: { ...schedule, version } }, undefined, {
+    headers: { ETag: version },
+  });
 });
 
 export const PATCH = withAdminAuth<Params>(
@@ -58,6 +63,8 @@ export const PATCH = withAdminAuth<Params>(
     const { id, scheduleId } = await params;
     const existing = await resolveSchedule(id, scheduleId);
 
+    // The version the form loaded (§122 t-899), checked under the row lock.
+    const loadedAt = requireIfMatch(request);
     const body = await validateRequestBody(request, updateScheduleSchema);
 
     if (body.cronExpression && !isValidCron(body.cronExpression)) {
@@ -72,15 +79,16 @@ export const PATCH = withAdminAuth<Params>(
     const nextRunAt = isEnabled ? getNextRunAt(cronExpr) : null;
 
     // The edit form sends the whole template it loaded, so one opened before a
-    // person was erased would write their address back (t-805).
+    // person was erased would write their address back. Refused when the
+    // schedule has moved on since it was loaded (§122 t-899), under the lock
+    // erasure takes; a template typed into a freshly loaded form is saved.
     const updated = await prisma.$transaction(async (tx) => {
-      if (body.inputTemplate !== undefined) {
-        await refuseErasedSubjects(
-          tx,
-          { addresses: stringsIn(body.inputTemplate) },
-          'inputTemplate'
-        );
-      }
+      await lockScheduleRow(tx, existing.id);
+      const current = await tx.aiWorkflowSchedule.findUniqueOrThrow({
+        where: { id: existing.id },
+        select: SCHEDULE_VERSION_SELECT,
+      });
+      assertCurrentVersion(loadedAt, scheduleVersion(current));
       return tx.aiWorkflowSchedule.update({
         where: { id: existing.id },
         data: {
@@ -114,7 +122,7 @@ export const PATCH = withAdminAuth<Params>(
       clientIp: clientIP,
     });
 
-    return successResponse({ schedule: updated });
+    return successResponse({ schedule: { ...updated, version: scheduleVersion(updated) } });
   },
   {
     tier: 'org',

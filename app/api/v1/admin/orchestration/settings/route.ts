@@ -33,7 +33,9 @@ import {
   costLogsOutliveExecutions,
   updateOrchestrationSettingsSchema,
 } from '@/lib/validations/orchestration';
-import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
+import { escalationVersion, lockSettingsRow } from '@/lib/orchestration/config-versions';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
@@ -45,15 +47,24 @@ import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 export const GET = withAdminAuth(async (request) => {
   const log = await getRouteLogger(request);
   const settings = await getOrchestrationSettings();
+  // The escalation list's version, for a save of it to send as If-Match
+  // (§122 t-899). Read from the row, not the 30 s cache above, and from the
+  // column as stored, as the PATCH reads it: a stale version would refuse
+  // every save until the cache turned over.
+  const stored = await prisma.aiOrchestrationSettings.findUnique({
+    where: { slug: 'global' },
+    select: { escalationConfig: true },
+  });
+  const body = { ...settings, escalationVersion: escalationVersion(stored?.escalationConfig) };
 
-  const etag = computeETag(settings);
+  const etag = computeETag(body);
   const notModified = checkConditional(request, etag);
   if (notModified) return notModified;
 
   log.info('Orchestration settings fetched', {
     hasGlobalCap: settings.globalMonthlyBudgetUsd !== null,
   });
-  return successResponse(settings, undefined, { headers: { ETag: etag } });
+  return successResponse(body, undefined, { headers: { ETag: etag } });
 });
 
 export const PATCH = withAdminAuth(
@@ -77,6 +88,9 @@ export const PATCH = withAdminAuth(
     await hydrateModelRegistryFromDb();
 
     const body = await validateRequestBody(request, updateOrchestrationSettingsSchema);
+    // A save of the escalation list says which version it loaded (§122
+    // t-899); a save of anything else on the row does not need to.
+    const loadedAt = body.escalationConfig !== undefined ? requireIfMatch(request) : undefined;
 
     // Validate the active-embedding-model FK against the model matrix. The
     // Zod schema only enforces "non-empty string", since the foreign key
@@ -319,15 +333,17 @@ export const PATCH = withAdminAuth(
     }
 
     // The form saves its whole escalation list, so one opened before a person
-    // was erased would write their address back (t-805). Refused in the
-    // transaction that writes, under the lock erasure takes.
+    // was erased would write their address back. Refused when the list has
+    // moved on since it was loaded (§122 t-899), under the lock erasure takes;
+    // a list typed into a freshly loaded form is saved, erased or not.
     const row = await prisma.$transaction(async (tx) => {
-      if (body.escalationConfig?.emailAddresses) {
-        await refuseErasedSubjects(
-          tx,
-          { addresses: body.escalationConfig.emailAddresses },
-          'escalationConfig.emailAddresses'
-        );
+      if (loadedAt) {
+        await lockSettingsRow(tx, 'global');
+        const current = await tx.aiOrchestrationSettings.findUnique({
+          where: { slug: 'global' },
+          select: { escalationConfig: true },
+        });
+        assertCurrentVersion(loadedAt, escalationVersion(current?.escalationConfig));
       }
       return tx.aiOrchestrationSettings.upsert({
         where: { slug: 'global' },
@@ -364,7 +380,10 @@ export const PATCH = withAdminAuth(
       globalCapSet: row.globalMonthlyBudgetUsd !== null,
     });
 
-    return successResponse(hydrateSettings(row));
+    return successResponse({
+      ...hydrateSettings(row),
+      escalationVersion: escalationVersion(row.escalationConfig),
+    });
   },
   { writesSharedSettings: true }
 );

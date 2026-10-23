@@ -20,7 +20,13 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
-import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
+import {
+  lockSubscriptionRow,
+  SUBSCRIPTION_VERSION_SELECT,
+  subscriptionVersion,
+} from '@/lib/orchestration/config-versions';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 import {
@@ -59,7 +65,8 @@ export const GET = withAdminAuth<{ id: string }>(
     });
     if (!webhook) throw new NotFoundError('Webhook not found');
 
-    return successResponse(webhook);
+    const version = subscriptionVersion(webhook);
+    return successResponse({ ...webhook, version }, undefined, { headers: { ETag: version } });
   },
   {
     tier: 'org',
@@ -85,6 +92,9 @@ export const PATCH = withAdminAuth<{ id: string }>(
     });
     if (!existing) throw new NotFoundError('Webhook not found');
 
+    // The version the form loaded (§122 t-899): checked under the row lock
+    // below, before anything is written.
+    const loadedAt = requireIfMatch(request);
     const body = await validateRequestBody(request, updateWebhookSchema);
 
     // The Zod union allows any subset of channel-specific fields on PATCH.
@@ -116,12 +126,17 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
     // The edit form sends the address it loaded on every save, so a page
     // opened before a person was erased would restore their address and
-    // re-activate the subscription erasure switched off (t-805). Refused under
-    // the lock erasure takes.
+    // re-activate the subscription erasure switched off. Refused when the row
+    // has moved on since it was loaded (§122 t-899), under the lock erasure
+    // takes; an address typed into a freshly loaded form is the admin's intent
+    // and is saved, erased or not.
     const webhook = await prisma.$transaction(async (tx) => {
-      if ('emailAddress' in body && body.emailAddress) {
-        await refuseErasedSubjects(tx, { addresses: [body.emailAddress] }, 'emailAddress');
-      }
+      await lockSubscriptionRow(tx, parsed.data);
+      const current = await tx.aiWebhookSubscription.findUniqueOrThrow({
+        where: { id: parsed.data },
+        select: SUBSCRIPTION_VERSION_SELECT,
+      });
+      assertCurrentVersion(loadedAt, subscriptionVersion(current));
       // An email subscription kept without a new address relies on the one
       // it has — which an erasure may have cleared since `existing` was read
       // (review round 2). Conditional on the row still having one, so a stale
@@ -165,7 +180,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
       clientIp: getClientIP(request),
     });
 
-    return successResponse(webhook);
+    return successResponse({ ...webhook, version: subscriptionVersion(webhook) });
   },
   {
     tier: 'org',
