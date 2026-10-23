@@ -114,10 +114,13 @@ export const POST = withAdminAuth(
             createdBy: session.user.id,
           },
         });
+        // A definition copied from a template or another workflow names its
+        // source, and is refused if that moved on since (§122 t-900).
         await createInitialVersion({
           tx,
           workflowId: created.id,
           definition: body.workflowDefinition,
+          copiedFrom: body.copiedFrom,
           userId: session.user.id,
         });
         return tx.aiWorkflow.findUniqueOrThrow({

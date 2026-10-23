@@ -19,6 +19,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { findFreeWorkflowSlug } from '@/lib/orchestration/workflows/slug-availability';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -103,10 +104,16 @@ export const POST = withAdminAuth<{ id: string }>(
             createdBy: session.user.id,
           },
         });
+        // The snapshot was read above, before the transaction: refused if an
+        // erasure (or anything else) has moved the source since (§122 t-900).
         await createInitialVersion({
           tx,
           workflowId: created.id,
           definition: sourceDefinition,
+          copiedFrom: {
+            workflowId: workflow.id,
+            definitionVersion: workflowDefinitionVersion(workflow),
+          },
           userId: session.user.id,
         });
         return tx.aiWorkflow.findUniqueOrThrow({ where: { id: created.id } });

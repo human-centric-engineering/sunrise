@@ -234,6 +234,7 @@ export function WorkflowsTable({
         const full = await apiClient.get<{
           draftDefinition: unknown;
           publishedVersion: { snapshot: unknown } | null;
+          definitionVersion: string;
           patternsUsed: string[];
           isTemplate: boolean;
           metadata: unknown;
@@ -250,6 +251,9 @@ export function WorkflowsTable({
             slug: `${workflow.slug}-copy-${Date.now()}`,
             description: workflow.description ?? '',
             workflowDefinition: sourceDefinition,
+            // Refused if the source moved on, an erasure included, since the
+            // read above (§122 t-900).
+            copiedFrom: { workflowId: workflow.id, definitionVersion: full.definitionVersion },
             patternsUsed: full.patternsUsed,
             isActive: false,
             isTemplate: false,

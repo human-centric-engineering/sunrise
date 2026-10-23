@@ -46,6 +46,12 @@ export interface WorkflowSavePayload {
    * (§122 t-900). A save refused because it moved on throws `STALE_RECORD`.
    */
   definitionVersion?: string;
+  /**
+   * Create mode: the custom template the canvas was loaded from, sent as
+   * `copiedFrom` (§122 t-900): the server refuses the copy if the template
+   * moved on since. Templates cannot be applied in edit mode.
+   */
+  copiedFrom?: { workflowId: string; definitionVersion: string };
   name: string;
   nodes: readonly PatternNode[];
   edges: readonly Edge[];
@@ -77,6 +83,7 @@ export async function saveWorkflow(
         slug: payload.details.slug,
         description: payload.details.description,
         workflowDefinition: definition,
+        ...(payload.copiedFrom ? { copiedFrom: payload.copiedFrom } : {}),
         isTemplate: payload.details.isTemplate,
         maxCostPerExecutionUsd: payload.details.maxCostPerExecutionUsd,
       },

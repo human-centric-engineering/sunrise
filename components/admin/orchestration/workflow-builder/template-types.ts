@@ -19,6 +19,18 @@ export const templateMetadataSchema = z.object({
 });
 
 /**
+ * A custom template's row and the `definitionVersion` it was read at, sent
+ * back as `copiedFrom` by a workflow made from it (§122 t-900). Built-in
+ * templates come from code and have none.
+ */
+export const templateCopySourceSchema = z.object({
+  workflowId: z.string(),
+  definitionVersion: z.string(),
+});
+
+export type TemplateCopySource = z.infer<typeof templateCopySourceSchema>;
+
+/**
  * The response of `GET /workflows/templates`, flattened to the shape the
  * builder's `initialTemplates` prop takes. Every entry is a template, so
  * `isTemplate` is always true. `workflowDefinition` and `metadata` stay
@@ -34,6 +46,7 @@ export const templateCatalogueSchema = z.array(
       workflowDefinition: z.unknown(),
       patternsUsed: z.array(z.number()),
       metadata: z.unknown(),
+      copySource: templateCopySourceSchema.optional(),
     })
     .transform((entry) => ({
       slug: entry.slug,
@@ -43,6 +56,7 @@ export const templateCatalogueSchema = z.array(
       patternsUsed: entry.patternsUsed,
       isTemplate: true,
       metadata: entry.metadata,
+      copySource: entry.copySource,
     }))
 );
 
@@ -58,6 +72,8 @@ export interface TemplateItem {
   patternsUsed: number[];
   isTemplate: boolean;
   metadata: WorkflowTemplateMetadata | null;
+  /** A custom template's row and version; none for a built-in. */
+  copySource?: TemplateCopySource;
 }
 
 /**
@@ -75,6 +91,7 @@ export function toTemplateItem(workflow: {
   patternsUsed: number[];
   isTemplate: boolean;
   metadata: unknown;
+  copySource?: TemplateCopySource;
 }): TemplateItem {
   const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
   const metaResult = templateMetadataSchema.safeParse(workflow.metadata);
@@ -89,5 +106,6 @@ export function toTemplateItem(workflow: {
     patternsUsed: workflow.patternsUsed,
     isTemplate: workflow.isTemplate,
     metadata: metaResult.success ? metaResult.data : null,
+    ...(workflow.copySource ? { copySource: workflow.copySource } : {}),
   };
 }

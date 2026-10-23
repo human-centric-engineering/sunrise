@@ -75,7 +75,10 @@ import type {
   AgentOption,
   CapabilityOption,
 } from '@/components/admin/orchestration/workflow-builder/block-editors';
-import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
+import type {
+  TemplateCopySource,
+  TemplateItem,
+} from '@/components/admin/orchestration/workflow-builder/template-types';
 import {
   templateMetadataSchema,
   toTemplateItem,
@@ -102,6 +105,7 @@ export interface WorkflowBuilderProps {
     patternsUsed: number[];
     isTemplate: boolean;
     metadata: unknown;
+    copySource?: TemplateCopySource;
   }>;
 }
 
@@ -245,6 +249,10 @@ function WorkflowBuilderInner({
     workflow?.definitionVersion
   );
   const [stale, setStale] = useState(false);
+  // The custom template the canvas was loaded from, until the next save: its
+  // addresses are the template's, not typed here, so the save names it and
+  // is refused if the template moved on (an erasure, say) since it loaded.
+  const [copiedFrom, setCopiedFrom] = useState<TemplateCopySource | null>(null);
 
   // Capabilities for the Tool Call editor — server-prefetched via props,
   // with a client-side fallback if the page didn't provide them.
@@ -527,6 +535,7 @@ function WorkflowBuilderInner({
     );
     setNodes(templateNodes);
     setEdges(templateEdges);
+    setCopiedFrom(pendingTemplate.copySource ?? null);
     setWorkflowName(pendingTemplate.name);
     setSelectedNodeId(null);
     setSaveError(null);
@@ -555,6 +564,7 @@ function WorkflowBuilderInner({
           mode,
           workflowId: editingWorkflowId,
           definitionVersion,
+          ...(copiedFrom ? { copiedFrom } : {}),
           name: workflowName.trim() || 'Untitled workflow',
           nodes,
           edges,
@@ -569,6 +579,8 @@ function WorkflowBuilderInner({
           // round-trip refresh.
           setHasDraft(true);
           setDefinitionVersion(savedWorkflow.definitionVersion);
+          // Saved: the draft is this workflow's own from here on.
+          setCopiedFrom(null);
           setSaved(true);
           schedule(() => setSaved(false), 2500);
           router.refresh();
@@ -590,7 +602,17 @@ function WorkflowBuilderInner({
         setSaving(false);
       }
     },
-    [edges, mode, nodes, router, editingWorkflowId, definitionVersion, workflowName, schedule]
+    [
+      edges,
+      mode,
+      nodes,
+      router,
+      editingWorkflowId,
+      definitionVersion,
+      copiedFrom,
+      workflowName,
+      schedule,
+    ]
   );
 
   const handleSave = useCallback(() => {
@@ -857,7 +879,12 @@ function WorkflowBuilderInner({
 
       {stale && (
         <div className="border-b px-4 py-2">
-          <StaleSaveNotice what="This workflow" onCopyChanges={handleCopyJson} />
+          <StaleSaveNotice
+            what={
+              copiedFrom ? 'This workflow, or the template it was started from,' : 'This workflow'
+            }
+            onCopyChanges={handleCopyJson}
+          />
         </div>
       )}
 

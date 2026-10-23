@@ -25,6 +25,7 @@ import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/erro
 import { assertCurrentVersion, recordVersion } from '@/lib/api/record-version';
 import {
   assertUnchangedSince,
+  lockWorkflowRow,
   WORKFLOW_DEFINITION_VERSION_SELECT,
   workflowDefinitionVersion,
 } from '@/lib/orchestration/config-versions';
@@ -149,6 +150,43 @@ async function lockedWithoutErasedApprovers(
   return erased.userIds.length > 0
     ? withoutErasedRecipients(definition, { addresses: [], userIds: erased.userIds })
     : definition;
+}
+
+/**
+ * The stored workflow a definition was copied from, at the
+ * `definitionVersion` it was copied at (§122 t-900): a custom template applied
+ * in the builder, a duplicated workflow, a workflow saved as a template.
+ */
+export interface CopySource {
+  workflowId: string;
+  definitionVersion: string;
+}
+
+/** What a 412 says when the source of a copy has moved on. */
+export const COPY_SOURCE_MOVED_MESSAGE =
+  'The workflow or template this was copied from changed since you opened it. Reload, then copy it again.';
+
+/**
+ * Refuse a copy whose source has moved on since it was copied, under the
+ * source's row lock. A copy is not new intent: whoever is erased in the
+ * source now, but named in the copy, was named by the stored data, not typed
+ * by the admin. Call after {@link lockedWithoutErasedApprovers} has taken
+ * erasure's locks for everyone the copy names, so an erasure scrubbing the
+ * source has either finished (the version moved) or waits for this commit.
+ * A source this org cannot see, or that is gone, is refused the same way.
+ */
+async function assertCopySourceUnchanged(
+  tx: Prisma.TransactionClient,
+  source: CopySource
+): Promise<void> {
+  await lockWorkflowRow(tx, source.workflowId);
+  const row = await tx.aiWorkflow.findUnique({
+    where: { id: source.workflowId },
+    select: WORKFLOW_DEFINITION_VERSION_SELECT,
+  });
+  if (!row || workflowDefinitionVersion(row) !== source.definitionVersion) {
+    throw new StaleRecordError(COPY_SOURCE_MOVED_MESSAGE);
+  }
 }
 
 /**
@@ -474,6 +512,8 @@ export interface CreateInitialVersionArgs {
   tx: Tx;
   workflowId: string;
   definition: WorkflowDefinition;
+  /** Where `definition` was copied from: a template, a duplicate, save-as-template. */
+  copiedFrom?: CopySource;
   userId: string;
 }
 
@@ -485,10 +525,13 @@ export interface CreateInitialVersionArgs {
 export async function createInitialVersion(
   args: CreateInitialVersionArgs
 ): Promise<AiWorkflowVersion> {
-  const { tx, workflowId, definition, userId } = args;
-  // A create is new intent (§122): an address in it was typed or imported on
-  // purpose. A backup import has already left out who it must (t-902).
+  const { tx, workflowId, definition, copiedFrom, userId } = args;
+  // A create typed from scratch is new intent (§122): an address in it was
+  // typed on purpose. A copy of a stored workflow is not, so it is checked
+  // against its source (t-900). A backup import has already left out who it
+  // must (t-902).
   const toWrite = await lockedWithoutErasedApprovers(tx, definition);
+  if (copiedFrom) await assertCopySourceUnchanged(tx, copiedFrom);
   const version = await tx.aiWorkflowVersion.create({
     data: {
       workflowId,
