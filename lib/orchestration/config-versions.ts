@@ -15,6 +15,11 @@
  *   • **The escalation list**: `escalationConfig` alone. The settings row is
  *     shared by five forms and only one writes this field, so a save of the
  *     default models is not refused because erasure took someone off the list.
+ *   • **A workflow's definition** (t-900): what the builder loaded, which is
+ *     the draft, or the published snapshot when there is none, and which
+ *     version is published. Erasure scrubs both the draft and the snapshots in
+ *     place; a publish or rollback moves the published version. A workflow's
+ *     name, toggles and cost cap are left out: nothing erasure scrubs.
  *
  * Each lock is `FOR NO KEY UPDATE`, the lock erasure takes on the same rows
  * (`config-recipients.ts`, `erase-user.ts`, `run-recipients.ts`).
@@ -26,7 +31,11 @@ import { assertCurrentVersion, recordVersion } from '@/lib/api/record-version';
 type LockClient = Pick<Prisma.TransactionClient, '$queryRaw'>;
 type VersionClient = Pick<
   Prisma.TransactionClient,
-  '$queryRaw' | 'aiWebhookSubscription' | 'aiWorkflowSchedule' | 'aiOrchestrationSettings'
+  | '$queryRaw'
+  | 'aiWebhookSubscription'
+  | 'aiWorkflowSchedule'
+  | 'aiOrchestrationSettings'
+  | 'aiWorkflow'
 >;
 
 /** The subscription fields its version covers. Select them wherever it is computed. */
@@ -92,6 +101,26 @@ export function escalationVersion(escalationConfig: unknown): string {
   return recordVersion(['escalation-config', escalationConfig ?? null]);
 }
 
+/** The workflow fields its definition version covers. */
+export const WORKFLOW_DEFINITION_VERSION_SELECT = {
+  draftDefinition: true,
+  publishedVersionId: true,
+  publishedVersion: { select: { snapshot: true } },
+} as const;
+
+type WorkflowDefinitionVersioned = Prisma.AiWorkflowGetPayload<{
+  select: typeof WORKFLOW_DEFINITION_VERSION_SELECT;
+}>;
+
+export function workflowDefinitionVersion(row: WorkflowDefinitionVersioned): string {
+  return recordVersion([
+    'workflow-definition',
+    row.draftDefinition ?? null,
+    row.publishedVersionId,
+    row.publishedVersion?.snapshot ?? null,
+  ]);
+}
+
 /** Lock a subscription for a versioned save. A missing row takes nothing. */
 export async function lockSubscriptionRow(tx: LockClient, id: string): Promise<void> {
   await tx.$queryRaw`SELECT id FROM ai_webhook_subscription WHERE id = ${id} FOR NO KEY UPDATE`;
@@ -107,15 +136,27 @@ export async function lockSettingsRow(tx: LockClient, slug: string): Promise<voi
   await tx.$queryRaw`SELECT id FROM ai_orchestration_settings WHERE slug = ${slug} FOR NO KEY UPDATE`;
 }
 
+/**
+ * Lock a workflow for a versioned save of its definition. The published
+ * snapshot is not locked with it: a writer that writes a definition takes the
+ * erasure locks for everyone it names first (`version-service.ts`), which
+ * orders it against an erasure scrubbing that snapshot.
+ */
+export async function lockWorkflowRow(tx: LockClient, id: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM ai_workflow WHERE id = ${id} FOR NO KEY UPDATE`;
+}
+
 /** A record a versioned save writes. */
 export type VersionedRecord =
   | { kind: 'webhook-subscription'; id: string }
   | { kind: 'workflow-schedule'; id: string }
-  | { kind: 'escalation-list' };
+  | { kind: 'escalation-list' }
+  | { kind: 'workflow-definition'; id: string };
 
 /**
  * The record's version as stored now, read under its row lock: the lock is
- * held for the rest of `tx`. A missing subscription or schedule throws.
+ * held for the rest of `tx`. A missing subscription, schedule or workflow
+ * throws.
  */
 export async function lockedVersion(tx: VersionClient, record: VersionedRecord): Promise<string> {
   switch (record.kind) {
@@ -142,6 +183,14 @@ export async function lockedVersion(tx: VersionClient, record: VersionedRecord):
         select: { escalationConfig: true },
       });
       return escalationVersion(row?.escalationConfig);
+    }
+    case 'workflow-definition': {
+      await lockWorkflowRow(tx, record.id);
+      const row = await tx.aiWorkflow.findUniqueOrThrow({
+        where: { id: record.id },
+        select: WORKFLOW_DEFINITION_VERSION_SELECT,
+      });
+      return workflowDefinitionVersion(row);
     }
   }
 }

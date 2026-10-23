@@ -13,15 +13,21 @@
 
 import { definitionRecipients, removeFromDefinition } from '@/lib/privacy/config-recipients';
 import {
-  ERASED_SUBJECT_MESSAGE,
-  findErasedSubjects,
+  lockSubjects,
+  matchErasedSubjects,
   WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, AiWorkflowVersion, AiWorkflow } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
+import { assertCurrentVersion, recordVersion } from '@/lib/api/record-version';
+import {
+  assertUnchangedSince,
+  WORKFLOW_DEFINITION_VERSION_SELECT,
+  workflowDefinitionVersion,
+} from '@/lib/orchestration/config-versions';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
@@ -115,34 +121,31 @@ async function getVersionInt(client: Tx, versionId: string | null): Promise<numb
 }
 
 /**
- * The definition a writer may write, given who has been erased (t-805),
- * checked inside its transaction under erasure's lock:
+ * The definition a writer may write, inside its transaction (§122 t-900).
  *
- * - **an erased address is refused** (`ValidationError` on `field`): an admin
- *   typed it, can see it, and can remove it — and a copy read before the
- *   erasure is exactly what this exists to stop;
- * - **an erased user id is stripped**, and the rest is written (review round
- *   2). An approver id is an opaque reference the builder cannot resolve once
- *   the account is gone, so refusing would leave the admin hunting a cuid —
- *   and a workflow naming someone erased before t-791 stripped definitions
- *   could then never be saved or published again.
+ * - **Erasure's locks are taken first** for every address and approver id it
+ *   names. A publish, rollback or create inserts a new version row, which an
+ *   erasure already scanning the versions would not see; with the locks,
+ *   either the erasure commits before this reads, or it waits and scans after
+ *   this commits. A save takes them too, before its version check.
+ * - **An erased approver id is stripped**, the rest written. An id is never
+ *   issued again, so nobody can re-add one on purpose, and the builder cannot
+ *   show an account that is gone.
+ * - **An erased address is written.** A copy loaded before the erasure is
+ *   refused by its version instead (`assertUnchangedSince`), so an address in
+ *   what reaches here was typed into a builder loaded after it: a deliberate
+ *   re-add. Until t-900 every address anyone was ever erased under was
+ *   refused, which kept such a re-add out for good.
  *
- * Returns the definition to write: the same object when nothing was erased.
+ * Returns the definition to write: the same object when nothing was stripped.
  */
-async function withoutErasedOrRefused(
+async function lockedWithoutErasedApprovers(
   tx: Prisma.TransactionClient,
-  definition: WorkflowDefinition,
-  field: string
+  definition: WorkflowDefinition
 ): Promise<WorkflowDefinition> {
-  const erased = await findErasedSubjects(
-    tx,
-    definitionRecipients(definition as unknown as Prisma.JsonValue)
-  );
-  if (erased.addresses.length > 0) {
-    throw new ValidationError('A recipient belongs to a person whose data was erased', {
-      [field]: [ERASED_SUBJECT_MESSAGE],
-    });
-  }
+  const named = definitionRecipients(definition as unknown as Prisma.JsonValue);
+  await lockSubjects(tx, named);
+  const erased = await matchErasedSubjects(tx, { userIds: named.userIds });
   return erased.userIds.length > 0
     ? withoutErasedRecipients(definition, { addresses: [], userIds: erased.userIds })
     : definition;
@@ -151,8 +154,8 @@ async function withoutErasedOrRefused(
 /**
  * The definition without any erased person in it — the same object when none
  * were — removed exactly as erasure removes them (`removeFromDefinition`).
- * For a writer whose source cannot be edited (a rollback's target snapshot, a
- * backup bundle), where refusing would block it for good (t-805).
+ * For approver ids (above), and for a backup bundle's people erased since it
+ * was taken (t-805, t-902).
  */
 export function withoutErasedRecipients(
   definition: WorkflowDefinition,
@@ -178,9 +181,16 @@ export function withoutErasedRecipients(
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
+/**
+ * The definition versions a builder's write was loaded at (`If-Match`, §122
+ * t-900): `workflowDefinitionVersion` of the workflow as the builder read it.
+ */
+export type LoadedAt = readonly string[];
+
 export interface SaveDraftArgs {
   workflowId: string;
   definition: WorkflowDefinition;
+  loadedAt: LoadedAt;
   userId: string;
   clientIp?: string | null;
 }
@@ -189,15 +199,21 @@ export interface SaveDraftArgs {
  * Write `draftDefinition` on a workflow. The caller has already Zod-validated
  * the body; this function intentionally does NOT run structural / semantic
  * validation so admins can save a half-built workflow and come back to it.
+ *
+ * Refused with 412 when the workflow's definition has moved on since the
+ * builder loaded it (`loadedAt`): another admin saved, published or rolled
+ * back, or an erasure scrubbed a person out of it.
  */
 export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
-  const { workflowId, definition, userId, clientIp } = args;
+  const { workflowId, definition, loadedAt, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
   // A builder tab opened before a person was erased saves the whole draft it
-  // loaded, their address included (t-805): refused under erasure's lock.
+  // loaded, their address included: refused by its version, under the lock
+  // erasure takes on the row (§122 t-900).
   const updated = await prisma.$transaction(async (tx) => {
-    const toWrite = await withoutErasedOrRefused(tx, definition, 'draftDefinition');
+    const toWrite = await lockedWithoutErasedApprovers(tx, definition);
+    await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, loadedAt);
     return tx.aiWorkflow.update({
       where: { id: workflowId },
       data: { draftDefinition: toWrite as unknown as Prisma.InputJsonValue },
@@ -219,21 +235,28 @@ export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
 
 export interface DiscardDraftArgs {
   workflowId: string;
+  loadedAt: LoadedAt;
   userId: string;
   clientIp?: string | null;
 }
 
 /**
  * Clear the in-progress draft. No-op (still emits audit) if no draft exists.
+ *
+ * Refused with 412 when the definition has moved on since the builder loaded
+ * it: the draft it would discard is not the one the admin saw.
  */
 export async function discardDraft(args: DiscardDraftArgs): Promise<AiWorkflow> {
-  const { workflowId, userId, clientIp } = args;
+  const { workflowId, loadedAt, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
-  const updated = await prisma.aiWorkflow.update({
-    where: { id: workflowId },
-    data: { draftDefinition: Prisma.DbNull },
-  });
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, loadedAt);
+    return tx.aiWorkflow.update({
+      where: { id: workflowId },
+      data: { draftDefinition: Prisma.DbNull },
+    });
+  }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({
     userId,
@@ -249,6 +272,7 @@ export async function discardDraft(args: DiscardDraftArgs): Promise<AiWorkflow> 
 
 export interface PublishDraftArgs {
   workflowId: string;
+  loadedAt: LoadedAt;
   userId: string;
   changeSummary?: string;
   clientIp?: string | null;
@@ -265,21 +289,23 @@ export interface PublishDraftResult {
  * insert + update + clear draft happen inside one transaction.
  *
  * Throws `ValidationError` if there is no draft, or if the draft fails
- * Zod / structural / semantic validation.
+ * Zod / structural / semantic validation. Refused with 412 when the definition
+ * has moved on since the builder loaded it (`loadedAt`): the draft stored now
+ * is not the one the admin is publishing.
  */
 export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraftResult> {
-  const { workflowId, userId, changeSummary, clientIp } = args;
+  const { workflowId, loadedAt, userId, changeSummary, clientIp } = args;
 
   const existing = await prisma.aiWorkflow.findUnique({
     where: { id: workflowId },
-    select: {
-      id: true,
-      name: true,
-      draftDefinition: true,
-      publishedVersionId: true,
-    },
+    select: { id: true, name: true, ...WORKFLOW_DEFINITION_VERSION_SELECT },
   });
   if (!existing) throw new NotFoundError(`Workflow ${workflowId} not found`);
+  // Checked here, before validation, so a stale builder is told to reload
+  // rather than shown errors in a draft it has not seen; and again under the
+  // lock below, against this read, so what was validated is what is published.
+  const readAt = workflowDefinitionVersion(existing);
+  assertCurrentVersion(loadedAt, readAt);
   if (existing.draftDefinition === null || existing.draftDefinition === undefined) {
     throw new ValidationError('No draft to publish', {
       draftDefinition: ['Workflow has no draft to publish'],
@@ -294,8 +320,10 @@ export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraft
 
   const result = await prisma.$transaction(async (tx) => {
     // The draft was read above, outside any lock: one read before a person was
-    // erased must not become a published version naming them (t-805).
-    const toWrite = await withoutErasedOrRefused(tx, definition, 'draftDefinition');
+    // erased must not become a published version naming them (t-805). An
+    // erasure since that read changed the version, and is refused here.
+    const toWrite = await lockedWithoutErasedApprovers(tx, definition);
+    await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, [readAt]);
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
       data: {
@@ -350,6 +378,17 @@ export interface RollbackResult {
  * copy of the target. Keeps the audit chain monotonic: history is never
  * rewritten. The target snapshot is re-validated before writing in case agent
  * or capability deletion has invalidated it since publication.
+ *
+ * **No `If-Match`** (§122 t-900). A rollback writes no copy the browser
+ * holds: it copies a snapshot from the database, which erasure scrubs in
+ * place. What could go stale is this function's own read of it, taken before
+ * the transaction. So the transaction takes erasure's locks for everyone that
+ * read names, then reads the snapshot again: an erasure either finished
+ * before, and the second read differs, or waits until this commits and then
+ * scrubs the new version too. A second read that differs is refused with 412
+ * rather than written unvalidated; trying again reads the scrubbed snapshot.
+ * The panel needs no version of its own for this: rolling back to a version
+ * is intent, whatever the builder has open.
  */
 export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
   const { workflowId, targetVersionId, userId, changeSummary, clientIp } = args;
@@ -380,15 +419,20 @@ export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
 
   let erasedRecipientsRemoved = false;
   const result = await prisma.$transaction(async (tx) => {
-    // The target snapshot was read before the transaction, and may name a
-    // person erased since — or before t-791 stripped versions. A snapshot
-    // cannot be edited, so refusing would block this rollback for good: the
-    // copy leaves them out instead (t-805), and the audit row says so.
-    const erased = await findErasedSubjects(
-      tx,
-      definitionRecipients(definition as unknown as Prisma.JsonValue)
-    );
-    const copied = withoutErasedRecipients(definition, erased);
+    // The target snapshot was read before the transaction: read it again
+    // under erasure's locks (see the docblock). An erased approver id, which
+    // a snapshot from before t-791 can still hold, is left out of the copy,
+    // and the audit row says so.
+    const copied = await lockedWithoutErasedApprovers(tx, definition);
+    const current = await tx.aiWorkflowVersion.findUnique({
+      where: { id: targetVersionId },
+      select: { snapshot: true },
+    });
+    if (!current || recordVersion(current.snapshot) !== recordVersion(target.snapshot)) {
+      throw new StaleRecordError(
+        'That version changed a moment ago, as a person on it had their data erased. Try the rollback again.'
+      );
+    }
     erasedRecipientsRemoved = copied !== definition;
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
@@ -442,7 +486,9 @@ export async function createInitialVersion(
   args: CreateInitialVersionArgs
 ): Promise<AiWorkflowVersion> {
   const { tx, workflowId, definition, userId } = args;
-  const toWrite = await withoutErasedOrRefused(tx, definition, 'workflowDefinition');
+  // A create is new intent (§122): an address in it was typed or imported on
+  // purpose. A backup import has already left out who it must (t-902).
+  const toWrite = await lockedWithoutErasedApprovers(tx, definition);
   const version = await tx.aiWorkflowVersion.create({
     data: {
       workflowId,

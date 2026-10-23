@@ -46,6 +46,7 @@ import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration
 import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
 import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
 import { PublishDialog } from '@/components/admin/orchestration/workflow-builder/publish-dialog';
+import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
 import { ExecutionInputDialog } from '@/components/admin/orchestration/workflow-builder/execution-input-dialog';
 import { ExecutionPanel } from '@/components/admin/orchestration/workflow-builder/execution-panel';
 import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
@@ -121,6 +122,11 @@ function pickEditableDefinition(workflow: AiWorkflowWithVersion): unknown {
     return workflow.draftDefinition;
   }
   return workflow.publishedVersion?.snapshot ?? null;
+}
+
+/** A save, publish or discard refused because the workflow moved on (412, §122 t-900). */
+function isStale(err: unknown): boolean {
+  return err instanceof APIClientError && err.code === 'STALE_RECORD';
 }
 
 function initialState(
@@ -230,6 +236,15 @@ function WorkflowBuilderInner({
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+
+  // The definition version this builder holds (§122 t-900): sent as If-Match
+  // on save, publish and discard, and moved on by each of them and by a
+  // rollback. `stale` is set when one is refused because the stored workflow
+  // moved on; the canvas keeps the admin's edits until they reload.
+  const [definitionVersion, setDefinitionVersion] = useState<string | undefined>(
+    workflow?.definitionVersion
+  );
+  const [stale, setStale] = useState(false);
 
   // Capabilities for the Tool Call editor — server-prefetched via props,
   // with a client-side fallback if the page didn't provide them.
@@ -539,6 +554,7 @@ function WorkflowBuilderInner({
         const savedWorkflow = await saveWorkflow({
           mode,
           workflowId: editingWorkflowId,
+          definitionVersion,
           name: workflowName.trim() || 'Untitled workflow',
           nodes,
           edges,
@@ -552,11 +568,16 @@ function WorkflowBuilderInner({
           // the toolbar's status pill flips to "Editing draft" without a
           // round-trip refresh.
           setHasDraft(true);
+          setDefinitionVersion(savedWorkflow.definitionVersion);
           setSaved(true);
           schedule(() => setSaved(false), 2500);
           router.refresh();
         }
       } catch (err) {
+        if (isStale(err)) {
+          setStale(true);
+          return;
+        }
         const message =
           err instanceof APIClientError
             ? err.message
@@ -569,7 +590,7 @@ function WorkflowBuilderInner({
         setSaving(false);
       }
     },
-    [edges, mode, nodes, router, editingWorkflowId, workflowName, schedule]
+    [edges, mode, nodes, router, editingWorkflowId, definitionVersion, workflowName, schedule]
   );
 
   const handleSave = useCallback(() => {
@@ -659,6 +680,7 @@ function WorkflowBuilderInner({
       // sync the toolbar pill to match.
       setPublishedVersion(fresh.publishedVersion?.version ?? null);
       setHasDraft(fresh.draftDefinition !== null && fresh.draftDefinition !== undefined);
+      setDefinitionVersion(fresh.definitionVersion);
     } catch (err) {
       logger.error('Failed to refresh canvas after revert', { err });
     }
@@ -676,16 +698,24 @@ function WorkflowBuilderInner({
       try {
         const result = await apiClient.post<{
           version: { version: number };
+          definitionVersion: string;
         }>(API.ADMIN.ORCHESTRATION.workflowPublish(workflow.id), {
           body: changeSummary ? { changeSummary } : {},
+          options: { headers: { 'If-Match': definitionVersion ?? '' } },
         });
         setPublishedVersion(result.version.version);
+        setDefinitionVersion(result.definitionVersion);
         setHasDraft(false);
         setPublishDialogOpen(false);
         setPublished(true);
         schedule(() => setPublished(false), 2500);
         router.refresh();
       } catch (err) {
+        if (isStale(err)) {
+          setPublishDialogOpen(false);
+          setStale(true);
+          return;
+        }
         const message =
           err instanceof APIClientError
             ? err.message
@@ -698,7 +728,7 @@ function WorkflowBuilderInner({
         setPublishing(false);
       }
     },
-    [router, workflow, schedule]
+    [router, workflow, definitionVersion, schedule]
   );
 
   const handleDiscardDraft = useCallback(async () => {
@@ -707,7 +737,9 @@ function WorkflowBuilderInner({
       return;
     }
     try {
-      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowDiscardDraft(workflow.id), {});
+      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowDiscardDraft(workflow.id), {
+        options: { headers: { 'If-Match': definitionVersion ?? '' } },
+      });
       // Reload the canvas from the published snapshot now that the draft is gone.
       const fresh = await apiClient.get<AiWorkflowWithVersion>(
         API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
@@ -721,11 +753,16 @@ function WorkflowBuilderInner({
         setEdges(revertedEdges);
       }
       setHasDraft(false);
+      setDefinitionVersion(fresh.definitionVersion);
       router.refresh();
     } catch (err) {
+      if (isStale(err)) {
+        setStale(true);
+        return;
+      }
       logger.error('Workflow discard-draft failed', { err });
     }
-  }, [router, setEdges, setNodes, workflow]);
+  }, [router, setEdges, setNodes, workflow, definitionVersion]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
@@ -815,6 +852,12 @@ function WorkflowBuilderInner({
             workflowId={workflow.id}
             onReverted={() => void handleHistoryRevert()}
           />
+        </div>
+      )}
+
+      {stale && (
+        <div className="border-b px-4 py-2">
+          <StaleSaveNotice what="This workflow" onCopyChanges={handleCopyJson} />
         </div>
       )}
 

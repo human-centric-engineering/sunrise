@@ -4,6 +4,8 @@
  * POST /api/v1/admin/orchestration/workflows/:id/discard-draft
  *
  * Clears `draftDefinition`. No body. The published version is unaffected.
+ * Requires `If-Match`: the `definitionVersion` the builder loaded (428
+ * without, 412 when it has moved on, §122 t-900).
  *
  * Authentication: Admin role required.
  */
@@ -13,6 +15,7 @@ import { successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
+import { requireIfMatch } from '@/lib/api/record-version';
 import { discardDraft } from '@/lib/orchestration/workflows/version-service';
 import { cuidSchema } from '@/lib/validations/common';
 
@@ -27,9 +30,11 @@ export const POST = withAdminAuth<{ id: string }>(
       throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
     }
     const id = parsed.data;
+    const loadedAt = requireIfMatch(request);
 
     const workflow = await discardDraft({
       workflowId: id,
+      loadedAt,
       userId: session.user.id,
       clientIp: clientIP,
     });

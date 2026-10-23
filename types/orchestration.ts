@@ -1336,9 +1336,13 @@ export type AiWorkflowListItem = AiWorkflow & {
  * workflow endpoints. The builder reads the snapshot from `publishedVersion`
  * (or `draftDefinition` when present) — the legacy `workflowDefinition`
  * column has been removed.
+ *
+ * `definitionVersion` is the version of what the builder edits, sent back as
+ * `If-Match` when it saves, publishes or discards (§122 t-900).
  */
 export type AiWorkflowWithVersion = AiWorkflow & {
   publishedVersion: AiWorkflowVersion | null;
+  definitionVersion: string;
 };
 
 /** Minimal agent projection nested in capability list items. */

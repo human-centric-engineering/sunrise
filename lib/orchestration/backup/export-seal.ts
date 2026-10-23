@@ -14,17 +14,15 @@
  *
  *   • `exportedAt`;
  *   • the org it exported, which the import must target;
- *   • every contact address the bundle carries ({@link bundleContacts}),
- *     the email subscriptions' and the escalation list's as two lists,
- *     normalised and sorted, repeats kept. An address added afterwards, or
- *     moved or copied from one to the other, breaks the seal.
+ *   • every contact address the bundle carries ({@link bundleContacts}):
+ *     the email subscriptions', the escalation list's and the workflow
+ *     definitions' (t-900) as three lists, normalised and sorted, repeats
+ *     kept. An address added afterwards, or moved or copied from one to
+ *     another, breaks the seal.
  *
  * The importer trusts the date only when the seal verifies against all three
  * ({@link trustedExportedAt}). Anything else counts every erasure, as imports
  * did before t-902.
- *
- * Workflow definitions are not sealed: the importer holds them to every
- * erasure until t-900 whatever the seal says.
  *
  * The signed bytes start with {@link SEAL_TYPE}, as `approval-tokens.ts` and
  * `lib/storage/access-tokens.ts` carry their own: all three use the same
@@ -40,6 +38,9 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { env } from '@/lib/env';
 import { isRecord } from '@/lib/utils';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
+import { definitionRecipients } from '@/lib/privacy/config-recipients';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import type { Prisma } from '@prisma/client';
 
 /** Scheme tag inside the signed bytes. Changing it unseals every bundle already exported. */
 const SEAL_TYPE = 'orchestration-backup-exported-at';
@@ -56,26 +57,42 @@ export interface SealedFacts {
 export interface BundleContacts {
   subscriptions: readonly string[];
   escalation: readonly string[];
+  /** Every address the workflow definitions send to or ask for approval from. */
+  workflows: readonly string[];
 }
 
 /** The parts of a bundle {@link bundleContacts} reads. */
 interface ContactSource {
   webhooks: ReadonlyArray<{ channel?: string | null; emailAddress?: string | null }>;
   settings?: { escalationConfig: unknown } | null;
+  workflows: ReadonlyArray<{ workflowDefinition: unknown }>;
 }
 
 /**
- * Every contact address a bundle carries: its email subscriptions', and its
- * escalation list's when it has settings. Read from the bundle as it stands,
- * whatever part an import writes, so exporter and importer seal the same lists;
- * the importer checks the same lists for erased people.
+ * Every contact address a bundle carries: its email subscriptions', its
+ * escalation list's when it has settings, and its workflow definitions'. Read
+ * from the bundle as it stands, whatever part an import writes, so exporter
+ * and importer seal the same lists; the importer checks the same lists for
+ * erased people. A definition that does not parse is skipped, as the importer
+ * skips it.
  */
 export function bundleContacts(data: ContactSource): BundleContacts {
   const subscriptions: string[] = [];
   for (const wh of data.webhooks) {
     if (wh.channel === 'email' && wh.emailAddress) subscriptions.push(wh.emailAddress);
   }
-  return { subscriptions, escalation: escalationAddresses(data.settings?.escalationConfig) };
+  return {
+    subscriptions,
+    escalation: escalationAddresses(data.settings?.escalationConfig),
+    workflows: data.workflows.flatMap((wf) => workflowAddresses(wf.workflowDefinition)),
+  };
+}
+
+/** A workflow definition's addresses, or none when it does not parse. */
+export function workflowAddresses(definition: unknown): string[] {
+  const parsed = workflowDefinitionSchema.safeParse(definition);
+  if (!parsed.success) return [];
+  return definitionRecipients(parsed.data as unknown as Prisma.JsonValue).addresses;
 }
 
 /** The escalation list's addresses; non-strings are skipped, as the importer skips them. */
@@ -86,7 +103,13 @@ export function escalationAddresses(config: unknown): string[] {
 
 function mac({ exportedAt, orgId, contacts }: SealedFacts): Buffer {
   const sorted = (list: readonly string[]) => list.map(normaliseAddress).sort();
-  const fields = [exportedAt, orgId, sorted(contacts.subscriptions), sorted(contacts.escalation)];
+  const fields = [
+    exportedAt,
+    orgId,
+    sorted(contacts.subscriptions),
+    sorted(contacts.escalation),
+    sorted(contacts.workflows),
+  ];
   return createHmac('sha256', env.BETTER_AUTH_SECRET)
     .update(`${SEAL_TYPE}\n${JSON.stringify(fields)}`, 'utf8')
     .digest();

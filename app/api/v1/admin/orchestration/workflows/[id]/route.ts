@@ -7,6 +7,10 @@
  *        same Zod schema as create.
  * DELETE /api/v1/admin/orchestration/workflows/:id — soft delete.
  *
+ * A read returns `definitionVersion`, the version of what the builder edits.
+ * A PATCH that sends `draftDefinition` must send it back as `If-Match`
+ * (428 without; 412 when the definition has moved on, §122 t-900).
+ *
  * Authentication: Admin role required.
  */
 
@@ -20,9 +24,26 @@ import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
+import { requireIfMatch } from '@/lib/api/record-version';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
+import {
+  assertUnchangedSince,
+  workflowDefinitionVersion,
+} from '@/lib/orchestration/config-versions';
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
 import { updateWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
+
+/**
+ * A workflow with the version of what the builder edits: a field, not the
+ * ETag, as it covers only the definition (§122 t-900).
+ */
+function withDefinitionVersion<
+  W extends AiWorkflow & { publishedVersion: AiWorkflowVersion | null },
+>(workflow: W): W & { definitionVersion: string } {
+  return { ...workflow, definitionVersion: workflowDefinitionVersion(workflow) };
+}
 
 export const GET = withAdminAuth<{ id: string }>(
   async (request, _session, { params }) => {
@@ -37,7 +58,7 @@ export const GET = withAdminAuth<{ id: string }>(
     if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
     log.info('Workflow fetched', { workflowId: id });
-    return successResponse(workflow);
+    return successResponse(withDefinitionVersion(workflow));
   },
   {
     tier: 'org',
@@ -61,6 +82,10 @@ export const PATCH = withAdminAuth<{ id: string }>(
     if (!current) throw new NotFoundError(`Workflow ${id} not found`);
 
     const body = await validateRequestBody(request, updateWorkflowSchema);
+    // A draft write carries the definition version the builder loaded, checked
+    // under the row lock. Name, toggles and cost cap name nobody erasure
+    // scrubs, so the list's toggle sends none.
+    const loadedAt = body.draftDefinition !== undefined ? requireIfMatch(request) : [];
 
     // System workflows cannot be deactivated or have their template status changed
     if (current.isSystem) {
@@ -78,14 +103,18 @@ export const PATCH = withAdminAuth<{ id: string }>(
     let baseline = current;
     if (body.draftDefinition !== undefined) {
       if (body.draftDefinition === null) {
-        await prisma.aiWorkflow.update({
-          where: { id },
-          data: { draftDefinition: Prisma.DbNull },
-        });
+        await prisma.$transaction(async (tx) => {
+          await assertUnchangedSince(tx, { kind: 'workflow-definition', id }, loadedAt);
+          await tx.aiWorkflow.update({
+            where: { id },
+            data: { draftDefinition: Prisma.DbNull },
+          });
+        }, WRITER_TRANSACTION_OPTIONS);
       } else {
         await saveDraft({
           workflowId: id,
           definition: body.draftDefinition,
+          loadedAt,
           userId: session.user.id,
           clientIp: clientIP,
         });
@@ -116,11 +145,15 @@ export const PATCH = withAdminAuth<{ id: string }>(
         where: { id },
         include: { publishedVersion: true },
       });
-      return successResponse(workflow);
+      return successResponse(withDefinitionVersion(workflow));
     }
 
     try {
-      const workflow = await prisma.aiWorkflow.update({ where: { id }, data });
+      const workflow = await prisma.aiWorkflow.update({
+        where: { id },
+        data,
+        include: { publishedVersion: true },
+      });
       log.info('Workflow updated', {
         workflowId: id,
         adminId: session.user.id,
@@ -133,11 +166,13 @@ export const PATCH = withAdminAuth<{ id: string }>(
         entityType: 'workflow',
         entityId: id,
         entityName: workflow.name,
-        changes: computeChanges(baseline, workflow, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+        changes: computeChanges(baseline, workflow, {
+          ignoreKeys: ['updatedAt', 'createdAt', 'publishedVersion'],
+        }),
         clientIp: clientIP,
       });
 
-      return successResponse(workflow);
+      return successResponse(withDefinitionVersion(workflow));
     } catch (err) {
       if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
         throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);

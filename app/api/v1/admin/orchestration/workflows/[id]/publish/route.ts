@@ -5,7 +5,9 @@
  *
  * Promotes the in-progress `draftDefinition` to a new immutable
  * `AiWorkflowVersion` and pins `publishedVersionId` to it. Atomic;
- * runs Zod + structural + semantic validation before writing.
+ * runs Zod + structural + semantic validation before writing. Requires
+ * `If-Match`: the `definitionVersion` the builder loaded (428 without, 412
+ * when it has moved on, §122 t-900).
  *
  * Authentication: Admin role required.
  */
@@ -16,6 +18,8 @@ import { ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
+import { requireIfMatch } from '@/lib/api/record-version';
+import { workflowDefinitionVersion } from '@/lib/orchestration/config-versions';
 import { publishDraft } from '@/lib/orchestration/workflows/version-service';
 import { publishWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -32,10 +36,12 @@ export const POST = withAdminAuth<{ id: string }>(
     }
     const id = parsed.data;
 
+    const loadedAt = requireIfMatch(request);
     const body = await validateRequestBody(request, publishWorkflowSchema);
 
     const result = await publishDraft({
       workflowId: id,
+      loadedAt,
       userId: session.user.id,
       changeSummary: body.changeSummary,
       clientIp: clientIP,
@@ -48,9 +54,16 @@ export const POST = withAdminAuth<{ id: string }>(
       adminId: session.user.id,
     });
 
+    // The builder's next save is checked against this: the draft is gone and
+    // the new version is published.
     return successResponse({
       workflow: result.workflow,
       version: result.version,
+      definitionVersion: workflowDefinitionVersion({
+        draftDefinition: result.workflow.draftDefinition,
+        publishedVersionId: result.workflow.publishedVersionId,
+        publishedVersion: { snapshot: result.version.snapshot },
+      }),
     });
   },
   {

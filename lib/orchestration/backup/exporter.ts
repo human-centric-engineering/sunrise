@@ -277,7 +277,11 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
     exportSeal: sealExport({
       exportedAt,
       orgId,
-      contacts: bundleContacts({ webhooks: exportedWebhooks, settings }),
+      contacts: bundleContacts({
+        webhooks: exportedWebhooks,
+        settings,
+        workflows: flattenedWorkflows,
+      }),
     }),
     data: {
       agents: flattenedAgents,

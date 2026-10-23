@@ -33,8 +33,9 @@
  *                  purpose.
  *   • `erasure`  — erasure itself.
  *   • `seed`     — a seed unit, run at deploy.
- *   • `pending`  — not converted yet, with the §122 task that converts it.
- *                  §122's last task removes this anchor from the type.
+ *
+ * Until §122 finished (t-900) there was a seventh, `pending`, for a writer not
+ * converted yet. A new writer takes one of these six.
  *
  * **What the test cannot catch.** An entry is a file and a model, not a write,
  * so a new write added to a file already listed passes whatever it does: a
@@ -99,30 +100,21 @@ export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
 /** How a writer knows its copy is stale. See the header. */
 export type StaleWriteAnchor = 'version' | 'row-lock' | 'taken-at' | 'intent' | 'erasure' | 'seed';
 
-/** The §122 tasks that convert a `pending` writer. */
-export type StaleWriterTask = 't-900';
-
 interface StaleWriterBase {
   /** Repo-relative path of the file that writes. */
   file: string;
   /** Prisma model name, one of {@link SCRUBBED_COLUMNS}. */
   model: string;
-  /** One or two sentences: what it writes, and how it knows (or, pending, what it does today). */
+  /** One or two sentences: what it writes, and how it knows. */
   how: string;
 }
 
-/** A writer whose anchor is settled. */
+/** A writer and its anchor. */
 export interface AnchoredStaleWriter extends StaleWriterBase {
   anchor: StaleWriteAnchor;
 }
 
-/** A writer §122 has not converted yet. */
-export interface PendingStaleWriter extends StaleWriterBase {
-  anchor: 'pending';
-  task: StaleWriterTask;
-}
-
-export type StaleWriter = AnchoredStaleWriter | PendingStaleWriter;
+export type StaleWriter = AnchoredStaleWriter;
 
 /** The backup importer's two contact writers share one rule (t-902). */
 const IMPORTED_CONTACTS =
@@ -155,12 +147,49 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
       'subscription has moved on, checked under the row lock erasure takes (t-899).',
   },
   {
+    file: 'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
+    model: 'AiWorkflow',
+    anchor: 'version',
+    how:
+      'Clears the draft to null when the builder sends the definition version it loaded ' +
+      '(If-Match) and the workflow has not moved on, under the row lock erasure takes (t-900). ' +
+      'Edits go through `saveDraft` in `version-service`.',
+  },
+  {
     file: 'app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.ts',
     model: 'AiWorkflowSchedule',
     anchor: 'version',
     how:
       'An edit sends the version it loaded (If-Match) and is refused with 412 once the schedule ' +
       'has moved on, checked under the row lock erasure takes (t-899).',
+  },
+  {
+    file: 'lib/orchestration/workflows/version-service.ts',
+    model: 'AiWorkflow',
+    anchor: 'version',
+    how:
+      'Saves, publishes and discards drafts. Each carries the definition version the builder ' +
+      'loaded and is refused with 412 once the draft or published version has moved on, under ' +
+      "the row lock and erasure's locks for everyone it names (t-900).",
+  },
+  {
+    file: 'lib/orchestration/workflows/version-service.ts',
+    model: 'AiWorkflowVersion',
+    anchor: 'version',
+    how:
+      'Publishes a versioned draft (above). A rollback copies a stored snapshot, not the ' +
+      "browser's: it reads it again under erasure's locks and is refused if erasure changed it. " +
+      "`createInitialVersion` writes a create's own definition (intent). Erased approver ids " +
+      'are stripped from all three (t-900).',
+  },
+  {
+    file: 'lib/orchestration/backup/importer.ts',
+    model: 'AiWorkflowVersion',
+    anchor: 'taken-at',
+    how:
+      "Imports workflow snapshots. Strips addresses erased since the bundle's `exportedAt` when " +
+      "this install sealed it over these definitions' addresses (`export-seal.ts`), else every " +
+      "erased address; and every erased approver id. Under erasure's locks (t-902, t-900).",
   },
   {
     file: 'lib/orchestration/backup/importer.ts',
@@ -350,41 +379,5 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     how:
       "One-off backfill of NULL destinations from each delivery's current hook. Hook " +
       'destinations are URLs, which erasure does not scrub; the payload is not written.',
-  },
-
-  // ---------------------------------------------------------------------
-  // Pending — converted by the named §122 task.
-  // ---------------------------------------------------------------------
-  {
-    file: 'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
-    model: 'AiWorkflow',
-    anchor: 'pending',
-    task: 't-900',
-    how:
-      'Clears the draft to null, which names no one. Edits go through `saveDraft` in ' +
-      '`version-service`.',
-  },
-  {
-    file: 'lib/orchestration/workflows/version-service.ts',
-    model: 'AiWorkflow',
-    anchor: 'pending',
-    task: 't-900',
-    how: 'Saves, publishes and discards drafts. Refuses or strips anyone ever erased.',
-  },
-  {
-    file: 'lib/orchestration/workflows/version-service.ts',
-    model: 'AiWorkflowVersion',
-    anchor: 'pending',
-    task: 't-900',
-    how: 'Publishes and rolls back snapshots. Refuses or strips anyone ever erased.',
-  },
-  {
-    file: 'lib/orchestration/backup/importer.ts',
-    model: 'AiWorkflowVersion',
-    anchor: 'pending',
-    task: 't-900',
-    how:
-      'Imports workflow snapshots. Strips anyone ever erased, because `createInitialVersion` ' +
-      'refuses an ever-erased address until t-900 (t-902).',
   },
 ];

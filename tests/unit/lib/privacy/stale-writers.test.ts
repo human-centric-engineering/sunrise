@@ -137,9 +137,11 @@ describe('the stale-writer manifest', () => {
     }
   });
 
-  it('accepts only a settled anchor from the app', () => {
-    // `pending` names a Sunrise task; a fork's writer has no Sunrise task to wait on.
-    expect(APP.filter((w) => (w.anchor as string) === 'pending').map(key)).toEqual([]);
+  it('gives every entry one of the six anchors', () => {
+    // `pending` went with §122's last task (t-900). The type says so; this
+    // holds a registration that got past it, a fork's included.
+    const anchors = ['version', 'row-lock', 'taken-at', 'intent', 'erasure', 'seed'];
+    for (const w of LISTED) expect(anchors, key(w)).toContain(w.anchor);
   });
 });
 

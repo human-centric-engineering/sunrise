@@ -10,11 +10,10 @@
  *     writes it onto a subscription, slowly. An erasure started meanwhile waits
  *     for it, then sees the committed write and strips it — the address does
  *     not survive.
- *   • **Erasure first.** A writer with a copy read before the erasure (a
- *     workflow draft emailing the person, or any write making the all-time
- *     check) is refused with a 400 once the erasure has committed; a draft
- *     naming them only as an approver id saves with the id stripped. The
- *     config routes refuse a stale save by version instead since t-899:
+ *   • **Erasure first.** A write making the all-time check is refused once
+ *     the erasure has committed; a workflow draft naming them only as an
+ *     approver id saves with the id stripped. The config routes and the
+ *     workflow builder refuse a stale save by version instead (t-899, t-900):
  *     `smoke:erasure-stale-saves`.
  *   • **Re-registered.** Someone who signs up again with the erased address,
  *     and verifies it, may be named again.
@@ -44,6 +43,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
+import { lockedVersion } from '@/lib/orchestration/config-versions';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { holdWorkflowRow, lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -51,11 +51,11 @@ import { runAsOrg } from '@/lib/tenancy/context';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 /**
- * A writer's all-time check, as `withoutErasedOrRefused` (`version-service.ts`)
- * and the scheduler still make one: under erasure's lock, refuse a write that
- * names anyone erased. The config routes moved off it to versioned saves in
- * t-899 (`smoke:erasure-stale-saves`); what these cases prove is the lock and
- * the matching underneath, which those writers still share.
+ * A writer's all-time check, as the scheduler still makes one: under
+ * erasure's lock, refuse a write that names anyone erased. The config routes
+ * and the workflow builder moved off it to versioned saves (t-899, t-900,
+ * `smoke:erasure-stale-saves`); what these cases prove is the lock and the
+ * matching underneath, which those writers still share.
  */
 async function refuseIfErased(
   tx: Parameters<typeof findErasedSubjects>[0],
@@ -225,33 +225,16 @@ async function main(): Promise<void> {
       await refused(() => prisma.$transaction((tx) => refuseIfErased(tx, [staleAddress]))),
       'a write holding their address (another case, padded) is refused'
     );
-    const addressedDef = workflowDefinitionSchema.parse({
-      steps: [
-        {
-          id: 'n',
-          name: 'Notify',
-          type: 'send_notification',
-          config: { channel: 'email', to: staleAddress, subject: 'Hi', bodyTemplate: 'x' },
-          nextSteps: [],
-        },
-      ],
-      entryStepId: 'n',
-      errorStrategy: 'fail',
+    // Loaded now, so the save is not stale: only the approver id is at issue.
+    const loadedAt = await prisma.$transaction((tx) =>
+      lockedVersion(tx, { kind: 'workflow-definition', id: workflow.id })
+    );
+    await saveDraft({
+      workflowId: workflow.id,
+      definition: def,
+      loadedAt: [loadedAt],
+      userId: admin.id,
     });
-    check(
-      await refused(() =>
-        saveDraft({ workflowId: workflow.id, definition: addressedDef, userId: admin.id })
-      ),
-      'a builder tab emailing their address is refused'
-    );
-    const refusedDraft = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: workflow.id } });
-    check(
-      !JSON.stringify(refusedDraft.draftDefinition)
-        .toLowerCase()
-        .includes(late.email.toLowerCase()),
-      'and that draft was not written'
-    );
-    await saveDraft({ workflowId: workflow.id, definition: def, userId: admin.id });
     const strippedDraft = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: workflow.id } });
     check(
       !JSON.stringify(strippedDraft.draftDefinition).includes(late.id),

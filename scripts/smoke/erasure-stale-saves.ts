@@ -1,9 +1,10 @@
 /**
  * Erasure smoke: a form loaded before an erasure cannot save the person back,
- * and one loaded after it can (§122 t-899).
+ * and one loaded after it can (§122 t-899, t-900).
  *
  * Proves against real Postgres, with the real `eraseUser()`, for the
- * escalation list, a webhook subscription and a schedule:
+ * escalation list, a webhook subscription, a schedule and a workflow's
+ * definition:
  *
  *   1. **Loaded.** The form reads the record naming Jane, and its version.
  *   2. **Erased.** Jane is erased, which scrubs her out of all three.
@@ -16,7 +17,13 @@
  *      on purpose, and the save with the new version is written. The
  *      all-time refusal these routes made before t-899 would have stopped it.
  *
- * It drives the routes' own check and write, not the routes: their guard
+ * For the workflow it drives the real `saveDraft`, `publishDraft`,
+ * `discardDraft` and `rollback` (`version-service.ts`): a stale save, publish
+ * and discard are each refused, a rollback to a version that named her copies
+ * the scrubbed snapshot, and a builder reloaded after the erasure saves her
+ * address typed back in.
+ *
+ * For the other three it drives the routes' own check and write, not the routes: their guard
  * reads the request's headers through Next's request scope, which a script
  * does not have. That the routes call this check before they write, require
  * `If-Match` (428) and return the version is held by their tests
@@ -40,6 +47,13 @@ import {
   lockedVersion,
   type VersionedRecord,
 } from '@/lib/orchestration/config-versions';
+import {
+  discardDraft,
+  publishDraft,
+  rollback,
+  saveDraft,
+} from '@/lib/orchestration/workflows/version-service';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 
@@ -248,6 +262,113 @@ async function main(): Promise<void> {
       );
     }
 
+    // ── 5. The workflow builder (t-900) ─────────────────────────────────
+    console.log('workflow builder');
+    const wf = { kind: 'workflow-definition' as const, id: workflow.id };
+    const emailing = (to: string) =>
+      workflowDefinitionSchema.parse({
+        steps: [
+          {
+            id: 'n',
+            name: 'Notify',
+            type: 'send_notification',
+            config: { channel: 'email', to: [ops, to], subject: 'Hi', bodyTemplate: 'x' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'n',
+        errorStrategy: 'fail',
+      });
+    const storedWorkflow = () =>
+      prisma.aiWorkflow.findUniqueOrThrow({
+        where: { id: workflow.id },
+        include: { publishedVersion: true },
+      });
+    const refusedStale = (write: () => Promise<unknown>) =>
+      write().then(
+        () => false,
+        (err: unknown) => err instanceof StaleRecordError && err.status === 412
+      );
+
+    const jane2 = await prisma.user.create({
+      data: {
+        name: `${PREFIX} jane2`,
+        email: `${PREFIX}-jane2-${stamp}@example.com`,
+        emailVerified: true,
+      },
+    });
+    userIds.push(jane2.id);
+    const namesJane2 = (value: unknown) =>
+      JSON.stringify(value ?? null)
+        .toLowerCase()
+        .includes(jane2.email.toLowerCase());
+    // Published v1 and the draft both email her, as a builder would show them.
+    const v1 = await prisma.aiWorkflowVersion.create({
+      data: {
+        workflowId: workflow.id,
+        version: 1,
+        snapshot: emailing(jane2.email) as unknown as Prisma.InputJsonValue,
+        createdBy: admin.id,
+      },
+    });
+    await prisma.aiWorkflow.update({
+      where: { id: workflow.id },
+      data: {
+        publishedVersionId: v1.id,
+        draftDefinition: emailing(jane2.email) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    const builderLoaded = await prisma.$transaction((tx) => lockedVersion(tx, wf));
+
+    const result2 = await eraseUser({
+      userId: jane2.id,
+      actorUserId: admin.id,
+      reason: 'admin_action',
+    });
+    receiptIds.push(result2.receiptId);
+    userIds.splice(userIds.indexOf(jane2.id), 1);
+    const scrubbed = await storedWorkflow();
+    check(
+      !namesJane2(scrubbed.draftDefinition) && !namesJane2(scrubbed.publishedVersion?.snapshot),
+      'the erasure took her out of the draft and the published version'
+    );
+
+    const asLoaded = { workflowId: workflow.id, loadedAt: [builderLoaded], userId: admin.id };
+    check(
+      await refusedStale(() => saveDraft({ ...asLoaded, definition: emailing(jane2.email) })),
+      'a save from the builder loaded before the erasure is refused with 412'
+    );
+    check(await refusedStale(() => publishDraft(asLoaded)), 'so is a publish from it');
+    check(await refusedStale(() => discardDraft(asLoaded)), 'and a discard from it');
+    const afterStale = await storedWorkflow();
+    check(
+      !namesJane2(afterStale.draftDefinition) && afterStale.draftDefinition !== null,
+      'and the draft is untouched: neither her address nor discarded'
+    );
+
+    const rolledBack = await rollback({
+      workflowId: workflow.id,
+      targetVersionId: v1.id,
+      userId: admin.id,
+    });
+    check(
+      !namesJane2(rolledBack.version.snapshot),
+      'a rollback to the version that named her copies it without her'
+    );
+
+    const reloaded = await prisma.$transaction((tx) => lockedVersion(tx, wf));
+    check(reloaded !== builderLoaded, 'reloading the builder gives a new version');
+    await saveDraft({
+      workflowId: workflow.id,
+      loadedAt: [reloaded],
+      userId: admin.id,
+      definition: emailing(jane2.email),
+    });
+    check(
+      namesJane2((await storedWorkflow()).draftDefinition),
+      'her address, typed back into a freshly loaded builder, saves'
+    );
+
     console.log('\n✓ smoke:erasure-stale-saves passed');
   } finally {
     if (settingsBefore) {
@@ -261,6 +382,12 @@ async function main(): Promise<void> {
     if (workflowId) {
       const id = workflowId;
       await prisma.aiWorkflowSchedule
+        .deleteMany({ where: { workflowId: id } })
+        .catch(() => undefined);
+      await prisma.aiWorkflow
+        .update({ where: { id }, data: { publishedVersionId: null } })
+        .catch(() => undefined);
+      await prisma.aiWorkflowVersion
         .deleteMany({ where: { workflowId: id } })
         .catch(() => undefined);
       await prisma.aiWorkflow.deleteMany({ where: { id } }).catch(() => undefined);
