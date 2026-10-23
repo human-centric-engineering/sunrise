@@ -34,8 +34,8 @@ import {
   updateOrchestrationSettingsSchema,
 } from '@/lib/validations/orchestration';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
-import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
-import { escalationVersion, lockSettingsRow } from '@/lib/orchestration/config-versions';
+import { requireIfMatch } from '@/lib/api/record-version';
+import { assertUnchangedSince, escalationVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
@@ -337,14 +337,7 @@ export const PATCH = withAdminAuth(
     // moved on since it was loaded (§122 t-899), under the lock erasure takes;
     // a list typed into a freshly loaded form is saved, erased or not.
     const row = await prisma.$transaction(async (tx) => {
-      if (loadedAt) {
-        await lockSettingsRow(tx, 'global');
-        const current = await tx.aiOrchestrationSettings.findUnique({
-          where: { slug: 'global' },
-          select: { escalationConfig: true },
-        });
-        assertCurrentVersion(loadedAt, escalationVersion(current?.escalationConfig));
-      }
+      if (loadedAt) await assertUnchangedSince(tx, { kind: 'escalation-list' }, loadedAt);
       return tx.aiOrchestrationSettings.upsert({
         where: { slug: 'global' },
         create: {

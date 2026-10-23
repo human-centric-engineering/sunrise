@@ -14,12 +14,8 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
-import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
-import {
-  lockScheduleRow,
-  SCHEDULE_VERSION_SELECT,
-  scheduleVersion,
-} from '@/lib/orchestration/config-versions';
+import { requireIfMatch } from '@/lib/api/record-version';
+import { assertUnchangedSince, scheduleVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateScheduleSchema } from '@/lib/validations/orchestration';
@@ -83,12 +79,7 @@ export const PATCH = withAdminAuth<Params>(
     // schedule has moved on since it was loaded (§122 t-899), under the lock
     // erasure takes; a template typed into a freshly loaded form is saved.
     const updated = await prisma.$transaction(async (tx) => {
-      await lockScheduleRow(tx, existing.id);
-      const current = await tx.aiWorkflowSchedule.findUniqueOrThrow({
-        where: { id: existing.id },
-        select: SCHEDULE_VERSION_SELECT,
-      });
-      assertCurrentVersion(loadedAt, scheduleVersion(current));
+      await assertUnchangedSince(tx, { kind: 'workflow-schedule', id: existing.id }, loadedAt);
       return tx.aiWorkflowSchedule.update({
         where: { id: existing.id },
         data: {

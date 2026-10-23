@@ -21,12 +21,8 @@ import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
-import { assertCurrentVersion, requireIfMatch } from '@/lib/api/record-version';
-import {
-  lockSubscriptionRow,
-  SUBSCRIPTION_VERSION_SELECT,
-  subscriptionVersion,
-} from '@/lib/orchestration/config-versions';
+import { requireIfMatch } from '@/lib/api/record-version';
+import { assertUnchangedSince, subscriptionVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 import {
@@ -131,12 +127,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
     // takes; an address typed into a freshly loaded form is the admin's intent
     // and is saved, erased or not.
     const webhook = await prisma.$transaction(async (tx) => {
-      await lockSubscriptionRow(tx, parsed.data);
-      const current = await tx.aiWebhookSubscription.findUniqueOrThrow({
-        where: { id: parsed.data },
-        select: SUBSCRIPTION_VERSION_SELECT,
-      });
-      assertCurrentVersion(loadedAt, subscriptionVersion(current));
+      await assertUnchangedSince(tx, { kind: 'webhook-subscription', id: parsed.data }, loadedAt);
       // An email subscription kept without a new address relies on the one
       // it has — which an erasure may have cleared since `existing` was read
       // (review round 2). Conditional on the row still having one, so a stale

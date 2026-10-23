@@ -21,9 +21,13 @@
  */
 
 import type { Prisma } from '@prisma/client';
-import { recordVersion } from '@/lib/api/record-version';
+import { assertCurrentVersion, recordVersion } from '@/lib/api/record-version';
 
 type LockClient = Pick<Prisma.TransactionClient, '$queryRaw'>;
+type VersionClient = Pick<
+  Prisma.TransactionClient,
+  '$queryRaw' | 'aiWebhookSubscription' | 'aiWorkflowSchedule' | 'aiOrchestrationSettings'
+>;
 
 /** The subscription fields its version covers. Select them wherever it is computed. */
 export const SUBSCRIPTION_VERSION_SELECT = {
@@ -101,4 +105,57 @@ export async function lockScheduleRow(tx: LockClient, id: string): Promise<void>
 /** Lock the settings row for a versioned save of the escalation list. */
 export async function lockSettingsRow(tx: LockClient, slug: string): Promise<void> {
   await tx.$queryRaw`SELECT id FROM ai_orchestration_settings WHERE slug = ${slug} FOR NO KEY UPDATE`;
+}
+
+/** A record a versioned save writes. */
+export type VersionedRecord =
+  | { kind: 'webhook-subscription'; id: string }
+  | { kind: 'workflow-schedule'; id: string }
+  | { kind: 'escalation-list' };
+
+/**
+ * The record's version as stored now, read under its row lock: the lock is
+ * held for the rest of `tx`. A missing subscription or schedule throws.
+ */
+export async function lockedVersion(tx: VersionClient, record: VersionedRecord): Promise<string> {
+  switch (record.kind) {
+    case 'webhook-subscription': {
+      await lockSubscriptionRow(tx, record.id);
+      const row = await tx.aiWebhookSubscription.findUniqueOrThrow({
+        where: { id: record.id },
+        select: SUBSCRIPTION_VERSION_SELECT,
+      });
+      return subscriptionVersion(row);
+    }
+    case 'workflow-schedule': {
+      await lockScheduleRow(tx, record.id);
+      const row = await tx.aiWorkflowSchedule.findUniqueOrThrow({
+        where: { id: record.id },
+        select: SCHEDULE_VERSION_SELECT,
+      });
+      return scheduleVersion(row);
+    }
+    case 'escalation-list': {
+      await lockSettingsRow(tx, 'global');
+      const row = await tx.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { escalationConfig: true },
+      });
+      return escalationVersion(row?.escalationConfig);
+    }
+  }
+}
+
+/**
+ * A versioned save's check, inside the transaction that writes: lock the
+ * record, and refuse with 412 unless it is still at a version the save was
+ * loaded at (`If-Match`). Call before the write; the lock holds until `tx`
+ * ends, so nothing (erasure included) can change the record in between.
+ */
+export async function assertUnchangedSince(
+  tx: VersionClient,
+  record: VersionedRecord,
+  loadedAt: readonly string[]
+): Promise<void> {
+  assertCurrentVersion(loadedAt, await lockedVersion(tx, record));
 }

@@ -75,6 +75,7 @@
     "smoke:erasure-pending": "tsx --env-file=.env.local scripts/smoke/erasure-pending.ts",
     "smoke:erasure-running": "tsx --env-file=.env.local scripts/smoke/erasure-running-runs.ts",
     "smoke:erasure-run-actions": "tsx --env-file=.env.local scripts/smoke/erasure-run-actions.ts",
+    "smoke:erasure-stale-saves": "tsx --env-file=.env.local scripts/smoke/erasure-stale-saves.ts",
     "smoke:tenancy": "tsx --env-file=.env.local scripts/smoke/tenancy.ts",
     "smoke:tenancy-isolation": "tsx --env-file=.env.local scripts/smoke/tenancy-isolation.ts",
     "smoke:send-message-target": "tsx --env-file=.env.local scripts/smoke/send-message-target.ts",
