@@ -908,7 +908,7 @@ and is refused when the record has moved on, whoever moved it:
 - **Save.** `PATCH /settings` with an `escalationConfig`, `PATCH /webhooks/:id`
   and `PATCH .../schedules/:scheduleId` send it back as `If-Match`.
   - Without one, the save is refused with **428** `PRECONDITION_REQUIRED`.
-    `*` is refused the same way. The header is required, not optional (owner
+    `*`, or only weak tags (`W/"…"`, a cache validator such as the settings `ETag`), is refused the same way. The header is required, not optional (owner
     ruling, 2026-10-23): a header any client may leave off is a check any
     client skips.
   - When the record has moved on, the save is refused with **412**
