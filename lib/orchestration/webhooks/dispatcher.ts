@@ -215,13 +215,24 @@ export async function deliverToSubscribers(
   });
   const stored = { event: eventType, data: payload };
   // Who the payload names, once for every subscription: each row is created
-  // from this same payload (t-926). A failed lookup fails each attempt as its
-  // own lookup would, uncounted, and the retry resolves it again.
-  const subjects = await subjectsOfPayload(
+  // from this same payload (t-926). Started now and awaited only after each
+  // row is written, so a slow lookup never keeps a delivery from being
+  // recorded. A failed one is logged, and each attempt then looks up for
+  // itself, as before t-926.
+  const subjects = subjectsOfPayload(
     prisma,
     eventType,
     stored as unknown as Prisma.JsonValue
-  ).catch(() => undefined);
+  ).catch((err: unknown) => {
+    logger.warn(
+      'Webhook dispatch: could not resolve who the payload names once; each attempt will',
+      {
+        eventType,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    );
+    return undefined;
+  });
 
   await Promise.allSettled(
     matched.map(async (sub) => {
@@ -236,7 +247,7 @@ export async function deliverToSubscribers(
         },
       });
 
-      await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt, subjects);
+      await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt, await subjects);
     })
   );
 }

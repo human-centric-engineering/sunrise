@@ -156,13 +156,14 @@ export interface DeliverySendOptions {
 export type DeliveryTable = 'webhook' | 'hook';
 
 /**
- * Settle a delivery attempt that was not sent as erasure settles a row it
- * stops (t-793): `exhausted`, `stoppedByErasure`, so no retry or replay sends
- * it, the not-retried reason appended to its error, and its payload redacted
- * when there is one. Only a row still waiting to send is written: one already
- * settled stays as it is. `extra` is what one table also clears (the webhook
- * row's address, when that is what was erased). The one place both delivery
- * tables write a stop (t-926).
+ * Settle a delivery attempt a sender did not send (t-886): `exhausted`,
+ * `stoppedByErasure`, so no retry or replay sends it, the not-retried reason
+ * appended to its error, and its payload redacted when there is one. Only a
+ * row still waiting to send is written: one already settled stays as it is.
+ * `extra` is what one table also clears (the webhook row's address, when that
+ * is what was erased). The one place a sender writes a stop, for both
+ * delivery tables (t-926); erasure's own pass over the rows writes its stop
+ * in `erase-user.ts`.
  */
 export async function settleStoppedDelivery(
   tx: Pick<Prisma.TransactionClient, 'aiWebhookDelivery' | 'aiEventHookDelivery'>,

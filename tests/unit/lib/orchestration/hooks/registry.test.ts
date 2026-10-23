@@ -2037,6 +2037,23 @@ describe('a hook delivery built from an event taken before an erasure (t-886)', 
     expect(prisma.aiWorkflowExecution.findUnique).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back to each attempt looking up for itself when the shared lookup fails (t-926)', async () => {
+    erasedSince.userIds = ['owner-1'];
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ id: 'hook-1', eventType: 'workflow.failed' }),
+      makeHook({ id: 'hook-2', eventType: 'workflow.failed' }),
+    ] as never);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique)
+      .mockRejectedValueOnce(new Error('pool exhausted'))
+      .mockResolvedValue({ userId: 'owner-1' } as never);
+
+    emitHookEvent('workflow.failed', { executionId: 'exec-1' });
+
+    await vi.waitFor(() => expect(stopWrites()).toHaveLength(2));
+    expect(prisma.aiWorkflowExecution.findUnique).toHaveBeenCalledTimes(3);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('does not post an event about the activity of a person erased since, and stops the row', async () => {
     erasedSince.userIds = ['u-1'];
     vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([

@@ -258,22 +258,27 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
   const byType = await loadHooks();
   const hooks = byType.get(payload.eventType) ?? [];
 
-  // Settles once every first attempt has, so the hold `emitHookEvent` takes
-  // covers the deliveries too. Retries run on their own timers, and the tick
-  // picks them up if the process is gone (`processPendingHookRetries`).
   const matched = hooks.filter(
     (hook): hook is CachedHook & { action: WebhookAction } =>
       matchesFilter(hook.filter, payload) && hook.action.type === 'webhook'
   );
   if (matched.length === 0) return;
   // Who the payload names, once for every hook: each row is created from
-  // this same payload (t-926). A failed lookup leaves each attempt to its own,
-  // which fails it as before; a retry resolves it from the row it claimed.
-  const subjects = await subjectsOfPayload(
+  // this same payload (t-926). Started now and awaited only after each row is
+  // written, so a slow lookup never keeps a delivery from being recorded. A
+  // failed one is logged, and each attempt then looks up for itself, as
+  // before t-926; a retry resolves it from the row it claimed.
+  const subjects = subjectsOfPayload(
     prisma,
     payload.eventType,
     payload as unknown as Prisma.JsonValue
-  ).catch(() => undefined);
+  ).catch((err: unknown) => {
+    logger.warn('Hook dispatch: could not resolve who the payload names once; each attempt will', {
+      eventType: payload.eventType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  });
   // Settles once every first attempt has, so the hold `emitHookEvent` takes
   // covers the deliveries too. Retries run on their own timers, and the tick
   // picks them up if the process is gone (`processPendingHookRetries`).
@@ -290,7 +295,7 @@ async function dispatchWebhook(
   secret: string | null,
   payload: HookEventPayload,
   takenAt: Date,
-  subjects: PayloadSubjects | undefined
+  subjects: Promise<PayloadSubjects | undefined>
 ): Promise<void> {
   try {
     const delivery = await prisma.aiEventHookDelivery.create({
@@ -309,7 +314,7 @@ async function dispatchWebhook(
       secret,
       payload,
       takenAt,
-      subjects
+      await subjects
     );
   } catch (err: unknown) {
     logger.warn('Hook webhook dispatch setup failed', {

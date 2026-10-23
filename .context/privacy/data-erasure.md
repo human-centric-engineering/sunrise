@@ -1150,8 +1150,8 @@ side), asks who among them was erased **since the copy was taken**, and
 writes what it decided under them. An event's first attempts share one
 payload, so its fan-out resolves who it names once and hands that to each
 attempt; a retry resolves it again, from the row it claimed (t-926). A
-stopped attempt is written by `settleStoppedDelivery()`, the one place both
-delivery tables settle a stop.
+stopped attempt is written by `settleStoppedDelivery()`, the one place a
+sender settles a stop in either delivery table.
 **An email is sent under the locks**, held until it settles: it reaches the
 person and cannot be recalled. **A webhook or hook post goes after the
 decision commits** (owner ruling, 2026-10-22): no pooled connection waits on a
