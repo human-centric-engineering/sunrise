@@ -33,7 +33,6 @@ import type {
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { Stream } from '@anthropic-ai/sdk/core/streaming';
-import { transformJSONSchema } from '@anthropic-ai/sdk/lib/transform-json-schema';
 
 import { logger } from '@/lib/logging';
 import {
@@ -585,6 +584,13 @@ export class AnthropicProvider implements LlmProvider {
     ) {
       params.temperature = options.temperature;
     }
+    // Anthropic refuses a forced tool alongside thinking, and Opus 5.5 /
+    // Sonnet 5.5 / Fable 5.1 refuse one outright — both a 400.
+    const forcedToolRefusal = thinkingEnabled
+      ? 'thinking'
+      : refusesForcedToolChoice(options.model)
+        ? 'model_refuses_forced_tool_choice'
+        : undefined;
     if (options.tools?.length) {
       params.tools = options.tools.map<Tool>((t) => ({
         name: t.name,
@@ -592,21 +598,16 @@ export class AnthropicProvider implements LlmProvider {
         input_schema: buildToolInputSchema(t.parameters),
       }));
       const toolChoice = mapToolChoice(options.toolChoice);
-      // Anthropic refuses a forced tool alongside thinking, and Opus 5.5 /
-      // Sonnet 5.5 / Fable 5.1 refuse one outright — both a 400. Send `auto`
-      // instead, which keeps the tool on offer. No instruction is added to
-      // the system prompt: in a tool loop the next request would then carry
-      // a different system prompt, which invalidates the thinking blocks it
-      // replays.
-      if (
-        toolChoice?.type === 'tool' &&
-        (thinkingEnabled || refusesForcedToolChoice(options.model))
-      ) {
+      // Where a forced tool would be refused, send `auto`, which keeps the
+      // tool on offer. No instruction is added to the system prompt: in a
+      // tool loop the next request would then carry a different system
+      // prompt, which invalidates the thinking blocks it replays.
+      if (toolChoice?.type === 'tool' && forcedToolRefusal) {
         logger.info('Anthropic: forced tool choice sent as auto', {
           provider: this.name,
           model: options.model,
           tool: toolChoice.name,
-          reason: thinkingEnabled ? 'thinking' : 'model_refuses_forced_tool_choice',
+          reason: forcedToolRefusal,
         });
         params.tool_choice = { type: 'auto' };
       } else if (toolChoice) {
@@ -620,17 +621,22 @@ export class AnthropicProvider implements LlmProvider {
     // no tool, so nothing to clash with thinking or with a model that refuses
     // a forced `tool_choice`, and the JSON arrives as ordinary text. The rest
     // get the extraction pattern: a tool carrying the schema, whose arguments
-    // are read back as the structured result. That tool is forced unless
-    // thinking is on, where a forced tool is a 400 — there it is offered with
-    // `auto` and the system prompt asks for it, which is safe because a
-    // structured-output request is a single turn with no tool loop.
+    // are read back as the structured result. That tool is forced unless a
+    // forced tool would be refused — there it is offered with `auto` and the
+    // system prompt asks for it, which is safe because a structured-output
+    // request is a single turn with no tool loop.
     if (options.responseFormat && !options.tools?.length) {
       if (options.responseFormat.type === 'json_schema') {
         const inputSchema = buildToolInputSchema(options.responseFormat.schema);
-        const nativeSchema =
-          acceptsNativeStructuredOutput(options.model) && !hasOpenObject(inputSchema)
-            ? toNativeOutputSchema(inputSchema)
-            : undefined;
+        const acceptsNative = acceptsNativeStructuredOutput(options.model);
+        const nativeSchema = acceptsNative ? toNativeOutputSchema(inputSchema) : undefined;
+        if (acceptsNative && !nativeSchema) {
+          logger.info('Anthropic: structured output sent through the extraction tool', {
+            provider: this.name,
+            model: options.model,
+            reason: 'schema_not_native_safe',
+          });
+        }
         if (nativeSchema) {
           params.output_config = {
             ...params.output_config,
@@ -645,7 +651,13 @@ export class AnthropicProvider implements LlmProvider {
               input_schema: inputSchema,
             },
           ];
-          if (thinkingEnabled || refusesForcedToolChoice(options.model)) {
+          if (forcedToolRefusal) {
+            logger.info('Anthropic: forced tool choice sent as auto', {
+              provider: this.name,
+              model: options.model,
+              tool: extractionToolName,
+              reason: forcedToolRefusal,
+            });
             params.tool_choice = { type: 'auto' };
             const instruction = `Respond only by calling the ${extractionToolName} tool with the result.`;
             params.system = system ? `${system}\n\n${instruction}` : instruction;
@@ -805,41 +817,117 @@ function installsExtractionTool(params: { tools?: ReadonlyArray<object> }): bool
   );
 }
 
-/**
- * Does the schema hold an object that accepts keys it doesn't list — no
- * `properties`, or `additionalProperties` other than `false`? Native
- * structured output forces `additionalProperties: false` on every object,
- * so such a schema would silently lose its free-form data there; it keeps
- * the extraction tool, which takes the schema as written.
- */
-function hasOpenObject(schema: unknown): boolean {
-  if (Array.isArray(schema)) return schema.some(hasOpenObject);
-  if (schema === null || typeof schema !== 'object') return false;
-  const node = schema as Record<string, unknown>;
-  if (
-    node.type === 'object' &&
-    (node.properties === undefined ||
-      (node.additionalProperties !== undefined && node.additionalProperties !== false))
-  ) {
-    return true;
-  }
-  return Object.values(node).some(hasOpenObject);
-}
+/** String formats native structured output accepts. */
+const NATIVE_STRING_FORMATS = new Set([
+  'date-time',
+  'time',
+  'date',
+  'duration',
+  'email',
+  'hostname',
+  'uri',
+  'ipv4',
+  'ipv6',
+  'uuid',
+]);
 
 /**
  * Rewrite a tool input schema into the subset native structured output
- * accepts, with the SDK's own transform: `additionalProperties: false` on
- * every object, and unsupported constraints moved into descriptions.
- * Returns `undefined` when the transform can't handle the schema (it needs
- * a `type` on every node), so the caller falls back to the extraction tool,
- * which accepted that schema before native output existed.
+ * accepts: `additionalProperties: false` on every object, `oneOf` as
+ * `anyOf`, and any keyword it rejects (numeric and length constraints,
+ * patterns, unknown formats) moved into the node's description so the
+ * model still reads it. `enum` and `const` are kept.
+ *
+ * Returns `undefined` — so the caller keeps the extraction tool, which takes
+ * the schema as written — for a schema native output would change the
+ * meaning of or may reject: an open object (no `properties`, or an
+ * `additionalProperties` other than `false`, which closing would silently
+ * empty), a union `type` array, a `$ref` (recursion is unsupported), a
+ * tuple `items`, or a node with no `type` and no `anyOf` / `allOf` /
+ * `enum` / `const`.
+ *
+ * Not the SDK's `transformJSONSchema`: that moves `enum` and `const` into
+ * the description too, so the decoder would no longer enforce them.
  */
-function toNativeOutputSchema(schema: Tool.InputSchema): Record<string, unknown> | undefined {
-  try {
-    return transformJSONSchema(schema);
-  } catch {
+function toNativeOutputSchema(node: unknown): Record<string, unknown> | undefined {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return undefined;
+  const source = node as Record<string, unknown>;
+  if ('$ref' in source || Array.isArray(source.type)) return undefined;
+
+  const out: Record<string, unknown> = {};
+  const moved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    switch (key) {
+      case 'type':
+      case 'title':
+      case 'description':
+      case 'enum':
+      case 'const':
+      case 'required':
+        out[key] = value;
+        break;
+      case 'additionalProperties':
+        if (value !== false) return undefined;
+        break;
+      case 'properties': {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+        const properties: Record<string, unknown> = {};
+        for (const [name, child] of Object.entries(value)) {
+          const converted = toNativeOutputSchema(child);
+          if (!converted) return undefined;
+          properties[name] = converted;
+        }
+        out.properties = properties;
+        break;
+      }
+      case 'items': {
+        const converted = toNativeOutputSchema(value);
+        if (!converted) return undefined;
+        out.items = converted;
+        break;
+      }
+      case 'anyOf':
+      case 'oneOf':
+      case 'allOf': {
+        if (!Array.isArray(value)) return undefined;
+        const variants = value.map(toNativeOutputSchema);
+        if (variants.some((v) => v === undefined)) return undefined;
+        out[key === 'allOf' ? 'allOf' : 'anyOf'] = variants;
+        break;
+      }
+      case 'format':
+        if (typeof value === 'string' && NATIVE_STRING_FORMATS.has(value)) out.format = value;
+        else moved[key] = value;
+        break;
+      case 'minItems':
+        if (value === 0 || value === 1) out.minItems = value;
+        else moved[key] = value;
+        break;
+      default:
+        moved[key] = value;
+    }
+  }
+
+  if (source.type === 'object') {
+    if (out.properties === undefined) return undefined;
+    out.additionalProperties = false;
+  }
+  if (
+    out.type === undefined &&
+    out.anyOf === undefined &&
+    out.allOf === undefined &&
+    out.enum === undefined &&
+    out.const === undefined
+  ) {
     return undefined;
   }
+  if (Object.keys(moved).length > 0) {
+    const note = `{${Object.entries(moved)
+      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+      .join(', ')}}`;
+    out.description = typeof out.description === 'string' ? `${out.description}\n\n${note}` : note;
+  }
+  return out;
 }
 
 function mapToolChoice(choice: LlmToolChoice | undefined): ToolChoice | undefined {

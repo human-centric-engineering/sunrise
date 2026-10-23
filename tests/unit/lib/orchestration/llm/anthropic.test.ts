@@ -2918,3 +2918,74 @@ describe('AnthropicProvider — structured output review fixes', () => {
     expect(response.finishReason).toBe('tool_use');
   });
 });
+
+describe('AnthropicProvider — native structured output schema (round 2)', () => {
+  const ok = {
+    content: [{ type: 'text', text: '{}' }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+    model: 'claude-opus-5-5',
+    stop_reason: 'end_turn',
+  };
+  const send = (schema: Record<string, unknown>) =>
+    makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-5-5',
+      responseFormat: { type: 'json_schema', name: 'r', schema },
+    });
+
+  it('keeps enum and const, and moves rejected keywords into the description', async () => {
+    createMock.mockResolvedValue(ok);
+    await send({
+      type: 'object',
+      properties: {
+        verdict: { type: 'string', enum: ['pass', 'fail'] },
+        kind: { const: 'grade' },
+        score: { type: 'number', minimum: 0, maximum: 1, description: 'Score' },
+        choice: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+      },
+      required: ['verdict'],
+    });
+
+    expect(createMock.mock.calls[0][0].output_config.format.schema).toEqual({
+      type: 'object',
+      properties: {
+        verdict: { type: 'string', enum: ['pass', 'fail'] },
+        kind: { const: 'grade' },
+        score: { type: 'number', description: 'Score\n\n{minimum: 0, maximum: 1}' },
+        choice: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+      },
+      required: ['verdict'],
+      additionalProperties: false,
+    });
+  });
+
+  it.each([
+    {
+      label: 'a union type array',
+      schema: {
+        type: 'object',
+        properties: { address: { type: ['object', 'null'], properties: {} } },
+      },
+    },
+    {
+      label: 'a $ref',
+      schema: {
+        type: 'object',
+        properties: { node: { $ref: '#/$defs/node' } },
+        $defs: { node: { type: 'object', properties: {} } },
+      },
+    },
+  ])('keeps the extraction tool for a schema with $label', async ({ schema }) => {
+    createMock.mockResolvedValue({
+      ...ok,
+      content: [{ type: 'tool_use', id: 's1', name: '__structured_r', input: {} }],
+      stop_reason: 'tool_use',
+    });
+    await send(schema);
+
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.output_config).toBeUndefined();
+    expect(callArgs.tools[0].name).toBe('__structured_r');
+    // Opus 5.5 refuses a forced tool, so the extraction tool goes as auto.
+    expect(callArgs.tool_choice).toEqual({ type: 'auto' });
+  });
+});
