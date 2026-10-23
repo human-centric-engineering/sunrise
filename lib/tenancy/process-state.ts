@@ -474,9 +474,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/admin-tier.ts',
-    holders: ['appPages', 'appPagesView'],
+    holders: ['appPages', 'appPagesView', 'closedSections', 'closedSectionsView'],
     posture: 'no-tenant-data',
-    why: 'Admin page patterns a fork lists as org-tier from code (t-817), and a frozen copy rebuilt when they change.',
+    why: 'Admin page patterns a fork lists as org-tier from code (t-817), the core sections it closes to org admins for the whole install (t-929), and a frozen copy of each rebuilt when it changes.',
   },
   {
     file: 'lib/auth/org-tier-admin-pages.ts',
