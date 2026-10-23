@@ -5,7 +5,6 @@
  * POST /api/v1/admin/orchestration/webhooks
  */
 
-import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/webhooks/route';
@@ -32,13 +31,9 @@ vi.mock('@/lib/db/client', () => {
       count: vi.fn(),
       create: vi.fn(),
     },
-    // The erased-person check runs in the write's transaction (t-805)
-    $executeRaw: vi.fn(async () => 1),
+    // Watched so a test can show a create asks erasure nothing (t-899)
     dataErasureReceipt: { findMany: vi.fn(async () => []) },
-    user: { findMany: vi.fn(async () => []) },
-    $transaction: vi.fn(),
   };
-  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
   return { prisma };
 });
 
@@ -77,14 +72,16 @@ const VALID_BODY = {
   description: 'Test webhook',
 };
 
+import {
+  SUBSCRIPTION_VERSION_SELECT,
+  subscriptionVersion,
+} from '@/lib/orchestration/config-versions';
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('Webhook CRUD', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
-    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   });
 
   describe('GET /webhooks', () => {
@@ -115,6 +112,34 @@ describe('Webhook CRUD', () => {
       expect(call.where).toEqual({
         AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }],
       });
+    });
+
+    it("returns each row's version, as the row's own PATCH computes it (t-899)", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const row = {
+        id: 'sub-1',
+        channel: 'email',
+        url: null,
+        emailAddress: 'ops@example.com',
+        events: ['workflow_failed'],
+        agentIds: [],
+        workflowIds: [],
+        isActive: true,
+        description: null,
+        maxAttempts: 3,
+        retryBackoffMs: [10000],
+      };
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([row] as never);
+      vi.mocked(prisma.aiWebhookSubscription.count).mockResolvedValue(1);
+
+      const res = await GET(makeGetRequest());
+
+      const body = (await res.json()) as { data: Array<{ version: string }> };
+      expect(body.data[0].version).toBe(subscriptionVersion(row));
+      const select = vi.mocked(prisma.aiWebhookSubscription.findMany).mock.calls[0][0]?.select;
+      for (const field of Object.keys(SUBSCRIPTION_VERSION_SELECT)) {
+        expect(select).toHaveProperty(field, true);
+      }
     });
   });
 
@@ -187,26 +212,36 @@ describe('Webhook CRUD', () => {
       expect(call.data.createdBy).toBe(ADMIN_ID);
     });
 
-    it('refuses an email subscription for an erased address (t-805)', async () => {
+    it('creates an email subscription for an address typed in, without asking who was erased (t-899)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
-        {
-          subjectUserId: 'gone-user',
-          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
-          metadata: { addressVerified: true },
-        },
-      ] as never);
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({
+        id: 'sub-1',
+        channel: 'email',
+        url: null,
+        emailAddress: 'readded@example.com',
+        events: ['workflow_failed'],
+        agentIds: [],
+        workflowIds: [],
+        isActive: true,
+        description: null,
+        maxAttempts: 3,
+        retryBackoffMs: [10000, 60000, 300000],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
 
       const res = await POST(
         makePostRequest({
           channel: 'email',
-          emailAddress: 'gone@example.com',
+          emailAddress: 'readded@example.com',
           events: ['workflow_failed'],
         })
       );
 
-      expect(res.status).toBe(400);
-      expect(prisma.aiWebhookSubscription.create).not.toHaveBeenCalled();
+      expect(res.status).toBe(201);
+      expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+      const body = (await res.json()) as { data: { version: string } };
+      expect(body.data.version).toMatch(/^"[\w-]{27}"$/);
     });
   });
 });

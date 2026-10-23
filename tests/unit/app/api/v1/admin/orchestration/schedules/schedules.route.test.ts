@@ -16,7 +16,6 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -35,6 +34,8 @@ vi.mock('@/lib/db/client', () => {
     aiWorkflowSchedule: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      // The row as the versioned save reads it under its lock (t-899)
+      findUniqueOrThrow: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -45,9 +46,10 @@ vi.mock('@/lib/db/client', () => {
     // orgs. One install org is what a `single` install has.
     org: { findMany: vi.fn(async () => [{ id: 'install' }]) },
     // The erased-person check runs in the write's transaction (t-805)
-    $executeRaw: vi.fn(),
+    // Watched so a test can show a create asks erasure nothing (t-899)
     dataErasureReceipt: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
+    // The row lock a versioned save takes (t-899)
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
@@ -88,10 +90,10 @@ import {
 import { POST as tickScheduler } from '@/app/api/v1/admin/orchestration/schedules/tick/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { scheduleVersion } from '@/lib/orchestration/config-versions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -115,10 +117,13 @@ function makePostRequest(body: unknown): NextRequest {
   return req as unknown as NextRequest;
 }
 
-function makePatchRequest(body: unknown): NextRequest {
+function makePatchRequest(body: unknown, ifMatch: string | null = LOADED_VERSION): NextRequest {
   const req = new Request('http://localhost:3000/test', {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(ifMatch === null ? {} : { 'If-Match': ifMatch }),
+    },
     body: JSON.stringify(body),
   });
   return req as unknown as NextRequest;
@@ -150,15 +155,19 @@ const mockScheduleRecord = {
   updatedAt: new Date(),
 };
 
+/** The stored schedule's version, as the tab loaded it (t-899). */
+const LOADED_VERSION = scheduleVersion(mockScheduleRecord);
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Schedule CRUD API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
     vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+    // Unchanged since the form loaded it, unless a test says otherwise
+    vi.mocked(prisma.aiWorkflowSchedule.findUniqueOrThrow).mockResolvedValue(mockScheduleRecord);
   });
 
   // ── List Schedules ──────────────────────────────────────────────────────
@@ -177,6 +186,8 @@ describe('Schedule CRUD API', () => {
 
       expect(res.status).toBe(200);
       expect(json.data.schedules).toHaveLength(1);
+      // The version a save from the tab sends back as If-Match (t-899)
+      expect(json.data.schedules[0].version).toBe(LOADED_VERSION);
     });
 
     it('returns 404 for unknown workflow', async () => {
@@ -226,35 +237,7 @@ describe('Schedule CRUD API', () => {
       expect(json.data.schedule.name).toBe('Daily run');
     });
 
-    it('refuses a template holding an erased address with a 400 and creates nothing (t-805)', async () => {
-      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
-      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
-      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
-        {
-          subjectUserId: 'gone-user',
-          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
-          metadata: { addressVerified: true },
-        },
-      ] as never);
-
-      const res = await createSchedule(
-        makePostRequest({
-          name: 'Digest',
-          cronExpression: '0 9 * * *',
-          // Nested, differently cased: found by walking the whole template
-          inputTemplate: { report: { sendTo: ['Gone@Example.com'] } },
-        }),
-        { params: Promise.resolve({ id: VALID_WF_ID }) }
-      );
-      const json = JSON.parse(await res.text());
-
-      expect(res.status).toBe(400);
-      expect(json.error.details.inputTemplate).toEqual([expect.stringMatching(/erased/i)]);
-      expect(prisma.aiWorkflowSchedule.create).not.toHaveBeenCalled();
-      expect(logAdminAction).not.toHaveBeenCalled();
-    });
-
-    it('creates the schedule when its template names nobody erased (t-805)', async () => {
+    it('creates a schedule whose template an admin typed, without asking who was erased (t-899)', async () => {
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
       vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
       vi.mocked(prisma.aiWorkflowSchedule.create).mockResolvedValue(mockScheduleRecord);
@@ -263,14 +246,15 @@ describe('Schedule CRUD API', () => {
         makePostRequest({
           name: 'Digest',
           cronExpression: '0 9 * * *',
-          inputTemplate: { sendTo: 'fine@example.com' },
+          inputTemplate: { sendTo: 'readded@example.com' },
         }),
         { params: Promise.resolve({ id: VALID_WF_ID }) }
       );
+      const json = JSON.parse(await res.text());
 
       expect(res.status).toBe(201);
-      expect(prisma.dataErasureReceipt.findMany).toHaveBeenCalledOnce();
-      expect(prisma.aiWorkflowSchedule.create).toHaveBeenCalledOnce();
+      expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+      expect(json.data.schedule.version).toBe(scheduleVersion(mockScheduleRecord));
     });
 
     it('persists the scope carrier on create when provided', async () => {
@@ -379,6 +363,8 @@ describe('Schedule CRUD API', () => {
 
       expect(res.status).toBe(200);
       expect(json.data.schedule.id).toBe(VALID_SCHED_ID);
+      expect(json.data.schedule.version).toBe(LOADED_VERSION);
+      expect(res.headers.get('ETag')).toBe(LOADED_VERSION);
     });
 
     it('returns 404 when schedule not found', async () => {
@@ -480,6 +466,61 @@ describe('Schedule CRUD API', () => {
 
       const call = vi.mocked(prisma.aiWorkflowSchedule.update).mock.calls[0][0];
       expect(call.data).not.toHaveProperty('scope');
+    });
+
+    describe('stale saves (t-899)', () => {
+      const params = { params: Promise.resolve({ id: VALID_WF_ID, scheduleId: VALID_SCHED_ID }) };
+
+      beforeEach(() => {
+        vi.mocked(prisma.aiWorkflowSchedule.findFirst).mockResolvedValue(mockScheduleRecord);
+        vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue(mockScheduleRecord);
+      });
+
+      it('refuses a save with no If-Match with 428, writing nothing', async () => {
+        const res = await updateSchedule(makePatchRequest({ name: 'x' }, null), params);
+
+        expect(res.status).toBe(428);
+        expect(prisma.aiWorkflowSchedule.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses a save loaded before an erasure blanked the template, with 412, writing nothing', async () => {
+        vi.mocked(prisma.aiWorkflowSchedule.findUniqueOrThrow).mockResolvedValue({
+          ...mockScheduleRecord,
+          inputTemplate: { sendTo: '' },
+        });
+
+        const res = await updateSchedule(makePatchRequest({ name: 'Renamed' }), params);
+        const json = JSON.parse(await res.text());
+
+        expect(res.status).toBe(412);
+        expect(json.error.code).toBe('STALE_RECORD');
+        expect(prisma.aiWorkflowSchedule.update).not.toHaveBeenCalled();
+      });
+
+      it('is not refused because the tick moved nextRunAt or lastRunAt since the form loaded', async () => {
+        vi.mocked(prisma.aiWorkflowSchedule.findUniqueOrThrow).mockResolvedValue({
+          ...mockScheduleRecord,
+          nextRunAt: new Date('2026-04-20T09:00:00Z'),
+          lastRunAt: new Date('2026-04-19T09:00:00Z'),
+        });
+
+        const res = await updateSchedule(makePatchRequest({ name: 'Renamed' }), params);
+
+        expect(res.status).toBe(200);
+      });
+
+      it('locks the row before reading the version it checks, and returns the new one', async () => {
+        const saved = { ...mockScheduleRecord, name: 'Renamed' };
+        vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue(saved);
+
+        const res = await updateSchedule(makePatchRequest({ name: 'Renamed' }), params);
+        const json = JSON.parse(await res.text());
+
+        expect(vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(prisma.aiWorkflowSchedule.findUniqueOrThrow).mock.invocationCallOrder[0]
+        );
+        expect(json.data.schedule.version).toBe(scheduleVersion(saved));
+      });
     });
   });
 
