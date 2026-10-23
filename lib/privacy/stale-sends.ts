@@ -43,6 +43,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import {
   anyoneErasedSince,
   boundLockWaits,
@@ -150,6 +151,30 @@ export interface DeliverySendOptions {
    * claimed, which an erasure may have redacted since.
    */
   subjects?: PayloadSubjects;
+}
+
+/**
+ * Who an event's payload names, resolved once for its whole fan-out (t-926):
+ * each first attempt's row is created from this same payload. Start it before
+ * the rows are written and await it after each, so a slow lookup never keeps
+ * a delivery from being recorded. A failed lookup is logged and resolves to
+ * undefined: each attempt then looks up for itself, as before t-926.
+ */
+export function resolveFanOutSubjects(
+  eventType: string,
+  payload: Prisma.JsonValue,
+  sender: 'Webhook' | 'Hook'
+): Promise<PayloadSubjects | undefined> {
+  return subjectsOfPayload(prisma, eventType, payload).catch((err: unknown) => {
+    logger.warn(
+      `${sender} dispatch: could not resolve who the payload names once; each attempt will`,
+      {
+        eventType,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    );
+    return undefined;
+  });
 }
 
 /** The delivery tables a stopped attempt is settled in. */

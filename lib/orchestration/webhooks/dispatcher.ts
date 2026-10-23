@@ -52,8 +52,12 @@ import {
   subscriptionDestination,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
-import { decideDeliveryUnderLocks, settleStoppedDelivery } from '@/lib/privacy/stale-sends';
-import { subjectsOfPayload, type PayloadSubjects } from '@/lib/privacy/delivery-payloads';
+import {
+  decideDeliveryUnderLocks,
+  resolveFanOutSubjects,
+  settleStoppedDelivery,
+} from '@/lib/privacy/stale-sends';
+import type { PayloadSubjects } from '@/lib/privacy/delivery-payloads';
 
 /** Safely extract a JSON object from a Prisma Json field, falling back to empty object. */
 function toJsonRecord(value: unknown): Record<string, unknown> {
@@ -214,25 +218,12 @@ export async function deliverToSubscribers(
     data: payload,
   });
   const stored = { event: eventType, data: payload };
-  // Who the payload names, once for every subscription: each row is created
-  // from this same payload (t-926). Started now and awaited only after each
-  // row is written, so a slow lookup never keeps a delivery from being
-  // recorded. A failed one is logged, and each attempt then looks up for
-  // itself, as before t-926.
-  const subjects = subjectsOfPayload(
-    prisma,
+  // Who the payload names, once for every subscription (t-926).
+  const subjects = resolveFanOutSubjects(
     eventType,
-    stored as unknown as Prisma.JsonValue
-  ).catch((err: unknown) => {
-    logger.warn(
-      'Webhook dispatch: could not resolve who the payload names once; each attempt will',
-      {
-        eventType,
-        error: err instanceof Error ? err.message : String(err),
-      }
-    );
-    return undefined;
-  });
+    stored as unknown as Prisma.JsonValue,
+    'Webhook'
+  );
 
   await Promise.allSettled(
     matched.map(async (sub) => {
@@ -250,6 +241,9 @@ export async function deliverToSubscribers(
       await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub), takenAt, await subjects);
     })
   );
+  // Settled within the dispatch even when every create failed and nothing
+  // awaited it.
+  await subjects;
 }
 
 /**

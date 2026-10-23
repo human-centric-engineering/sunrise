@@ -58,8 +58,12 @@ import {
   destinationUpdate,
   type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
-import { decideDeliveryUnderLocks, settleStoppedDelivery } from '@/lib/privacy/stale-sends';
-import { subjectsOfPayload, type PayloadSubjects } from '@/lib/privacy/delivery-payloads';
+import {
+  decideDeliveryUnderLocks,
+  resolveFanOutSubjects,
+  settleStoppedDelivery,
+} from '@/lib/privacy/stale-sends';
+import type { PayloadSubjects } from '@/lib/privacy/delivery-payloads';
 import { requireTenantContext } from '@/lib/tenancy/context';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
@@ -263,22 +267,13 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
       matchesFilter(hook.filter, payload) && hook.action.type === 'webhook'
   );
   if (matched.length === 0) return;
-  // Who the payload names, once for every hook: each row is created from
-  // this same payload (t-926). Started now and awaited only after each row is
-  // written, so a slow lookup never keeps a delivery from being recorded. A
-  // failed one is logged, and each attempt then looks up for itself, as
-  // before t-926; a retry resolves it from the row it claimed.
-  const subjects = subjectsOfPayload(
-    prisma,
+  // Who the payload names, once for every hook (t-926); a retry resolves it
+  // from the row it claimed.
+  const subjects = resolveFanOutSubjects(
     payload.eventType,
-    payload as unknown as Prisma.JsonValue
-  ).catch((err: unknown) => {
-    logger.warn('Hook dispatch: could not resolve who the payload names once; each attempt will', {
-      eventType: payload.eventType,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  });
+    payload as unknown as Prisma.JsonValue,
+    'Hook'
+  );
   // Settles once every first attempt has, so the hold `emitHookEvent` takes
   // covers the deliveries too. Retries run on their own timers, and the tick
   // picks them up if the process is gone (`processPendingHookRetries`).
@@ -287,6 +282,9 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
       dispatchWebhook(hook.id, hook.action, hook.secret, payload, takenAt, subjects)
     )
   );
+  // Settled within the dispatch even when every create failed and nothing
+  // awaited it.
+  await subjects;
 }
 
 async function dispatchWebhook(
