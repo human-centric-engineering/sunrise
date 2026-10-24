@@ -7,6 +7,8 @@
  * - 400 on validation (same variant for A + B, missing variantIds,
  *   missing evaluationRunId on a variant, missing dataset, judge agent
  *   not found or wrong kind)
+ * - 400 when either variant's run has not completed (queued, running,
+ *   failed, cancelled), before any judging or write
  * - 409 when dataset case count exceeds the synchronous cap
  * - 200 happy path: tallies A / B / tie verdicts from the (mocked)
  *   grader, persists summary on AiExperiment.pairwiseVerdict
@@ -42,7 +44,7 @@ vi.mock('@/lib/db/client', () => ({
     aiEvaluationCaseResult: { findMany: vi.fn() },
     aiDatasetCase: { findMany: vi.fn() },
     aiDataset: { findFirst: vi.fn() },
-    aiEvaluationRun: { count: vi.fn() },
+    aiEvaluationRun: { count: vi.fn(), findMany: vi.fn() },
   },
 }));
 
@@ -159,6 +161,23 @@ function setRunOwners(owners: Record<string, string>) {
 }
 
 /**
+ * Each run's status. The route asks for the caller's runs among the two that
+ * have not completed; this fake answers from the table, so a route that stopped
+ * filtering on status (or on the caller) would see the wrong rows.
+ */
+function setRunStatuses(statuses: Record<string, string>, owners: Record<string, string> = {}) {
+  vi.mocked(prisma.aiEvaluationRun.findMany).mockImplementation(((args: {
+    where: { id: { in: string[] }; userId: string; status: { not: string } };
+  }) =>
+    Promise.resolve(
+      args.where.id.in
+        .filter((id) => (owners[id] ?? ADMIN_ID) === args.where.userId)
+        .filter((id) => statuses[id] !== args.where.status.not)
+        .map((id) => ({ id, status: statuses[id] }))
+    )) as never);
+}
+
+/**
  * The experiment row. Also binds its dataset (`bindDataset`), since the route
  * reads that separately — pass `dataset: null` for an experiment with none.
  */
@@ -191,6 +210,7 @@ beforeEach(() => {
   limiterCheck.mockReturnValue({ success: true, remaining: 4, reset: Date.now() + 60_000 });
   bindDataset({ caseCount: 3, userId: ADMIN_ID });
   setRunOwners({ 'run-a': ADMIN_ID, 'run-b': ADMIN_ID });
+  setRunStatuses({ 'run-a': 'completed', 'run-b': 'completed' });
 });
 
 describe('POST /experiments/:id/verdicts — auth', () => {
@@ -288,6 +308,60 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     expect(vi.mocked(prisma.aiEvaluationCaseResult.findMany)).not.toHaveBeenCalled();
     expect(grade).not.toHaveBeenCalled();
     expect(prisma.aiExperiment.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['queued', 'running', 'failed', 'cancelled'])(
+    'refuses when a variant run is %s, and keeps the stored verdict',
+    async (status) => {
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
+      setRunStatuses({ 'run-a': 'completed', 'run-b': status });
+
+      const res = await POST(makeRequest(defaultBody()), ctx());
+
+      expect(res.status).toBe(400);
+      const body = await parseJson<{
+        error: { message: string; details: { runs: Array<{ id: string; status: string }> } };
+      }>(res);
+      expect(body.error.message).toMatch(/completed/);
+      // The unfinished run, not the "run by you" refusal the ownership count gives.
+      expect(body.error.message).not.toMatch(/run by you/);
+      expect(body.error.details.runs).toEqual([{ id: 'run-b', status }]);
+      expect(vi.mocked(prisma.aiEvaluationCaseResult.findMany)).not.toHaveBeenCalled();
+      expect(grade).not.toHaveBeenCalled();
+      expect(prisma.aiExperiment.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it('names both runs when neither has completed', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
+    setRunStatuses({ 'run-a': 'failed', 'run-b': 'running' });
+
+    const res = await POST(makeRequest(defaultBody()), ctx());
+
+    expect(res.status).toBe(400);
+    const body = await parseJson<{
+      error: { details: { runs: Array<{ id: string; status: string }> } };
+    }>(res);
+    expect(body.error.details.runs).toEqual([
+      { id: 'run-a', status: 'failed' },
+      { id: 'run-b', status: 'running' },
+    ]);
+    expect(prisma.aiExperiment.update).not.toHaveBeenCalled();
+  });
+
+  it("gives the ownership refusal, not the status one, for another admin's unfinished run", async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+      makeExperiment({ createdBy: null, dataset: { caseCount: 3, userId: null } }) as never
+    );
+    setRunOwners({ 'run-a': ADMIN_ID, 'run-b': 'another-admin' });
+    setRunStatuses({ 'run-a': 'completed', 'run-b': 'running' }, { 'run-b': 'another-admin' });
+
+    const res = await POST(makeRequest(defaultBody()), ctx());
+
+    expect(res.status).toBe(400);
+    const body = await parseJson<{ error: { message: string } }>(res);
+    expect(body.error.message).toMatch(/run by you/);
+    expect(vi.mocked(prisma.aiEvaluationRun.findMany)).not.toHaveBeenCalled();
   });
 
   /**
