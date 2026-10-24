@@ -38,6 +38,11 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Metadata } from 'next';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
+import {
+  mapWithConcurrency,
+  ROUTE_IMPORT_CONCURRENCY,
+  routeImportTimeoutMs,
+} from '@/tests/helpers/route-module-imports';
 
 /** A brand no fixture would produce by accident. */
 const { STUB_BRAND } = vi.hoisted(() => ({ STUB_BRAND: 'Zzyzx Industries' }));
@@ -169,19 +174,29 @@ function flatten(value: unknown, out: string[] = []): string[] {
  * `generateMetadata` instead of a static `metadata` object contribute nothing —
  * calling them needs route params and a live database. The hand-listed version
  * did not cover them either, so this is not a regression, but it is not coverage.
+ *
+ * Imported a bounded number at a time, against a timeout that scales with how many
+ * modules there are (#969) — see `tests/helpers/route-module-imports.ts`. That is
+ * why discovery runs here, at collection, rather than inside the hook: the timeout
+ * has to be known when the hook is registered. An import that throws still fails
+ * the hook; nothing is skipped.
  */
 const withMetadata: { rel: string; spec: string; strings: string[] }[] = [];
-let discovered: string[] = [];
+const discovered: string[] = routeModules();
 
 beforeAll(async () => {
-  discovered = routeModules();
-  for (const rel of discovered) {
-    const mod: { metadata?: Metadata } = await import(/* @vite-ignore */ toSpec(rel));
-    if (!mod.metadata) continue;
+  const mods = await mapWithConcurrency(
+    discovered,
+    ROUTE_IMPORT_CONCURRENCY,
+    (rel): Promise<{ metadata?: Metadata }> => import(/* @vite-ignore */ toSpec(rel))
+  );
+  mods.forEach((mod, i) => {
+    if (!mod.metadata) return;
     const strings = flatten(mod.metadata);
+    const rel = discovered[i];
     if (strings.length > 0) withMetadata.push({ rel, spec: toSpec(rel), strings });
-  }
-}, 120_000);
+  });
+}, routeImportTimeoutMs(discovered.length));
 
 describe('metadata is driven by the BRAND seam, not hardcoded', () => {
   it('the brand stub reaches BRAND through the seam', async () => {
