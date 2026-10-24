@@ -216,11 +216,17 @@ the only place the distinction can be drawn.
 (plus `responseSchemaName` / `responseSchemaStrict`). When supplied it is
 forwarded as a `json_schema` `responseFormat` on both attempts, so
 supporting providers enforce the output shape natively (OpenAI-compatible
-`response_format`; Anthropic forced-tool extraction) rather than relying on
-the prompt's prose. It is purely additive — the judge and summary callers
-don't opt in, providers without support ignore it, and the `parse` + retry
-path stays the cross-provider safety net. The prompt's prose output
-contract above remains the belt-and-suspenders fallback.
+`response_format`; Anthropic native structured output or tool extraction, see
+`llm-providers.md`) rather than relying on the prompt's prose. It is purely
+additive — the judge and summary callers don't opt in, providers without
+support ignore it, and the `parse` + retry path stays the cross-provider safety
+net. The prompt's prose output contract above remains the belt-and-suspenders
+fallback.
+
+It also accepts an optional `reasoningEffort`, forwarded on both attempts and
+dropped by models that do not reason. No core caller sets it. On a thinking
+model the reasoning tokens count against `maxTokens`, so a caller that sets it
+should raise the cap too.
 
 ## Cost accounting
 

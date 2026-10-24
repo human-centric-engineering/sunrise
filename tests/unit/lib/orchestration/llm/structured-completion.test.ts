@@ -187,6 +187,44 @@ describe('runStructuredCompletion', () => {
     expect(firstFormat).not.toHaveProperty('strict');
   });
 
+  it('forwards reasoningEffort on both attempts', async () => {
+    // First attempt malformed → forces the retry so we can assert both calls.
+    const provider = makeProvider([
+      { content: 'nope', usage: { inputTokens: 1, outputTokens: 1 } },
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'STRICT',
+      reasoningEffort: 'high',
+    });
+    const calls = (provider.chat as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect((calls[0] as unknown[])[1]).toMatchObject({ reasoningEffort: 'high' });
+    expect((calls[1] as unknown[])[1]).toMatchObject({ reasoningEffort: 'high' });
+  });
+
+  it('sends no reasoningEffort when none is supplied', async () => {
+    const provider = makeProvider([
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
+    });
+    const opts = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts).not.toHaveProperty('reasoningEffort');
+  });
+
   it('uses responseSchemaName when provided and forwards strict when set', async () => {
     const provider = makeProvider([
       { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },

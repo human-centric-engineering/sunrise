@@ -49,7 +49,12 @@
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import type { LlmFinishReason, LlmMessage, LlmResponseFormat } from '@/lib/orchestration/llm/types';
+import type {
+  LlmFinishReason,
+  LlmMessage,
+  LlmResponseFormat,
+  ReasoningEffort,
+} from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import {
   GEN_AI_OPERATION_NAME,
@@ -82,9 +87,11 @@ export interface StructuredCompletionOptions<T> {
    * rather than relying on the prompt's prose alone.
    *
    * Providers that support it constrain the response (OpenAI-compatible via
-   * `response_format: { type: 'json_schema', ... }`; Anthropic via a forced
-   * single-tool extraction whose input is serialized back into the response
-   * string). Providers without support ignore it — so `parse` plus the
+   * `response_format: { type: 'json_schema', ... }`; Anthropic via native
+   * structured output where the model takes it, else a single-tool extraction
+   * whose input is serialized back into the response string — forced, or
+   * offered with `auto` when thinking is on or the model refuses a forced
+   * tool). Providers without support ignore it — so `parse` plus the
    * existing temp-0 retry remain the cross-provider safety net, and the
    * prompt's prose contract should still describe the shape as a
    * belt-and-suspenders fallback.
@@ -118,6 +125,14 @@ export interface StructuredCompletionOptions<T> {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * How much the model should reason before answering, forwarded on both
+   * attempts. Only reasoning-capable models honour it; others drop it. On a
+   * thinking model the reasoning tokens count against `maxTokens`, so raise
+   * the cap with it or the answer can be truncated. Omitted → the provider's
+   * default (no extended reasoning on Claude).
+   */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Optional caller-supplied error to throw when the attempts are exhausted
    * and nothing parsed.
@@ -280,6 +295,7 @@ export async function runStructuredCompletion<T>(
             timeoutMs,
             signal,
             ...(responseFormat ? { responseFormat } : {}),
+            ...(opts.reasoningEffort ? { reasoningEffort: opts.reasoningEffort } : {}),
           });
           setSpanAttributes(span, {
             [GEN_AI_RESPONSE_MODEL]: opts.model,
