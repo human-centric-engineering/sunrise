@@ -91,10 +91,13 @@ interface RouteErrorFallbackAction {
   working shell (protected, admin) the default `router.push` is right.
 - **`checkSession`** only makes sense behind authentication. It calls
   `authClient.getSession()` and destructures the result — better-auth always
-  resolves to a `{ data, error }` envelope, so the session is `data`, and a null
-  `data` is the expiry signal. A rejected call is treated as expired too.
-  Testing the envelope itself for truthiness never fires: that was the bug that
-  left the expiry card reachable only on a network failure.
+  resolves to a `{ data, error }` envelope, so the session is `data`. Expiry is
+  a null `data` with no error (better-auth's answer for a missing or expired
+  session) or with a 401 (a failed refresh). Any other error, or a rejected
+  call, means the lookup failed rather than the session, so the normal card and
+  its "Try again" stay: an auth outage must not tell a signed-in user to sign
+  in. Testing the envelope itself for truthiness never fires: that was the bug
+  that left the expiry card reachable only on a network failure.
 - `app/global-error.tsx` is deliberately NOT a wrapper — it replaces the root
   layout, so it renders its own `<html>`/`<body>` and cannot import the shared
   card.

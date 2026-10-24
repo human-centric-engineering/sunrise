@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouteErrorBoundary } from '@/components/errors/route-error-boundary';
 
@@ -53,10 +53,21 @@ const envelope = (value: unknown): SessionResult => value as SessionResult;
 const validSession = (): SessionResult =>
   envelope({ data: { session: { id: 'sess-1' }, user: { id: 'user-1' } }, error: null });
 
-const expiredSession = (): SessionResult =>
+/** better-auth's answer for a missing or expired session: a 200 with null data. */
+const expiredSession = (): SessionResult => envelope({ data: null, error: null });
+
+/** A session refresh that failed: better-auth's only 401 from this call. */
+const refreshRejected = (): SessionResult =>
   envelope({
     data: null,
     error: { status: 401, statusText: 'UNAUTHORIZED', message: 'Session expired' },
+  });
+
+/** The auth service failing: an error envelope that says nothing about the session. */
+const lookupFailed = (): SessionResult =>
+  envelope({
+    data: null,
+    error: { status: 500, statusText: 'INTERNAL_SERVER_ERROR', message: 'boom' },
   });
 
 function renderBoundary(props: Partial<React.ComponentProps<typeof RouteErrorBoundary>> = {}) {
@@ -147,12 +158,36 @@ describe('RouteErrorBoundary', () => {
       expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
     });
 
-    it('treats a failed session lookup as expired', async () => {
-      vi.mocked(authClient.getSession).mockRejectedValue(new Error('network'));
+    it('shows the sign-in card when a session refresh is refused with a 401', async () => {
+      vi.mocked(authClient.getSession).mockResolvedValue(refreshRejected());
 
       renderBoundary({ checkSession: true });
 
       expect(await screen.findByText('Session Expired')).toBeInTheDocument();
+    });
+
+    // #1066: an auth outage is not an expired session
+    it('keeps the normal error card when the session lookup returns a server error', async () => {
+      vi.mocked(authClient.getSession).mockResolvedValue(lookupFailed());
+
+      renderBoundary({ checkSession: true });
+
+      await waitFor(() => expect(authClient.getSession).toHaveBeenCalledTimes(1));
+      // Let the resolved lookup settle before asserting the card did not swap.
+      await act(async () => {});
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+      expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
+    });
+
+    it('keeps the normal error card when the session lookup rejects', async () => {
+      vi.mocked(authClient.getSession).mockRejectedValue(new Error('network'));
+
+      renderBoundary({ checkSession: true });
+
+      await waitFor(() => expect(authClient.getSession).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+      expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
     });
 
     it('never calls getSession when checkSession is not set', async () => {

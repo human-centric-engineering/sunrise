@@ -122,13 +122,19 @@ export function RouteErrorBoundary({
         // session itself is `data`. Testing the envelope for truthiness would
         // never fire, so the expiry card would only ever appear on a thrown
         // request.
-        const { data: session } = await authClient.getSession();
-        if (!session) {
+        //
+        // A missing or expired session comes back as a 200 with null `data`,
+        // and a failed refresh as a 401. Anything else is the lookup failing,
+        // not the session: an auth outage should offer "try again", not tell a
+        // signed-in user to sign in.
+        const { data: session, error: sessionError } = await authClient.getSession();
+        if (!session && (!sessionError || sessionError.status === 401)) {
           setIsSessionExpired(true);
           logger.warn('Session expired in error boundary', { boundaryName });
         }
       } catch {
-        setIsSessionExpired(true);
+        // The request itself failed, so the session is unknown — keep the
+        // normal error card and its retry.
       }
     };
 
