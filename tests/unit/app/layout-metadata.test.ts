@@ -133,7 +133,7 @@ function routeModules(): string[] {
 function forkOwnedRouteModules(): Set<string> {
   if (occupiedTiers.length === 0) return new Set();
   const owned = new Set<string>();
-  for (const rel of routeModules()) {
+  for (const rel of discovered) {
     const src = readFileSync(join(APP_DIR, rel), 'utf8');
     const reExportsMetadata = occupiedTiers.some((tier) => {
       // `.` is a wildcard in a RegExp and two reserved tiers contain one
@@ -185,17 +185,15 @@ const withMetadata: { rel: string; spec: string; strings: string[] }[] = [];
 const discovered: string[] = routeModules();
 
 beforeAll(async () => {
-  const mods = await mapWithConcurrency(
-    discovered,
-    ROUTE_IMPORT_CONCURRENCY,
-    (rel): Promise<{ metadata?: Metadata }> => import(/* @vite-ignore */ toSpec(rel))
-  );
-  mods.forEach((mod, i) => {
-    if (!mod.metadata) return;
-    const strings = flatten(mod.metadata);
-    const rel = discovered[i];
-    if (strings.length > 0) withMetadata.push({ rel, spec: toSpec(rel), strings });
+  const imported = await mapWithConcurrency(discovered, ROUTE_IMPORT_CONCURRENCY, async (rel) => {
+    const mod: { metadata?: Metadata } = await import(/* @vite-ignore */ toSpec(rel));
+    return { rel, mod };
   });
+  for (const { rel, mod } of imported) {
+    if (!mod.metadata) continue;
+    const strings = flatten(mod.metadata);
+    if (strings.length > 0) withMetadata.push({ rel, spec: toSpec(rel), strings });
+  }
 }, routeImportTimeoutMs(discovered.length));
 
 describe('metadata is driven by the BRAND seam, not hardcoded', () => {

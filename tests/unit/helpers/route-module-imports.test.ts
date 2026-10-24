@@ -25,7 +25,10 @@ describe('routeImportTimeoutMs', () => {
     // A fork that deleted most of its routes keeps the budget it always had.
     expect(routeImportTimeoutMs(0)).toBe(ROUTE_IMPORT_TIMEOUT_FLOOR_MS);
     expect(routeImportTimeoutMs(10)).toBe(ROUTE_IMPORT_TIMEOUT_FLOOR_MS);
-    expect(routeImportTimeoutMs(91)).toBeGreaterThanOrEqual(ROUTE_IMPORT_TIMEOUT_FLOOR_MS);
+  });
+
+  it('gives Sunrise its own 91 modules more than the fixed limit that ran out', () => {
+    expect(routeImportTimeoutMs(91)).toBeGreaterThan(ROUTE_IMPORT_TIMEOUT_FLOOR_MS);
   });
 
   it('grows past the fixed limit for the fork size reported in #969', () => {
@@ -69,16 +72,29 @@ describe('mapWithConcurrency', () => {
     await expect(
       mapWithConcurrency(items, 2, async (i) => {
         started.push(i);
-        await tick();
+        // Item 1 fails before yielding, so the failure is recorded before item 0
+        // finishes and its worker looks for the next item.
         if (i === 1) throw new Error('Cannot find module @/app/(public)/gone/page');
+        await tick();
         return i;
       })
     ).rejects.toThrow('Cannot find module');
 
-    // Items 0 and 1 start together; 1 fails. Worker 0 may already have picked up
-    // item 2 before the failure, but nothing beyond that.
-    expect(started.length).toBeGreaterThanOrEqual(2);
-    expect(started.length).toBeLessThanOrEqual(3);
+    expect(started).toEqual([0, 1]);
+  });
+
+  it('lets calls already in flight settle before it rejects', async () => {
+    let settled = 0;
+    const out = mapWithConcurrency([0, 1, 2], 3, async (i) => {
+      if (i === 0) throw new Error('first');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      settled++;
+    });
+
+    await expect(out).rejects.toThrow('first');
+    // Both slow calls finished before the rejection was delivered; with a plain
+    // `Promise.all` this would read 0 and they would still be running.
+    expect(settled).toBe(2);
   });
 
   it('handles an empty list and a limit larger than the list', async () => {

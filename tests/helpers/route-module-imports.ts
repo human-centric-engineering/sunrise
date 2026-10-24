@@ -45,6 +45,10 @@ export function routeImportTimeoutMs(count: number): number {
  * further items are started. The metadata test is a brand-leak guard, and an
  * import that is quietly skipped would let it pass while checking less. Do not
  * add a catch here or at the call site.
+ *
+ * Unlike `Promise.all`, it rejects only once the calls already in flight have
+ * settled, so no import is still evaluating after the hook has been reported as
+ * failed. The error is the first one; later ones are dropped.
  */
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -56,18 +60,18 @@ export async function mapWithConcurrency<T, R>(
   }
   const results = new Array<R>(items.length);
   let next = 0;
-  let failed = false;
+  let failure: { error: unknown } | undefined;
   const worker = async (): Promise<void> => {
-    while (!failed && next < items.length) {
+    while (!failure && next < items.length) {
       const index = next++;
       try {
         results[index] = await fn(items[index], index);
-      } catch (err) {
-        failed = true;
-        throw err;
+      } catch (error) {
+        failure ??= { error };
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure) throw failure.error;
   return results;
 }
