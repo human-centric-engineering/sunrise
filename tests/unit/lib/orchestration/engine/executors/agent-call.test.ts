@@ -94,6 +94,7 @@ import { SPAN_AGENT_CALL_TURN } from '@/lib/orchestration/tracing/attributes';
 import { createContext } from '@/lib/orchestration/engine/context';
 import { logger } from '@/lib/logging';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
+import { turnEntriesSchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1565,6 +1566,56 @@ describe('executeAgentCall', () => {
         'agent_call: resuming single-turn from prior iterations',
         expect.objectContaining({ stepId: 'step1' })
       );
+    });
+
+    // ── Test 3b: thinking blocks survive the checkpoint into the resume ─────
+
+    it('single-turn resume: replays the continuing turn’s thinking blocks from the checkpoint', async () => {
+      // Anthropic rejects a continued tool loop whose assistant turn lacks its
+      // thinking blocks. Run 1 checkpoints a continuing turn; the checkpoint is
+      // JSON-round-tripped and parsed as the resume path parses the running-step
+      // row; run 2 resumes from it and must send the blocks back unchanged.
+      vi.mocked(getCapabilityDefinitions).mockResolvedValue([
+        { name: 'cap', description: 'cap', parameters: { type: 'object', properties: {} } },
+      ]);
+      const reasoning = [
+        { type: 'thinking' as const, thinking: 'look it up', signature: 'sig-1' },
+        { type: 'redacted_thinking' as const, data: 'opaque' },
+      ];
+      mockChat.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'tc_1', name: 'cap', arguments: {} }],
+        reasoning,
+        usage: { inputTokens: 10, outputTokens: 5 },
+        finishReason: 'tool_use',
+        model: 'claude-opus-5-5',
+      });
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      await executeAgentCall(makeStep({ mode: 'single-turn' }), makeCtx({ recordTurn }));
+
+      const recorded: unknown[] = recordTurn.mock.calls.map((c) => c[0]);
+      const checkpoint = turnEntriesSchema.parse(
+        JSON.parse(
+          JSON.stringify(recorded.filter((t) => (t as { phase?: string }).phase === 'continuing'))
+        )
+      );
+      expect(checkpoint).toHaveLength(1);
+
+      mockChat.mockClear();
+      await executeAgentCall(
+        makeStep({ mode: 'single-turn' }),
+        makeCtx({ resumeTurns: checkpoint })
+      );
+
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      const resumedMessages = mockChat.mock.calls[0][0] as Array<{
+        role: string;
+        toolCalls?: Array<{ id: string }>;
+        reasoning?: unknown;
+      }>;
+      const continued = resumedMessages.find((m) => m.role === 'assistant');
+      expect(continued?.toolCalls?.[0]?.id).toBe('tc_1');
+      expect(continued?.reasoning).toEqual(reasoning);
     });
 
     // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────

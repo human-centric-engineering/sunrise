@@ -477,6 +477,7 @@ async function runSingleTurn(
             assistantContent: response.content,
             toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
             toolResult: capResult,
+            ...(response.reasoning ? { reasoning: response.reasoning } : {}),
             tokensUsed: turnTokens,
             costUsd: turnCost.totalCostUsd,
           });
@@ -748,6 +749,7 @@ export async function executeAgentCall(
             role: 'assistant',
             content: turn.assistantContent,
             toolCalls: [turn.toolCall],
+            ...(turn.reasoning ? { reasoning: turn.reasoning } : {}),
           });
           restoredMessages.push({
             role: 'tool',

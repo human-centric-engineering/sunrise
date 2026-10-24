@@ -4992,6 +4992,47 @@ describe('OrchestrationEngine', () => {
       expect(capturedRecordTurn).toBeDefined();
     });
 
+    it('agent_call reasoning stays on the running-step checkpoint and is left out of executionTrace', async () => {
+      // Thinking blocks are resume state: the running-step row needs them to
+      // replay a continued tool loop, the kept/exported trace does not.
+      const reasoning = [{ type: 'thinking' as const, thinking: 'secret plan', signature: 'sig' }];
+      const turn: TurnEntry = {
+        kind: 'agent_call',
+        phase: 'continuing',
+        index: 0,
+        assistantContent: '',
+        toolCall: { id: 'tc_1', name: 'cap', arguments: {} },
+        toolResult: { ok: true },
+        reasoning,
+        tokensUsed: 10,
+        costUsd: 0.01,
+      };
+      registerStepType('llm_call', async (_step, ctx) => {
+        if (ctx.recordTurn) await ctx.recordTurn(turn);
+        return { output: 'ok', tokensUsed: 10, costUsd: 0.01 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      const checkpointTurns = vi
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
+        .mock.calls.map((c) => (c[0] as { data: { turns?: unknown } }).data.turns)
+        .find((t): t is TurnEntry[] => Array.isArray(t) && t.length > 0);
+      expect(checkpointTurns).toEqual([turn]);
+
+      const lastTrace = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.map(
+          (c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace
+        )
+        .filter(Array.isArray)
+        .pop() as Array<{ stepId: string; turns?: Array<Record<string, unknown>> }>;
+      const traceTurns = lastTrace.find((e) => e.stepId === 'a')?.turns;
+      expect(traceTurns).toHaveLength(1);
+      expect(traceTurns?.[0]).toMatchObject({ phase: 'continuing', toolCall: { id: 'tc_1' } });
+      expect(traceTurns?.[0]).not.toHaveProperty('reasoning');
+    });
+
     it('recordStepTurn: DB throw is non-fatal — executor continues and workflow_completed is yielded', async () => {
       // Arrange — running-step `updateMany` rejects (this is the turns
       // write in recordStepTurn's two-step sequence). The execution-row

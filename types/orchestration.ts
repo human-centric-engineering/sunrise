@@ -24,7 +24,7 @@ import type {
   AiProviderModel,
 } from '@/types/prisma';
 import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
-import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
+import type { LlmFinishReason, LlmReasoningBlock } from '@/lib/orchestration/llm/types';
 
 // ============================================================================
 // Enums
@@ -388,6 +388,13 @@ export interface AgentCallTurnContinuing extends AgentCallTurnBase {
   toolCall: { id: string; name: string; arguments: Record<string, unknown> };
   /** The dispatcher's result for `toolCall`, JSON-serialisable. */
   toolResult: unknown;
+  /**
+   * The reasoning blocks the provider returned with this turn, replayed on
+   * resume (Anthropic rejects a continued tool loop without them when
+   * thinking is on). Kept on the running-step checkpoint only — the engine
+   * strips it from the `executionTrace` copy of the turns.
+   */
+  reasoning?: LlmReasoningBlock[];
 }
 
 /**

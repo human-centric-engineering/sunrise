@@ -1161,7 +1161,7 @@ export class OrchestrationEngine {
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
-          ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
+          ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
         });
         // The pause path keeps the running-step row alive on purpose:
         // `pauseForApproval` doesn't call `clearRunningStep`, so the row
@@ -1247,7 +1247,7 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
-        ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
+        ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
       });
       ctx.resumeTurns = undefined;
       ctx.recordTurn = undefined;
@@ -1286,7 +1286,7 @@ export class OrchestrationEngine {
       durationMs,
       input: step.config,
       ...rollupTelemetry(telemetryOut),
-      ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
+      ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
       ...(completedProvenance ? { provenance: completedProvenance } : {}),
     });
     ctx.resumeTurns = undefined;
@@ -2576,6 +2576,20 @@ function drainContextPatch(ctx: ExecutionContext): Record<string, unknown> {
   }
   ctx.pendingContextPatch = undefined;
   return out;
+}
+
+/**
+ * The step's turns as the trace entry keeps them. `agent_call` reasoning
+ * (signed, possibly summarized thinking blocks) is resume state only: it stays
+ * on the running-step row, which is cleared when the step ends, and is left out
+ * of `executionTrace`, which is kept, shown in the trace viewer and exported.
+ */
+function traceTurns(turns: TurnEntry[]): TurnEntry[] {
+  return turns.map((turn) => {
+    if (turn.kind !== 'agent_call' || turn.phase !== 'continuing' || !turn.reasoning) return turn;
+    const { reasoning: _reasoning, ...rest } = turn;
+    return rest;
+  });
 }
 
 /** Sanitize an error for client-facing text. */
