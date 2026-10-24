@@ -157,6 +157,18 @@ release process.
   the row's first hour. See
   `.context/privacy/data-erasure.md`.
 
+### Fixed
+
+- **The owner-classification test sees a fork's user columns named for their
+  role (§115, #1069, #1067).** A `String` column named `…UserId`
+  (`respondentUserId`) now counts as a user link, so its model must be
+  classified and may name it as its owner. Before, the test skipped such a model
+  and refused a classification of it. For a user id named any other way, put a
+  `/// owner-classification: user-id` doc line above the field. A comment
+  mentioning `@relation` no longer hides a column. **A fork with an unclassified
+  `…UserId` model will now fail that test** until it classifies the model in
+  `lib/app/owner-classification.ts`. See `.context/auth/authorization.md`.
+
 ## [0.15.0] — 2026-10-21
 
 > **Alpha release.** Twenty-first tagged Sunrise release. **MINOR bump**. It

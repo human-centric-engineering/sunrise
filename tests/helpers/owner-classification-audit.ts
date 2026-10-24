@@ -31,24 +31,45 @@ const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
 const FK_RELATION = /^\s*(\w+)\s+(\w+)(\?)?\s+@relation\(([^)]*)\)/;
 const FK_FIELDS = /\bfields:\s*\[([^\]]*)\]/;
 const SCALAR = /^\s*(\w+)\s+(\w+)(\?)?(\s|$)/;
-const USER_SCALAR = new Set([
-  'userId',
-  'createdBy',
-  'uploadedBy',
-  'ownerId',
-  'actorUserId',
-  'subjectUserId',
-]);
+/**
+ * A user-id column with no `@relation` behind it: one of these names, any
+ * `String` named `…UserId` (`respondentUserId`, `decidedByUserId` — #1069), or
+ * a field under a `/// owner-classification: user-id` doc line. There is no
+ * `…By` rule: core's `lockedBy` holds a worker id, not a user's.
+ */
+const USER_SCALAR = new Set(['userId', 'createdBy', 'uploadedBy', 'ownerId']);
+const USER_ID_SUFFIX = /UserId$/;
+const USER_MARKER = /^\s*\/\/\/.*\bowner-classification:\s*user-id\b/;
 
 interface Relation {
   target: string;
   optional: boolean;
   keys: string[];
 }
+interface Scalar {
+  type: string;
+  optional: boolean;
+  /** Under a `/// owner-classification: user-id` doc line. */
+  userMarked: boolean;
+}
 export interface SchemaModel {
   name: string;
-  scalars: Map<string, { type: string; optional: boolean }>;
+  scalars: Map<string, Scalar>;
   relations: Map<string, Relation>;
+}
+
+/**
+ * The line without its trailing `//` comment, so a comment that mentions
+ * `@relation` cannot hide a scalar (#1067). A `//` inside a quoted string
+ * (`@default("https://…")`) is not a comment.
+ */
+function stripComment(line: string): string {
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"' && line[i - 1] !== '\\') quoted = !quoted;
+    else if (!quoted && line[i] === '/' && line[i + 1] === '/') return line.slice(0, i);
+  }
+  return line;
 }
 
 /** Parse model blocks: scalar columns and the foreign-key relations this model holds. */
@@ -56,18 +77,27 @@ export function parseSchema(texts: string[]): Map<string, SchemaModel> {
   const out = new Map<string, SchemaModel>();
   for (const text of texts) {
     let current: SchemaModel | null = null;
-    for (const line of text.split('\n')) {
-      const open = MODEL_OPEN.exec(line);
+    let marked = false;
+    for (const raw of text.split('\n')) {
+      const open = MODEL_OPEN.exec(raw);
       if (open) {
         current = { name: open[1], scalars: new Map(), relations: new Map() };
         out.set(current.name, current);
+        marked = false;
         continue;
       }
-      if (line.startsWith('}')) {
+      if (raw.startsWith('}')) {
         current = null;
         continue;
       }
-      if (!current || /^\s*(\/\/|@@)/.test(line)) continue;
+      if (!current) continue;
+      if (USER_MARKER.test(raw)) marked = true;
+      if (/^\s*(\/\/|@@)/.test(raw)) continue;
+      const line = stripComment(raw);
+      if (!line.trim()) continue;
+      // A doc line describes the next field only.
+      const userMarked = marked;
+      marked = false;
       const rel = FK_RELATION.exec(line);
       if (rel) {
         const keys = FK_FIELDS.exec(rel[4]);
@@ -82,11 +112,23 @@ export function parseSchema(texts: string[]): Map<string, SchemaModel> {
       }
       const scalar = SCALAR.exec(line);
       if (scalar && !line.includes('@relation')) {
-        current.scalars.set(scalar[1], { type: scalar[2], optional: scalar[3] === '?' });
+        current.scalars.set(scalar[1], {
+          type: scalar[2],
+          optional: scalar[3] === '?',
+          userMarked,
+        });
       }
     }
   }
   return out;
+}
+
+function isUserScalar(name: string, scalar: Scalar): boolean {
+  return (
+    USER_SCALAR.has(name) ||
+    (scalar.type === 'String' && USER_ID_SUFFIX.test(name)) ||
+    scalar.userMarked
+  );
 }
 
 function userColumnsOf(model: SchemaModel): Set<string> {
@@ -94,7 +136,7 @@ function userColumnsOf(model: SchemaModel): Set<string> {
   for (const rel of model.relations.values()) {
     if (rel.target === 'User') rel.keys.forEach((k) => cols.add(k));
   }
-  for (const name of model.scalars.keys()) if (USER_SCALAR.has(name)) cols.add(name);
+  for (const [name, scalar] of model.scalars) if (isUserScalar(name, scalar)) cols.add(name);
   return cols;
 }
 

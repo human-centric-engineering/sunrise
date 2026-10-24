@@ -8,8 +8,10 @@
  * `export-sources.test.ts` checks the subject-access manifest.
  *
  * A model must be classified when it has:
- *   • a foreign key to `User`, or a user-id column with no foreign key
- *     (the same column vocabulary the export guard uses), or
+ *   • a foreign key to `User`, or a user-id column with no foreign key:
+ *     `userId`, `createdBy`, `uploadedBy`, `ownerId`, any `String` named
+ *     `…UserId`, or a field under a `/// owner-classification: user-id` doc
+ *     line (for a user id named any other way), or
  *   • a foreign key to a model classified personal — a child of a private row
  *     is either private through it, or says why not.
  *
@@ -180,6 +182,90 @@ model Post {
       });
       expect(problems).toContain('Gone is classified but is not a model in the schema');
       expect(problems).toContain('Post is personal through Thread, which is not personal');
+    });
+
+    describe('which columns hold a user id', () => {
+      const columns = parseSchema([
+        `
+model User {
+  id String @id
+}
+model Session {
+  id               String  @id
+  respondentUserId String?
+}
+model Meeting {
+  id String @id
+  /// Who ran the meeting.
+  /// owner-classification: user-id
+  facilitator String
+}
+model Note {
+  id       String @id
+  authorId String // a user id, but kept off @relation on purpose
+}
+model Lease {
+  id       String  @id
+  lockedBy String?
+  homepage String  @default("https://example.com") // not a @relation
+}
+model Ticket {
+  id        String  @id
+  /// owner-classification: user-id
+  assignee  String?
+  // The marker above covers assignee only.
+  watcher   String?
+  reporterUserId Int
+}
+model Thread {
+  id     String  @id
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id]) // the real link
+}
+`,
+      ]);
+
+      it('asks about a model whose user column is named for its role or marked', () => {
+        const problems = auditOwnerClassification(columns, {});
+        for (const model of ['Session', 'Meeting', 'Ticket', 'Thread']) {
+          expect(problems).toContain(
+            `${model} links to a user or to a personal model and is not classified`
+          );
+        }
+        // A lease holder, a URL default and a comment mentioning @relation are not user links.
+        for (const model of ['Note', 'Lease']) {
+          expect(problems.some((p) => p.startsWith(`${model} `))).toBe(false);
+        }
+      });
+
+      it('accepts those columns as owners, and nothing the marker or suffix does not cover', () => {
+        const problems = auditOwnerClassification(columns, {
+          Session: { kind: 'not-personal', because: 'who answered' },
+          Meeting: { kind: 'personal', owner: { column: 'facilitator' } },
+          Ticket: { kind: 'personal', owner: { column: 'watcher' }, ownerless: 'conversation' },
+          Thread: { kind: 'not-personal', because: 'authorship' },
+          Lease: { kind: 'not-personal', because: 'worker lease' },
+        });
+        expect(problems).not.toContain(
+          'Session is classified but links to no user and no personal model'
+        );
+        expect(problems.some((p) => p.startsWith('Meeting'))).toBe(false);
+        // The marker covered assignee, not watcher; reporterUserId is not a String.
+        expect(problems).toContain('Ticket.watcher is not a user column on Ticket');
+        expect(problems).toContain(
+          'Lease is classified but links to no user and no personal model'
+        );
+      });
+
+      it('still reads the scalar behind a comment and the relation behind its key', () => {
+        expect(columns.get('Note')?.scalars.get('authorId')).toMatchObject({ type: 'String' });
+        expect(columns.get('Lease')?.scalars.has('homepage')).toBe(true);
+        expect(columns.get('Thread')?.relations.get('user')).toMatchObject({
+          target: 'User',
+          keys: ['userId'],
+        });
+        expect(columns.get('Thread')?.scalars.has('user')).toBe(false);
+      });
     });
   });
 });
