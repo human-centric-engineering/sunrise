@@ -222,6 +222,17 @@ model Thread {
   userId String?
   user   User?   @relation(fields: [userId], references: [id]) // the real link
 }
+model SlackUser {
+  id String @id
+}
+model SlackLink {
+  id          String    @id
+  slackUserId String
+  slackUser   SlackUser @relation(fields: [slackUserId], references: [id])
+  /// owner-classification: user-id
+  @@index([slackUserId])
+  label       String    @default("a \\"quoted\\" // label") // not a @relation
+}
 `,
       ]);
 
@@ -232,8 +243,9 @@ model Thread {
             `${model} links to a user or to a personal model and is not classified`
           );
         }
-        // A lease holder, a URL default and a comment mentioning @relation are not user links.
-        for (const model of ['Note', 'Lease']) {
+        // A lease holder, a URL default, a comment mentioning @relation, a key of a
+        // relation to another model and a marker spent on a block attribute are not user links.
+        for (const model of ['Note', 'Lease', 'SlackLink']) {
           expect(problems.some((p) => p.startsWith(`${model} `))).toBe(false);
         }
       });
@@ -260,6 +272,10 @@ model Thread {
       it('still reads the scalar behind a comment and the relation behind its key', () => {
         expect(columns.get('Note')?.scalars.get('authorId')).toMatchObject({ type: 'String' });
         expect(columns.get('Lease')?.scalars.has('homepage')).toBe(true);
+        expect(columns.get('SlackLink')?.scalars.get('label')).toMatchObject({
+          type: 'String',
+          userMarked: false,
+        });
         expect(columns.get('Thread')?.relations.get('user')).toMatchObject({
           target: 'User',
           keys: ['userId'],

@@ -39,7 +39,7 @@ const SCALAR = /^\s*(\w+)\s+(\w+)(\?)?(\s|$)/;
  */
 const USER_SCALAR = new Set(['userId', 'createdBy', 'uploadedBy', 'ownerId']);
 const USER_ID_SUFFIX = /UserId$/;
-const USER_MARKER = /^\s*\/\/\/.*\bowner-classification:\s*user-id\b/;
+const USER_MARKER = /^\s*\/\/\/\s*owner-classification:\s*user-id\b/;
 
 interface Relation {
   target: string;
@@ -66,7 +66,9 @@ export interface SchemaModel {
 function stripComment(line: string): string {
   let quoted = false;
   for (let i = 0; i < line.length; i++) {
-    if (line[i] === '"' && line[i - 1] !== '\\') quoted = !quoted;
+    if (quoted && line[i] === '\\') {
+      i++; // skip the escaped character
+    } else if (line[i] === '"') quoted = !quoted;
     else if (!quoted && line[i] === '/' && line[i + 1] === '/') return line.slice(0, i);
   }
   return line;
@@ -92,7 +94,12 @@ export function parseSchema(texts: string[]): Map<string, SchemaModel> {
       }
       if (!current) continue;
       if (USER_MARKER.test(raw)) marked = true;
-      if (/^\s*(\/\/|@@)/.test(raw)) continue;
+      if (/^\s*\/\//.test(raw)) continue;
+      // A block attribute ends any doc line above it: the marker names a field.
+      if (/^\s*@@/.test(raw)) {
+        marked = false;
+        continue;
+      }
       const line = stripComment(raw);
       if (!line.trim()) continue;
       // A doc line describes the next field only.
@@ -133,10 +140,15 @@ function isUserScalar(name: string, scalar: Scalar): boolean {
 
 function userColumnsOf(model: SchemaModel): Set<string> {
   const cols = new Set<string>();
+  // A key of a relation to some other model holds that model's id, whatever it is named.
+  const otherKeys = new Set<string>();
   for (const rel of model.relations.values()) {
     if (rel.target === 'User') rel.keys.forEach((k) => cols.add(k));
+    else rel.keys.forEach((k) => otherKeys.add(k));
   }
-  for (const [name, scalar] of model.scalars) if (isUserScalar(name, scalar)) cols.add(name);
+  for (const [name, scalar] of model.scalars) {
+    if (!otherKeys.has(name) && isUserScalar(name, scalar)) cols.add(name);
+  }
   return cols;
 }
 
