@@ -2581,8 +2581,9 @@ function drainContextPatch(ctx: ExecutionContext): Record<string, unknown> {
 /**
  * The step's turns as the trace entry keeps them. `agent_call` reasoning
  * (signed, possibly summarized thinking blocks) is resume state only: it stays
- * on the running-step row, which is cleared when the step ends, and is left out
- * of `executionTrace`, which is kept, shown in the trace viewer and exported.
+ * on the running-step row, which outlives the step only while it is paused or
+ * in flight and is stripped from the org export, and is left out of
+ * `executionTrace`, which is kept, shown in the trace viewer and exported.
  */
 function traceTurns(turns: TurnEntry[]): TurnEntry[] {
   return turns.map((turn) => {

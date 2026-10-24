@@ -626,6 +626,51 @@ describe('org-data source manifest', () => {
       expect(JSON.stringify(row)).not.toContain('signing-secret');
     });
 
+    it('strips agent_call thinking blocks from a running step’s turns, keeping the rest of each turn', async () => {
+      // A step paused for approval keeps its running-step row, and its
+      // checkpoint turns carry the signed thinking a resume replays.
+      const toolTurn = {
+        kind: 'agent_call',
+        phase: 'continuing',
+        index: 0,
+        assistantContent: '',
+        toolCall: { id: 'tc_1', name: 'cap', arguments: {} },
+        toolResult: { ok: true },
+        tokensUsed: 10,
+        costUsd: 0.01,
+      };
+      const reflectTurn = { kind: 'reflect', iteration: 0, draft: 'd', converged: false };
+      prismaMock.aiWorkflowRunningStep.findMany.mockResolvedValue([
+        {
+          id: 'rs-1',
+          executionId: 'exec-1',
+          stepId: 'a',
+          turns: [
+            {
+              ...toolTurn,
+              reasoning: [
+                { type: 'thinking', thinking: 'secret plan', signature: 'sig-1' },
+                { type: 'redacted_thinking', data: 'opaque-blob' },
+              ],
+            },
+            reflectTurn,
+          ],
+          orgId: 'cmorg000000000000000other',
+        },
+        { id: 'rs-2', executionId: 'exec-1', stepId: 'b', turns: null, orgId: null },
+      ]);
+      const source = ORG_DATA_SOURCES.find((c) => c.model === 'AiWorkflowRunningStep');
+      const rows = (await source!.fetch({ orgId: 'cmorg000000000000000other' })) as Array<
+        Record<string, unknown>
+      >;
+
+      expect(rows[0].turns).toEqual([toolTurn, reflectTurn]);
+      expect(rows[0]).toMatchObject({ id: 'rs-1', executionId: 'exec-1', stepId: 'a' });
+      expect(rows[1].turns).toBeNull();
+      expect(JSON.stringify(rows)).not.toContain('secret plan');
+      expect(JSON.stringify(rows)).not.toContain('opaque-blob');
+    });
+
     it('withholds the invitation token and selects invitations INTO this org only', async () => {
       prismaMock.verification.findMany.mockResolvedValue([]);
       const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'Verification');

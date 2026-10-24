@@ -38,6 +38,7 @@
  * @see .context/privacy/org-export.md — the guide
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import type { SourceDisposition, AttributionRow } from '@/lib/privacy/export-sources';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
@@ -102,6 +103,28 @@ function toAttribution(
   rows: { id: string; label: string | null; createdAt: Date }[]
 ): AttributionRow[] {
   return rows.map((row) => ({ id: row.id, label: row.label, createdAt: row.createdAt }));
+}
+
+/**
+ * A running-step row's turns without `agent_call` reasoning — signed thinking
+ * blocks kept only so a resumed tool loop can replay them. The trace copy of
+ * the turns drops them too; a paused or in-flight step's row would otherwise
+ * hand them out.
+ */
+function withoutReasoning(turns: Prisma.JsonValue | null): Prisma.JsonValue | null {
+  if (!Array.isArray(turns)) return turns;
+  return turns.map((turn) => {
+    if (
+      turn === null ||
+      typeof turn !== 'object' ||
+      Array.isArray(turn) ||
+      !('reasoning' in turn)
+    ) {
+      return turn;
+    }
+    const { reasoning: _reasoning, ...rest } = turn;
+    return rest;
+  });
 }
 
 /**
@@ -584,12 +607,15 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     model: 'AiWorkflowRunningStep',
     section: 'workflowRunningSteps',
     disposition: 'export',
-    description: 'Per-step timing and turn records for each run.',
-    fetch: ({ orgId }) =>
-      prisma.aiWorkflowRunningStep.findMany({
+    description:
+      'Per-step timing and turn records for each run. Model thinking kept for resuming a step is not included.',
+    fetch: async ({ orgId }: OrgQuery): Promise<unknown[]> => {
+      const rows = await prisma.aiWorkflowRunningStep.findMany({
         where: ownedBy(orgId),
         orderBy: { startedAt: 'asc' },
-      }),
+      });
+      return rows.map((row) => ({ ...row, turns: withoutReasoning(row.turns) }));
+    },
   },
 
   // ---------------------------------------------------------------------

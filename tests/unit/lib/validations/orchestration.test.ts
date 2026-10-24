@@ -2903,6 +2903,40 @@ describe('turnEntrySchema', () => {
     }
   });
 
+  it('rejects a continuing agent_call turn whose reasoning is malformed, rather than dropping it', () => {
+    // Replaying the turn without its thinking blocks would make Anthropic
+    // reject the resumed loop, so the parse fails and the resume logs it.
+    const turn = {
+      kind: 'agent_call',
+      phase: 'continuing',
+      index: 0,
+      assistantContent: '',
+      toolCall: { id: 'call_1', name: 'search', arguments: {} },
+      toolResult: { ok: true },
+      tokensUsed: 10,
+      costUsd: 0.01,
+    };
+    const valid = [{ type: 'thinking', thinking: 'plan', signature: 'sig-1' }];
+
+    const ok = turnEntrySchema.safeParse({ ...turn, reasoning: valid });
+    expect(ok.success).toBe(true);
+    if (ok.success && ok.data.kind === 'agent_call' && ok.data.phase === 'continuing') {
+      expect(ok.data.reasoning).toEqual(valid);
+    }
+
+    const missingSignature = turnEntrySchema.safeParse({
+      ...turn,
+      reasoning: [{ type: 'thinking', thinking: 'plan' }],
+    });
+    expect(missingSignature.success).toBe(false);
+
+    const unknownBlock = turnEntrySchema.safeParse({
+      ...turn,
+      reasoning: [{ type: 'progress_update', text: 'x' }],
+    });
+    expect(unknownBlock.success).toBe(false);
+  });
+
   it('accepts agent_call continuing-phase shape (toolCall + toolResult required)', () => {
     // Arrange
     const input = {
