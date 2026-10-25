@@ -44,7 +44,7 @@ vi.mock('@/lib/db/client', () => ({
     aiEvaluationCaseResult: { findMany: vi.fn() },
     aiDatasetCase: { findMany: vi.fn() },
     aiDataset: { findFirst: vi.fn() },
-    aiEvaluationRun: { count: vi.fn(), findMany: vi.fn() },
+    aiEvaluationRun: { findMany: vi.fn() },
   },
 }));
 
@@ -147,33 +147,19 @@ function bindDataset(dataset: { caseCount: number; userId: string | null } | nul
 }
 
 /**
- * Who started each variant's run. The route counts the caller's own among the
- * two; this fake answers that count from the table, so a route that stopped
- * asking for `userId` would count another admin's run as its own.
+ * Who started each variant's run, and its status. The route reads the caller's
+ * own among the two; this fake answers from the table, so a route that stopped
+ * asking for `userId` would read another admin's run as its own. Runs not named
+ * are the caller's and completed.
  */
-function setRunOwners(owners: Record<string, string>) {
-  vi.mocked(prisma.aiEvaluationRun.count).mockImplementation(((args: {
+function setRuns(runs: Record<string, { userId?: string; status?: string }>) {
+  vi.mocked(prisma.aiEvaluationRun.findMany).mockImplementation(((args: {
     where: { id: { in: string[] }; userId: string };
   }) =>
     Promise.resolve(
-      args.where.id.in.filter((id) => owners[id] === args.where.userId).length
-    )) as never);
-}
-
-/**
- * Each run's status. The route asks for the caller's runs among the two that
- * have not completed; this fake answers from the table, so a route that stopped
- * filtering on status (or on the caller) would see the wrong rows.
- */
-function setRunStatuses(statuses: Record<string, string>, owners: Record<string, string> = {}) {
-  vi.mocked(prisma.aiEvaluationRun.findMany).mockImplementation(((args: {
-    where: { id: { in: string[] }; userId: string; status: { not: string } };
-  }) =>
-    Promise.resolve(
       args.where.id.in
-        .filter((id) => (owners[id] ?? ADMIN_ID) === args.where.userId)
-        .filter((id) => statuses[id] !== args.where.status.not)
-        .map((id) => ({ id, status: statuses[id] }))
+        .filter((id) => (runs[id]?.userId ?? ADMIN_ID) === args.where.userId)
+        .map((id) => ({ id, status: runs[id]?.status ?? 'completed' }))
     )) as never);
 }
 
@@ -209,8 +195,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   limiterCheck.mockReturnValue({ success: true, remaining: 4, reset: Date.now() + 60_000 });
   bindDataset({ caseCount: 3, userId: ADMIN_ID });
-  setRunOwners({ 'run-a': ADMIN_ID, 'run-b': ADMIN_ID });
-  setRunStatuses({ 'run-a': 'completed', 'run-b': 'completed' });
+  setRuns({});
 });
 
 describe('POST /experiments/:id/verdicts — auth', () => {
@@ -297,13 +282,14 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ createdBy: null, dataset: { caseCount: 3, userId: null } }) as never
     );
-    setRunOwners({ 'run-a': ADMIN_ID, 'run-b': 'another-admin' });
+    setRuns({ 'run-b': { userId: 'another-admin' } });
 
     const res = await POST(makeRequest(defaultBody()), ctx());
 
     expect(res.status).toBe(400);
-    expect(vi.mocked(prisma.aiEvaluationRun.count)).toHaveBeenCalledWith({
+    expect(vi.mocked(prisma.aiEvaluationRun.findMany)).toHaveBeenCalledWith({
       where: { id: { in: ['run-a', 'run-b'] }, userId: ADMIN_ID },
+      select: { id: true, status: true },
     });
     expect(vi.mocked(prisma.aiEvaluationCaseResult.findMany)).not.toHaveBeenCalled();
     expect(grade).not.toHaveBeenCalled();
@@ -314,7 +300,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     'refuses when a variant run is %s, and keeps the stored verdict',
     async (status) => {
       vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
-      setRunStatuses({ 'run-a': 'completed', 'run-b': status });
+      setRuns({ 'run-b': { status } });
 
       const res = await POST(makeRequest(defaultBody()), ctx());
 
@@ -323,7 +309,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
         error: { message: string; details: { runs: Array<{ id: string; status: string }> } };
       }>(res);
       expect(body.error.message).toMatch(/completed/);
-      // The unfinished run, not the "run by you" refusal the ownership count gives.
+      // The unfinished run, not the "run by you" refusal the ownership check gives.
       expect(body.error.message).not.toMatch(/run by you/);
       expect(body.error.details.runs).toEqual([{ id: 'run-b', status }]);
       expect(vi.mocked(prisma.aiEvaluationCaseResult.findMany)).not.toHaveBeenCalled();
@@ -334,7 +320,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
 
   it('names both runs when neither has completed', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
-    setRunStatuses({ 'run-a': 'failed', 'run-b': 'running' });
+    setRuns({ 'run-a': { status: 'failed' }, 'run-b': { status: 'running' } });
 
     const res = await POST(makeRequest(defaultBody()), ctx());
 
@@ -353,15 +339,15 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ createdBy: null, dataset: { caseCount: 3, userId: null } }) as never
     );
-    setRunOwners({ 'run-a': ADMIN_ID, 'run-b': 'another-admin' });
-    setRunStatuses({ 'run-a': 'completed', 'run-b': 'running' }, { 'run-b': 'another-admin' });
+    setRuns({ 'run-b': { userId: 'another-admin', status: 'running' } });
 
     const res = await POST(makeRequest(defaultBody()), ctx());
 
     expect(res.status).toBe(400);
-    const body = await parseJson<{ error: { message: string } }>(res);
+    const body = await parseJson<{ error: { message: string; details?: unknown } }>(res);
     expect(body.error.message).toMatch(/run by you/);
-    expect(vi.mocked(prisma.aiEvaluationRun.findMany)).not.toHaveBeenCalled();
+    // Nothing about the other admin's run: not its status, not its id.
+    expect(body.error.details).toBeUndefined();
   });
 
   /**
