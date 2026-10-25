@@ -71,6 +71,13 @@ export interface LlmMessage {
    * tool loop. Not persisted: only the turn being continued needs them.
    */
   reasoning?: LlmReasoningBlock[];
+  /**
+   * On a `system` message: an instruction that steers the turn at this point
+   * in the conversation rather than adding to the system prompt (the text of
+   * an agent-opened turn). A provider whose API has no positional system
+   * message sends it as a turn of its own; the others ignore the flag.
+   */
+  turnInstruction?: boolean;
 }
 
 /**

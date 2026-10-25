@@ -701,6 +701,18 @@ function splitSystemMessages(messages: LlmMessage[]): {
   const conversation: MessageParam[] = [];
 
   for (const msg of messages) {
+    if (msg.role === 'system' && msg.turnInstruction) {
+      // Hoisting this one would leave the request ending on whatever came
+      // before it: nothing (a 400), an assistant reply (read as a prefill), or
+      // a tool result continuing a turn whose thinking was not kept. Anthropic
+      // only takes a user turn last, so send it as one, framed so the model
+      // does not read it as the person's words.
+      const text = getTextContent(msg.content);
+      if (!text) continue;
+      closeUnthinkingToolTurn(conversation);
+      conversation.push({ role: 'user', content: `${TURN_INSTRUCTION_HEADING}\n\n${text}` });
+      continue;
+    }
     if (msg.role === 'system') {
       const text = getTextContent(msg.content);
       if (text) systemParts.push(text);
@@ -750,6 +762,41 @@ function splitSystemMessages(messages: LlmMessage[]): {
     system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
     conversation,
   };
+}
+
+/** Heads a `turnInstruction` sent as a user turn, so it is not read as the person's. */
+const TURN_INSTRUCTION_HEADING = '[Instruction from the application, not a message from the user]';
+
+/**
+ * Remove a tool call left unanswered by the assistant at the end of
+ * `conversation` when its turn carries no thinking blocks, as a chat history
+ * rebuilt from the database does (reasoning is not persisted). A user turn
+ * appended straight after it would sit in the same turn as those tool results,
+ * which on a thinking model is a continuation sent without its thinking. The
+ * assistant's text is kept; only its `tool_use` blocks and their results go.
+ */
+function closeUnthinkingToolTurn(conversation: MessageParam[]): void {
+  let resultsStart = conversation.length;
+  while (resultsStart > 0 && isToolResultTurn(conversation[resultsStart - 1])) resultsStart--;
+  if (resultsStart === conversation.length || resultsStart === 0) return;
+
+  const assistant = conversation[resultsStart - 1];
+  if (assistant.role !== 'assistant' || !Array.isArray(assistant.content)) return;
+  const first = assistant.content[0];
+  if (first?.type === 'thinking' || first?.type === 'redacted_thinking') return;
+
+  const kept = assistant.content.filter((block) => block.type !== 'tool_use');
+  conversation.splice(resultsStart - 1);
+  if (kept.length > 0) conversation.push({ role: 'assistant', content: kept });
+}
+
+function isToolResultTurn(msg: MessageParam): boolean {
+  return (
+    msg.role === 'user' &&
+    Array.isArray(msg.content) &&
+    msg.content.length > 0 &&
+    msg.content.every((block) => block.type === 'tool_result')
+  );
 }
 
 /** Convert platform-neutral ContentPart[] to Anthropic ContentBlockParam[]. */

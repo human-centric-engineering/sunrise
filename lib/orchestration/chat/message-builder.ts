@@ -422,8 +422,10 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   // `system` instruction so the model is steered without the transcript
   // attributing words to the person. Attachments are meaningless here (nobody
   // uploaded anything), so this branch precedes the multimodal one.
+  // `turnInstruction` keeps it in place for a provider that would otherwise
+  // hoist it into the system prompt and leave the request ending on history.
   if (isOpeningTurn) {
-    messages.push({ role: 'system', content: turnText });
+    messages.push({ role: 'system', content: turnText, turnInstruction: true });
   } else if (args.attachments && args.attachments.length > 0) {
     const parts: ContentPart[] = [{ type: 'text', text: args.newUserMessage }];
     for (const attachment of args.attachments) {

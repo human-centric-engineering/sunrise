@@ -1393,6 +1393,32 @@ describe('toSdkMessage mapping', () => {
     expect(calledParams.messages[0]).toEqual({ role: 'system', content: 'You are helpful.' });
   });
 
+  it('sends a turnInstruction system message as a plain system message, in place', async () => {
+    // Arrange
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+
+    // Act
+    const provider = makeProvider();
+    await provider.chat(
+      [
+        { role: 'system', content: 'You are helpful.' },
+        { role: 'assistant', content: 'Earlier reply.' },
+        { role: 'system', content: 'Open the check-in.', turnInstruction: true },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    // Assert — OpenAI takes a system message anywhere, so the flag changes nothing.
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(calledParams.messages).toEqual([
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'assistant', content: 'Earlier reply.' },
+      { role: 'system', content: 'Open the check-in.' },
+    ]);
+  });
+
   it('maps user message correctly', async () => {
     // Arrange
     chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));

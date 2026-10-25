@@ -8371,10 +8371,15 @@ describe('agent-opened turns (#474)', () => {
     const messages = (provider.chatStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Array<{
       role: string;
       content: unknown;
+      turnInstruction?: boolean;
     }>;
     const opener = messages.find((m) => m.content === openingRequest.openingTurn.content);
     expect(opener).toBeDefined();
     expect(opener?.role).toBe('system');
+    // Marked so a provider that hoists system messages keeps it in place (t-937);
+    // the system prompt itself is not.
+    expect(opener?.turnInstruction).toBe(true);
+    expect(messages[0].turnInstruction).toBeUndefined();
     // And no user-role message at all this turn.
     expect(messages.filter((m) => m.role === 'user')).toHaveLength(0);
   });
