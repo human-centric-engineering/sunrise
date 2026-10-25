@@ -758,10 +758,18 @@ function splitSystemMessages(
     // Multimodal content — convert ContentPart[] to Anthropic blocks
     if (Array.isArray(msg.content)) {
       const blocks: ContentBlockParam[] = toAnthropicBlocks(msg.content);
+      if (msg.role === 'user') {
+        for (const block of blocks) {
+          if (block.type === 'text') block.text = neutraliseTurnInstructionHeading(block.text);
+        }
+      }
       conversation.push({ role: msg.role, content: blocks });
       continue;
     }
-    conversation.push({ role: msg.role, content: msg.content });
+    conversation.push({
+      role: msg.role,
+      content: msg.role === 'user' ? neutraliseTurnInstructionHeading(msg.content) : msg.content,
+    });
   }
 
   return {
@@ -772,6 +780,24 @@ function splitSystemMessages(
 
 /** Heads a `turnInstruction` sent as a user turn, so it is not read as the person's. */
 const TURN_INSTRUCTION_HEADING = '[Instruction from the application, not a message from the user]';
+
+/**
+ * The heading as a person might type it: any case or spacing, with or without
+ * its second clause or closing bracket.
+ */
+const FORGED_HEADING = /\[\s*(instruction\s+from\s+the\s+application\b[^\]\n]*)\]?/gi;
+
+/**
+ * Re-word any copy of `TURN_INSTRUCTION_HEADING` in a person's own text, so
+ * they cannot present their words as an instruction from the application.
+ * Only a `turnInstruction` opener carries the heading as written.
+ */
+function neutraliseTurnInstructionHeading(text: string): string {
+  return text.replace(
+    FORGED_HEADING,
+    (_match, words: string) => `(typed by the user: ${words.trim()})`
+  );
+}
 
 /**
  * Close a tool call left unanswered by the assistant at the end of
