@@ -493,7 +493,19 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   {
     seam: 'lib/app/own-modules.ts',
     risk: 'a stray entry would exempt a lib/app/ entry from the version contract, the fork guide and this table on every install, so a real seam could ship with no breaking-change announcement',
-    assert: () => expect(appOwnModules).toEqual([]),
+    // Not pinned to []: a leaf fork that declares its modules would otherwise
+    // edit this row, in a Sunrise file, which is the cost #847 removes. What
+    // it asserts still fails on a stray upstream entry, because every seam
+    // Sunrise ships has a row here or in UNASSERTED_SEAMS, and an entry with
+    // a row is refused. Upstream, that leaves no declarable entry at all.
+    assert: () =>
+      expect(
+        ownModuleProblems(appOwnModules, scaffoldsOnDisk(), {
+          SEAM_DEFAULTS: SEAM_DEFAULTS.map((s) => s.seam),
+          UNASSERTED_SEAMS: [...UNASSERTED_SEAMS],
+        }),
+        'lib/app/own-modules.ts declares entries that cannot be honoured (see each message)'
+      ).toEqual([]),
   },
   {
     seam: 'lib/app/capability-seed-pairs.ts',
@@ -628,10 +640,6 @@ describe('lib/app/ seams ship empty', () => {
     const stale = [...covered].filter((f) => !onDisk.includes(f));
 
     expect(missing, 'lib/app/ seam with no row in SEAM_DEFAULTS').toEqual([]);
-    expect(
-      ownModuleProblems(appOwnModules, onDisk, { SEAM_DEFAULTS: [...covered] }),
-      'a module declared in lib/app/own-modules.ts still has a SEAM_DEFAULTS row'
-    ).toEqual([]);
     expect(stale, 'SEAM_DEFAULTS row for a file that no longer exists').toEqual([]);
   });
 });

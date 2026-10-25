@@ -133,11 +133,13 @@ describe('presentSessionEntry', () => {
     }
   );
 
-  it('logs a refused write with the user, as the guards do', () => {
-    expect(() => presentSessionEntry(adminSession(), support('READ_ONLY'), 'POST')).toThrow();
+  it("logs a refused write with the user and the caller's context, as the guards do", () => {
+    expect(() =>
+      presentSessionEntry(adminSession(), support('READ_ONLY'), 'POST', { path: '/api/x' })
+    ).toThrow();
     expect(logger.warn).toHaveBeenCalledWith(
       'tenancy: refused a write under a read-only support grant',
-      expect.objectContaining({ userId: 'u1', method: 'POST' })
+      expect.objectContaining({ userId: 'u1', method: 'POST', path: '/api/x' })
     );
   });
 

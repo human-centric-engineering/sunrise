@@ -108,17 +108,29 @@ export function refuseReadOnlySupportWrite(
  * ```typescript
  * const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
  * if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
- * const session = presentSessionEntry(rawSession, entry, request.method);
- * if (isPlatformAdmin(session.user)) { ... } // false for a support actor
+ * const session = presentSessionEntry(rawSession, entry, request.method, { path });
+ * // false for a support actor
+ * const admin = isPlatformAdmin(session.user);
+ * // Run the work in the org's tenant context, as the guards do: row
+ * // isolation reads it, and so does the support stamp on audit rows.
+ * return runAsOrg(entry.orgId, () => handle(session, admin), {
+ *   source: entry.source,
+ *   role: entry.role,
+ *   ...(entry.support ? { support: entry.support } : {}),
+ * });
  * ```
+ *
+ * `context` is added to the refusal's log line beside the user, as the guards
+ * add their name and the path.
  *
  * @see .context/tenancy/support-access.md — entering an org outside the guards
  */
 export function presentSessionEntry<S extends { user: { id?: string; role?: string | null } }>(
   session: S,
   entry: { source: string; orgId?: string; support?: { level: string; grantId?: string } },
-  method: string | undefined
+  method: string | undefined,
+  context: Record<string, unknown> = {}
 ): S {
-  refuseReadOnlySupportWrite(entry, method, { userId: session.user.id });
+  refuseReadOnlySupportWrite(entry, method, { ...context, userId: session.user.id });
   return presentedSession(session, entry);
 }

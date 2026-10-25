@@ -84,7 +84,8 @@ release process.
   longer carries a row per module in those three Sunrise files. An entry that
   is not on disk, or that still has a row in any of the three (as every Sunrise
   seam does), fails the seam-coverage tests; delete a module's old rows when
-  you list it. A fork others build on should not declare. See CUSTOMIZATION.md §4.
+  you list it. Unlike other seams it needs no `SEAM_DEFAULTS` pin: its row
+  checks the entries instead. A fork others build on should not declare. See CUSTOMIZATION.md §4.
 
 ### Changed
 

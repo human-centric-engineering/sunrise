@@ -5,7 +5,7 @@
  * this file after release, so your edits here merge cleanly on upgrade (the
  * stable contract is this file's exports, not their values).
  *
- * Auto-wired: read by `tests/helpers/app-scaffolds.ts` (`seamsOnDisk()`), which
+ * Auto-wired: read by `tests/helpers/app-scaffolds.ts` (`unlistedSeams()`), which
  * subtracts it for the three guards that treat every `lib/app/` entry as a
  * public seam: the VERSIONING.md Covered list, CUSTOMIZATION.md §4's "Edit this
  * file" table, and the `SEAM_DEFAULTS` rows in `tests/unit/lib/app/defaults.test.ts`.
@@ -42,7 +42,8 @@
  *
  * An entry is refused, not ignored, when it is not on disk, is not in that
  * form, is this file, is already not a seam, or still has a row in
- * VERSIONING.md, the CUSTOMIZATION.md §4 table or `SEAM_DEFAULTS`. Every
+ * VERSIONING.md, the CUSTOMIZATION.md §4 table, `SEAM_DEFAULTS` or
+ * `UNASSERTED_SEAMS`. Every
  * Sunrise seam has those rows, so naming one is refused; a module of your own
  * is accepted once you delete the rows you added for it before this file
  * existed. So a typo fails loudly instead of silently exempting nothing.

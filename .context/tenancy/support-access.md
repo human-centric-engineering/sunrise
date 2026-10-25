@@ -160,7 +160,7 @@ nothing scopes the work to the org. Three things are then the caller's duty:
 const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
 if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
 // 403 (logged) for a write under a READ_ONLY grant; the default user role inside support.
-const session = presentSessionEntry(rawSession, entry, request.method);
+const session = presentSessionEntry(rawSession, entry, request.method, { path });
 // Run the work in the org's tenant context, as the guards do: row isolation
 // reads it, and so does the support stamp on audit rows.
 return runAsOrg(entry.orgId, () => handle(session), {

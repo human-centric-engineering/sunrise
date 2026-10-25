@@ -533,8 +533,8 @@ A directory takes a trailing slash, a file none. All three checks skip what you
 list. An entry that names nothing, or that still has a row in VERSIONING.md,
 this table or `SEAM_DEFAULTS` (which every Sunrise seam has), fails the
 seam-coverage tests, so delete the rows you added for those modules before this
-file existed. Then pin the value in its `SEAM_DEFAULTS` row, as for
-any seam you fill. **A fork others build on should not declare**: its `lib/app/`
+file existed. Unlike other seams, filling this one needs no `SEAM_DEFAULTS`
+pin: its row checks your entries rather than asserting the file is empty. **A fork others build on should not declare**: its `lib/app/`
 modules are its own forks' public surface, and the VERSIONING.md rows are how
 they hear about a breaking change.
 
