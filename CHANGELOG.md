@@ -60,6 +60,12 @@ release process.
   `LlmProvider` that ignores the field is unaffected; a fork with its own
   tool loop over Claude should copy `reasoning` from the response onto the
   assistant message it appends. See `.context/orchestration/llm-providers.md`.
+- **`runStructuredCompletion` takes a `reasoningEffort` (t-940, #981).**
+  Optional, forwarded on both attempts; no core caller sets it. A thinking
+  model's reasoning counts against `maxTokens`, so a caller setting it should
+  raise `maxTokens` and `timeoutMs` from their plain-extraction defaults; the
+  option's doc comment in `lib/orchestration/llm/structured-completion.ts` says
+  why.
 
 ### Changed
 
@@ -168,6 +174,16 @@ release process.
   mentioning `@relation` no longer hides a column. **A fork with an unclassified
   `…UserId` model will now fail that test** until it classifies the model in
   `lib/app/owner-classification.ts`. See `.context/auth/authorization.md`.
+- **Pairwise verdicts refuse unfinished runs (t-938, #923).** `POST
+  /experiments/:id/verdicts` now answers `400` unless both variants' runs have
+  completed, naming each unfinished run and its status in `details.runs`.
+  Before, it judged queued, running, failed or cancelled runs and overwrote the
+  stored verdict with a comparison of partial results.
+- **`RouteErrorBoundary` shows "Session Expired" only when the session is gone
+  (t-939, #1066).** With `checkSession`, the sign-in card now needs a null
+  session or a `401` from the lookup. An auth outage or a rejected lookup keeps
+  the normal card and its retry, and is logged. A later error that finds a
+  valid session clears the card. See `.context/ui/components.md`.
 
 ## [0.15.0] — 2026-10-21
 
