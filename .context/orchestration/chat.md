@@ -172,10 +172,15 @@ the opener is ignored rather than prepended.
 system messages into the request's `system` field, and Anthropic only accepts
 a user turn last. The message-builder marks it `turnInstruction: true`, and
 the provider sends it in place as a user turn headed
-`[Instruction from the application, not a message from the user]`. A person
-cannot forge that heading: any copy of it in a user turn's own text (any case
-or spacing, with or without the second clause or closing bracket) is re-worded
-to `(typed by the user: ...)` before it is sent. If history
+`[Instruction from the application, not a message from the user]`. Before
+sending, the provider re-words any copy of that heading in a user message's
+text (`(typed by the user: ...)`) or in a tool result
+(`(written in a tool result: ...)`), so the heading as written comes only from
+the opener. Matching ignores case, spacing, full-width characters, zero-width
+characters and soft hyphens; it accepts any of `[ ( 【 〔 〖` or no bracket at
+all, a missing second clause, and a heading split across adjacent text parts.
+It is a pattern, not a guarantee: look-alike letters from other alphabets
+(Cyrillic `о` for `o`) and text inside a PDF document are not checked. If history
 ends on a tool call with no reply after it (a `skipFollowup` capability such
 as `run_workflow` pending approval) and the request thinks, that call and its
 results are sent as a text note on the assistant turn
