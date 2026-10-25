@@ -27,6 +27,7 @@ audit row made inside names the grant, for the vendor and for the org (t-825).
 | Enter under a grant      | **Enter as support** on `/admin/orgs` → `POST /api/v1/orgs/switch`                                |
 | Does a grant admit now?  | `verifiedSupportGrant(orgId)` in `lib/tenancy/entry.ts`                                           |
 | What support presents as | `lib/auth/support-principal.ts`                                                                   |
+| Entering outside guards  | `presentSessionEntry(session, entry, method)` after `enterSessionOrg()`                           |
 | The banner               | `components/admin/support-banner.tsx`, fed by `requestSupportSession()`                           |
 | An audit row's grant     | `AiAdminAuditLog.supportGrantId` / `supportOrgId`, stamped by `logAdminAction()`                  |
 | What support did         | `GET /api/v1/orgs/[id]/support-grants/activity`, `listSupportActivity()`                          |
@@ -145,6 +146,29 @@ level, expiresAt }`. The tenant context carries the same `support` field,
   entry would admit (the granter still an OWNER of the org).
 - **Account deletion.** `DELETE /api/v1/users/me` refuses inside a support
   session: the presented role would otherwise skip its last-admin check.
+
+## Entering an org outside the guards
+
+`withAuth` / `withAdminAuth` apply both support rules for every route they
+wrap. A route that enters an org itself, with `getServerSession()` and
+`enterSessionOrg()` (one that also serves a cookie-less caller, say), gets the
+raw entry: source `'support'`, role ADMIN, and a session whose user is still a
+platform `ADMIN`. Nothing refuses its writes under a READ_ONLY grant. Both
+rules are then the caller's duty:
+
+```typescript
+const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
+if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
+// 403 for a write under a READ_ONLY grant; the default user role inside support.
+const session = presentSessionEntry(rawSession, entry, request.method);
+```
+
+Use the presented `session` for every check after entry. A check on the raw
+session's `isPlatformAdmin(session.user)` is true for a support actor, so an
+"admin, or a member of this row's org" rule would admit them at both levels.
+Before 0.15.0 the same caller was refused `not-a-member`, so a route written
+then may need this added. `isSupportEntry(entry)` is there for a route that
+should refuse support outright.
 
 ## Audit rows (t-825)
 

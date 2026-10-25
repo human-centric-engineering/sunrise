@@ -66,6 +66,15 @@ release process.
   raise `maxTokens` and `timeoutMs` from their plain-extraction defaults; the
   option's doc comment in `lib/orchestration/llm/structured-completion.ts` says
   why.
+- **`presentSessionEntry()` for routes that enter an org outside the guards
+  (t-941, #1068).** New on `lib/auth/support-principal.ts`, with
+  `READ_ONLY_SUPPORT_MESSAGE`. After `enterSessionOrg()`, it refuses a write
+  under a READ_ONLY support grant with a 403 and returns the session with the
+  default user role inside a support session, as the guards do. **A fork route
+  that calls `enterSessionOrg()` itself should adopt it**: since 0.15.0 such a
+  route sees a support actor as a platform `ADMIN`, and a READ_ONLY grant does
+  not stop its writes. See `.context/tenancy/support-access.md` ("Entering an
+  org outside the guards").
 
 ### Changed
 

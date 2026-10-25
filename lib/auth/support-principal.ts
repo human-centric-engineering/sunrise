@@ -18,6 +18,7 @@
  * @see lib/tenancy/entry.ts — where a support entry is admitted
  * @see .context/tenancy/support-access.md
  */
+import { ForbiddenError } from '@/lib/api/errors';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /** Did this entry admit a support session? */
@@ -60,4 +61,37 @@ export function isRefusedReadOnlyWrite(
   if (!isSupportEntry(entry) || entry?.support?.level !== 'READ_ONLY') return false;
   // No method is not a read: refuse what cannot be classified.
   return !READ_METHODS.has((method ?? '').toUpperCase());
+}
+
+/** The refusal a READ_ONLY support session's write gets, in the guards and outside them. */
+export const READ_ONLY_SUPPORT_MESSAGE = 'Support access to this organisation is read-only';
+
+/**
+ * Both support-session rules, for a route that enters an org itself
+ * (`enterSessionOrg`) instead of through `withAuth` / `withAdminAuth` — a
+ * route that also serves a cookie-less caller, say. The guards apply these
+ * rules for every route they wrap; outside them the caller must, or a support
+ * actor keeps their platform `ADMIN` role and a READ_ONLY grant stops no write.
+ *
+ * Throws `ForbiddenError` (403) for a write under a READ_ONLY grant, before
+ * the caller does anything. Otherwise returns `session` as a handler inside
+ * the guards would see it: the default user role in place of the platform
+ * role inside a support session, unchanged everywhere else.
+ *
+ * ```typescript
+ * const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
+ * if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
+ * const session = presentSessionEntry(rawSession, entry, request.method);
+ * if (isPlatformAdmin(session.user)) { ... } // false for a support actor
+ * ```
+ *
+ * @see .context/tenancy/support-access.md — entering an org outside the guards
+ */
+export function presentSessionEntry<S extends { user: { role?: string | null } }>(
+  session: S,
+  entry: { source: string; support?: { level: string } } | null | undefined,
+  method: string | undefined
+): S {
+  if (isRefusedReadOnlyWrite(entry, method)) throw new ForbiddenError(READ_ONLY_SUPPORT_MESSAGE);
+  return presentedSession(session, entry);
 }

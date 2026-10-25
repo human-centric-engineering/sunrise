@@ -182,6 +182,14 @@ async function memberOrSupportEntry(
  * whether the caller may enter it. It wins over `activeOrgId` because a fork
  * that resolves tenants by hostname means "this request is for the org at
  * this hostname", whatever the cookie last recorded.
+ *
+ * **A `'support'` entry is not the caller's own role.** It admits a platform
+ * admin as the org's ADMIN under a grant, and is safe only once two rules are
+ * applied: the platform role is replaced with the default user role, and a
+ * READ_ONLY grant refuses writes. `withAuth` / `withAdminAuth` apply both. A
+ * caller outside the guards must apply them itself with
+ * `presentSessionEntry()` (`lib/auth/support-principal.ts`), or its raw
+ * session still says `ADMIN` and a READ_ONLY grant stops nothing.
  */
 export async function enterSessionOrg(
   user: NewUserShape & { id: string },

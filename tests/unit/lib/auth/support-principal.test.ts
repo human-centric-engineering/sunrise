@@ -5,11 +5,14 @@
  * three helpers' own answers, including the fail-closed edges.
  */
 import { describe, it, expect } from 'vitest';
+import { ForbiddenError } from '@/lib/api/errors';
 import {
   isRefusedReadOnlyWrite,
   isSupportEntry,
+  presentSessionEntry,
   presentedRole,
   presentedSession,
+  READ_ONLY_SUPPORT_MESSAGE,
 } from '@/lib/auth/support-principal';
 
 const support = (level: 'ADMIN' | 'READ_ONLY') => ({ source: 'support', support: { level } });
@@ -67,5 +70,36 @@ describe('isSupportEntry', () => {
     expect(isSupportEntry(support('ADMIN'))).toBe(true);
     expect(isSupportEntry(member)).toBe(false);
     expect(isSupportEntry(undefined)).toBe(false);
+  });
+});
+
+describe('presentSessionEntry', () => {
+  const adminSession = () => ({ user: { id: 'u1', role: 'ADMIN' } });
+
+  it('presents the default user role under an ADMIN grant, for a write too', () => {
+    const session = adminSession();
+    expect(presentSessionEntry(session, support('ADMIN'), 'POST')).toEqual({
+      user: { id: 'u1', role: 'USER' },
+    });
+    expect(session.user.role).toBe('ADMIN');
+  });
+
+  it('presents the default user role for a read under a READ_ONLY grant', () => {
+    expect(presentSessionEntry(adminSession(), support('READ_ONLY'), 'GET').user.role).toBe('USER');
+  });
+
+  it.each(['POST', 'DELETE', undefined])(
+    'refuses %s under a READ_ONLY grant with a 403',
+    (method) => {
+      const call = () => presentSessionEntry(adminSession(), support('READ_ONLY'), method);
+      expect(call).toThrow(ForbiddenError);
+      expect(call).toThrow(READ_ONLY_SUPPORT_MESSAGE);
+    }
+  );
+
+  it('leaves a member entry, and no entry, unchanged', () => {
+    const session = adminSession();
+    expect(presentSessionEntry(session, member, 'POST')).toBe(session);
+    expect(presentSessionEntry(session, null, 'POST')).toBe(session);
   });
 });

@@ -67,6 +67,7 @@ import {
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import {
   isRefusedReadOnlyWrite,
+  READ_ONLY_SUPPORT_MESSAGE,
   presentedRole,
   presentedSession,
 } from '@/lib/auth/support-principal';
@@ -540,7 +541,7 @@ async function sessionEntryFor(
       orgId: entry.orgId,
       grantId: entry.support?.grantId,
     });
-    throw new ForbiddenError('Support access to this organisation is read-only');
+    throw new ForbiddenError(READ_ONLY_SUPPORT_MESSAGE);
   }
   return entry;
 }
