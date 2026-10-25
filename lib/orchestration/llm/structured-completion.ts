@@ -127,10 +127,19 @@ export interface StructuredCompletionOptions<T> {
   timeoutMs?: number;
   /**
    * How much the model should reason before answering, forwarded on both
-   * attempts. Only reasoning-capable models honour it; others drop it. On a
-   * thinking model the reasoning tokens count against `maxTokens`, so raise
-   * the cap with it or the answer can be truncated. Omitted → the provider's
-   * default (no extended reasoning on Claude).
+   * attempts. Only reasoning-capable models honour it; others drop it.
+   * Omitted → the provider's default (no extended reasoning on Claude).
+   *
+   * Setting it means sizing the call for reasoning too — the defaults
+   * (1500 tokens, 10s) are for a plain extraction:
+   * - Reasoning tokens count against `maxTokens`. Below 2048 a Claude model
+   *   that takes a thinking budget drops thinking without a word; an adaptive
+   *   one thinks and can spend the whole cap, failing both attempts as
+   *   `truncated_no_output`. Raise `maxTokens`, and `timeoutMs` with it.
+   * - With thinking on, Anthropic refuses a temperature, so neither attempt
+   *   sends one — the temp-0 retry is a second try at the provider's default,
+   *   not a deterministic one. The span still records the requested
+   *   temperature, as every LLM span here records the caller's values.
    */
   reasoningEffort?: ReasoningEffort;
   /**
