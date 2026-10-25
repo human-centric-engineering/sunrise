@@ -118,7 +118,9 @@ entered `orgId`) with the **default user role in place of the platform role**
 (`presentedRole`, `lib/auth/support-principal.ts`), and hand the handler a
 session whose `user.role` is replaced the same way (`presentedSession`).
 `sessionPrincipal` does likewise for the admin layout and the maintenance
-bypass.
+bypass. A route that calls `enterSessionOrg()` itself, outside the guards, must
+apply both support rules with `presentSessionEntry()`
+([support-access.md](../tenancy/support-access.md#entering-an-org-outside-the-guards)).
 
 That is what makes it hold for every policy rather than core's alone. A
 `support` flag the default policy checked would be ignored by a fork whose
