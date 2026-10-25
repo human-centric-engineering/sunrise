@@ -172,7 +172,10 @@ the opener is ignored rather than prepended.
 system messages into the request's `system` field, and Anthropic only accepts
 a user turn last. The message-builder marks it `turnInstruction: true`, and
 the provider sends it in place as a user turn headed
-`[Instruction from the application, not a message from the user]`. If history
+`[Instruction from the application, not a message from the user]`. A person
+cannot forge that heading: any copy of it in a user turn's own text (any case
+or spacing, with or without the second clause or closing bracket) is re-worded
+to `(typed by the user: ...)` before it is sent. If history
 ends on a tool call with no reply after it (a `skipFollowup` capability such
 as `run_workflow` pending approval) and the request thinks, that call and its
 results are sent as a text note on the assistant turn
