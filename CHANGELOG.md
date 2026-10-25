@@ -192,7 +192,7 @@ release process.
   `400`), a history ending on a reply was read as a prefill, and on a thinking
   agent a history ending on a tool result was rejected. A tool call left
   unanswered at the end of history, without its thinking blocks, is left out of
-  that request (its text is kept). New optional `turnInstruction` on
+  a thinking request (its text is kept). New optional `turnInstruction` on
   `LlmMessage`, which a custom provider may honour; OpenAI-compatible providers
   are unchanged. The stored transcript is unchanged.
 - **The owner-classification test sees a fork's user columns named for their

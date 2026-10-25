@@ -3088,6 +3088,61 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
     expect(sent().messages).toEqual([{ role: 'user', content: 'Start the plan' }, openerTurn]);
   });
 
+  it('unwinds every text-less pass of a trailing multi-pass tool loop', async () => {
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'Start the plan' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', name: 'lookup', arguments: {} }],
+        },
+        { role: 'tool', content: '{"hit":true}', toolCallId: 'call_1' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_2', name: 'run_workflow', arguments: {} }],
+        },
+        { role: 'tool', content: '{"pendingApproval":true}', toolCallId: 'call_2' },
+        opener,
+      ],
+      thinkingOptions
+    );
+
+    expect(sent().messages).toEqual([{ role: 'user', content: 'Start the plan' }, openerTurn]);
+  });
+
+  it('keeps a trailing tool call when the request does not think', async () => {
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'Start the plan' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', name: 'run_workflow', arguments: {} }],
+        },
+        { role: 'tool', content: '{"pendingApproval":true}', toolCallId: 'call_1' },
+        opener,
+      ],
+      { model: 'claude-opus-5-5' }
+    );
+
+    expect(sent().messages).toEqual([
+      { role: 'user', content: 'Start the plan' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'run_workflow', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: '{"pendingApproval":true}' },
+        ],
+      },
+      openerTurn,
+    ]);
+  });
+
   it('keeps the opener in place on a later pass of its own tool loop', async () => {
     // Pass two of the opening turn: the loop appended its own tool call (with
     // thinking) after the opener. The request must continue THAT turn, with the

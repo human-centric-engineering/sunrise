@@ -498,14 +498,12 @@ export class AnthropicProvider implements LlmProvider {
     messages: LlmMessage[],
     options: LlmOptions
   ): Omit<MessageCreateParamsNonStreaming, 'stream'> {
-    const { system, conversation } = splitSystemMessages(messages);
     const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
     const params: Omit<MessageCreateParamsNonStreaming, 'stream'> = {
       model: options.model,
       max_tokens: maxTokens,
-      messages: conversation,
+      messages: [],
     };
-    if (system) params.system = system;
     // Extended thinking — Claude Opus 4+ and Sonnet 4.5+ think. We
     // translate the platform-neutral `reasoningEffort` bucket via the
     // heuristics in model-heuristics. Models from Opus 4.7 / Sonnet 5 on
@@ -574,6 +572,11 @@ export class AnthropicProvider implements LlmProvider {
       // rawBudget === undefined → reasoningEffort === 'minimal' on
       // Anthropic, which deliberately means "no extended thinking".
     }
+    // Split after thinking is settled: a dangling tool call before an
+    // opener only has to go when this request thinks.
+    const { system, conversation } = splitSystemMessages(messages, thinkingEnabled);
+    params.messages = conversation;
+    if (system) params.system = system;
     // Claude models from Opus 4.7 / Sonnet 5 / Haiku 5 on refuse any
     // temperature (400), so it is sent only to the older families that
     // honour one. The caller's value stays on the trace's requestParams.
@@ -693,7 +696,10 @@ export class AnthropicProvider implements LlmProvider {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function splitSystemMessages(messages: LlmMessage[]): {
+function splitSystemMessages(
+  messages: LlmMessage[],
+  thinkingEnabled: boolean
+): {
   system: string | undefined;
   conversation: MessageParam[];
 } {
@@ -709,7 +715,7 @@ function splitSystemMessages(messages: LlmMessage[]): {
       // does not read it as the person's words.
       const text = getTextContent(msg.content);
       if (!text) continue;
-      closeUnthinkingToolTurn(conversation);
+      if (thinkingEnabled) closeUnthinkingToolTurns(conversation);
       conversation.push({ role: 'user', content: `${TURN_INSTRUCTION_HEADING}\n\n${text}` });
       continue;
     }
@@ -768,26 +774,37 @@ function splitSystemMessages(messages: LlmMessage[]): {
 const TURN_INSTRUCTION_HEADING = '[Instruction from the application, not a message from the user]';
 
 /**
- * Remove a tool call left unanswered by the assistant at the end of
- * `conversation` when its turn carries no thinking blocks, as a chat history
- * rebuilt from the database does (reasoning is not persisted). A user turn
- * appended straight after it would sit in the same turn as those tool results,
- * which on a thinking model is a continuation sent without its thinking. The
- * assistant's text is kept; only its `tool_use` blocks and their results go.
+ * Remove the tool calls at the end of `conversation` whose turns carry no
+ * thinking blocks, as a chat history rebuilt from the database does (reasoning
+ * is not persisted). A user turn appended straight after them would sit in the
+ * same turn as those tool results, which on a thinking model is a continuation
+ * sent without its thinking. A multi-pass loop is unwound until the tail is no
+ * longer a tool result. The assistants' text is kept; only their `tool_use`
+ * blocks and the results go.
  */
-function closeUnthinkingToolTurn(conversation: MessageParam[]): void {
-  let resultsStart = conversation.length;
-  while (resultsStart > 0 && isToolResultTurn(conversation[resultsStart - 1])) resultsStart--;
-  if (resultsStart === conversation.length || resultsStart === 0) return;
+function closeUnthinkingToolTurns(conversation: MessageParam[]): void {
+  for (;;) {
+    let resultsStart = conversation.length;
+    while (resultsStart > 0 && isToolResultTurn(conversation[resultsStart - 1])) resultsStart--;
+    if (resultsStart === conversation.length || resultsStart === 0) return;
 
-  const assistant = conversation[resultsStart - 1];
-  if (assistant.role !== 'assistant' || !Array.isArray(assistant.content)) return;
-  const first = assistant.content[0];
-  if (first?.type === 'thinking' || first?.type === 'redacted_thinking') return;
+    const assistant = conversation[resultsStart - 1];
+    if (assistant.role !== 'assistant' || !Array.isArray(assistant.content)) return;
+    if (
+      assistant.content.some(
+        (block) => block.type === 'thinking' || block.type === 'redacted_thinking'
+      )
+    ) {
+      return;
+    }
 
-  const kept = assistant.content.filter((block) => block.type !== 'tool_use');
-  conversation.splice(resultsStart - 1);
-  if (kept.length > 0) conversation.push({ role: 'assistant', content: kept });
+    const kept = assistant.content.filter((block) => block.type !== 'tool_use');
+    conversation.splice(resultsStart - 1);
+    if (kept.length > 0) {
+      conversation.push({ role: 'assistant', content: kept });
+      return;
+    }
+  }
 }
 
 function isToolResultTurn(msg: MessageParam): boolean {
