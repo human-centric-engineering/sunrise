@@ -68,10 +68,12 @@ release process.
   why.
 - **`presentSessionEntry()` for routes that enter an org outside the guards
   (t-941, #1068).** New on `lib/auth/support-principal.ts`, with
-  `READ_ONLY_SUPPORT_MESSAGE`. After `enterSessionOrg()`, it refuses a write
-  under a READ_ONLY support grant with a 403 and returns the session with the
+  `refuseReadOnlySupportWrite()` (the guards' own refusal, now shared) and
+  `READ_ONLY_SUPPORT_MESSAGE`. After `enterSessionOrg()`, it refuses and logs a
+  write under a READ_ONLY support grant with a 403 and returns the session with the
   default user role inside a support session, as the guards do. **A fork route
-  that calls `enterSessionOrg()` itself should adopt it**: since 0.15.0 such a
+  that calls `enterSessionOrg()` itself should adopt it**, and run its work in
+  `runAsOrg()` so the audit log stamps the grant: since 0.15.0 such a
   route sees a support actor as a platform `ADMIN`, and a READ_ONLY grant does
   not stop its writes. See `.context/tenancy/support-access.md` ("Entering an
   org outside the guards").
@@ -80,9 +82,9 @@ release process.
   modules under `lib/app/`. VERSIONING.md's seam check, CUSTOMIZATION.md §4's
   table check and the `SEAM_DEFAULTS` row check skip them, so a leaf fork no
   longer carries a row per module in those three Sunrise files. An entry that
-  is not on disk, or that VERSIONING.md names as a seam, fails
-  `versioning-seam-coverage.test.ts`; delete a module's old rows when you list
-  it. A fork others build on should not declare. See CUSTOMIZATION.md §4.
+  is not on disk, or that still has a row in any of the three (as every Sunrise
+  seam does), fails the seam-coverage tests; delete a module's old rows when
+  you list it. A fork others build on should not declare. See CUSTOMIZATION.md §4.
 
 ### Changed
 

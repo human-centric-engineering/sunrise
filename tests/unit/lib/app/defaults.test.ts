@@ -29,7 +29,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { scaffoldsOnDisk, unlistedSeams } from '@/tests/helpers/app-scaffolds';
+import { ownModuleProblems, scaffoldsOnDisk, unlistedSeams } from '@/tests/helpers/app-scaffolds';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
 import { hasTenantResolver } from '@/lib/tenancy/resolver';
@@ -628,6 +628,10 @@ describe('lib/app/ seams ship empty', () => {
     const stale = [...covered].filter((f) => !onDisk.includes(f));
 
     expect(missing, 'lib/app/ seam with no row in SEAM_DEFAULTS').toEqual([]);
+    expect(
+      ownModuleProblems(appOwnModules, onDisk, { SEAM_DEFAULTS: [...covered] }),
+      'a module declared in lib/app/own-modules.ts still has a SEAM_DEFAULTS row'
+    ).toEqual([]);
     expect(stale, 'SEAM_DEFAULTS row for a file that no longer exists').toEqual([]);
   });
 });

@@ -59,8 +59,8 @@
  * A LEAF fork, which nobody forks, has no such surface. It lists its own
  * `lib/app/` modules in `lib/app/own-modules.ts` instead of adding rows here,
  * in CUSTOMIZATION.md, or in `defaults.test.ts`: all three checks subtract
- * them (#847). An entry that names nothing, or a seam VERSIONING.md lists, is
- * refused below.
+ * them (#847). An entry that names nothing, or that a seam list still has a
+ * row for, is refused below.
  *
  * The same derivation also checks CUSTOMIZATION.md §4's "Edit this file" table,
  * the guide a fork reads to find where to make a change. That table missed
@@ -292,15 +292,15 @@ describe('CUSTOMIZATION.md seam table coverage', () => {
 });
 
 describe('lib/app/own-modules.ts', () => {
-  it('declares only modules on disk that VERSIONING.md does not name as seams', () => {
-    const problems = ownModuleProblems(
-      appOwnModules,
-      scaffoldsOnDisk(),
-      scaffoldsNamedInVersioning(readFileSync(VERSIONING_MD, 'utf8'))
-    );
+  const onDisk = scaffoldsOnDisk();
+  const named = scaffoldsNamedInVersioning(readFileSync(VERSIONING_MD, 'utf8'));
+  const listed = scaffoldsInCustomizationTable(readFileSync(CUSTOMIZATION_MD, 'utf8'));
+  const rowsIn = { 'VERSIONING.md': named, 'CUSTOMIZATION.md §4': listed };
 
+  it('declares only modules on disk that neither document lists as seams', () => {
+    // SEAM_DEFAULTS is checked the same way in tests/unit/lib/app/defaults.test.ts.
     expect(
-      problems,
+      ownModuleProblems(appOwnModules, onDisk, rowsIn),
       'lib/app/own-modules.ts declares entries that cannot be honoured. An entry ' +
         'that names nothing exempts nothing, and a seam cannot also be a module ' +
         'nobody depends on. Fix the entry, or drop it.'
@@ -308,12 +308,10 @@ describe('lib/app/own-modules.ts', () => {
   });
 
   it('refuses every seam Sunrise ships, whichever one a fork names', () => {
-    // Drives the real rule against the real list: no Sunrise seam can be
-    // declared a fork's own, because VERSIONING.md names every one of them.
-    const onDisk = scaffoldsOnDisk();
-    const named = scaffoldsNamedInVersioning(readFileSync(VERSIONING_MD, 'utf8'));
+    // Drives the real rule against the real lists: every Sunrise seam has its
+    // rows, so none can be declared a fork's own while they stand.
     const declarable = named.filter(
-      (seam) => ownModuleProblems([seam], onDisk, named).length === 0
+      (seam) => ownModuleProblems([seam], onDisk, rowsIn).length === 0
     );
 
     expect(named.length).toBeGreaterThan(10);

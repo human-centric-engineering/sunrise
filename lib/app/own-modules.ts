@@ -41,9 +41,11 @@
  * Sunrise core ships `[]` — everything it puts in `lib/app/` is a seam.
  *
  * An entry is refused, not ignored, when it is not on disk, is not in that
- * form, is this file, or is a seam VERSIONING.md names (one of Sunrise's, or a
- * row you added before this file existed: delete the row when you list it
- * here). So a typo fails loudly instead of silently exempting nothing.
+ * form, is this file, is already not a seam, or still has a row in
+ * VERSIONING.md, the CUSTOMIZATION.md §4 table or `SEAM_DEFAULTS`. Every
+ * Sunrise seam has those rows, so naming one is refused; a module of your own
+ * is accepted once you delete the rows you added for it before this file
+ * existed. So a typo fails loudly instead of silently exempting nothing.
  *
  * @example A leaf fork with two modules of its own
  * ```ts

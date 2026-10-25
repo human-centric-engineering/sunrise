@@ -289,10 +289,14 @@ skip them: they ask through one function, `unlistedSeams()` in
 `tests/helpers/app-scaffolds.ts`, so a module is skipped by all of them or none
 (#847).
 
-`versioning-seam-coverage.test.ts` refuses an entry that is not on disk, is not
-`lib/app/<file>` or `lib/app/<dir>/`, is the declaration file, or is named in
-VERSIONING.md. The last rule is what stops a fork declaring one of Sunrise's
-seams its own, since VERSIONING.md names every one. The shared-gate check in
+`ownModuleProblems()` refuses an entry that is not on disk, is not
+`lib/app/<file>` or `lib/app/<dir>/`, is the declaration file, is already not a
+seam, or still has a row in VERSIONING.md, the CUSTOMIZATION.md table
+(`versioning-seam-coverage.test.ts`) or `SEAM_DEFAULTS` (`defaults.test.ts`).
+Every Sunrise seam has those rows, so declaring one is refused while they stand.
+It guards against a mistake, not against a fork that edits the lists: a fork
+that deletes a Sunrise seam's rows to declare it has taken that seam out of its
+own version contract. The shared-gate check in
 `fork-init-seams.test.ts` does not subtract them: an `initApp*` nothing calls is
 dead wiring whoever owns it.
 

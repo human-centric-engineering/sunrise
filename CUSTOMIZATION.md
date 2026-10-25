@@ -530,9 +530,10 @@ export const appOwnModules: readonly string[] = ['lib/app/questionnaire/', 'lib/
 ```
 
 A directory takes a trailing slash, a file none. All three checks skip what you
-list, and an entry that names nothing, or a seam VERSIONING.md names, fails
-`versioning-seam-coverage.test.ts`. Delete any rows you added for those modules
-before this file existed. Then pin the value in its `SEAM_DEFAULTS` row, as for
+list. An entry that names nothing, or that still has a row in VERSIONING.md,
+this table or `SEAM_DEFAULTS` (which every Sunrise seam has), fails the
+seam-coverage tests, so delete the rows you added for those modules before this
+file existed. Then pin the value in its `SEAM_DEFAULTS` row, as for
 any seam you fill. **A fork others build on should not declare**: its `lib/app/`
 modules are its own forks' public surface, and the VERSIONING.md rows are how
 they hear about a breaking change.

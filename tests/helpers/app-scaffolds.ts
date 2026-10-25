@@ -19,8 +19,8 @@
  * FORK NOTE — this reads your `lib/app/own-modules.ts` for real, on purpose:
  * the modules you declare there are what the row-demanding guards skip. Leave
  * it empty unless you are a leaf fork with modules of your own in `lib/app/`;
- * `tests/unit/versioning-seam-coverage.test.ts` refuses an entry that names
- * nothing or names a seam.
+ * `tests/unit/versioning-seam-coverage.test.ts` and `defaults.test.ts` refuse an
+ * entry that names nothing or that a seam list still has a row for.
  */
 
 import { readdirSync } from 'node:fs';
@@ -123,30 +123,40 @@ export function unlistedSeams(
  *
  * Refused rather than ignored, as `reserved-tiers.ts` refuses an unknown tier:
  * an entry that matches nothing exempts nothing, and the fork would read its
- * declaration as working. An entry VERSIONING.md names is refused because the
- * same file cannot be a seam forks are promised and a module nobody is — and
- * every seam Sunrise ships is named there, so this is also what stops a fork
- * declaring one of Sunrise's seams its own.
+ * declaration as working. `rowsIn` names each list that treats an entry as a
+ * seam (VERSIONING.md, the CUSTOMIZATION.md table, `SEAM_DEFAULTS`) with the
+ * entries it has rows for. An entry still listed in one is refused: the same
+ * file cannot be a seam and a module of the fork's own. Every seam Sunrise
+ * ships has those rows, so this is what refuses a fork naming one of them,
+ * for as long as the fork keeps the rows; it is a check against a mistake,
+ * not against a fork that edits the lists.
  */
 export function ownModuleProblems(
   ownModules: readonly string[],
   onDisk: readonly string[],
-  namedInVersioning: readonly string[]
+  rowsIn: Readonly<Record<string, readonly string[]>>
 ): string[] {
   const problems: string[] = [];
   for (const entry of ownModules) {
+    const name = entry.replace(/^lib\/app\//, '').replace(/\/$/, '');
     if (!/^lib\/app\/[^/]+\/?$/.test(entry)) {
       problems.push(`${entry}: not lib/app/<file> or lib/app/<dir>/`);
+    } else if (NOT_A_SEAM.some((rx) => rx.test(name))) {
+      problems.push(`${entry}: already not a seam (NOT_A_SEAM), so there is nothing to declare`);
     } else if (entry === OWN_MODULES_FILE) {
       problems.push(`${entry}: the declaration file is a seam, not a module of the fork's own`);
     } else if (!onDisk.includes(entry)) {
       problems.push(
         `${entry}: not in lib/app/ (a directory needs its trailing slash, a file none)`
       );
-    } else if (namedInVersioning.includes(entry)) {
-      problems.push(
-        `${entry}: VERSIONING.md names it as a seam. Delete that row if this is your own module; a Sunrise seam cannot be declared one`
-      );
+    } else {
+      for (const [list, rows] of Object.entries(rowsIn)) {
+        if (rows.includes(entry)) {
+          problems.push(
+            `${entry}: ${list} still has a row for it. If it is a Sunrise seam, drop the entry; if it is your own module, delete the row`
+          );
+        }
+      }
     }
   }
   return problems;

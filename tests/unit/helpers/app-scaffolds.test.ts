@@ -97,32 +97,50 @@ describe('app scaffolds', () => {
 
   describe('ownModuleProblems', () => {
     const onDisk = ['lib/app/brand.ts', 'lib/app/orders/', 'lib/app/theme.mts', OWN_MODULES_FILE];
-    const named = ['lib/app/brand.ts', OWN_MODULES_FILE];
+    const rowsIn = {
+      'VERSIONING.md': ['lib/app/brand.ts', OWN_MODULES_FILE],
+      'CUSTOMIZATION.md §4': ['lib/app/brand.ts', 'lib/app/theme.mts'],
+    };
 
-    it('accepts modules on disk that VERSIONING.md does not name', () => {
-      expect(ownModuleProblems(['lib/app/orders/', 'lib/app/theme.mts'], onDisk, named)).toEqual(
-        []
-      );
+    it('accepts a module on disk that no list has a row for', () => {
+      expect(ownModuleProblems(['lib/app/orders/'], onDisk, rowsIn)).toEqual([]);
     });
 
-    it('refuses a seam VERSIONING.md names', () => {
-      expect(ownModuleProblems(['lib/app/brand.ts'], onDisk, named)).toEqual([
-        expect.stringContaining('lib/app/brand.ts: VERSIONING.md names it as a seam'),
+    it('refuses an entry once per list that still has a row for it', () => {
+      expect(ownModuleProblems(['lib/app/brand.ts'], onDisk, rowsIn)).toEqual([
+        expect.stringContaining('lib/app/brand.ts: VERSIONING.md still has a row'),
+        expect.stringContaining('lib/app/brand.ts: CUSTOMIZATION.md §4 still has a row'),
+      ]);
+    });
+
+    it('refuses a module whose old row survives in only one list', () => {
+      // The fork deleted the VERSIONING.md row but not the CUSTOMIZATION.md one.
+      expect(ownModuleProblems(['lib/app/theme.mts'], onDisk, rowsIn)).toEqual([
+        expect.stringContaining('CUSTOMIZATION.md §4 still has a row'),
       ]);
     });
 
     it('refuses the declaration file itself', () => {
-      expect(ownModuleProblems([OWN_MODULES_FILE], onDisk, named)).toEqual([
+      expect(ownModuleProblems([OWN_MODULES_FILE], onDisk, rowsIn)).toEqual([
         expect.stringContaining('the declaration file is a seam'),
       ]);
     });
+
+    it.each(['lib/app/types.d.ts', 'lib/app/README.md', 'lib/app/.helpers/'])(
+      'says %s is already not a seam, rather than that it is missing',
+      (entry) => {
+        expect(ownModuleProblems([entry], onDisk, rowsIn)).toEqual([
+          expect.stringContaining('already not a seam (NOT_A_SEAM)'),
+        ]);
+      }
+    );
 
     it.each([
       ['a directory without its trailing slash', 'lib/app/orders'],
       ['a file given a trailing slash', 'lib/app/theme.mts/'],
       ['an entry that is not on disk', 'lib/app/pricing.ts'],
     ])('refuses %s', (_label, entry) => {
-      expect(ownModuleProblems([entry], onDisk, named)).toEqual([
+      expect(ownModuleProblems([entry], onDisk, rowsIn)).toEqual([
         expect.stringContaining(`${entry}: not in lib/app/`),
       ]);
     });
@@ -130,7 +148,7 @@ describe('app scaffolds', () => {
     it.each(['orders/', 'lib/app/orders/server/', 'lib/framework/x.ts'])(
       'refuses %s, which is not lib/app/<file> or lib/app/<dir>/',
       (entry) => {
-        expect(ownModuleProblems([entry], onDisk, named)).toEqual([
+        expect(ownModuleProblems([entry], onDisk, rowsIn)).toEqual([
           expect.stringContaining('not lib/app/<file> or lib/app/<dir>/'),
         ]);
       }
