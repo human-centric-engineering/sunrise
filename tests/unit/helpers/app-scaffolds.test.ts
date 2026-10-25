@@ -14,7 +14,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { APP_DIR, scaffoldSourceFiles, scaffoldsOnDisk } from '@/tests/helpers/app-scaffolds';
+import {
+  APP_DIR,
+  OWN_MODULES_FILE,
+  ownModuleProblems,
+  scaffoldSourceFiles,
+  scaffoldsOnDisk,
+  unlistedSeams,
+} from '@/tests/helpers/app-scaffolds';
 
 describe('app scaffolds', () => {
   let dir: string;
@@ -62,5 +69,71 @@ describe('app scaffolds', () => {
     expect(APP_DIR).toBe(path.join(process.cwd(), 'lib/app'));
     expect(scaffoldsOnDisk()).toContain('lib/app/bootstrap.ts');
     expect(scaffoldsOnDisk()).toContain('lib/app/eslint.config.mjs');
+  });
+
+  describe('unlistedSeams', () => {
+    // Every guard that demands a row per seam asks through this one function,
+    // so a fork's declared modules are skipped by all of them (#847).
+    it('owes a row for every scaffold the list does not name', () => {
+      expect(unlistedSeams(['lib/app/brand.ts'], dir, [])).toEqual([
+        'lib/app/orders/',
+        'lib/app/theme.mts',
+      ]);
+    });
+
+    it("skips a fork's own modules, a directory and a file alike", () => {
+      expect(
+        unlistedSeams(['lib/app/brand.ts'], dir, ['lib/app/orders/', 'lib/app/theme.mts'])
+      ).toEqual([]);
+    });
+
+    it('still owes a row for a seam the fork did not declare', () => {
+      expect(unlistedSeams([], dir, ['lib/app/orders/'])).toEqual([
+        'lib/app/brand.ts',
+        'lib/app/theme.mts',
+      ]);
+    });
+  });
+
+  describe('ownModuleProblems', () => {
+    const onDisk = ['lib/app/brand.ts', 'lib/app/orders/', 'lib/app/theme.mts', OWN_MODULES_FILE];
+    const named = ['lib/app/brand.ts', OWN_MODULES_FILE];
+
+    it('accepts modules on disk that VERSIONING.md does not name', () => {
+      expect(ownModuleProblems(['lib/app/orders/', 'lib/app/theme.mts'], onDisk, named)).toEqual(
+        []
+      );
+    });
+
+    it('refuses a seam VERSIONING.md names', () => {
+      expect(ownModuleProblems(['lib/app/brand.ts'], onDisk, named)).toEqual([
+        expect.stringContaining('lib/app/brand.ts: VERSIONING.md names it as a seam'),
+      ]);
+    });
+
+    it('refuses the declaration file itself', () => {
+      expect(ownModuleProblems([OWN_MODULES_FILE], onDisk, named)).toEqual([
+        expect.stringContaining('the declaration file is a seam'),
+      ]);
+    });
+
+    it.each([
+      ['a directory without its trailing slash', 'lib/app/orders'],
+      ['a file given a trailing slash', 'lib/app/theme.mts/'],
+      ['an entry that is not on disk', 'lib/app/pricing.ts'],
+    ])('refuses %s', (_label, entry) => {
+      expect(ownModuleProblems([entry], onDisk, named)).toEqual([
+        expect.stringContaining(`${entry}: not in lib/app/`),
+      ]);
+    });
+
+    it.each(['orders/', 'lib/app/orders/server/', 'lib/framework/x.ts'])(
+      'refuses %s, which is not lib/app/<file> or lib/app/<dir>/',
+      (entry) => {
+        expect(ownModuleProblems([entry], onDisk, named)).toEqual([
+          expect.stringContaining('not lib/app/<file> or lib/app/<dir>/'),
+        ]);
+      }
+    );
   });
 });

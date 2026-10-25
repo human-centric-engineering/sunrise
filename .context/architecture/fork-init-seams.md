@@ -279,6 +279,26 @@ access during this work. `onSuccess` receives the pre-init snapshot (the graders
 registry diffs it to warn that a fork replaced a built-in slug); `onFailure`
 receives whatever was thrown, after the rollback and the log line.
 
+## A fork's own modules are not seams
+
+Three guards read every `lib/app/` entry as a seam owed a row: VERSIONING.md's
+Covered list, CUSTOMIZATION.md §4's "Edit this file" table, and `SEAM_DEFAULTS`
+in `tests/unit/lib/app/defaults.test.ts`. A leaf fork that keeps its own modules
+there lists them in `lib/app/own-modules.ts` (`appOwnModules`), and all three
+skip them: they ask through one function, `unlistedSeams()` in
+`tests/helpers/app-scaffolds.ts`, so a module is skipped by all of them or none
+(#847).
+
+`versioning-seam-coverage.test.ts` refuses an entry that is not on disk, is not
+`lib/app/<file>` or `lib/app/<dir>/`, is the declaration file, or is named in
+VERSIONING.md. The last rule is what stops a fork declaring one of Sunrise's
+seams its own, since VERSIONING.md names every one. The shared-gate check in
+`fork-init-seams.test.ts` does not subtract them: an `initApp*` nothing calls is
+dead wiring whoever owns it.
+
+A fork others build on should not declare its modules: they are its own forks'
+public surface.
+
 ## See also
 
 - [`CUSTOMIZATION.md` §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface) — the `lib/app/` surface a fork fills

@@ -75,6 +75,14 @@ release process.
   route sees a support actor as a platform `ADMIN`, and a READ_ONLY grant does
   not stop its writes. See `.context/tenancy/support-access.md` ("Entering an
   org outside the guards").
+- **A leaf fork's own `lib/app/` modules (t-942, #847).** New scaffold
+  `lib/app/own-modules.ts` (`appOwnModules`, ships empty) lists a fork's own
+  modules under `lib/app/`. VERSIONING.md's seam check, CUSTOMIZATION.md §4's
+  table check and the `SEAM_DEFAULTS` row check skip them, so a leaf fork no
+  longer carries a row per module in those three Sunrise files. An entry that
+  is not on disk, or that VERSIONING.md names as a seam, fails
+  `versioning-seam-coverage.test.ts`; delete a module's old rows when you list
+  it. A fork others build on should not declare. See CUSTOMIZATION.md §4.
 
 ### Changed
 

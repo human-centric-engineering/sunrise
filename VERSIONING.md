@@ -133,6 +133,7 @@ covered by the version contract.
   - `lib/app/rate-limit.ts` → `registerAppRateLimits()` — rate-limit registry (`registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`). The per-org request counter (`quotas.requestsPerMinute`, `lib/security/org-request-cap.ts`) runs outside this registry, and `'org'` stays free as a custom key name
   - `lib/app/tenant-resolver.ts` → `registerAppTenantResolver()` — the proxy's tenant resolver (primitive: `registerTenantResolver()` in `lib/tenancy/resolver.ts`; Web-standard only)
   - `lib/app/reserved-tiers.ts` → `occupiedTiers` — which reserved namespace tiers this fork occupies
+  - `lib/app/own-modules.ts` → `appOwnModules` — a leaf fork's own `lib/app/` modules, which the seam-coverage guards then skip
   - `lib/app/surface.ts` → `classifySurface()` / `DEFAULT_SURFACE` — per-surface theming classifier
   - `lib/app/user-created.ts` → `initAppUserCreatedHooks()` — post-signup hook registry
 

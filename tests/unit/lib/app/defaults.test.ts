@@ -29,7 +29,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { scaffoldsOnDisk } from '@/tests/helpers/app-scaffolds';
+import { scaffoldsOnDisk, unlistedSeams } from '@/tests/helpers/app-scaffolds';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
 import { hasTenantResolver } from '@/lib/tenancy/resolver';
@@ -62,6 +62,7 @@ import {
   appOwnerlessSurfaceExceptions,
 } from '@/lib/app/ci';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
+import { appOwnModules } from '@/lib/app/own-modules';
 import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
@@ -490,6 +491,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     assert: () => expect(occupiedTiers).toEqual([]),
   },
   {
+    seam: 'lib/app/own-modules.ts',
+    risk: 'a stray entry would exempt a lib/app/ entry from the version contract, the fork guide and this table on every install, so a real seam could ship with no breaking-change announcement',
+    assert: () => expect(appOwnModules).toEqual([]),
+  },
+  {
     seam: 'lib/app/capability-seed-pairs.ts',
     risk: 'a stray pair fails the capability parity test on every install (for a slug no seed writes it is a pair nothing wrote, for a slug core already pairs a duplicate), and a stray unchecked seed switches the parity checks off for that seed',
     assert: () => {
@@ -615,8 +621,10 @@ describe('lib/app/ seams ship empty', () => {
     // `lib/app/<name>/`, and a file of any extension is owed one too.
     const onDisk = scaffoldsOnDisk();
 
+    // A leaf fork's own modules (lib/app/own-modules.ts) are not seams and owe
+    // no row (#847).
     const covered = new Set(SEAM_DEFAULTS.map((s) => s.seam));
-    const missing = onDisk.filter((f) => !covered.has(f) && !UNASSERTED_SEAMS.has(f));
+    const missing = unlistedSeams([...covered, ...UNASSERTED_SEAMS]);
     const stale = [...covered].filter((f) => !onDisk.includes(f));
 
     expect(missing, 'lib/app/ seam with no row in SEAM_DEFAULTS').toEqual([]);

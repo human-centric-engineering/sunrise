@@ -56,6 +56,12 @@
  * is the test working: your scaffold is public surface for whoever forks
  * *you*, and the list is where you say so.
  *
+ * A LEAF fork, which nobody forks, has no such surface. It lists its own
+ * `lib/app/` modules in `lib/app/own-modules.ts` instead of adding rows here,
+ * in CUSTOMIZATION.md, or in `defaults.test.ts`: all three checks subtract
+ * them (#847). An entry that names nothing, or a seam VERSIONING.md lists, is
+ * refused below.
+ *
  * The same derivation also checks CUSTOMIZATION.md §4's "Edit this file" table,
  * the guide a fork reads to find where to make a change. That table missed
  * `footer.ts` and `tenant-resolver.ts` (#735), so a fork looking there for the
@@ -68,7 +74,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { classifyEntries, NOT_A_SEAM, scaffoldsOnDisk } from '@/tests/helpers/app-scaffolds';
+import { appOwnModules } from '@/lib/app/own-modules';
+import {
+  classifyEntries,
+  NOT_A_SEAM,
+  ownModuleProblems,
+  scaffoldsOnDisk,
+  unlistedSeams,
+} from '@/tests/helpers/app-scaffolds';
 
 const VERSIONING_MD = path.join(process.cwd(), 'VERSIONING.md');
 const CUSTOMIZATION_MD = path.join(process.cwd(), 'CUSTOMIZATION.md');
@@ -134,7 +147,7 @@ describe('VERSIONING.md seam coverage', () => {
   const named = scaffoldsNamedInVersioning(markdown);
 
   it('names every scaffold in lib/app/', () => {
-    const missing = onDisk.filter((f) => !named.includes(f));
+    const missing = unlistedSeams(named);
 
     expect(
       missing,
@@ -242,7 +255,7 @@ describe('CUSTOMIZATION.md seam table coverage', () => {
   });
 
   it('lists every scaffold in lib/app/', () => {
-    const missing = onDisk.filter((f) => !listed.includes(f));
+    const missing = unlistedSeams(listed);
 
     expect(
       missing,
@@ -275,5 +288,35 @@ describe('CUSTOMIZATION.md seam table coverage', () => {
     ].join('\n');
 
     expect(scaffoldsInCustomizationTable(doc)).toEqual(['lib/app/brand.ts', 'lib/app/orders/']);
+  });
+});
+
+describe('lib/app/own-modules.ts', () => {
+  it('declares only modules on disk that VERSIONING.md does not name as seams', () => {
+    const problems = ownModuleProblems(
+      appOwnModules,
+      scaffoldsOnDisk(),
+      scaffoldsNamedInVersioning(readFileSync(VERSIONING_MD, 'utf8'))
+    );
+
+    expect(
+      problems,
+      'lib/app/own-modules.ts declares entries that cannot be honoured. An entry ' +
+        'that names nothing exempts nothing, and a seam cannot also be a module ' +
+        'nobody depends on. Fix the entry, or drop it.'
+    ).toEqual([]);
+  });
+
+  it('refuses every seam Sunrise ships, whichever one a fork names', () => {
+    // Drives the real rule against the real list: no Sunrise seam can be
+    // declared a fork's own, because VERSIONING.md names every one of them.
+    const onDisk = scaffoldsOnDisk();
+    const named = scaffoldsNamedInVersioning(readFileSync(VERSIONING_MD, 'utf8'));
+    const declarable = named.filter(
+      (seam) => ownModuleProblems([seam], onDisk, named).length === 0
+    );
+
+    expect(named.length).toBeGreaterThan(10);
+    expect(declarable).toEqual([]);
   });
 });

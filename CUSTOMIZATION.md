@@ -483,6 +483,7 @@ small and conflict-free.)
 | `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)                           | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client)                                                 |
 | `lib/app/brand.ts`                         | product name, legal entity, meta description                          | `lib/brand.ts` → metadata, footers, `<BrandMark>`, emails (server + client)                                           |
 | `lib/app/reserved-tiers.ts`                | which reserved tiers THIS checkout occupies                           | `tests/unit/reserved-fork-tiers.test.ts` + the metadata guard (test)                                                  |
+| `lib/app/own-modules.ts`                   | a leaf fork's own `lib/app/` modules, which are not seams             | `tests/helpers/app-scaffolds.ts` → the seam-coverage guards (test)                                                    |
 | `lib/app/capability-seed-pairs.ts`         | capability class per seeded slug; seeds the parity mock cannot run    | `tests/unit/prisma/seeds/capability-class-seed-parity.test.ts` (test)                                                 |
 | `lib/app/authorization.ts`                 | who may administer, and over whose data                               | `withAuth` / `withAdminAuth` / the admin layout (server)                                                              |
 | `lib/app/tenant-resolver.ts`               | which org a request is acting in (`registerAppTenantResolver`)        | `proxy.ts` at module load → the `x-sunrise-org` header (proxy runtime)                                                |
@@ -517,6 +518,24 @@ small and conflict-free.)
 > reading a seam unmocked has one, and its docblock is honest about the shapes a
 > grep cannot catch. If you hit a core test that moves when you fill a seam and
 > it has **no** note, that is a bug worth filing.
+
+**Your own modules in `lib/app/` — `lib/app/own-modules.ts`.** Three core
+checks treat every entry in `lib/app/` as a seam owed a row: VERSIONING.md's
+Covered list, the table above, and `SEAM_DEFAULTS`. If you are a **leaf fork**
+(nobody forks you) and keep modules of your own there, list them instead of
+adding those rows:
+
+```ts
+export const appOwnModules: readonly string[] = ['lib/app/questionnaire/', 'lib/app/pricing.ts'];
+```
+
+A directory takes a trailing slash, a file none. All three checks skip what you
+list, and an entry that names nothing, or a seam VERSIONING.md names, fails
+`versioning-seam-coverage.test.ts`. Delete any rows you added for those modules
+before this file existed. Then pin the value in its `SEAM_DEFAULTS` row, as for
+any seam you fill. **A fork others build on should not declare**: its `lib/app/`
+modules are its own forks' public surface, and the VERSIONING.md rows are how
+they hear about a breaking change.
 
 **Why one file per concern and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a

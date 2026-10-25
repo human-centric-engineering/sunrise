@@ -10,10 +10,23 @@
  * the first and silently skipped by the other two (#734). `lib/app/` is flat
  * today, so they agreed by accident. Reading through here, a new kind of
  * scaffold is checked by all three or fails all three loudly.
+ *
+ * The two that demand a row per seam (the documents, and `SEAM_DEFAULTS`) ask
+ * through {@link unlistedSeams}, which subtracts the fork's own modules
+ * (`lib/app/own-modules.ts`, #847). The shared-gate check still reads every
+ * scaffold file: an `initApp*` nothing calls is dead wiring whoever owns it.
+ *
+ * FORK NOTE — this reads your `lib/app/own-modules.ts` for real, on purpose:
+ * the modules you declare there are what the row-demanding guards skip. Leave
+ * it empty unless you are a leaf fork with modules of your own in `lib/app/`;
+ * `tests/unit/versioning-seam-coverage.test.ts` refuses an entry that names
+ * nothing or names a seam.
  */
 
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
+
+import { appOwnModules } from '@/lib/app/own-modules';
 
 export const APP_DIR = path.join(process.cwd(), 'lib/app');
 
@@ -85,4 +98,56 @@ export function scaffoldSourceFiles(dir: string = APP_DIR): string[] {
     else files.push(full);
   }
   return files.sort();
+}
+
+/** The declaration file itself — a seam, so never one of a fork's own modules. */
+export const OWN_MODULES_FILE = 'lib/app/own-modules.ts';
+
+/**
+ * The seams on disk that `listed` has no row for: every scaffold, less the
+ * fork's own modules (`lib/app/own-modules.ts`), less `listed`. The one place a
+ * row-demanding guard asks "which seams am I missing?", so a module a leaf fork
+ * declares as its own is skipped by every such guard or by none.
+ */
+export function unlistedSeams(
+  listed: Iterable<string>,
+  dir: string = APP_DIR,
+  ownModules: readonly string[] = appOwnModules
+): string[] {
+  const skip = new Set([...ownModules, ...listed]);
+  return scaffoldsOnDisk(dir).filter((s) => !skip.has(s));
+}
+
+/**
+ * Why each declared own module cannot be honoured; empty when all can.
+ *
+ * Refused rather than ignored, as `reserved-tiers.ts` refuses an unknown tier:
+ * an entry that matches nothing exempts nothing, and the fork would read its
+ * declaration as working. An entry VERSIONING.md names is refused because the
+ * same file cannot be a seam forks are promised and a module nobody is — and
+ * every seam Sunrise ships is named there, so this is also what stops a fork
+ * declaring one of Sunrise's seams its own.
+ */
+export function ownModuleProblems(
+  ownModules: readonly string[],
+  onDisk: readonly string[],
+  namedInVersioning: readonly string[]
+): string[] {
+  const problems: string[] = [];
+  for (const entry of ownModules) {
+    if (!/^lib\/app\/[^/]+\/?$/.test(entry)) {
+      problems.push(`${entry}: not lib/app/<file> or lib/app/<dir>/`);
+    } else if (entry === OWN_MODULES_FILE) {
+      problems.push(`${entry}: the declaration file is a seam, not a module of the fork's own`);
+    } else if (!onDisk.includes(entry)) {
+      problems.push(
+        `${entry}: not in lib/app/ (a directory needs its trailing slash, a file none)`
+      );
+    } else if (namedInVersioning.includes(entry)) {
+      problems.push(
+        `${entry}: VERSIONING.md names it as a seam. Delete that row if this is your own module; a Sunrise seam cannot be declared one`
+      );
+    }
+  }
+  return problems;
 }
