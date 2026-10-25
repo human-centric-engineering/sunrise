@@ -191,8 +191,8 @@ release process.
   folded into the system prompt, so a new conversation sent no messages (a
   `400`), a history ending on a reply was read as a prefill, and on a thinking
   agent a history ending on a tool result was rejected. A tool call left
-  unanswered at the end of history, without its thinking blocks, is left out of
-  a thinking request (its text is kept). New optional `turnInstruction` on
+  unanswered at the end of history, without its thinking blocks, is sent to a
+  thinking request as a text note of the call and its result. New optional `turnInstruction` on
   `LlmMessage`, which a custom provider may honour; OpenAI-compatible providers
   are unchanged. The stored transcript is unchanged.
 - **The owner-classification test sees a fork's user columns named for their

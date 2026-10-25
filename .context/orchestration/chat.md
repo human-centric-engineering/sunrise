@@ -175,10 +175,11 @@ the provider sends it in place as a user turn headed
 `[Instruction from the application, not a message from the user]`. If history
 ends on a tool call with no reply after it (a `skipFollowup` capability such
 as `run_workflow` pending approval) and the request thinks, that call and its
-results are left out of the request, since thinking blocks are not persisted
-and Anthropic would read the opener as continuing that turn. Every text-less
-pass of a multi-pass loop goes; the assistant's text from a pass is kept.
-Without thinking the call stays. Nothing about the stored transcript changes.
+results are sent as a text note on the assistant turn
+(`[Called run_workflow; result: {...}]`) instead, since thinking blocks are
+not persisted and Anthropic would read the opener as continuing that turn. The
+note keeps the model from repeating a call that already ran. Without thinking
+the call is sent as it is. Nothing about the stored transcript changes.
 
 **A turn must carry something.** `message`, `openingTurn.content`, or at least
 one attachment — a request with none of the three is rejected with

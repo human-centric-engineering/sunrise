@@ -715,7 +715,7 @@ function splitSystemMessages(
       // does not read it as the person's words.
       const text = getTextContent(msg.content);
       if (!text) continue;
-      if (thinkingEnabled) closeUnthinkingToolTurns(conversation);
+      if (thinkingEnabled) closeUnthinkingToolTurn(conversation);
       conversation.push({ role: 'user', content: `${TURN_INSTRUCTION_HEADING}\n\n${text}` });
       continue;
     }
@@ -774,37 +774,52 @@ function splitSystemMessages(
 const TURN_INSTRUCTION_HEADING = '[Instruction from the application, not a message from the user]';
 
 /**
- * Remove the tool calls at the end of `conversation` whose turns carry no
- * thinking blocks, as a chat history rebuilt from the database does (reasoning
- * is not persisted). A user turn appended straight after them would sit in the
- * same turn as those tool results, which on a thinking model is a continuation
- * sent without its thinking. A multi-pass loop is unwound until the tail is no
- * longer a tool result. The assistants' text is kept; only their `tool_use`
- * blocks and the results go.
+ * Close a tool call left unanswered by the assistant at the end of
+ * `conversation` when its turn carries no thinking blocks, as a chat history
+ * rebuilt from the database does (reasoning is not persisted). A user turn
+ * appended straight after its results would sit in the same turn, which on a
+ * thinking model is a continuation sent without its thinking. The `tool_use`
+ * blocks and their results become a text note on the assistant turn, so the
+ * model still knows the call ran (a pending approval is not repeated).
  */
-function closeUnthinkingToolTurns(conversation: MessageParam[]): void {
-  for (;;) {
-    let resultsStart = conversation.length;
-    while (resultsStart > 0 && isToolResultTurn(conversation[resultsStart - 1])) resultsStart--;
-    if (resultsStart === conversation.length || resultsStart === 0) return;
+function closeUnthinkingToolTurn(conversation: MessageParam[]): void {
+  let resultsStart = conversation.length;
+  while (resultsStart > 0 && isToolResultTurn(conversation[resultsStart - 1])) resultsStart--;
+  if (resultsStart === conversation.length || resultsStart === 0) return;
 
-    const assistant = conversation[resultsStart - 1];
-    if (assistant.role !== 'assistant' || !Array.isArray(assistant.content)) return;
-    if (
-      assistant.content.some(
-        (block) => block.type === 'thinking' || block.type === 'redacted_thinking'
-      )
-    ) {
-      return;
-    }
+  const assistant = conversation[resultsStart - 1];
+  if (assistant.role !== 'assistant' || !Array.isArray(assistant.content)) return;
+  if (
+    assistant.content.some(
+      (block) => block.type === 'thinking' || block.type === 'redacted_thinking'
+    )
+  ) {
+    return;
+  }
 
-    const kept = assistant.content.filter((block) => block.type !== 'tool_use');
-    conversation.splice(resultsStart - 1);
-    if (kept.length > 0) {
-      conversation.push({ role: 'assistant', content: kept });
-      return;
+  const results = new Map<string, string>();
+  for (const turn of conversation.slice(resultsStart)) {
+    if (!Array.isArray(turn.content)) continue;
+    for (const block of turn.content) {
+      if (block.type === 'tool_result' && typeof block.content === 'string') {
+        results.set(block.tool_use_id, block.content);
+      }
     }
   }
+  const kept: ContentBlockParam[] = [];
+  const notes: string[] = [];
+  for (const block of assistant.content) {
+    if (block.type === 'tool_use') {
+      notes.push(`[Called ${block.name}; result: ${results.get(block.id) ?? '(none)'}]`);
+    } else {
+      kept.push(block);
+    }
+  }
+  kept.push({ type: 'text', text: notes.join('\n') });
+  conversation.splice(resultsStart - 1, conversation.length, {
+    role: 'assistant',
+    content: kept,
+  });
 }
 
 function isToolResultTurn(msg: MessageParam): boolean {

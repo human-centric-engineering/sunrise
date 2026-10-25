@@ -2999,6 +2999,10 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
   };
   const openerTurn = { role: 'user', content: `${HEADING}\n\nOpen the check-in.` };
   const thinkingOptions = { model: 'claude-opus-5-5', reasoningEffort: 'medium' as const };
+  const pendingNote = {
+    role: 'assistant',
+    content: [{ type: 'text', text: '[Called run_workflow; result: {"pendingApproval":true}]' }],
+  };
 
   beforeEach(() => {
     createMock.mockResolvedValue({
@@ -3041,7 +3045,7 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
     ]);
   });
 
-  it('closes a trailing tool call that has no thinking, keeping the assistant text', async () => {
+  it('turns a trailing tool call that has no thinking into a note, keeping the assistant text', async () => {
     // A skipFollowup capability (run_workflow pending approval) leaves history
     // on the tool row; reasoning is not persisted, so the turn has no thinking.
     await makeProvider().chat(
@@ -3065,12 +3069,21 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
 
     expect(sent().messages).toEqual([
       { role: 'user', content: 'Start the plan' },
-      { role: 'assistant', content: [{ type: 'text', text: 'Starting it.' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Starting it.' },
+          {
+            type: 'text',
+            text: '[Called run_workflow; result: {"pendingApproval":true}]\n[Called lookup; result: {"hit":true}]',
+          },
+        ],
+      },
       openerTurn,
     ]);
   });
 
-  it('drops a text-less trailing tool call entirely', async () => {
+  it('notes a text-less trailing tool call in place of it', async () => {
     await makeProvider().chat(
       [
         { role: 'user', content: 'Start the plan' },
@@ -3085,10 +3098,14 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
       thinkingOptions
     );
 
-    expect(sent().messages).toEqual([{ role: 'user', content: 'Start the plan' }, openerTurn]);
+    expect(sent().messages).toEqual([
+      { role: 'user', content: 'Start the plan' },
+      pendingNote,
+      openerTurn,
+    ]);
   });
 
-  it('unwinds every text-less pass of a trailing multi-pass tool loop', async () => {
+  it('notes only the last pass of a trailing multi-pass tool loop', async () => {
     await makeProvider().chat(
       [
         { role: 'user', content: 'Start the plan' },
@@ -3109,7 +3126,19 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
       thinkingOptions
     );
 
-    expect(sent().messages).toEqual([{ role: 'user', content: 'Start the plan' }, openerTurn]);
+    expect(sent().messages).toEqual([
+      { role: 'user', content: 'Start the plan' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'lookup', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '{"hit":true}' }],
+      },
+      pendingNote,
+      openerTurn,
+    ]);
   });
 
   it('keeps a trailing tool call when the request does not think', async () => {
@@ -3173,6 +3202,7 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
     expect(sent().system).toBe('You are a coach.');
     expect(sent().messages).toEqual([
       { role: 'user', content: 'Start the plan' },
+      pendingNote,
       openerTurn,
       {
         role: 'assistant',
