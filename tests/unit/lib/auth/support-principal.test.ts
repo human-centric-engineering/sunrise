@@ -4,8 +4,14 @@
  * The guards are driven end to end in `guards-support.test.ts`; this pins the
  * three helpers' own answers, including the fail-closed edges.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('@/lib/logging', () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 import { ForbiddenError } from '@/lib/api/errors';
+import { logger } from '@/lib/logging';
 import {
   isRefusedReadOnlyWrite,
   isSupportEntry,
@@ -13,6 +19,7 @@ import {
   presentedRole,
   presentedSession,
   READ_ONLY_SUPPORT_MESSAGE,
+  refuseReadOnlySupportWrite,
 } from '@/lib/auth/support-principal';
 
 const support = (level: 'ADMIN' | 'READ_ONLY') => ({ source: 'support', support: { level } });
@@ -73,7 +80,36 @@ describe('isSupportEntry', () => {
   });
 });
 
+describe('refuseReadOnlySupportWrite', () => {
+  beforeEach(() => vi.mocked(logger.warn).mockClear());
+
+  const readOnly = {
+    source: 'support',
+    orgId: 'org-b',
+    support: { level: 'READ_ONLY', grantId: 'grant-1' },
+  };
+
+  it('logs the refusal with the grant, the org and the caller context, then throws a 403', () => {
+    expect(() => refuseReadOnlySupportWrite(readOnly, 'POST', { guard: 'withAuth' })).toThrow(
+      ForbiddenError
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      'tenancy: refused a write under a read-only support grant',
+      { guard: 'withAuth', method: 'POST', orgId: 'org-b', grantId: 'grant-1' }
+    );
+  });
+
+  it('neither logs nor throws for a read, an ADMIN grant or a member', () => {
+    refuseReadOnlySupportWrite(readOnly, 'GET');
+    refuseReadOnlySupportWrite(support('ADMIN'), 'POST');
+    refuseReadOnlySupportWrite(member, 'POST');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('presentSessionEntry', () => {
+  beforeEach(() => vi.mocked(logger.warn).mockClear());
+
   const adminSession = () => ({ user: { id: 'u1', role: 'ADMIN' } });
 
   it('presents the default user role under an ADMIN grant, for a write too', () => {
@@ -97,9 +133,16 @@ describe('presentSessionEntry', () => {
     }
   );
 
-  it('leaves a member entry, and no entry, unchanged', () => {
+  it('logs a refused write with the user, as the guards do', () => {
+    expect(() => presentSessionEntry(adminSession(), support('READ_ONLY'), 'POST')).toThrow();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'tenancy: refused a write under a read-only support grant',
+      expect.objectContaining({ userId: 'u1', method: 'POST' })
+    );
+  });
+
+  it('leaves a member entry unchanged', () => {
     const session = adminSession();
     expect(presentSessionEntry(session, member, 'POST')).toBe(session);
-    expect(presentSessionEntry(session, null, 'POST')).toBe(session);
   });
 });

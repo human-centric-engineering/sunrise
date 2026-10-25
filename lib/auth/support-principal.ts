@@ -20,6 +20,7 @@
  */
 import { ForbiddenError } from '@/lib/api/errors';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { logger } from '@/lib/logging';
 
 /** Did this entry admit a support session? */
 export function isSupportEntry(entry: { source: string } | null | undefined): boolean {
@@ -67,6 +68,28 @@ export function isRefusedReadOnlyWrite(
 export const READ_ONLY_SUPPORT_MESSAGE = 'Support access to this organisation is read-only';
 
 /**
+ * Refuse a write under a READ_ONLY support grant: log it and throw
+ * `ForbiddenError` (403). Does nothing for any other request. The one
+ * statement of the refusal, used by the guards and by
+ * {@link presentSessionEntry}, so the log line and the 403 are the same on both
+ * paths. `context` is added to the log line (the guard, the path, the user).
+ */
+export function refuseReadOnlySupportWrite(
+  entry: { source: string; orgId?: string; support?: { level: string; grantId?: string } },
+  method: string | undefined,
+  context: Record<string, unknown> = {}
+): void {
+  if (!isRefusedReadOnlyWrite(entry, method)) return;
+  logger.warn('tenancy: refused a write under a read-only support grant', {
+    ...context,
+    method,
+    orgId: entry.orgId,
+    grantId: entry.support?.grantId,
+  });
+  throw new ForbiddenError(READ_ONLY_SUPPORT_MESSAGE);
+}
+
+/**
  * Both support-session rules, for a route that enters an org itself
  * (`enterSessionOrg`) instead of through `withAuth` / `withAdminAuth` — a
  * route that also serves a cookie-less caller, say. The guards apply these
@@ -78,6 +101,10 @@ export const READ_ONLY_SUPPORT_MESSAGE = 'Support access to this organisation is
  * the guards would see it: the default user role in place of the platform
  * role inside a support session, unchanged everywhere else.
  *
+ * `entry` is the entry `enterSessionOrg()` returned, after the caller refused
+ * an `OrgRefusal`. It is not nullable on purpose: a caller that turned a
+ * refusal into `null` would otherwise get the raw session back.
+ *
  * ```typescript
  * const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
  * if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
@@ -87,11 +114,11 @@ export const READ_ONLY_SUPPORT_MESSAGE = 'Support access to this organisation is
  *
  * @see .context/tenancy/support-access.md — entering an org outside the guards
  */
-export function presentSessionEntry<S extends { user: { role?: string | null } }>(
+export function presentSessionEntry<S extends { user: { id?: string; role?: string | null } }>(
   session: S,
-  entry: { source: string; support?: { level: string } } | null | undefined,
+  entry: { source: string; orgId?: string; support?: { level: string; grantId?: string } },
   method: string | undefined
 ): S {
-  if (isRefusedReadOnlyWrite(entry, method)) throw new ForbiddenError(READ_ONLY_SUPPORT_MESSAGE);
+  refuseReadOnlySupportWrite(entry, method, { userId: session.user.id });
   return presentedSession(session, entry);
 }

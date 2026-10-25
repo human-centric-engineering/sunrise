@@ -66,10 +66,9 @@ import {
 } from '@/lib/tenancy/entry';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import {
-  isRefusedReadOnlyWrite,
-  READ_ONLY_SUPPORT_MESSAGE,
   presentedRole,
   presentedSession,
+  refuseReadOnlySupportWrite,
 } from '@/lib/auth/support-principal';
 import {
   canChangeSharedSettings,
@@ -531,18 +530,13 @@ async function sessionEntryFor(
   }
   // A READ_ONLY support grant refuses every write here, before the resolver,
   // the policy or the handler runs (§121 t-824) — one rule in the one place
-  // both guards enter a session's org, so no route can forget it.
-  if (isRefusedReadOnlyWrite(entry, request.method)) {
-    logger.warn('tenancy: refused a write under a read-only support grant', {
-      guard,
-      path: loggablePath(request.nextUrl?.pathname),
-      method: request.method,
-      userId: session.user.id,
-      orgId: entry.orgId,
-      grantId: entry.support?.grantId,
-    });
-    throw new ForbiddenError(READ_ONLY_SUPPORT_MESSAGE);
-  }
+  // both guards enter a session's org, so no route can forget it. The same
+  // function refuses for routes that enter an org outside the guards.
+  refuseReadOnlySupportWrite(entry, request.method, {
+    guard,
+    path: loggablePath(request.nextUrl?.pathname),
+    userId: session.user.id,
+  });
   return entry;
 }
 

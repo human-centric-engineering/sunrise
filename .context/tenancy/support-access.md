@@ -153,15 +153,26 @@ level, expiresAt }`. The tenant context carries the same `support` field,
 wrap. A route that enters an org itself, with `getServerSession()` and
 `enterSessionOrg()` (one that also serves a cookie-less caller, say), gets the
 raw entry: source `'support'`, role ADMIN, and a session whose user is still a
-platform `ADMIN`. Nothing refuses its writes under a READ_ONLY grant. Both
-rules are then the caller's duty:
+platform `ADMIN`. Nothing refuses its writes under a READ_ONLY grant, and
+nothing scopes the work to the org. Three things are then the caller's duty:
 
 ```typescript
 const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
 if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
-// 403 for a write under a READ_ONLY grant; the default user role inside support.
+// 403 (logged) for a write under a READ_ONLY grant; the default user role inside support.
 const session = presentSessionEntry(rawSession, entry, request.method);
+// Run the work in the org's tenant context, as the guards do: row isolation
+// reads it, and so does the support stamp on audit rows.
+return runAsOrg(entry.orgId, () => handle(session), {
+  source: entry.source,
+  role: entry.role,
+  ...(entry.support ? { support: entry.support } : {}),
+});
 ```
+
+Without the `runAsOrg`, `logAdminAction()` finds no support context, so the
+row carries no `supportGrantId` and the action is missing from the org's view
+of what support did ([Audit rows](#audit-rows-t-825)).
 
 Use the presented `session` for every check after entry. A check on the raw
 session's `isPlatformAdmin(session.user)` is true for a support actor, so an
