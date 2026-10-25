@@ -177,6 +177,10 @@ describe('RouteErrorBoundary', () => {
       await act(async () => {});
       expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
       expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
+      expect(logger.warn).toHaveBeenCalledWith('Session check failed in error boundary', {
+        boundaryName: 'TestError',
+        status: 500,
+      });
     });
 
     it('keeps the normal error card when the session lookup rejects', async () => {
@@ -187,6 +191,34 @@ describe('RouteErrorBoundary', () => {
       await waitFor(() => expect(authClient.getSession).toHaveBeenCalledTimes(1));
       await act(async () => {});
       expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+      expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
+      expect(logger.warn).toHaveBeenCalledWith('Session check failed in error boundary', {
+        boundaryName: 'TestError',
+        error: 'network',
+      });
+    });
+
+    it('clears the sign-in card when a later error finds a valid session', async () => {
+      vi.mocked(authClient.getSession).mockResolvedValueOnce(expiredSession());
+      const { rerender, retry } = renderBoundary({ checkSession: true });
+      expect(await screen.findByText('Session Expired')).toBeInTheDocument();
+
+      // Signed in again elsewhere; the boundary is handed a new error.
+      vi.mocked(authClient.getSession).mockResolvedValueOnce(validSession());
+      rerender(
+        <RouteErrorBoundary
+          error={new Error('second failure')}
+          retry={retry}
+          boundaryName="TestError"
+          tag="test"
+          title="Something went wrong"
+          description="An error occurred."
+          fallback={{ label: 'Dashboard', href: '/dashboard' }}
+          checkSession
+        />
+      );
+
+      expect(await screen.findByRole('button', { name: 'Try again' })).toBeInTheDocument();
       expect(screen.queryByText('Session Expired')).not.toBeInTheDocument();
     });
 

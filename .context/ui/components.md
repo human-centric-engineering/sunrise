@@ -96,7 +96,8 @@ interface RouteErrorFallbackAction {
   session) or with a 401 (a failed refresh). Any other error, or a rejected
   call, means the lookup failed rather than the session, so the normal card and
   its "Try again" stay: an auth outage must not tell a signed-in user to sign
-  in. Testing the envelope itself for truthiness never fires: that was the bug
+  in. That failure is logged as a warning. Each new error re-checks, and a
+  valid session clears an expiry card an earlier error raised. Testing the envelope itself for truthiness never fires: that was the bug
   that left the expiry card reachable only on a network failure.
 - `app/global-error.tsx` is deliberately NOT a wrapper — it replaces the root
   layout, so it renders its own `<html>`/`<body>` and cannot import the shared

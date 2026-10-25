@@ -127,14 +127,28 @@ export function RouteErrorBoundary({
         // and a failed refresh as a 401. Anything else is the lookup failing,
         // not the session: an auth outage should offer "try again", not tell a
         // signed-in user to sign in.
+        //
+        // Each new error re-checks, so a valid session clears an expiry card an
+        // earlier error raised (signed in again in another tab, say).
         const { data: session, error: sessionError } = await authClient.getSession();
-        if (!session && (!sessionError || sessionError.status === 401)) {
+        if (session) {
+          setIsSessionExpired(false);
+        } else if (!sessionError || sessionError.status === 401) {
           setIsSessionExpired(true);
           logger.warn('Session expired in error boundary', { boundaryName });
+        } else {
+          logger.warn('Session check failed in error boundary', {
+            boundaryName,
+            status: sessionError.status,
+          });
         }
-      } catch {
+      } catch (checkError) {
         // The request itself failed, so the session is unknown — keep the
         // normal error card and its retry.
+        logger.warn('Session check failed in error boundary', {
+          boundaryName,
+          error: checkError instanceof Error ? checkError.message : String(checkError),
+        });
       }
     };
 
