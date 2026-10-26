@@ -23,6 +23,11 @@ export interface SendEmailOptions {
    * Extra message headers, passed to Resend unchanged — e.g. `List-Unsubscribe`
    * and `List-Unsubscribe-Post` for one-click unsubscribe on marketing mail.
    * Only the header names are logged, not their values.
+   *
+   * One set of headers goes to every address in `to`, so a per-recipient
+   * value such as an unsubscribe token needs one send per recipient. Headers
+   * are part of the request `idempotencyKey` covers: a retry with the same key
+   * must send the same headers, or Resend refuses it.
    */
   headers?: Record<string, string>;
 }

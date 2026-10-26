@@ -329,8 +329,8 @@ under `app` in the bundle.
 **`emailVerified` is passed but not declared.** `AppSubjectQuery` in the
 scaffold names only `userId` and `email`, and Sunrise does not edit that file
 once released. To read the flag, add it to your own copy of the type —
-`emailVerified: boolean;` — and core's call still type-checks, because it
-passes the whole subject. Only match rows by address when it is `true`:
+`emailVerified: boolean;` — and core's call still type-checks either way,
+because it passes an object carrying all three fields. Only match rows by address when it is `true`:
 
 ```ts
 import { prisma } from '@/lib/db/client';

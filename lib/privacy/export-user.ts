@@ -265,13 +265,22 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     } else {
       results.push(...(await Promise.all(SUBJECT_DATA_SOURCES.map(fetchOne))));
     }
-    // The collector gets the whole subject, `emailVerified` included, so a
-    // fork table filled by address can apply the verified-address rule
-    // `ContactSubmission` does (t-934). Its declared type, `AppSubjectQuery`,
-    // lives in the fork-owned scaffold and names only `userId` and `email`;
-    // core does not edit that file, so a fork that wants the flag widens its
-    // own copy of the type. The wider object satisfies either shape.
-    return { results, app: await collectAppSubjectData(subject) };
+    // The collector is also told `emailVerified`, so a fork table filled by
+    // address can apply the verified-address rule `ContactSubmission` does
+    // (t-934). Its declared type, `AppSubjectQuery`, lives in the fork-owned
+    // scaffold and names only `userId` and `email`; core does not edit that
+    // file, so a fork that wants the flag widens its own copy of the type.
+    // Built field by field, not by passing `subject`: a field core later adds
+    // to `SubjectQuery` for its own sources does not reach fork code unasked,
+    // and the collector cannot mutate the object the sources read.
+    // A typed local, not a literal at the call: the literal would trip the
+    // excess-property check against the scaffold's narrower type.
+    const appSubject: SubjectQuery = {
+      userId: subject.userId,
+      email: subject.email,
+      emailVerified: subject.emailVerified,
+    };
+    return { results, app: await collectAppSubjectData(appSubject) };
   };
   // Inside one org, too, the rows are the subject's and the reader may be
   // someone else: an admin answering an Art. 15 request. The route decided
