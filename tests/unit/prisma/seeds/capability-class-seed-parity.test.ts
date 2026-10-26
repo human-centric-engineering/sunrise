@@ -91,6 +91,9 @@ vi.mock('@/lib/db/client', () => {
   );
   return { prisma: refuse, default: refuse };
 });
+// 019 erases legacy seed users through eraseUser(), which writes with the app
+// client. Stubbed, so the rest of that seed still runs through the strict one.
+vi.mock('@/lib/privacy/erase-user', () => ({ eraseUser: vi.fn() }));
 
 import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { isRecord } from '@/lib/utils';
@@ -148,11 +151,6 @@ const UNCHECKED_SEEDS: ReadonlyMap<string, string> = new Map([
   [
     '007-knowledge-chunks.ts',
     'seeds the patterns knowledge through seedChunks(), which writes with the app client; ' +
-      'it writes no capability',
-  ],
-  [
-    '019-reconcile-legacy-seed-users.ts',
-    'erases legacy seed users through eraseUser(), which writes with the app client; ' +
       'it writes no capability',
   ],
   ...Object.entries(APP_UNCHECKED_SEEDS),
@@ -252,7 +250,11 @@ function placeholderRow(model: string, args: unknown): Record<string, unknown> {
     const counted = isRecord(count) && isRecord(count.select) ? count.select : null;
     row._count = Object.fromEntries(
       [...columns]
-        .filter(([name, column]) => (counted ? counted[name] : column.list && !EMPTY[column.type]))
+        .filter(([name, column]) =>
+          counted
+            ? counted[name]
+            : column.list && !EMPTY[column.type] && !SCHEMA.enums.has(column.type)
+        )
         .map(([name]) => [name, 0])
     );
   }
@@ -377,7 +379,8 @@ function strictClient(
             const rowFor = (slug: unknown) => ({
               ...placeholderRow(name, args),
               id: `${ID_PREFIX}${typeof slug === 'string' ? slug : ''}`,
-              ...(typeof slug === 'string' ? { slug } : {}),
+              // No placeholder `''`: a write keyed on it would hide the id fallback.
+              slug: typeof slug === 'string' ? slug : undefined,
             });
             const row = rowFor(where.slug);
             if (WRITES.has(method)) {

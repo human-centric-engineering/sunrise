@@ -168,6 +168,11 @@ describe('CapabilityValidationError instanceof', () => {
     expect(nothing instanceof CapabilityValidationError).toBe(false);
   });
 
+  it('rejects a plain-object copy of a real one', () => {
+    const copy: unknown = { ...new CapabilityValidationError([]) };
+    expect(copy instanceof CapabilityValidationError).toBe(false);
+  });
+
   it('keeps the prototype check for a subclass, so a sibling error is not one', () => {
     class NarrowerError extends CapabilityValidationError {}
     expect(new NarrowerError([]) instanceof NarrowerError).toBe(true);

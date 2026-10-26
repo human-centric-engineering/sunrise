@@ -157,8 +157,6 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
 const CAPABILITY_VALIDATION_ERROR = Symbol.for('sunrise.capabilities.validationError');
 
 export class CapabilityValidationError extends Error {
-  readonly [CAPABILITY_VALIDATION_ERROR] = true;
-
   constructor(public readonly issues: unknown[]) {
     super('Capability argument validation failed');
     this.name = 'CapabilityValidationError';
@@ -176,3 +174,7 @@ export class CapabilityValidationError extends Error {
     );
   }
 }
+// On the prototype, not each instance: a `{ ...err }` copy is not one.
+Object.defineProperty(CapabilityValidationError.prototype, CAPABILITY_VALIDATION_ERROR, {
+  value: true,
+});
