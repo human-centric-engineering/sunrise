@@ -18,6 +18,14 @@ release process.
 
 ### Added
 
+- **The app export collector is told whether the subject's email is verified
+  (t-934, #972).** `exportUserData()` now passes `emailVerified` to
+  `collectAppSubjectData()` alongside `userId` and `email`, so a fork table
+  keyed by address can hand rows over only to an account that proved the
+  address. The scaffold `lib/app/data-export.ts` is unchanged: to read the
+  flag, add `emailVerified: boolean` to your own `AppSubjectQuery`. A
+  collector that spreads its whole argument into a query will now see the
+  extra field. See `.context/privacy/data-export.md` ("Extending It").
 - **`sendEmail` takes message headers (t-935, #854).** New optional
   `headers` on `SendEmailOptions` (`lib/email/send.ts`) is passed to Resend
   unchanged, so a fork can send the one-click unsubscribe headers

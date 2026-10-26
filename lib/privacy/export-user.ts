@@ -265,9 +265,13 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     } else {
       results.push(...(await Promise.all(SUBJECT_DATA_SOURCES.map(fetchOne))));
     }
-    // The fork's collector gets exactly `AppSubjectQuery` — that type lives in
-    // the fork-owned scaffold, so a field it does not declare stays out.
-    return { results, app: await collectAppSubjectData({ userId, email: account.email }) };
+    // The collector gets the whole subject, `emailVerified` included, so a
+    // fork table filled by address can apply the verified-address rule
+    // `ContactSubmission` does (t-934). Its declared type, `AppSubjectQuery`,
+    // lives in the fork-owned scaffold and names only `userId` and `email`;
+    // core does not edit that file, so a fork that wants the flag widens its
+    // own copy of the type. The wider object satisfies either shape.
+    return { results, app: await collectAppSubjectData(subject) };
   };
   // Inside one org, too, the rows are the subject's and the reader may be
   // someone else: an admin answering an Art. 15 request. The route decided

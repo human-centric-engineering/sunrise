@@ -1307,12 +1307,25 @@ describe('exportUserData', () => {
   });
 
   describe('the app seam', () => {
-    it('passes the subject id and email to the collector', async () => {
+    it('passes the subject id, email and verified flag to the collector', async () => {
       await exportUserData(PARAMS);
 
       expect(mockCollectAppSubjectData).toHaveBeenCalledWith({
         userId: 'user-1',
         email: 'Subject@Example.com',
+        emailVerified: true,
+      });
+    });
+
+    it('tells the collector when the subject has not verified their email', async () => {
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+
+      await exportUserData(PARAMS);
+
+      expect(mockCollectAppSubjectData).toHaveBeenCalledWith({
+        userId: 'user-1',
+        email: 'Subject@Example.com',
+        emailVerified: false,
       });
     });
 

@@ -316,28 +316,40 @@ email verification off anyone can open an account under someone else's. So
 `ContactSubmission` is exported (and erased) only for an account whose
 `emailVerified` is true — `contactSubmissionsOf()` in
 `lib/privacy/contact-submissions.ts` returns no match otherwise. The app
-collector below receives `userId` and `email` only, so a fork table filled by
-an unauthenticated writer should read `emailVerified` off the user row itself.
+collector below is passed `emailVerified` too, so a fork table filled by an
+unauthenticated writer applies the same rule from it rather than reading the
+user row again.
 
 ## Extending It — the App Seam
 
 Fill in `collectAppSubjectData()` in `lib/app/data-export.ts`. It receives the
-subject's `userId` and `email` and returns sections that land under `app` in the
-bundle:
+subject's `userId`, `email` and `emailVerified`, and returns sections that land
+under `app` in the bundle.
+
+**`emailVerified` is passed but not declared.** `AppSubjectQuery` in the
+scaffold names only `userId` and `email`, and Sunrise does not edit that file
+once released. To read the flag, add it to your own copy of the type —
+`emailVerified: boolean;` — and core's call still type-checks, because it
+passes the whole subject. Only match rows by address when it is `true`:
 
 ```ts
 import { prisma } from '@/lib/db/client';
 import type { AppSubjectQuery, AppSubjectData } from '@/lib/app/data-export';
 
+// Assumes you added `emailVerified: boolean` to your `AppSubjectQuery`.
 export async function collectAppSubjectData({
   userId,
   email,
+  emailVerified,
 }: AppSubjectQuery): Promise<AppSubjectData> {
   const [invoices, enquiries] = await Promise.all([
     prisma.appInvoice.findMany({ where: { userId }, omit: { gatewayToken: true } }),
     // Exact, normalised the way YOUR enquiry writer normalises — this assumes it
-    // stores `emailSchema` output. See "Tables With No `User` FK".
-    prisma.appEnquiry.findMany({ where: { email: email.trim().toLowerCase() } }),
+    // stores `emailSchema` output. See "Tables With No `User` FK". An unproven
+    // address gets none: a public form records whatever address was typed.
+    emailVerified
+      ? prisma.appEnquiry.findMany({ where: { email: email.trim().toLowerCase() } })
+      : [],
   ]);
 
   return { invoices, enquiries };
