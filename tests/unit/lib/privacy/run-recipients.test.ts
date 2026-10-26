@@ -25,6 +25,8 @@ import {
   redactSubjectFromRunsSince,
   redactErased,
   redactPerson,
+  redactTurns,
+  toStoredJson,
 } from '@/lib/privacy/run-recipients';
 
 const USER_ID = 'cmuser00000000000000erase';
@@ -505,7 +507,7 @@ describe('eraseFromRunInputs — supervisor report and side rows (t-882)', () =>
     expect(tx.aiWorkflowExecutionLeaseEvent.updateMany).not.toHaveBeenCalled();
   });
 
-  it('narrows the runs it reads by the supervisor report and the three side tables', async () => {
+  it('narrows the runs it reads by the supervisor report and one EXISTS per side table, never string_agg', async () => {
     const tx = makeTx([[]], [[]]);
 
     await run(tx);
@@ -516,14 +518,147 @@ describe('eraseFromRunInputs — supervisor report and side rows (t-882)', () =>
     expect(execCall).toBeDefined();
     const sql = sqlOf(execCall as unknown[]);
     expect(sql).toContain('e."supervisorReport"::text');
-    expect(sql).toContain('FROM ai_workflow_running_step s');
-    expect(sql).toContain('s.turns::text');
-    expect(sql).toContain('FROM ai_workflow_step_dispatch d');
-    expect(sql).toContain('d.result::text');
-    expect(sql).toContain('FROM ai_workflow_execution_lease_event l');
-    expect(sql).toContain('l.metadata::text');
+    expect(sql).toContain('EXISTS (SELECT 1 FROM ai_workflow_running_step s');
+    expect(sql).toContain('EXISTS (SELECT 1 FROM ai_workflow_step_dispatch d');
+    expect(sql).toContain('EXISTS (SELECT 1 FROM ai_workflow_execution_lease_event l');
+    expect(sql).not.toContain('string_agg');
     // The report is also selected, so redactRunRow can rewrite it.
     expect(sql.split('FROM ai_workflow_execution e')[0]).toContain('e."supervisorReport"');
+  });
+
+  it('reads each side table narrowed by that table’s own text, for this run and this person', async () => {
+    const tx = makeTx([[]], [[cleanRun('exec-side')]]);
+
+    await run(tx);
+
+    const reads = tx.$queryRaw.mock.calls.filter((c) =>
+      /SELECT (s\.id, s\.turns|d\.id, d\.result|l\.id, l\.metadata)/.test(sqlOf(c))
+    );
+    const tables = reads.map((c) => sqlOf(c).match(/FROM (ai_workflow_\w+) [sdl]\n/)?.[1]);
+    expect(tables).toEqual([
+      'ai_workflow_running_step',
+      'ai_workflow_step_dispatch',
+      'ai_workflow_execution_lease_event',
+    ]);
+    for (const call of reads) {
+      expect(sqlOf(call)).toContain('strpos(');
+      expect(sqlOf(call)).toContain('"executionId" =');
+      expect(call).toContain('exec-side');
+      expect(call).toContain(USER_ID);
+    }
+  });
+
+  it('drops a turn’s reasoning that names the person from a running step, and redacts the rest', async () => {
+    const keptReasoning = { text: 'weighing the options', signature: 'sig-keep' };
+    const tx = makeTx([[]], [[cleanRun('exec-think')]], {
+      steps: [
+        {
+          id: 'step-think',
+          executionId: 'exec-think',
+          turns: [
+            {
+              role: 'assistant',
+              reasoning: { text: `${USER_ID} asked for this`, signature: 'sig-gone' },
+              content: `Notify ${USER_ID}`,
+            },
+            { role: 'assistant', reasoning: keptReasoning, content: 'next' },
+          ],
+        },
+      ],
+    });
+
+    const result = await run(tx);
+
+    expect(result.executionsRedacted).toBe(1);
+    expect(tx.aiWorkflowRunningStep.updateMany).toHaveBeenCalledWith({
+      where: { id: 'step-think' },
+      data: {
+        turns: [
+          { role: 'assistant', content: `Notify ${ERASED_VALUE}` },
+          { role: 'assistant', reasoning: keptReasoning, content: 'next' },
+        ],
+      },
+    });
+  });
+
+  it('carries on when a side row was deleted since the read (updateMany count 0)', async () => {
+    const tx = makeTx(
+      [[]],
+      [[cleanRun('exec-gone'), cleanRun('exec-next', { inputData: { to: ADDRESS } })]],
+      {
+        steps: [{ id: 'step-gone', executionId: 'exec-gone', turns: [{ content: USER_ID }] }],
+        dispatches: [{ id: 'disp-gone', executionId: 'exec-gone', result: { to: ADDRESS } }],
+      }
+    );
+    tx.aiWorkflowRunningStep.updateMany.mockResolvedValue({ count: 0 });
+    tx.aiWorkflowStepDispatch.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await run(tx);
+
+    // Both writes were attempted and found nothing; the erasure went on to the next run.
+    expect(tx.aiWorkflowRunningStep.updateMany).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec-next' },
+      data: { inputData: { to: ERASED_VALUE } },
+    });
+    expect(result.executionsRedacted).toBe(2);
+  });
+});
+
+describe('redactTurns (t-882)', () => {
+  const redact = (value: Prisma.JsonValue) =>
+    redactPerson(value, subject, ERASED_VALUE)?.value ?? value;
+
+  it('drops a turn’s reasoning that names the person, and still redacts the rest of the turn', () => {
+    const turns: Prisma.JsonValue = [
+      {
+        role: 'assistant',
+        reasoning: { text: `ask ${USER_ID}`, signature: 'sig-1' },
+        content: `Done for ${USER_ID}`,
+        toolCalls: [{ id: 'tc-1', args: { to: ADDRESS } }],
+      },
+    ];
+
+    expect(redactTurns(turns, redact)).toEqual([
+      {
+        role: 'assistant',
+        content: `Done for ${ERASED_VALUE}`,
+        toolCalls: [{ id: 'tc-1', args: { to: ERASED_VALUE } }],
+      },
+    ]);
+  });
+
+  it('keeps the reasoning of a turn whose reasoning does not name them, byte for byte', () => {
+    const reasoning = { text: 'compare the two quotes', signature: 'sig-keep' };
+    const turns: Prisma.JsonValue = [
+      { role: 'assistant', reasoning, content: `Sent to ${USER_ID}` },
+    ];
+
+    const out = redactTurns(turns, redact) as Array<Record<string, Prisma.JsonValue>>;
+
+    expect(out[0].content).toBe(`Sent to ${ERASED_VALUE}`);
+    expect(JSON.stringify(out[0].reasoning)).toBe(JSON.stringify(reasoning));
+  });
+
+  it('redacts a value that is not an array as a whole', () => {
+    expect(redactTurns({ note: USER_ID, reasoning: `r ${USER_ID}` }, redact)).toEqual({
+      note: ERASED_VALUE,
+      reasoning: `r ${ERASED_VALUE}`,
+    });
+    expect(redactTurns(`by ${USER_ID}`, redact)).toBe(`by ${ERASED_VALUE}`);
+  });
+});
+
+describe('toStoredJson (t-882)', () => {
+  it('stores undefined as null', () => {
+    expect(toStoredJson(undefined)).toBeNull();
+  });
+
+  it('round-trips through JSON: a Date becomes its ISO string and undefined members vanish', () => {
+    expect(
+      toStoredJson({ at: new Date('2026-10-26T12:00:00.000Z'), gone: undefined, n: 3 })
+    ).toEqual({ at: '2026-10-26T12:00:00.000Z', n: 3 });
   });
 });
 
