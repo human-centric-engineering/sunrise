@@ -620,7 +620,18 @@ transaction):
    - **Other people's runs** — a run keeps a copy of everything it was given
      and did: `inputData` (a scheduled run's copy of the template),
      `executionTrace` (each step's config and output), `outputData` (the step
-     outputs the engine copies there on completion) and `errorMessage`. A run **paused at an
+     outputs the engine copies there on completion), `errorMessage` and
+     `supervisorReport` (an LLM's audit of the run, which quotes its step
+     outputs). Three more tables hold a run's copies, and are redacted with it,
+     under the run's row lock, by the same rule (t-882):
+     `ai_workflow_running_step.turns` (a multi-turn step's state, kept while
+     the run is paused at an approval or its host died mid-step, because
+     resume reads it back), `ai_workflow_step_dispatch.result` (a
+     `tool_call` or `external_call` step's whole result, cached so a crash
+     re-drive replays it into the trace) and
+     `ai_workflow_execution_lease_event.metadata` (`actorUserId`, the admin who
+     force-failed the run). A run is read when any of them names the person,
+     and counted once. A run **paused at an
      approval** keeps its `approverUserIds` and notification target there,
      and the approval routes read them until retention prunes the run. In
      both columns the subject's id leaves every approver list, a notification
@@ -725,13 +736,21 @@ transaction):
 
    **Not reached:** the approval events are sent after the pause commits
    and its locks are let go, so an erasure that ran from start to finish in
-   that gap of milliseconds would not see the delivery they create. A run's
-   multi-turn step state (`ai_workflow_running_step.turns`) is not redacted
-   by erasure at all, nor is `supervisorReport` (t-882). The writes of a run
-   made outside the engine are below ("Actions on a run", §122 t-901). The
-   engine deletes the running-step row when its step ends, but it
-   is kept while the run is paused at an approval (resume reads its turns
-   back) and when the host running it dies mid-step. A tick that read a schedule before the erasure and creates
+   that gap of milliseconds would not see the delivery they create. The
+   writes of a run made outside the engine are below ("Actions on a run",
+   §122 t-901).
+
+   The engine's other writes of a run's copies are checked the same way
+   (t-882): the supervisor report its checkpoint or finalize writes is
+   checked and rewritten with the trace; a multi-turn step's `turns` are
+   written in a transaction that first refreshes the run's lease, which
+   takes its row lock; and a step's cached dispatch result is written after
+   taking the run's row lock. Each leaves out anyone erased since the run
+   started. Erasure takes the run's row lock before it redacts any of them,
+   so the two are ordered as above, and the pass after the commit reaches the
+   rest. **Not reached:** what an executor holds in memory for its next model
+   call — a multi-turn step's message history — is not redacted; only what is
+   written is. A tick that read a schedule before the erasure and creates
    its run after it is a writer like any other (t-839, see "Writers that read
    before an erasure" below).
 
@@ -867,7 +886,8 @@ erased. Step one was knowing every writer. That list is
 
 - **`SCRUBBED_COLUMNS`** is every column erasure rewrites in place, by model.
   A column added to erasure goes here in the same change, with its writers.
-  `AiWorkflowExecution.supervisorReport` joins it with t-882.
+  t-882 added `AiWorkflowExecution.supervisorReport` and a run's three side
+  tables (`turns`, dispatch `result`, lease-event `metadata`).
 - **`STALE_WRITERS`** is every file that writes one, with its anchor:
 
 | Anchor     | How the writer knows its copy is stale                                                                                          |
@@ -1060,9 +1080,11 @@ written since, terminal ones included.
   writes `supervisorReport` under the lock with anyone erased since its read
   of the run taken out (`findErasedSinceCopy`), and returns what it stored. It
   follows erasure's rule: an id wherever it appears, an address only where it
-  is a whole value, never inside the report's prose. Erasure does not redact
-  `supervisorReport` itself until t-882, so until then a review written while
-  an erasure is still open, before its receipt commits, keeps the person.
+  is a whole value, never inside the report's prose. Erasure redacts
+  `supervisorReport` itself under the same lock (t-882), so a review written
+  while an erasure is still open either waits for it and finds its receipt,
+  or is read and redacted by it. The verdict a review archives is read under
+  the lock too (t-925), and it refuses (409) a run retried since its read.
 - **The scheduler's crash hook** carries the same redacted message as the row.
 
 `npm run smoke:erasure-run-actions` races each of approve, reject and

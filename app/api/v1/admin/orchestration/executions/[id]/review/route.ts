@@ -315,9 +315,9 @@ export const POST = withAdminAuth<{ id: string }>(
     // can take long enough for an erasure to land, and the report quotes the
     // run it read. By erasure's rule: an id wherever it appears, an address
     // only where it is a whole value, never inside the report's prose. The
-    // lock orders this against an erasure once erasure redacts the report
-    // itself (t-882); until then a review written while an erasure is still
-    // open, before its receipt commits, keeps the person.
+    // lock orders this against an erasure, which redacts the report itself
+    // under the same lock (t-882): a review written while an erasure is still
+    // open waits for it and finds its receipt, or erasure reads what it wrote.
     // Confined as the read above was, so the owner layer sees a write it can
     // check: the row it returns is one this caller may read.
     const report = await withRunRowLocked(id, async (tx) => {

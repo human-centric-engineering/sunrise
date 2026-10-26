@@ -70,15 +70,20 @@ export interface ScrubbedModel {
  * `run-recipients.ts`, `config-recipients.ts`, `delivery-payloads.ts` and
  * `erase-user.ts`. A column added to erasure is added here in the same change,
  * with its writers.
- *
- * `AiWorkflowExecution.supervisorReport` is not here because erasure does not
- * redact it yet (t-882, §80); t-882 adds it, and its writers, here.
  */
 export const SCRUBBED_COLUMNS: readonly ScrubbedModel[] = [
   {
     model: 'AiWorkflowExecution',
     table: 'ai_workflow_execution',
-    columns: ['inputData', 'executionTrace', 'outputData', 'errorMessage'],
+    columns: ['inputData', 'executionTrace', 'outputData', 'errorMessage', 'supervisorReport'],
+  },
+  // A run's rows in other tables (t-882).
+  { model: 'AiWorkflowRunningStep', table: 'ai_workflow_running_step', columns: ['turns'] },
+  { model: 'AiWorkflowStepDispatch', table: 'ai_workflow_step_dispatch', columns: ['result'] },
+  {
+    model: 'AiWorkflowExecutionLeaseEvent',
+    table: 'ai_workflow_execution_lease_event',
+    columns: ['metadata'],
   },
   {
     model: 'AiWebhookDelivery',
@@ -200,9 +205,35 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     model: 'AiWorkflowExecution',
     anchor: 'taken-at',
     how:
-      "A run's trace, output and error are written from memory with the people erased since the " +
-      'run started taken out (`findErasedSinceRunStarted`, t-843). A new run is created from the ' +
-      "caller's input, which it holds now.",
+      "A run's trace, output, error and supervisor report are written from memory with the people " +
+      'erased since the run started taken out (`findErasedSinceRunStarted`, t-843, t-882). A new ' +
+      "run is created from the caller's input, which it holds now.",
+  },
+  {
+    file: 'lib/orchestration/engine/orchestration-engine.ts',
+    model: 'AiWorkflowRunningStep',
+    anchor: 'taken-at',
+    how:
+      "A multi-turn step's turns are written from the executor's memory under the run's row lock, " +
+      'with the people erased since the run started taken out (t-882). Other writes of the row ' +
+      '(its current step, completion) carry no turns.',
+  },
+  {
+    file: 'lib/orchestration/engine/dispatch-cache.ts',
+    model: 'AiWorkflowStepDispatch',
+    anchor: 'taken-at',
+    how:
+      "A step's result is cached under the run's row lock with the people erased since the run " +
+      'started taken out (t-882).',
+  },
+  {
+    file: `${RUN_ROUTES}/review/route.ts`,
+    model: 'AiWorkflowExecution',
+    anchor: 'taken-at',
+    how:
+      'Writes `supervisorReport` under the run’s row lock, built from a read taken before the ' +
+      'model call: anyone erased since that read is taken out (`findErasedSinceCopy`, t-901), and ' +
+      'the verdict it archives is read under the lock (t-925).',
   },
   {
     file: 'lib/privacy/stale-sends.ts',
@@ -272,6 +303,14 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     how:
       'One UPDATE of a fixed message and the reason the admin typed in this request; nothing it read ' +
       'is written back (t-901).',
+  },
+  {
+    file: 'lib/orchestration/engine/lease.ts',
+    model: 'AiWorkflowExecutionLeaseEvent',
+    anchor: 'intent',
+    how:
+      'Inserts lease events. The only person one names is the admin force-failing the run in the ' +
+      'request in hand (`actorUserId`); nothing stored is copied in (t-882).',
   },
   {
     file: 'lib/orchestration/engine/execution-reaper.ts',
@@ -370,6 +409,24 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     model: 'AiWorkflowExecution',
     anchor: 'erasure',
     how: "Redacts the person from other people's runs, each under its row lock.",
+  },
+  {
+    file: 'lib/privacy/run-recipients.ts',
+    model: 'AiWorkflowRunningStep',
+    anchor: 'erasure',
+    how: "Redacts the person from a run's step turns, under the run's row lock (t-882).",
+  },
+  {
+    file: 'lib/privacy/run-recipients.ts',
+    model: 'AiWorkflowStepDispatch',
+    anchor: 'erasure',
+    how: "Redacts the person from a run's cached step results, under the run's row lock (t-882).",
+  },
+  {
+    file: 'lib/privacy/run-recipients.ts',
+    model: 'AiWorkflowExecutionLeaseEvent',
+    anchor: 'erasure',
+    how: "Redacts the person from a run's lease events, under the run's row lock (t-882).",
   },
   {
     file: 'lib/privacy/run-recipients.ts',

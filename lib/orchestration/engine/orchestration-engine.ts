@@ -2201,6 +2201,11 @@ export class OrchestrationEngine {
    * lease guarantees only one host writes per execution, so overwrite is
    * correct.
    *
+   * The refresh and the `turns` write share one transaction (t-882): the
+   * refresh takes the run's row lock, as erasure does before it redacts the
+   * run's turns, and anyone erased since the run started is then left out of
+   * the turns written — the executor holds them in memory from before.
+   *
    * Log-level branch on the clear-write case (`turns.length === 0`): the
    * empty-array write is fired by `executeSingleStep`'s `onAttemptStart`
    * callback between retry attempts. If THAT write fails AND the host
@@ -2221,18 +2226,24 @@ export class OrchestrationEngine {
     const { executionId, token } = lease;
     const isClearWrite = turns.length === 0;
     try {
-      const refreshed = await prisma.aiWorkflowExecution.updateMany({
-        where: { id: executionId, leaseToken: token },
-        data: {
-          leaseExpiresAt: leaseExpiry(),
-          lastHeartbeatAt: new Date(),
-        },
-      });
-      if (refreshed.count === 0) return;
-      await prisma.aiWorkflowRunningStep.updateMany({
-        where: { executionId, stepId },
-        data: { turns: turns as unknown as Prisma.InputJsonValue },
-      });
+      await prisma.$transaction(async (tx) => {
+        const refreshed = await tx.aiWorkflowExecution.updateMany({
+          where: { id: executionId, leaseToken: token },
+          data: {
+            leaseExpiresAt: leaseExpiry(),
+            lastHeartbeatAt: new Date(),
+          },
+        });
+        if (refreshed.count === 0) return;
+        const erased = isClearWrite
+          ? null
+          : await findErasedSinceRunStarted(tx, executionId, [turns]);
+        const written = erased ? redactErased(toJson(turns), erased) : turns;
+        await tx.aiWorkflowRunningStep.updateMany({
+          where: { executionId, stepId },
+          data: { turns: written as unknown as Prisma.InputJsonValue },
+        });
+      }, RUN_ROW_WRITE_OPTIONS);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (isClearWrite) {
@@ -2270,7 +2281,11 @@ export class OrchestrationEngine {
             ...contextPatchData,
           },
         });
-        if (written.count > 0) await leaveOutErasedSinceStart(tx, executionId, ctx, trace, null);
+        if (written.count > 0) {
+          await leaveOutErasedSinceStart(tx, executionId, ctx, trace, null, {
+            patch: contextPatchData,
+          });
+        }
         return written;
       }, RUN_ROW_WRITE_OPTIONS);
       if (result.count === 0) {
@@ -2498,15 +2513,11 @@ export class OrchestrationEngine {
           },
         });
         if (written.count > 0) {
-          const left = await leaveOutErasedSinceStart(
-            tx,
-            executionId,
-            ctx,
-            trace,
-            errorMessage,
+          const left = await leaveOutErasedSinceStart(tx, executionId, ctx, trace, errorMessage, {
             outputData,
-            [finalOutput]
-          );
+            alsoSent: [finalOutput],
+            patch: contextPatchData,
+          });
           erased = left?.erased ?? null;
         }
         return written;
@@ -2698,19 +2709,32 @@ async function leaveOutErasedSinceStart(
   ctx: ExecutionContext,
   trace: ExecutionTraceEntry[],
   errorMessage: string | null,
-  outputData?: () => object,
-  /**
-   * Values the caller sends on after the write and redacts itself from the
-   * result — the completion event's output, which holds the last step's
-   * output as it was before any redaction.
-   */
-  alsoSent: unknown[] = []
+  {
+    outputData,
+    alsoSent = [],
+    patch = {},
+  }: {
+    outputData?: () => object;
+    /**
+     * Values the caller sends on after the write and redacts itself from the
+     * result — the completion event's output, which holds the last step's
+     * output as it was before any redaction.
+     */
+    alsoSent?: unknown[];
+    /**
+     * The context patch the write carried. Its supervisor report quotes step
+     * outputs, so it is checked and rewritten with the rest (t-882).
+     */
+    patch?: Record<string, unknown>;
+  } = {}
 ): Promise<{ erased: ErasedSubjects } | null> {
+  const report = patch.supervisorReport;
   const erased = await findErasedSinceRunStarted(tx, executionId, [
     ctx.inputData,
     ctx.stepOutputs,
     trace,
     errorMessage,
+    report,
     ...alsoSent,
   ]);
   if (!erased) return null;
@@ -2732,6 +2756,9 @@ async function leaveOutErasedSinceStart(
       inputData: ctx.inputData as Prisma.InputJsonValue,
       ...(typeof error === 'string' ? { errorMessage: error } : {}),
       ...(outputData ? { outputData: outputData() } : {}),
+      ...(isRecord(report)
+        ? { supervisorReport: redactErased(toJson(report), erased) ?? Prisma.DbNull }
+        : {}),
     },
   });
   // Never the address or the id: they are what was erased.
