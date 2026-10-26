@@ -5,12 +5,22 @@
  * the log verbatim unless the path is collapsed first. These pin what the
  * heuristic collapses and — as importantly — what it leaves readable.
  *
+ * FORK NOTE: the `declared credential paths` block reads the real
+ * `lib/app/credential-paths.ts`. It checks every pattern your fork lists there
+ * and is expected to pass once you fill it; a failure names the malformed
+ * entry and why, because a malformed entry is skipped at runtime (its segment
+ * would be logged verbatim). Fix the entry, don't delete the test.
+ *
  * @see lib/logging/redact-path.ts
+ * @see tests/unit/lib/logging/redact-path.credential-paths.test.ts
  */
 
 import { describe, it, expect } from 'vitest';
+import { appCredentialPaths } from '@/lib/app/credential-paths';
 import {
+  CREDENTIAL_PATHS,
   collapseDynamicSegments,
+  credentialPathProblem,
   loggablePath,
   loggableUrl,
   loggableUrlsInText,
@@ -19,6 +29,18 @@ import {
   scrubUrlsInError,
   scrubUrlsInText,
 } from '@/lib/logging/redact-path';
+
+describe('declared credential paths', () => {
+  it.each([...CREDENTIAL_PATHS, ...appCredentialPaths])('%s is a usable declaration', (pattern) => {
+    expect(credentialPathProblem(pattern)).toBeNull();
+  });
+
+  it("collapses better-auth's reset token by declaration, below the 20-character floor", () => {
+    expect(collapseDynamicSegments('/api/auth/reset-password/Ab3dEf6h')).toBe(
+      '/api/auth/reset-password/[param]'
+    );
+  });
+});
 
 describe('collapseDynamicSegments', () => {
   it.each([

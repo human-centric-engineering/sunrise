@@ -50,6 +50,7 @@ import { initAppGuardFloorContributors } from '@/lib/app/guard-floor-contributor
 import { initAppGuardEventContributors } from '@/lib/app/guard-event-contributors';
 import { appAgentFields } from '@/lib/app/agent-fields';
 import { appProtectedRoutes } from '@/lib/app/protected-routes';
+import { appCredentialPaths } from '@/lib/app/credential-paths';
 import { appEnvSchema } from '@/lib/app/env';
 import { footerCopyright } from '@/lib/app/footer';
 import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
@@ -341,6 +342,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     seam: 'lib/app/protected-routes.ts',
     risk: 'a stray path would put a public route behind auth on every install',
     assert: () => expect(appProtectedRoutes).toEqual([]),
+  },
+  {
+    seam: 'lib/app/credential-paths.ts',
+    risk: 'a stray pattern would blank a route word out of every install’s logs and analytics',
+    assert: () => expect(appCredentialPaths).toEqual([]),
   },
   {
     seam: 'lib/app/env.ts',
