@@ -51,9 +51,11 @@ describe('021-platform-agents', () => {
     );
     expect(sharedFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the shared client must not be used at all
     expect(mockReconcile.mock.calls).toEqual([
-      ['install', { db: ctx.prisma, log: logger }],
-      ['org_b', { db: ctx.prisma, log: logger }],
+      ['install', { db: ctx.prisma, log: logger, catalogue: expect.any(Object) }],
+      ['org_b', { db: ctx.prisma, log: logger, catalogue: expect.any(Object) }],
     ]);
+    // One provider and model catalogue for every org (t-816).
+    expect(mockReconcile.mock.calls[1][1].catalogue).toBe(mockReconcile.mock.calls[0][1].catalogue);
   });
 
   it('reports an org whose own agent held a platform slug', async () => {

@@ -249,10 +249,13 @@ release process.
   model rows, each read once on first use. The `platformAgents` maintenance
   job shares one catalogue across every org it visits in a run, so a pass over
   N orgs reads those tables once, not N times. A drifted org's reconcile also
-  reuses the pick its drift check made, so the pick runs once instead of
-  twice. A one-argument `defaultBinding` still type-checks and works.
+  reuses the picks its drift check got, rather than asking for them again. A
+  one-argument `defaultBinding` still type-checks and works.
   **Forks:** if you implement one, read rows from `catalogue`, and use the
   seams' "could not ask" forms (see Added).
+
+### Fixed
+
 - **The clean-up agent stays put while a fork resolver is down (t-819).**
   Since t-798, a fork's eligibility or credential resolver that threw during
   a maintenance pass moved the clean-up agent to inherit and wrote a version
@@ -261,9 +264,12 @@ release process.
   happens when the eligibility resolver fails, or when the credential
   resolver fails for a provider whose model would have won. A credential
   failure for any other provider can't change the pick, so the pick goes
-  ahead.
-
-### Fixed
+  ahead. The pick also asks the eligibility rule before the credential
+  resolver now, so the resolver is only asked about providers the org may
+  use. **Forks:** a credential resolver that throws for a provider it doesn't
+  serve keeps the clean-up agent off that provider for as long as it would
+  have won, with a warning every pass saying so. Answer with no key for such
+  a provider instead.
 
 - **A run's supervisor verdict history is kept (t-925, t-951).** Two
   overlapping retroactive reviews of one run both stay in

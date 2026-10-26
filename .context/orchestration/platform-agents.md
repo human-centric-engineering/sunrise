@@ -214,7 +214,8 @@ the org's own scope itself, and it has five callers:
    provider and model rows are read once per run, not once per org: the job
    hands every org of a run one `PlatformAgentCatalogue` (t-816), since both
    tables are global. A drifted org's reconcile reuses the picks its drift
-   check made, so it asks once per pass.
+   check got rather than asking for them again; one the check could not get
+   is asked again.
 
 The digest covers every definition, the baseline, and the patterns
 document's slug (`PATTERNS_DOCUMENT_SLUG` in

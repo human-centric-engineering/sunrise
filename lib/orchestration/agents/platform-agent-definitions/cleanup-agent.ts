@@ -120,21 +120,35 @@ export async function pickCleanupBinding(
   catalogue: PlatformAgentCatalogue
 ): Promise<PlatformAgentBinding | null> {
   const providers = await catalogue.activeProviders(db);
-  // Through the credential seam (§120 t-744): by default the row's env var, as
-  // this read directly before; a fork's resolver otherwise. A row the resolver
-  // failed for is kept aside rather than dropped (see above).
-  const credentials = await classifyProvidersByCredential(providers);
-  const unavailable = new Map(credentials.unavailable.map((u) => [u.config.slug, u.error]));
-  const reachable = new Set(credentials.reachable.map((p) => p.slug));
-  // Core's org policy first, then a fork's rule (see above). Asked of every
-  // row not known to have no key, in the catalogue's order.
-  const candidates = new Set(
+  if (providers.length === 0) return null;
+  // Core's org policy first, then a fork's rule (see above). Asked before the
+  // credential seam so a fork's resolver, which may call out to a vault, is
+  // only asked about providers the org may use at all.
+  const eligible = new Set(
     await resolveEligibleProviders(
-      providers.map((p) => p.slug).filter((slug) => reachable.has(slug) || unavailable.has(slug)),
+      providers.map((p) => p.slug),
       { task: 'chat', source: 'explicit', primarySlug: null },
       { onFailure: 'throw' }
     )
   );
+  // Through the credential seam (§120 t-744): by default the row's env var, as
+  // this read directly before; a fork's resolver otherwise. It is handed a copy
+  // of the fields it is typed for, not the catalogue's shared, frozen row. A
+  // row the resolver failed for is kept aside rather than dropped (see above).
+  const credentials = await classifyProvidersByCredential(
+    providers
+      .filter((p) => eligible.has(p.slug))
+      .map(({ id, slug, name, providerType, isLocal, apiKeyEnvVar }) => ({
+        id,
+        slug,
+        name,
+        providerType,
+        isLocal,
+        apiKeyEnvVar,
+      }))
+  );
+  const unavailable = new Map(credentials.unavailable.map((u) => [u.config.slug, u.error]));
+  const candidates = new Set([...credentials.reachable.map((p) => p.slug), ...unavailable.keys()]);
   if (candidates.size === 0) return null;
 
   const models = (await catalogue.activeModels(db)).filter(
@@ -161,7 +175,8 @@ export async function pickCleanupBinding(
   // Whether this provider has a key is the one thing that would decide.
   if (unavailable.has(best.providerSlug)) {
     throw new ProviderSeamUnavailableError(
-      `The credential resolver failed for provider "${best.providerSlug}", which would otherwise be picked`,
+      `The credential resolver failed for provider "${best.providerSlug}", which would otherwise be picked. ` +
+        'If the resolver does not serve this provider, have it answer with no key rather than throw.',
       { cause: unavailable.get(best.providerSlug) }
     );
   }

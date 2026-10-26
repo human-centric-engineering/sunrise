@@ -409,6 +409,33 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     });
   });
 
+  it('asks the credential resolver only about providers the org may use', async () => {
+    // The resolver may call out to a vault; the eligibility rule is asked first.
+    registerProviderEligibility((candidates) => candidates.filter((slug) => slug !== 'openai'));
+    const asked: string[] = [];
+    registerProviderCredentialResolver((config) => {
+      asked.push(config.slug);
+      return { apiKey: 'k', identity: '' };
+    });
+    const { client } = reachableBoth();
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
+    expect(asked).toEqual(['anthropic']);
+  });
+
+  it('pins nothing, and asks no rule, when no provider is active', async () => {
+    const rule = vi.fn((candidates: readonly string[]) => candidates);
+    registerProviderEligibility(rule);
+    const { client, modelFindMany } = db([], []);
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toBeNull();
+    expect(rule).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to ask about
+    expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to ask about
+  });
+
   it('still pins nothing when the resolvers answer, but answer "none" (t-819)', async () => {
     // The other side of the two tests above: a real "no" is still null.
     registerProviderCredentialResolver(() => ({ apiKey: undefined, identity: '' }));

@@ -179,10 +179,11 @@ async function askPick(
 }
 
 /**
- * What to log for a pick that threw: its message, and its cause's. A seam
- * that throws on a caller's behalf (`ProviderSeamUnavailableError`) logs
- * nothing itself, so the cause — the resolver's own error — is the only place
- * the reason survives.
+ * What to log for a pick that threw: its message, and its cause's. The
+ * eligibility seam's throw mode logs nothing itself, so there the cause — the
+ * resolver's own error — is the only place the reason survives. The
+ * credential seam logs its resolver's error where it happens, and the cause
+ * here is its `credential_unavailable` error.
  */
 function pickFailure(error: unknown): { error: string; cause?: string } {
   const message = error instanceof Error ? error.message : String(error);

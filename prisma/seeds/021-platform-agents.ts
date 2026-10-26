@@ -1,5 +1,6 @@
 import type { SeedUnit } from '@/prisma/runner';
 import { reconcilePlatformAgents } from '@/lib/orchestration/agents/reconcile-platform-agents';
+import { createPlatformAgentCatalogue } from '@/lib/orchestration/agents/platform-agents';
 import { listActiveOrgIds } from '@/lib/tenancy/context';
 
 /**
@@ -47,13 +48,16 @@ const unit: SeedUnit = {
   ],
   async run({ prisma, logger }) {
     logger.info('🤖 Reconciling platform agents in every org...');
+    // One provider and model catalogue for every org, as the maintenance job
+    // shares one per run: the tables are global (t-816).
+    const catalogue = createPlatformAgentCatalogue();
     for (const orgId of await listActiveOrgIds(prisma)) {
       // One org's failure does not stop the rest, nor fail the deploy: its
       // marker is left unwritten, so the platformAgents maintenance job
       // reconciles it again — the same answer `createOrg` gives.
       let result: Awaited<ReturnType<typeof reconcilePlatformAgents>>;
       try {
-        result = await reconcilePlatformAgents(orgId, { db: prisma, log: logger });
+        result = await reconcilePlatformAgents(orgId, { db: prisma, log: logger, catalogue });
       } catch (err) {
         logger.error(`  ✗ ${orgId}: platform agents not reconciled; the maintenance job retries`, {
           orgId,
