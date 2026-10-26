@@ -101,6 +101,13 @@ export interface AgentVersionHistoryTabProps {
    * absent for an org's own agent, where a restore brings back everything.
    */
   platformTunableFields?: readonly string[] | null;
+  /**
+   * The platform picks this agent's provider and model and currently owns
+   * them (`bindingOwner: 'platform'`), so a restore leaves them as they are
+   * (t-821). The dialog then leaves them out of what it says a restore brings
+   * back, and says why.
+   */
+  bindingFollowsPlatform?: boolean;
 }
 
 function formatDate(iso: string): string {
@@ -175,8 +182,13 @@ export function AgentVersionHistoryTab({
   agentId,
   onRestored,
   platformTunableFields,
+  bindingFollowsPlatform = false,
 }: AgentVersionHistoryTabProps) {
   const isPlatformAgent = platformTunableFields != null;
+  // What a restore brings back on a platform agent (t-821).
+  const restoredFields = (platformTunableFields ?? []).filter(
+    (f) => !bindingFollowsPlatform || (f !== 'provider' && f !== 'model')
+  );
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -459,10 +471,14 @@ export function AgentVersionHistoryTab({
                 <>
                   This is a platform agent, so a restore brings back only this org&apos;s settings
                   from version {restoreTarget?.version}: its{' '}
-                  {describeTunableFields(platformTunableFields, { includeProviderConfig: true })}.
-                  Its instructions, knowledge and the other settings the platform owns are left as
-                  they are. A new version entry will be created to record this action. Conversations
-                  and cost history are not affected.
+                  {describeTunableFields(restoredFields, { includeProviderConfig: true })}. Its
+                  instructions, knowledge and the other settings the platform owns are left as they
+                  are
+                  {bindingFollowsPlatform
+                    ? ', and so are its provider and model: the platform picks those for this org, and keeps them on the strongest model it can reach'
+                    : ''}
+                  . A new version entry will be created to record this action. Conversations and
+                  cost history are not affected.
                 </>
               ) : (
                 <>

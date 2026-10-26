@@ -54,6 +54,7 @@ import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instr
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
 import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
+import { PlatformBindingOwner } from '@/components/admin/orchestration/platform-binding-owner';
 import { describeTunableFields } from '@/components/admin/orchestration/platform-agent-fields';
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
@@ -213,6 +214,8 @@ export type AgentWithGrants = AiAgent & {
     lockedFields: string[];
     tunableFields: string[];
     bindingsLocked: boolean;
+    /** The platform picks this agent's provider and model while it owns them (t-818). */
+    picksOwnBinding?: boolean;
   } | null;
   /**
    * Providers the agent names that its org is no longer approved for (§120
@@ -394,6 +397,7 @@ export function AgentForm({
     setValue,
     watch,
     reset,
+    getValues,
     formState: { errors, isDirty },
   } = useForm<AgentFormData>({
     resolver: zodResolver(isEdit ? agentFormSchema : createFormSchema),
@@ -1087,6 +1091,35 @@ export function AgentForm({
 
         {/* ================= TAB 2 — MODEL ================= */}
         <TabsContent value="model" className="space-y-4 pt-4">
+          {isEdit && agent && platformAgent?.picksOwnBinding && (
+            <PlatformBindingOwner
+              agentId={agent.id}
+              bindingOwner={agent.bindingOwner}
+              hasUnsavedChanges={isDirty || authored.provider || authored.model}
+              onHandedBack={async () => {
+                // The PATCH reconciled the org before responding, so the row
+                // already holds the platform's pick. Nothing else was unsaved
+                // (the control is disabled otherwise), so the form keeps its
+                // values and takes the row's provider and model, seeded as at
+                // mount: the row's own values, never the preview.
+                try {
+                  const fresh = await apiClient.get<AgentWithGrants>(
+                    API.ADMIN.ORCHESTRATION.agentById(agent.id)
+                  );
+                  reset({ ...getValues(), provider: fresh.provider, model: fresh.model });
+                  setAuthored({ provider: false, model: false });
+                } catch {
+                  // The hand-back itself succeeded; only the reload failed, so
+                  // it is not reported as a failed hand-back. The refresh
+                  // below still shows the new owner.
+                } finally {
+                  // Re-render the server page, so the owner shown here and
+                  // the restore dialog follow the hand-back.
+                  router.refresh();
+                }
+              }}
+            />
+          )}
           {(providerFallback || modelFallback) && (
             <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
               We couldn&apos;t load the{' '}
@@ -2242,6 +2275,9 @@ export function AgentForm({
             <AgentVersionHistoryTab
               agentId={agent.id}
               platformTunableFields={platformAgent?.tunableFields ?? null}
+              bindingFollowsPlatform={
+                platformAgent?.picksOwnBinding === true && agent.bindingOwner === 'platform'
+              }
               onRestored={() => {
                 // Re-pull the fresh agent into the form after a version restore.
                 void (async () => {
