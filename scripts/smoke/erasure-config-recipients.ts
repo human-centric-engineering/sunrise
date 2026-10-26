@@ -278,6 +278,10 @@ async function main(): Promise<void> {
         metadata: { actorUserId: subject.id, previousStatus: 'running' },
       },
     });
+    // Older than any pass reads without narrowing (they re-read runs written in
+    // the last RUN_CLOCK_SKEW_MS), so only the text narrowing can find it.
+    await prisma.$executeRaw`UPDATE ai_workflow_execution
+      SET "updatedAt" = now() - interval '1 hour' WHERE id = ${sideOnlyRun.id}`;
     const ownRun = await prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
