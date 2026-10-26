@@ -1097,7 +1097,9 @@ export function AgentForm({
             <PlatformBindingOwner
               agentId={agent.id}
               bindingOwner={agent.bindingOwner}
-              hasUnsavedChanges={isDirty || authored.provider || authored.model}
+              // A save in flight counts: it re-seeds the form when it lands,
+              // which would put back the binding the hand-back replaced.
+              hasUnsavedChanges={isDirty || authored.provider || authored.model || submitting}
               onHandedBack={(handedBack) => {
                 // The PATCH returns the row after its reconcile. Nothing else
                 // was unsaved (the control is disabled otherwise), so the form

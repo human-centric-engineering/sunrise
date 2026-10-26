@@ -394,6 +394,24 @@ describe('AgentForm — platform agent', () => {
       expect(apiClient.get).not.toHaveBeenCalledWith(expect.stringMatching(/agents\/agent-1$/)); // test-review:accept no_arg_called — the PATCH's row replaces the reload
     });
 
+    it('withholds the hand-back while a save is in flight', async () => {
+      // The save re-seeds the form when it lands, which would put back the
+      // binding a hand-back made in the meantime.
+      const { apiClient } = await import('@/lib/api/client');
+      let finishSave: (value: unknown) => void = () => undefined;
+      vi.mocked(apiClient.patch).mockImplementation(
+        () => new Promise((resolve) => (finishSave = resolve))
+      );
+      const user = await openModelTab(cleanupAgent('org'));
+      const button = screen.getByRole('button', { name: /let the platform choose/i });
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(button).toBeDisabled());
+      finishSave({});
+      await waitFor(() => expect(button).toBeEnabled());
+    });
+
     it('withholds the hand-back while provider or model has an unsaved edit', async () => {
       const user = await openModelTab(cleanupAgent('org'));
       const button = screen.getByRole('button', { name: /let the platform choose/i });

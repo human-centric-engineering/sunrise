@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getClientIP } from '@/lib/security/ip';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
@@ -38,7 +38,10 @@ import {
   nextAgentVersionNumber,
 } from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
-import { bindingOwnerAfterWrite } from '@/lib/orchestration/agents/binding-owner';
+import {
+  PLATFORM_BINDING_FIELDS,
+  bindingOwnerAfterWrite,
+} from '@/lib/orchestration/agents/binding-owner';
 import {
   bindingFollowsPlatform,
   picksOwnBinding,
@@ -134,11 +137,7 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // `providerConfig` stays too: it is the configuration of whichever
     // provider is primary, and the old one's would land on the platform's.
     const followsPlatform = bindingFollowsPlatform(agent);
-    if (followsPlatform) {
-      skip.add('provider');
-      skip.add('model');
-      skip.add('providerConfig');
-    }
+    if (followsPlatform) for (const field of PLATFORM_BINDING_FIELDS) skip.add(field);
     // The old fallbacks were chosen beside the old primary. Kept, but not the
     // platform's current primary, which would then fall back to itself.
     const restoredFallbacks = followsPlatform
@@ -284,8 +283,27 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // platform-owned fields, left at their current values. The pre-restore state is already the
     // agent's newest version (newest-row-equals-live), so it needs no separate
     // snapshot.
+    //
+    // On an agent whose binding the platform picks, the write is conditional on
+    // the owner and binding read above: what to restore was decided from them,
+    // and a reconcile or a hand-back can change them in between. A restore
+    // that went ahead would then undo a hand-back, or leave a fallback equal
+    // to a primary that has since moved. It is refused instead, for the admin
+    // to retry against the current agent.
+    const where = picksOwnBinding(agent)
+      ? { id, bindingOwner: agent.bindingOwner, provider: agent.provider, model: agent.model }
+      : { id };
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {
-      const txUpdated = await tx.aiAgent.update({ where: { id }, data: updateData });
+      const txUpdated = await tx.aiAgent
+        .update({ where, data: updateData })
+        .catch((err: unknown) => {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+            throw new ConflictError(
+              "The agent's provider and model changed while it was being restored. Reload the agent and try again."
+            );
+          }
+          throw err;
+        });
 
       // Replace grants only when the snapshot carried them.
       if (snapshotTagIds !== undefined) {

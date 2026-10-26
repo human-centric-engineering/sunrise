@@ -326,7 +326,8 @@ release process.
   org's. If that pick's provider had since been revoked, the whole restore was
   refused. Once the org owns the binding, a restore brings all of them back as
   before. The Versions tab's confirm dialog says which fields come back in
-  each case.
+  each case. On such an agent a restore that races a reconcile or a hand-back
+  now returns 409 rather than undoing it.
 
 ### Fixed
 

@@ -601,6 +601,44 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
       expect(data).toMatchObject({ provider: 'openai', model: 'gpt-5', bindingOwner: 'org' });
     });
 
+    it('refuses with 409, writing nothing, when the binding changed after it was read', async () => {
+      // A reconcile or a hand-back moved the agent between the read and the
+      // write: the conditional update matches no row.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ ...cleanup('org'), provider: 'anthropic', model: 'claude' }) as never
+      );
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(makeVersion());
+      const txAgentUpdate = vi.fn().mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        })
+      );
+      const versionCreate = vi.fn();
+      vi.mocked(prisma.$transaction).mockImplementation(async (callback) =>
+        callback({
+          aiAgent: { update: txAgentUpdate },
+          aiAgentVersion: { findFirst: vi.fn(), create: versionCreate },
+        } as never)
+      );
+
+      const response = await POST(
+        makeRequest(AGENT_ID, VERSION_ID),
+        makeParams(AGENT_ID, VERSION_ID)
+      );
+
+      expect(response.status).toBe(409);
+      // Conditional on the owner and binding the restore was decided from.
+      expect(txAgentUpdate.mock.calls[0][0].where).toEqual({
+        id: AGENT_ID,
+        bindingOwner: 'org',
+        provider: 'anthropic',
+        model: 'claude',
+      });
+      expect(versionCreate).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a refused restore records no version
+    });
+
     it('gives any other agent no owner, whatever the restore brings back', async () => {
       const { data } = await restoreWith(
         { provider: 'openai', model: 'gpt-5' },

@@ -24,6 +24,14 @@ export const BINDING_OWNERS = ['platform', 'org'] as const;
 export type BindingOwner = (typeof BINDING_OWNERS)[number];
 
 /**
+ * What a version restore leaves as it is while the platform owns a platform
+ * agent's binding (t-821): the binding, and the configuration of whichever
+ * provider is primary. The restore route skips these, and the Versions tab's
+ * confirm dialog leaves them out of what it says comes back.
+ */
+export const PLATFORM_BINDING_FIELDS = ['provider', 'model', 'providerConfig'] as const;
+
+/**
  * What a write leaves `bindingOwner` as: `'org'` when it changes provider or
  * model, `undefined` (no change) otherwise. Compared by value, so a client
  * echoing the agent back takes nothing over. Every route that writes either

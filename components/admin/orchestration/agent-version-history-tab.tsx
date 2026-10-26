@@ -37,6 +37,7 @@
  * "After" for row i and "Before" for row i-1 (its newer neighbour).
  */
 
+import { PLATFORM_BINDING_FIELDS } from '@/lib/orchestration/agents/binding-owner';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Clock, Loader2, RotateCcw } from 'lucide-react';
 
@@ -110,8 +111,8 @@ export interface AgentVersionHistoryTabProps {
   bindingFollowsPlatform?: boolean;
 }
 
-/** What a restore leaves alone while the platform owns the binding (t-821). */
-const LEFT_WITH_THE_PLATFORM = new Set(['provider', 'model', 'providerConfig']);
+/** What a restore leaves alone while the platform owns the binding: the route's own list (t-821). */
+const LEFT_WITH_THE_PLATFORM = new Set<string>(PLATFORM_BINDING_FIELDS);
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
