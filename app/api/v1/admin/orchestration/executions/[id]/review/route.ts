@@ -66,7 +66,7 @@ import {
   withPriorArchived,
 } from '@/lib/orchestration/supervisor/verdict-history';
 import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
-import { findErasedSinceCopy, redactErased } from '@/lib/privacy/run-recipients';
+import { findErasedSinceCopy, redactErased, toStoredJson } from '@/lib/privacy/run-recipients';
 
 const TERMINAL_STATUSES = new Set<string>([
   WorkflowStatus.COMPLETED,
@@ -109,11 +109,6 @@ function stepOutputsFromTrace(trace: ExecutionTraceEntry[]): Record<string, unkn
     }
   }
   return out;
-}
-
-/** The report as the JSON it is stored as, for erasure's redaction to walk. */
-function toReportJson(report: SupervisorReport): Prisma.JsonValue {
-  return z.json().parse(JSON.parse(JSON.stringify(report)));
 }
 
 /**
@@ -345,7 +340,7 @@ export const POST = withAdminAuth<{ id: string }>(
       }
       const finalReport = withPriorArchived(assessment.report, prior, id);
       const erased = await findErasedSinceCopy(tx, takenAt, [finalReport]);
-      const stored = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
+      const stored = erased ? redactErased(toStoredJson(finalReport), erased) : finalReport;
       await tx.aiWorkflowExecution.update({
         where: { id, AND: [executionVisibilityWhere(session)] },
         data: {

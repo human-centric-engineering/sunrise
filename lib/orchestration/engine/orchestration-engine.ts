@@ -43,12 +43,16 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { z } from 'zod';
 import { createLogger, type Logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { prisma } from '@/lib/db/client';
 import { approvalRecipients } from '@/lib/privacy/config-recipients';
-import { findErasedSinceRunStarted, redactErased } from '@/lib/privacy/run-recipients';
+import {
+  findErasedSinceRunStarted,
+  redactErased,
+  redactTurns,
+  toStoredJson as toJson,
+} from '@/lib/privacy/run-recipients';
 import { isRecord } from '@/lib/utils';
 import {
   boundLockWaits,
@@ -2238,7 +2242,9 @@ export class OrchestrationEngine {
         const erased = isClearWrite
           ? null
           : await findErasedSinceRunStarted(tx, executionId, [turns]);
-        const written = erased ? redactErased(toJson(turns), erased) : turns;
+        const written = erased
+          ? redactTurns(toJson(turns), (value) => redactErased(value, erased))
+          : turns;
         await tx.aiWorkflowRunningStep.updateMany({
           where: { executionId, stepId },
           data: { turns: written as unknown as Prisma.InputJsonValue },
@@ -2768,16 +2774,4 @@ async function leaveOutErasedSinceStart(
     userIds: erased.userIds.length,
   });
   return { erased };
-}
-
-const jsonValueSchema = z.json();
-
-/**
- * `value` as the JSON it is persisted as: the trace and the payload are
- * written to a JSON column, so this is the value erasure later reads.
- */
-function toJson(value: unknown): Prisma.JsonValue {
-  if (value === undefined) return null;
-  const parsed: unknown = JSON.parse(JSON.stringify(value));
-  return jsonValueSchema.parse(parsed);
 }

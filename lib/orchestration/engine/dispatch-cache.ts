@@ -28,12 +28,15 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { z } from 'zod';
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { lockRunRow, RUN_ROW_WRITE_OPTIONS } from '@/lib/orchestration/engine/run-row-lock';
-import { findErasedSinceRunStarted, redactErased } from '@/lib/privacy/run-recipients';
+import {
+  findErasedSinceRunStarted,
+  redactErased,
+  toStoredJson,
+} from '@/lib/privacy/run-recipients';
 
 /**
  * The deterministic shape that maps to one dispatch-cache row's primary axis.
@@ -123,7 +126,9 @@ export async function recordDispatch({
           stepId,
           ...(turnIndex !== undefined ? { turnIndex } : {}),
           idempotencyKey,
-          result: (erased ? redactErased(toJson(result), erased) : result) as Prisma.InputJsonValue,
+          result: (erased
+            ? redactErased(toStoredJson(result), erased)
+            : result) as Prisma.InputJsonValue,
         },
       });
     }, RUN_ROW_WRITE_OPTIONS);
@@ -139,10 +144,4 @@ export async function recordDispatch({
     }
     throw err;
   }
-}
-
-/** `value` as the JSON column stores it, for erasure's redaction to walk. */
-function toJson(value: unknown): Prisma.JsonValue {
-  if (value === undefined) return null;
-  return z.json().parse(JSON.parse(JSON.stringify(value)));
 }
