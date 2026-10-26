@@ -45,6 +45,7 @@ import {
   acceptsVerbosity,
   deriveParamProfile,
   openAiReasoningEffort,
+  reasoningModelAcceptsParallelToolCalls,
   supportedReasoningEfforts,
 } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -765,7 +766,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       // The o-series refuses it outright; GPT-5 takes it.
       if (
         options.parallelToolCalls !== undefined &&
-        (!isReasoning || acceptsVerbosity(options.model))
+        (!isReasoning || reasoningModelAcceptsParallelToolCalls(options.model))
       ) {
         params.parallel_tool_calls = options.parallelToolCalls;
       }

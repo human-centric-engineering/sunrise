@@ -700,13 +700,27 @@ describe('deriveMatrixSlug', () => {
 });
 
 describe('acceptsFlexTier', () => {
-  it.each(['gpt-5', 'gpt-5-mini', 'openai/gpt-5.4', 'o3', 'o3-2025-04-16', 'o4-mini'])(
-    'offers flex on %s',
-    (id) => expect(acceptsFlexTier(id)).toBe(true)
-  );
+  it.each([
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-nano',
+    'openai/gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5-2025-08-07',
+    'o3',
+    'o3-2025-04-16',
+    'o4-mini',
+  ])('offers flex on %s', (id) => expect(acceptsFlexTier(id)).toBe(true));
 
-  it.each(['gpt-4o', 'gpt-4.1-mini', 'o3-mini', 'o3-pro', 'o1', 'my-gpt-5'])(
-    'does not on %s',
-    (id) => expect(acceptsFlexTier(id)).toBe(false)
-  );
+  it.each([
+    'gpt-4o',
+    'gpt-4.1-mini',
+    'o3-mini',
+    'o3-pro',
+    'o1',
+    'my-gpt-5',
+    'gpt-5-chat-latest',
+    'gpt-5-pro',
+    'gpt-5-codex',
+  ])('does not on %s', (id) => expect(acceptsFlexTier(id)).toBe(false));
 });

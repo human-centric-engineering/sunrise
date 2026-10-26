@@ -164,6 +164,8 @@ async function runSingleTurn(
   // Names already refused this turn, so the hook fires once per distinct name
   // rather than once per iteration — see the emission site for why.
   const refusedToolNames = new Set<string>();
+  // The agent's stop sequences, top P and the rest — the same every turn.
+  const modelParams = modelParamOptions(agent!);
 
   for (let iteration = startIteration; iteration < maxIterations; iteration++) {
     const turnOutcome = await withSpan(
@@ -192,7 +194,7 @@ async function runSingleTurn(
             ...(effectiveReasoningEffort !== undefined
               ? { reasoningEffort: effectiveReasoningEffort }
               : {}),
-            ...modelParamOptions(agent!),
+            ...modelParams,
             ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
             signal: ctx.signal,
           });
@@ -232,7 +234,7 @@ async function runSingleTurn(
           requestParams.reasoningEffort = effectiveReasoningEffort;
         }
         if (toolDefinitions.length > 0) requestParams.toolCount = toolDefinitions.length;
-        Object.assign(requestParams, modelParamOptions(agent!));
+        Object.assign(requestParams, modelParams);
         ctx.stepTelemetry?.push({
           model: model,
           provider: usedSlug,

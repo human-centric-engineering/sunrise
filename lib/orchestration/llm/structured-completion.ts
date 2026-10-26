@@ -424,8 +424,6 @@ function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
     if (usage.cacheWriteTokens) {
       total.cacheWriteTokens = (total.cacheWriteTokens ?? 0) + usage.cacheWriteTokens;
     }
-    // Both attempts go to the same model on the same tier.
-    if (usage.serviceTier) total.serviceTier = usage.serviceTier;
   }
   return total;
 }
@@ -436,14 +434,24 @@ function billing(
   attempts: Array<LlmUsage | null>
 ): Pick<StructuredCompletionResult<unknown>, 'tokenUsage' | 'costUsd'> {
   const usage = sumUsage(attempts);
+  // Each attempt is priced at the tier that served it: under `auto` one can
+  // be served at priority and the next at standard.
+  const billed = attempts.filter((attempt): attempt is LlmUsage => attempt !== null);
+  const tiers = new Set(billed.map((attempt) => attempt.serviceTier));
+  const onlyTier = tiers.size === 1 ? [...tiers][0] : undefined;
   return {
     tokenUsage: {
       input: usage.inputTokens,
       output: usage.outputTokens,
       ...(usage.cacheReadTokens ? { cacheRead: usage.cacheReadTokens } : {}),
       ...(usage.cacheWriteTokens ? { cacheWrite: usage.cacheWriteTokens } : {}),
-      ...(usage.serviceTier ? { serviceTier: usage.serviceTier } : {}),
+      // A cost row has one tier, so name it only when every attempt agreed.
+      ...(onlyTier ? { serviceTier: onlyTier } : {}),
     },
-    costUsd: calculateCost(model, usage.inputTokens, usage.outputTokens, usage).totalCostUsd,
+    costUsd: billed.reduce(
+      (sum, attempt) =>
+        sum + calculateCost(model, attempt.inputTokens, attempt.outputTokens, attempt).totalCostUsd,
+      0
+    ),
   };
 }

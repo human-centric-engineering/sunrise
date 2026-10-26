@@ -1230,3 +1230,24 @@ describe('ExecutionTraceEntryRow', () => {
     });
   });
 });
+
+describe('ExecutionTraceEntryRow — model parameters on the request line (t-911, t-913)', () => {
+  it('names the further model parameters a step asked for', () => {
+    render(
+      <ExecutionTraceEntryRow
+        {...BASE_PROPS}
+        requestParams={{
+          stopSequences: ['END', '###'],
+          topP: 0.9,
+          verbosity: 'low',
+          parallelToolCalls: false,
+          serviceTier: 'flex',
+        }}
+      />
+    );
+
+    expect(screen.getByTestId('trace-entry-request-params-step-1')).toHaveTextContent(
+      'Request — stop: 2 · topP: 0.9 · verbosity: low · parallel tools: off · tier: flex'
+    );
+  });
+});

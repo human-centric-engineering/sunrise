@@ -690,17 +690,18 @@ describe('runStructuredCompletion', () => {
 });
 
 describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', () => {
-  it('adds both attempts’ cache counts and keeps the served tier, and prices with them', async () => {
+  it('adds both attempts’ cache counts and prices each attempt at its own tier', async () => {
     const { calculateCost } = await import('@/lib/orchestration/llm/cost-tracker');
+    const first = {
+      inputTokens: 100,
+      outputTokens: 5,
+      cacheReadTokens: 60,
+      serviceTier: 'priority' as const,
+    };
+    const retry = { inputTokens: 100, outputTokens: 5, cacheReadTokens: 90, cacheWriteTokens: 10 };
     const provider = makeProvider([
-      {
-        content: 'not json',
-        usage: { inputTokens: 100, outputTokens: 5, cacheReadTokens: 60, serviceTier: 'priority' },
-      },
-      {
-        content: '{"ok":true}',
-        usage: { inputTokens: 100, outputTokens: 5, cacheReadTokens: 90, cacheWriteTokens: 10 },
-      },
+      { content: 'not json', usage: first },
+      { content: '{"ok":true}', usage: retry },
     ] as never);
 
     const result = await runStructuredCompletion<DummyShape>({
@@ -711,19 +712,24 @@ describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', ()
       retryUserMessage: 'try again',
     });
 
-    expect(result.tokenUsage).toEqual({
-      input: 200,
-      output: 10,
-      cacheRead: 150,
-      cacheWrite: 10,
-      serviceTier: 'priority',
+    // The attempts disagreed on tier, so the summary names none.
+    expect(result.tokenUsage).toEqual({ input: 200, output: 10, cacheRead: 150, cacheWrite: 10 });
+    expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, first);
+    expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, retry);
+    // The mocked calculateCost returns 0.003 per call.
+    expect(result.costUsd).toBeCloseTo(0.006);
+  });
+
+  it('names the tier when every attempt was served at it', async () => {
+    const usage = { inputTokens: 10, outputTokens: 5, serviceTier: 'flex' as const };
+    const result = await runStructuredCompletion<DummyShape>({
+      provider: makeProvider([{ content: '{"ok":true}', usage }] as never),
+      model: 'gpt-5',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
     });
-    expect(vi.mocked(calculateCost)).toHaveBeenLastCalledWith('gpt-5', 200, 10, {
-      inputTokens: 200,
-      outputTokens: 10,
-      cacheReadTokens: 150,
-      cacheWriteTokens: 10,
-      serviceTier: 'priority',
-    });
+
+    expect(result.tokenUsage.serviceTier).toBe('flex');
   });
 });

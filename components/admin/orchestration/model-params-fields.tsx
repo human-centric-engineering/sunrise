@@ -130,8 +130,8 @@ export function ModelParamsFields({
         />
         {extraStops > 0 && (
           <p className="text-destructive text-xs">
-            Only the first {MAX_STOP_SEQUENCES} are used. Remove {extraStops} to keep the one you
-            need.
+            Only the first {MAX_STOP_SEQUENCES} lines are used. The last {extraStops} will be
+            ignored.
           </p>
         )}
       </div>
@@ -162,13 +162,14 @@ export function ModelParamsFields({
           placeholder="Model default"
           disabled={isLocked('topP')}
           onChange={(e) =>
-            onChange({
-              // Kept inside 0–1 as typed: a step config is not validated until
-              // the step runs, where 1.5 would fail it.
-              topP: e.target.value === '' ? null : Math.min(1, Math.max(0, Number(e.target.value))),
-            })
+            onChange({ topP: e.target.value === '' ? null : Number(e.target.value) })
           }
         />
+        {/* Said here as well as by the agent form's validation: a step config
+            is only validated when the step runs. */}
+        {value.topP !== null && (value.topP < 0 || value.topP > 1) && (
+          <p className="text-destructive text-xs">Top P must be between 0 and 1.</p>
+        )}
       </div>
 
       <div className="grid gap-2">

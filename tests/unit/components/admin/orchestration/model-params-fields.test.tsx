@@ -115,18 +115,21 @@ describe('ModelParamsFields', () => {
       'a{Enter}b{Enter}c{Enter}d{Enter}e'
     );
 
-    expect(screen.getByText(/only the first 4 are used/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/only the first 4 lines are used\. the last 1 will be ignored/i)
+    ).toBeInTheDocument();
     expect(onChange).toHaveBeenLastCalledWith({ stopSequences: ['a', 'b', 'c', 'd'] });
   });
 
-  it('keeps top P inside 0–1 as it is typed', async () => {
+  it('says when top P is outside 0–1, rather than changing what was typed', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
 
     await user.type(screen.getByRole('spinbutton', { name: /top p/i }), '5');
 
-    expect(onChange).toHaveBeenLastCalledWith({ topP: 1 });
+    expect(onChange).toHaveBeenLastCalledWith({ topP: 5 });
+    expect(screen.getByText('Top P must be between 0 and 1.')).toBeInTheDocument();
   });
 
   it('shows a locked field read-only', () => {

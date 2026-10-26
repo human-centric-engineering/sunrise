@@ -649,13 +649,27 @@ export function acceptsVerbosity(modelId: string): boolean {
 
 /**
  * Does OpenAI offer the `flex` service tier on this model? Its list is the
- * GPT-5 family, o3 and o4-mini; a flex request to any other model is a 400,
- * so an allow-list, and a model it doesn't recognise is sent no tier.
+ * GPT-5 models themselves (base, mini, nano, numbered releases), o3 and
+ * o4-mini; a flex request to any other model — gpt-4o, o3-mini, or a GPT-5
+ * variant such as `-chat-latest`, `-pro` or `-codex` — is a 400. So an
+ * allow-list, and a model it doesn't recognise is sent no tier.
  */
 export function acceptsFlexTier(modelId: string): boolean {
   const id = bareOpenAiId(modelId);
-  // o3 and o4-mini themselves and their dated snapshots — not o3-mini / o3-pro.
-  return /^gpt-5(?:$|[-.])/.test(id) || /^(?:o3|o4-mini)(?:$|-\d{4}-\d{2}-\d{2}$)/.test(id);
+  const dated = '(?:-\\d{4}-\\d{2}-\\d{2})?$';
+  return (
+    new RegExp(`^gpt-5(?:\\.\\d+)?(?:-mini|-nano)?${dated}`).test(id) ||
+    new RegExp(`^(?:o3|o4-mini)${dated}`).test(id)
+  );
+}
+
+/**
+ * Does this OpenAI reasoning model take `parallel_tool_calls`? The GPT-5
+ * family does; the o-series refuses it with a 400. Non-reasoning chat models
+ * always take it and don't ask this.
+ */
+export function reasoningModelAcceptsParallelToolCalls(modelId: string): boolean {
+  return /^gpt-5(?:$|[-.])/.test(bareOpenAiId(modelId));
 }
 
 /** An OpenAI model id without an `openai/` or `azure/` prefix, lower-cased. */
