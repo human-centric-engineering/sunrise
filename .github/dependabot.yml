@@ -78,6 +78,31 @@ updates:
       # supports the native compiler package.
       - dependency-name: 'typescript'
         versions: ['>=7']
+      # undici has to sit at the major Node's own `fetch` runs on: the
+      # SSRF-safe dispatcher (lib/security/safe-dispatcher.ts) hands an undici
+      # `Agent` to the global `fetch`, and Node 24's bundled undici rejects an
+      # undici-8 Agent (`invalid onRequestStart method`), which
+      # tests/unit/lib/security/safe-dispatcher.test.ts catches. Raise this
+      # WITH the Node bump that brings undici 8.
+      - dependency-name: 'undici'
+        versions: ['>=8']
+      # @anthropic-ai/sdk 1.x moves to API version 2026-10-21 and drops
+      # temperature/top_p/top_k from MessageCreateParams. That is a provider
+      # migration (lib/orchestration/llm/anthropic.ts), not a bump. Remove when
+      # that migration is planned.
+      - dependency-name: '@anthropic-ai/sdk'
+        versions: ['>=1']
+      # OpenTelemetry JS 3.x restructures the SDK family (sdk-trace-base is
+      # removed in favour of sdk-trace), and every 2.x SDK package caps its
+      # @opentelemetry/api peer at <1.10.0. That one deduped API copy is what
+      # Sentry, Next and better-auth instrument through, so the SDK and the API
+      # move together, as one migration. Remove all three entries then.
+      - dependency-name: '@opentelemetry/context-async-hooks'
+        versions: ['>=3']
+      - dependency-name: '@opentelemetry/sdk-trace-base'
+        versions: ['>=3']
+      - dependency-name: '@opentelemetry/api'
+        versions: ['>=1.10']
 
   # GitHub Actions pinned in .github/workflows/**
   - package-ecosystem: 'github-actions'
