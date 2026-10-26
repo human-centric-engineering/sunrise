@@ -119,6 +119,19 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     const skip = agent.isSystem
       ? new Set<string>(platformAgentFieldNames('code'))
       : new Set<string>();
+    // While the platform owns a platform agent's provider and model, they move
+    // on their own (t-798), so almost every older version holds a different
+    // pair. Restoring one would freeze the agent on an old pick and make the
+    // binding the org's, and a pick on a provider since revoked would refuse
+    // the whole restore. So a restore leaves them as they are (owner ruling
+    // 2026-10-26, t-821); an admin who wants the old pair sets it on the form,
+    // which makes the binding the org's. Once the org owns it, a restore
+    // brings them back as before.
+    const bindingFollowsPlatform = picksOwnBinding(agent) && agent.bindingOwner === 'platform';
+    if (bindingFollowsPlatform) {
+      skip.add('provider');
+      skip.add('model');
+    }
 
     const updateData: Record<string, unknown> = {};
 
@@ -171,7 +184,7 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // On a platform agent that picks its own binding, bringing back a
     // different provider or model is an admin's choice like any PATCH
     // (t-798): the binding becomes the org's, and the platform stops moving it.
-    if (picksOwnBinding(agent)) {
+    if (picksOwnBinding(agent) && !bindingFollowsPlatform) {
       const bindingOwner = bindingOwnerAfterWrite(agent, {
         provider: snapshot.provider,
         model: snapshot.model,
@@ -183,9 +196,13 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // that the agent does not hold now must be one the org is approved for
     // (§120 t-743). A version saved before the org's grant changed would
     // otherwise restore the agent straight into refusal.
-    // An inherit snapshot names no provider, so it has none to approve.
+    // An inherit snapshot names no provider, so it has none to approve, and
+    // nor does one whose provider this restore leaves alone.
     await assertAgentProvidersApproved(
-      { provider: snapshot.provider || undefined, fallbackProviders: snapshot.fallbackProviders },
+      {
+        provider: bindingFollowsPlatform ? undefined : snapshot.provider || undefined,
+        fallbackProviders: snapshot.fallbackProviders,
+      },
       agent
     );
 

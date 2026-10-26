@@ -175,6 +175,12 @@ export interface PlatformAgentEditPolicy {
   tunableFields: string[];
   /** Whether the capability-binding routes refuse changes. */
   bindingsLocked: boolean;
+  /**
+   * Whether the platform picks this agent's provider and model while it owns
+   * them (`AiAgent.bindingOwner`, t-798) — the agents the form offers to hand
+   * the binding back to the platform (t-818).
+   */
+  picksOwnBinding: boolean;
 }
 
 export function platformAgentEditPolicy(agent: {
@@ -186,6 +192,7 @@ export function platformAgentEditPolicy(agent: {
     lockedFields: platformAgentFieldNames('code'),
     tunableFields: platformAgentFieldNames('org'),
     bindingsLocked: platformBindingsLocked(agent),
+    picksOwnBinding: picksOwnBinding(agent),
   };
 }
 

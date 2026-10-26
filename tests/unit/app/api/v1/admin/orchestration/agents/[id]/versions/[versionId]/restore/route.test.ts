@@ -51,6 +51,13 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+// The real approval check, observable: a test can make it refuse a provider.
+vi.mock('@/lib/orchestration/agents/provider-approval', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/provider-approval')>();
+  return { ...actual, assertAgentProvidersApproved: vi.fn(actual.assertAgentProvidersApproved) };
+});
+
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
   computeChanges: vi.fn(),
@@ -64,6 +71,7 @@ import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgen
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { POST } from '@/app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route';
 import { updateAgentObjectSchema } from '@/lib/validations/orchestration';
+import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -481,12 +489,16 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     });
   });
 
-  it('makes the binding the org’s when the restore brings back another provider or model (t-798)', async () => {
+  describe('a platform agent that picks its own provider and model (t-798, t-821)', () => {
     // The clean-up agent picks its own binding; an org's own agent does not.
-    const cleanup = { isSystem: true, slug: 'cleanup-agent', bindingOwner: 'platform' };
+    const cleanup = (bindingOwner: string | null) => ({
+      isSystem: true,
+      slug: 'cleanup-agent',
+      bindingOwner,
+    });
     const restoreWith = async (
       snapshot: Record<string, unknown>,
-      agent: Record<string, unknown> = cleanup
+      agent: Record<string, unknown>
     ) => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent(agent) as never);
@@ -503,20 +515,70 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
           },
         } as never)
       );
-      await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
-      return txAgentUpdate.mock.calls[0][0].data as Record<string, unknown>;
+      const response = await POST(
+        makeRequest(AGENT_ID, VERSION_ID),
+        makeParams(AGENT_ID, VERSION_ID)
+      );
+      return {
+        status: response.status,
+        data: txAgentUpdate.mock.calls[0]?.[0].data as Record<string, unknown> | undefined,
+      };
     };
 
-    expect((await restoreWith({ provider: 'openai', model: 'gpt-5' })).bindingOwner).toBe('org');
-    // The same binding as now: the platform keeps it.
-    expect(await restoreWith({})).not.toHaveProperty('bindingOwner');
-    // Any other agent keeps no owner, whatever the restore brings back.
-    expect(
-      await restoreWith(
+    it('leaves provider and model, and the owner, as they are while the platform owns them', async () => {
+      // An older pick, as almost every version of this agent holds.
+      const { status, data } = await restoreWith(
+        { provider: 'openai', model: 'gpt-5', monthlyBudgetUsd: 40 },
+        cleanup('platform')
+      );
+
+      expect(status).toBe(200);
+      expect(data).toMatchObject({ monthlyBudgetUsd: 40 });
+      expect(data).not.toHaveProperty('provider');
+      expect(data).not.toHaveProperty('model');
+      expect(data).not.toHaveProperty('bindingOwner');
+    });
+
+    it('restores the org’s settings even when that older pick’s provider has since been revoked', async () => {
+      // The provider it leaves alone is not one the restore brings back, so it
+      // is not one it asks approval for.
+      vi.mocked(assertAgentProvidersApproved).mockImplementationOnce(async (next) => {
+        if (next.provider === 'revoked') throw new Error('not approved: revoked');
+      });
+
+      const { status, data } = await restoreWith(
+        { provider: 'revoked', model: 'old-model', monthlyBudgetUsd: 40 },
+        cleanup('platform')
+      );
+
+      expect(status).toBe(200);
+      expect(data).toMatchObject({ monthlyBudgetUsd: 40 });
+      expect(vi.mocked(assertAgentProvidersApproved).mock.calls[0][0]).toMatchObject({
+        provider: undefined,
+      });
+    });
+
+    it('brings provider and model back once the org owns them, keeping the owner the org’s', async () => {
+      const { data } = await restoreWith({ provider: 'openai', model: 'gpt-5' }, cleanup('org'));
+
+      expect(data).toMatchObject({ provider: 'openai', model: 'gpt-5', bindingOwner: 'org' });
+    });
+
+    it('treats one nobody has classified yet as before: another pair makes it the org’s', async () => {
+      const { data } = await restoreWith({ provider: 'openai', model: 'gpt-5' }, cleanup(null));
+
+      expect(data).toMatchObject({ provider: 'openai', model: 'gpt-5', bindingOwner: 'org' });
+    });
+
+    it('gives any other agent no owner, whatever the restore brings back', async () => {
+      const { data } = await restoreWith(
         { provider: 'openai', model: 'gpt-5' },
         { isSystem: false, slug: 'mine', bindingOwner: null }
-      )
-    ).not.toHaveProperty('bindingOwner');
+      );
+
+      expect(data).toMatchObject({ provider: 'openai', model: 'gpt-5' });
+      expect(data).not.toHaveProperty('bindingOwner');
+    });
   });
 
   it('coerces null JSON columns to Prisma.JsonNull and restores knowledgeAccessMode', async () => {

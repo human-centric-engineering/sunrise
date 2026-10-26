@@ -199,6 +199,16 @@ describe('platformAgentEditPolicy', () => {
       lockedFields: platformAgentFieldNames('code'),
       tunableFields: platformAgentFieldNames('org'),
       bindingsLocked: false,
+      picksOwnBinding: false,
+    });
+  });
+
+  it('says whether the platform picks the agent’s provider and model (t-818)', () => {
+    expect(platformAgentEditPolicy({ isSystem: true, slug: 'cleanup-agent' })).toMatchObject({
+      picksOwnBinding: true,
+    });
+    expect(platformAgentEditPolicy({ isSystem: true, slug: 'pattern-advisor' })).toMatchObject({
+      picksOwnBinding: false,
     });
   });
 
