@@ -432,6 +432,8 @@ export class AnthropicProvider implements LlmProvider {
       throw toProviderErrorWithUsage(err, 'Anthropic stream iteration failed', {
         inputTokens,
         outputTokens,
+        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
       });
     }
 
@@ -457,7 +459,16 @@ export class AnthropicProvider implements LlmProvider {
           retriable: false,
           // Only when the stream actually reported usage — a zeroed cost row
           // would tell the dashboard this turn was free.
-          ...(inputTokens > 0 || outputTokens > 0 ? { usage: { inputTokens, outputTokens } } : {}),
+          ...(inputTokens > 0 || outputTokens > 0
+            ? {
+                usage: {
+                  inputTokens,
+                  outputTokens,
+                  ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+                  ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+                },
+              }
+            : {}),
         }
       );
     }
@@ -741,7 +752,12 @@ export class AnthropicProvider implements LlmProvider {
  *    prompt, the last tool definition takes the mark instead. This is the
  *    read point every conversation with the same agent shares.
  * 2. The last block of the last message, so the next request of a tool
- *    loop or conversation reads the whole history back.
+ *    loop or conversation reads the whole history back — only when the
+ *    request has earlier turns. A single-message request (an `llm_call`
+ *    step, a summary, an enrichment) is rarely sent again within the cache
+ *    lifetime, and marking it would pay the 1.25× write on every call for
+ *    reads that never come. A conversation's first turn still reads the
+ *    system mark; its second turn starts the tail.
  *
  * A prefix shorter than the model's minimum (512–4096 tokens) is simply
  * not cached and costs nothing extra, so no length check is needed. Moving
@@ -758,8 +774,8 @@ function addCacheBreakpoints(params: Omit<MessageCreateParamsNonStreaming, 'stre
     if ('input_schema' in last) last.cache_control = ephemeral;
   }
 
+  if (params.messages.length < 2) return;
   const lastMessage = params.messages[params.messages.length - 1];
-  if (!lastMessage) return;
   if (typeof lastMessage.content === 'string') {
     if (!lastMessage.content) return;
     lastMessage.content = [{ type: 'text', text: lastMessage.content }];

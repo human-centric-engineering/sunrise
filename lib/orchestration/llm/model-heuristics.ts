@@ -644,5 +644,21 @@ export function anthropicAdaptiveEffort(
  * named `my-gpt-5` does not.
  */
 export function acceptsVerbosity(modelId: string): boolean {
-  return /^gpt-5(?:$|[-.])/.test(modelId.toLowerCase().replace(/^(openai|azure)\//, ''));
+  return /^gpt-5(?:$|[-.])/.test(bareOpenAiId(modelId));
+}
+
+/**
+ * Does OpenAI offer the `flex` service tier on this model? Its list is the
+ * GPT-5 family, o3 and o4-mini; a flex request to any other model is a 400,
+ * so an allow-list, and a model it doesn't recognise is sent no tier.
+ */
+export function acceptsFlexTier(modelId: string): boolean {
+  const id = bareOpenAiId(modelId);
+  // o3 and o4-mini themselves and their dated snapshots — not o3-mini / o3-pro.
+  return /^gpt-5(?:$|[-.])/.test(id) || /^(?:o3|o4-mini)(?:$|-\d{4}-\d{2}-\d{2}$)/.test(id);
+}
+
+/** An OpenAI model id without an `openai/` or `azure/` prefix, lower-cased. */
+function bareOpenAiId(modelId: string): string {
+  return modelId.toLowerCase().replace(/^(openai|azure)\//, '');
 }

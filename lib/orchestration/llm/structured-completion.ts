@@ -174,7 +174,13 @@ export interface StructuredCompletionResult<T> {
    * `cacheRead` / `cacheWrite` are the parts of it billed at prompt-cache
    * rates, present when the provider reported any.
    */
-  tokenUsage: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  tokenUsage: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    serviceTier?: LlmUsage['serviceTier'];
+  };
   costUsd: number;
   /**
    * Finish reason of the attempt that produced `value` (the retry's, when
@@ -418,6 +424,8 @@ function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
     if (usage.cacheWriteTokens) {
       total.cacheWriteTokens = (total.cacheWriteTokens ?? 0) + usage.cacheWriteTokens;
     }
+    // Both attempts go to the same model on the same tier.
+    if (usage.serviceTier) total.serviceTier = usage.serviceTier;
   }
   return total;
 }
@@ -434,6 +442,7 @@ function billing(
       output: usage.outputTokens,
       ...(usage.cacheReadTokens ? { cacheRead: usage.cacheReadTokens } : {}),
       ...(usage.cacheWriteTokens ? { cacheWrite: usage.cacheWriteTokens } : {}),
+      ...(usage.serviceTier ? { serviceTier: usage.serviceTier } : {}),
     },
     costUsd: calculateCost(model, usage.inputTokens, usage.outputTokens, usage).totalCostUsd,
   };

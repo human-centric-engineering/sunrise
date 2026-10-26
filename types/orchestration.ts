@@ -28,6 +28,8 @@ import type {
   LlmFinishReason,
   LlmReasoningBlock,
   ReasoningEffort,
+  ServiceTier,
+  Verbosity,
 } from '@/lib/orchestration/llm/types';
 
 // ============================================================================
@@ -663,6 +665,16 @@ export interface LlmRequestParamsSnapshot {
    * model that ignores it) is visible in the trace.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * The further model parameters the caller set (`modelParamOptions`), in
+   * the same spirit: a provider drops one its model can't take, and this
+   * keeps what was asked for.
+   */
+  stopSequences?: string[];
+  topP?: number;
+  verbosity?: Verbosity;
+  parallelToolCalls?: boolean;
+  serviceTier?: ServiceTier;
 }
 
 /**

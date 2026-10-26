@@ -50,6 +50,12 @@ describe('modelParamOptions', () => {
     expect(modelParamOptions({ verbosity: 'verbose', serviceTier: 'turbo' })).toEqual({});
   });
 
+  it('drops whitespace-only stop sequences, which Anthropic refuses', () => {
+    expect(modelParamOptions({ stopSequences: ['  ', '\t', 'END'] })).toEqual({
+      stopSequences: ['END'],
+    });
+  });
+
   it('drops empty stop sequences and keeps at most four', () => {
     expect(modelParamOptions({ stopSequences: ['a', '', 'b', 'c', 'd', 'e'] })).toEqual({
       stopSequences: ['a', 'b', 'c', 'd'],

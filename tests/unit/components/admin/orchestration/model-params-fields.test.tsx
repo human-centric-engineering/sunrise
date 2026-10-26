@@ -91,6 +91,44 @@ describe('ModelParamsFields', () => {
     expect(onChange).toHaveBeenLastCalledWith({ serviceTier: null });
   });
 
+  it('shows a stored list the parser would change once, without looping', () => {
+    // A blank entry from raw SQL or a fork's bundle used to reset the box on
+    // every render ("Too many re-renders").
+    render(
+      <ModelParamsFields
+        idPrefix="t"
+        value={{ ...EMPTY, stopSequences: ['a', '', 'b'] }}
+        onChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('textbox', { name: /stop sequences/i })).toHaveValue('a\n\nb');
+  });
+
+  it('says when more than four sequences are typed, and sends the first four', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+
+    await user.type(
+      screen.getByRole('textbox', { name: /stop sequences/i }),
+      'a{Enter}b{Enter}c{Enter}d{Enter}e'
+    );
+
+    expect(screen.getByText(/only the first 4 are used/i)).toBeInTheDocument();
+    expect(onChange).toHaveBeenLastCalledWith({ stopSequences: ['a', 'b', 'c', 'd'] });
+  });
+
+  it('keeps top P inside 0–1 as it is typed', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+
+    await user.type(screen.getByRole('spinbutton', { name: /top p/i }), '5');
+
+    expect(onChange).toHaveBeenLastCalledWith({ topP: 1 });
+  });
+
   it('shows a locked field read-only', () => {
     render(
       <ModelParamsFields

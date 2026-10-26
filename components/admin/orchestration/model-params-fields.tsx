@@ -53,12 +53,14 @@ export interface ModelParamsFieldsProps {
 /** Radix Select forbids an empty value, so "not set" has a sentinel. */
 const UNSET = 'unset';
 
-/** Split the stop-sequence box into its sequences: one per line, blanks dropped. */
+/** The stop-sequence box's lines that are sequences: blank and whitespace-only lines dropped. */
+function stopLines(text: string): string[] {
+  return text.split('\n').filter((line) => line.trim().length > 0);
+}
+
+/** Split the stop-sequence box into its sequences: one per line, at most four. */
 export function parseStopSequences(text: string): string[] {
-  return text
-    .split('\n')
-    .filter((line) => line.length > 0)
-    .slice(0, MAX_STOP_SEQUENCES);
+  return stopLines(text).slice(0, MAX_STOP_SEQUENCES);
 }
 
 const VERBOSITY_LABELS: Record<Verbosity, string> = {
@@ -83,10 +85,18 @@ export function ModelParamsFields({
   // The box keeps what was typed, blank lines included, so pressing Enter
   // to start the next sequence isn't undone; the caller gets the parsed list.
   // When the list changes from outside (a form reset, a version restore) the
-  // box takes the new list instead.
-  const [stopText, setStopText] = useState(value.stopSequences.join('\n'));
+  // box takes the new list instead. "From outside" is judged against the last
+  // list this box saw or sent, not against a re-parse of the text, so a
+  // stored list the parser would change (a blank entry from raw SQL) is shown
+  // once rather than reset on every render.
   const incoming = value.stopSequences.join('\n');
-  if (parseStopSequences(stopText).join('\n') !== incoming) setStopText(incoming);
+  const [stopText, setStopText] = useState(incoming);
+  const [synced, setSynced] = useState(incoming);
+  if (incoming !== synced) {
+    setSynced(incoming);
+    setStopText(incoming);
+  }
+  const extraStops = stopLines(stopText).length - MAX_STOP_SEQUENCES;
 
   return (
     <>
@@ -112,10 +122,18 @@ export function ModelParamsFields({
           placeholder="One per line"
           disabled={isLocked('stopSequences')}
           onChange={(e) => {
+            const parsed = parseStopSequences(e.target.value);
             setStopText(e.target.value);
-            onChange({ stopSequences: parseStopSequences(e.target.value) });
+            setSynced(parsed.join('\n'));
+            onChange({ stopSequences: parsed });
           }}
         />
+        {extraStops > 0 && (
+          <p className="text-destructive text-xs">
+            Only the first {MAX_STOP_SEQUENCES} are used. Remove {extraStops} to keep the one you
+            need.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-2">
@@ -144,7 +162,11 @@ export function ModelParamsFields({
           placeholder="Model default"
           disabled={isLocked('topP')}
           onChange={(e) =>
-            onChange({ topP: e.target.value === '' ? null : Number(e.target.value) })
+            onChange({
+              // Kept inside 0–1 as typed: a step config is not validated until
+              // the step runs, where 1.5 would fail it.
+              topP: e.target.value === '' ? null : Math.min(1, Math.max(0, Number(e.target.value))),
+            })
           }
         />
       </div>

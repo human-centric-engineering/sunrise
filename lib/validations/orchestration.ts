@@ -80,7 +80,13 @@ export const capabilityFunctionDefinitionSchema = z.object({
  */
 export const modelParamFields = {
   stopSequences: z
-    .array(z.string().min(1, 'A stop sequence cannot be empty').max(200))
+    .array(
+      z
+        .string()
+        .max(200)
+        // Anthropic refuses a stop sequence that is only whitespace.
+        .refine((stop) => stop.trim().length > 0, 'A stop sequence needs a visible character')
+    )
     .max(MAX_STOP_SEQUENCES, `At most ${MAX_STOP_SEQUENCES} stop sequences`)
     .optional(),
   topP: z
@@ -3354,6 +3360,11 @@ export const executionTraceEntrySchema = z
         responseFormat: z.enum(['json_object', 'json_schema']).optional(),
         toolCount: z.number().int().nonnegative().optional(),
         reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+        stopSequences: z.array(z.string()).optional(),
+        topP: z.number().optional(),
+        verbosity: z.enum(VERBOSITIES).optional(),
+        parallelToolCalls: z.boolean().optional(),
+        serviceTier: z.enum(SERVICE_TIERS).optional(),
       })
       .optional()
       .catch(() => undefined),

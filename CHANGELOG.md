@@ -34,8 +34,9 @@ release process.
   typed against Prisma needs the five fields, and the platform-agent banner
   now lists the service tier among the org's settings.
 - **Prompt caching on Claude, and cache-priced cost rows (t-909).** Every
-  Anthropic request now carries two `cache_control` breakpoints: the agent's
-  composed system prompt (with the tools ahead of it) and the last turn. No
+  Anthropic request now carries a `cache_control` breakpoint on the agent's
+  composed system prompt (with the tools ahead of it), and one on the last
+  turn when the request has earlier turns. No
   configuration and no top-level automatic caching, which some gateways
   refuse. New `LlmUsage` (`lib/orchestration/llm/types.ts`), now the type of
   `LlmResponse.usage`, the stream's `done` chunk and `ProviderError.usage`,

@@ -190,6 +190,7 @@ export async function completeEvaluationSession(
     outputTokens: analysis.tokenUsage.output,
     cacheReadTokens: analysis.tokenUsage.cacheRead,
     cacheWriteTokens: analysis.tokenUsage.cacheWrite,
+    serviceTier: analysis.tokenUsage.serviceTier,
     operation: CostOperation.EVALUATION,
     metadata: { phase: 'summary' },
   };

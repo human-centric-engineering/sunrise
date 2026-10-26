@@ -49,7 +49,8 @@ export function modelParamOptions(
   const verbosity = narrowVerbosity(stored.verbosity);
   const serviceTier = narrowServiceTier(stored.serviceTier);
   const stopSequences = (stored.stopSequences ?? [])
-    .filter((stop) => stop.length > 0)
+    // Blank or whitespace-only sequences are refused by Anthropic.
+    .filter((stop) => stop.trim().length > 0)
     .slice(0, MAX_STOP_SEQUENCES);
   return {
     ...(stopSequences.length > 0 ? { stopSequences } : {}),

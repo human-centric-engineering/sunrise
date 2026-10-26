@@ -3858,6 +3858,7 @@ describe('agent model parameters (t-911, t-913)', () => {
   it.each([
     ['more than four stop sequences', { stopSequences: ['a', 'b', 'c', 'd', 'e'] }],
     ['an empty stop sequence', { stopSequences: [''] }],
+    ['a whitespace-only stop sequence', { stopSequences: ['   '] }],
     ['a top P above 1', { topP: 1.5 }],
     ['an unknown verbosity', { verbosity: 'verbose' }],
     ['an unknown service tier', { serviceTier: 'scale' }],

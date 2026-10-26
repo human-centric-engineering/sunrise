@@ -2484,6 +2484,26 @@ describe('stop, top_p, verbosity, parallel tool calls, service tier (t-911, t-91
     expect(await sent(model, { verbosity: 'low' })).not.toHaveProperty('verbosity');
   });
 
+  it('drops parallel_tool_calls on the o-series, which refuses it, and keeps it on GPT-5', async () => {
+    expect(await sent('o3-mini', { tools: [tool], parallelToolCalls: false })).not.toHaveProperty(
+      'parallel_tool_calls'
+    );
+    expect(
+      (await sent('gpt-5', { tools: [tool], parallelToolCalls: false })).parallel_tool_calls
+    ).toBe(false);
+  });
+
+  it.each([
+    ['gpt-4o', 'flex', false],
+    ['o3-mini', 'flex', false],
+    ['gpt-5-mini', 'flex', true],
+    ['o3', 'flex', true],
+    ['gpt-4o', 'priority', true],
+  ] as const)('on %s, sends a %s tier: %s', async (model, serviceTier, expected) => {
+    const params = await sent(model, { serviceTier }, 'https://api.openai.com/v1');
+    expect('service_tier' in params).toBe(expected);
+  });
+
   it('sends parallel_tool_calls only alongside tools', async () => {
     expect(
       (await sent('gpt-5', { tools: [tool], parallelToolCalls: false })).parallel_tool_calls

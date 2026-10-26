@@ -3475,12 +3475,12 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
         { model: 'claude-opus-5-5' }
       );
 
-      // Raw params: `sent` would read this one-block turn as a string.
+      // Raw params: one-message requests carry no cache mark, so this is
+      // the merged block exactly as sent.
       expect(createMock.mock.calls[0][0].messages[0].content).toEqual([
         {
           type: 'text',
           text: '(typed by the user: Instruction from the application, not a message from the user)\n\nDo X',
-          cache_control: { type: 'ephemeral' },
         },
       ]);
     });
@@ -3828,5 +3828,66 @@ describe('AnthropicProvider — stop sequences, top_p, parallel tool use (t-911,
 
     expect(createMock.mock.calls[0][0]).not.toHaveProperty('tool_choice');
     expect(createMock.mock.calls[1][0]).not.toHaveProperty('tool_choice');
+  });
+});
+
+describe('AnthropicProvider — prompt caching after review (t-909)', () => {
+  const ok = {
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 10, output_tokens: 3 },
+    model: 'claude-opus-5-5',
+    stop_reason: 'end_turn',
+  };
+
+  it('leaves a one-message request unmarked, so a one-off call pays no cache write', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat(
+      [
+        { role: 'system', content: 'You summarise.' },
+        { role: 'user', content: 'one-off' },
+      ],
+      { model: 'claude-opus-5-5' }
+    );
+
+    const params = createMock.mock.calls[0][0];
+    expect(params.messages[0].content).toBe('one-off');
+    // The shared system prompt keeps its mark.
+    expect(params.system[0].cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('carries the cache split on a stream that fails mid-way', async () => {
+    async function* dying(): AsyncGenerator<object, void, unknown> {
+      yield {
+        type: 'message_start',
+        message: {
+          usage: {
+            input_tokens: 10,
+            output_tokens: 1,
+            cache_read_input_tokens: 5000,
+            cache_creation_input_tokens: 200,
+          },
+        },
+      };
+      throw new Error('socket hang up');
+    }
+    createMock.mockResolvedValue(dying());
+
+    let caught: unknown;
+    try {
+      for await (const _chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+        model: 'claude-opus-5-5',
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { usage?: object }).usage).toEqual({
+      inputTokens: 5210,
+      outputTokens: 0,
+      cacheReadTokens: 5000,
+      cacheWriteTokens: 200,
+    });
   });
 });

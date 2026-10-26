@@ -41,6 +41,7 @@ import { z } from 'zod';
 import { logger } from '@/lib/logging';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
+  acceptsFlexTier,
   acceptsVerbosity,
   deriveParamProfile,
   openAiReasoningEffort,
@@ -312,6 +313,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
                 usage: {
                   inputTokens: completion.usage.prompt_tokens ?? 0,
                   outputTokens: completion.usage.completion_tokens ?? 0,
+                  ...(completion.usage.prompt_tokens_details?.cached_tokens
+                    ? { cacheReadTokens: completion.usage.prompt_tokens_details.cached_tokens }
+                    : {}),
+                  ...pricedTier(completion.service_tier),
                 },
               }
             : {}),
@@ -431,6 +436,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       throw toProviderErrorWithUsage(err, 'OpenAI-compatible stream iteration failed', {
         inputTokens,
         outputTokens,
+        ...(cacheReadTokens ? { cacheReadTokens } : {}),
+        ...pricedTier(servedTier),
       });
     }
 
@@ -465,7 +472,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         {
           code: 'truncated_no_output',
           retriable: false,
-          ...(inputTokens > 0 || outputTokens > 0 ? { usage: { inputTokens, outputTokens } } : {}),
+          ...(inputTokens > 0 || outputTokens > 0
+            ? {
+                usage: {
+                  inputTokens,
+                  outputTokens,
+                  ...(cacheReadTokens ? { cacheReadTokens } : {}),
+                  ...pricedTier(servedTier),
+                },
+              }
+            : {}),
         }
       );
     }
@@ -707,7 +723,13 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     if (options.verbosity !== undefined && acceptsVerbosity(options.model)) {
       params.verbosity = options.verbosity;
     }
-    if (options.serviceTier !== undefined && this.isOpenAiHost) {
+    // Flex exists only on some models and 400s on the rest, so it goes only
+    // to those (`acceptsFlexTier`); the other tiers every model takes.
+    if (
+      options.serviceTier !== undefined &&
+      this.isOpenAiHost &&
+      (options.serviceTier !== 'flex' || acceptsFlexTier(options.model))
+    ) {
       params.service_tier = options.serviceTier;
     }
     // `reasoning_effort` is only honoured by the reasoning family. The
@@ -740,7 +762,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       const choice = mapToolChoice(options.toolChoice);
       if (choice) params.tool_choice = choice;
       // Only with tools: OpenAI 400s on `parallel_tool_calls` without them.
-      if (options.parallelToolCalls !== undefined) {
+      // The o-series refuses it outright; GPT-5 takes it.
+      if (
+        options.parallelToolCalls !== undefined &&
+        (!isReasoning || acceptsVerbosity(options.model))
+      ) {
         params.parallel_tool_calls = options.parallelToolCalls;
       }
     }

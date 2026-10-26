@@ -250,6 +250,7 @@ export async function runLlmCall(
       if (params.temperature !== undefined) requestParams.temperature = params.temperature;
       if (params.responseFormat) requestParams.responseFormat = params.responseFormat.type;
       if (params.reasoningEffort) requestParams.reasoningEffort = params.reasoningEffort;
+      Object.assign(requestParams, params.modelParams);
       ctx.stepTelemetry?.push({
         model: modelId,
         provider: modelInfo.provider,

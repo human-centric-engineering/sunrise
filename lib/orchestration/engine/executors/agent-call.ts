@@ -232,6 +232,7 @@ async function runSingleTurn(
           requestParams.reasoningEffort = effectiveReasoningEffort;
         }
         if (toolDefinitions.length > 0) requestParams.toolCount = toolDefinitions.length;
+        Object.assign(requestParams, modelParamOptions(agent!));
         ctx.stepTelemetry?.push({
           model: model,
           provider: usedSlug,
