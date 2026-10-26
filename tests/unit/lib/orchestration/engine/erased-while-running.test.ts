@@ -43,6 +43,14 @@ const db = vi.hoisted(() => {
     }),
     $executeRaw: vi.fn(),
     aiWorkflowExecution,
+    // A multi-turn step's turns (t-882); the engine's other running-step
+    // writes carry none.
+    aiWorkflowRunningStep: {
+      upsert: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+    },
     dataErasureReceipt: {
       findMany: vi.fn(async () =>
         receipts.map((r) => ({ ...r, metadata: { addressVerified: true } }))
@@ -251,5 +259,109 @@ describe('a run executing while a person it names is erased (t-843)', () => {
     await run();
 
     expect(db.client.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('the rest of what a running workflow writes, erased while it runs (t-882)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // A test above leaves every run write losing its lease.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 });
+    __resetRegistryForTests();
+    db.calls.length = 0;
+    db.receipts.length = 0;
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_test' } as never);
+  });
+
+  afterEach(() => {
+    __resetRegistryForTests();
+  });
+
+  const turnsWritten = (): unknown[] =>
+    vi
+      .mocked(db.client.aiWorkflowRunningStep.updateMany)
+      .mock.calls.map((c) => (c as unknown as [{ data: { turns: unknown } }])[0].data.turns);
+
+  it('leaves them out of the supervisor report a step publishes', async () => {
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') erase();
+      return {
+        output: 'audited',
+        tokensUsed: 0,
+        costUsd: 0,
+        ...(step.id === 'a'
+          ? {
+              contextPatch: {
+                supervisorVerdict: 'concerns',
+                supervisorReport: { summary: `Sent to ${GONE} by ${GONE_ID}`, cites: [GONE, KEPT] },
+              },
+            }
+          : {}),
+      };
+    });
+
+    await run();
+
+    // The population is real: the report was written with the patch.
+    expect(writes().some((w) => 'supervisorReport' in w.data)).toBe(true);
+    expect(rowAfter().supervisorReport).toEqual({
+      // An address is replaced only as a whole value; the id wherever it appears.
+      summary: `Sent to ${GONE} by [erased]`,
+      cites: [KEPT],
+    });
+  });
+
+  it('leaves them out of the turns a multi-turn step records', async () => {
+    registerStepType('llm_call', async (step, ctx) => {
+      if (step.id === 'a') {
+        erase();
+        await ctx.recordTurn?.({
+          kind: 'reflect',
+          iteration: 0,
+          draft: GONE,
+          converged: false,
+          tokensUsed: 0,
+          costUsd: 0,
+        });
+      }
+      return { output: 'done', tokensUsed: 0, costUsd: 0 };
+    });
+
+    await run();
+
+    const recorded = turnsWritten().filter((t) => Array.isArray(t) && t.length > 0);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toEqual([
+      {
+        kind: 'reflect',
+        iteration: 0,
+        draft: '[erased]',
+        converged: false,
+        tokensUsed: 0,
+        costUsd: 0,
+      },
+    ]);
+  });
+
+  it('writes the turns as recorded when nobody was erased', async () => {
+    registerStepType('llm_call', async (step, ctx) => {
+      if (step.id === 'a') {
+        await ctx.recordTurn?.({
+          kind: 'reflect',
+          iteration: 0,
+          draft: GONE,
+          converged: false,
+          tokensUsed: 0,
+          costUsd: 0,
+        });
+      }
+      return { output: 'done', tokensUsed: 0, costUsd: 0 };
+    });
+
+    await run();
+
+    const recorded = turnsWritten().filter((t) => Array.isArray(t) && t.length > 0);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toEqual([expect.objectContaining({ draft: GONE })]);
   });
 });
