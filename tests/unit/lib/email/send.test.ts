@@ -203,6 +203,69 @@ describe('lib/email/send', () => {
       );
     });
 
+    it('should pass headers to Resend and log only their names', async () => {
+      const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isEmailEnabled).mockReturnValue(true);
+      const mockSend = vi.fn().mockResolvedValue({
+        data: { id: 'email-hdr' },
+      });
+      vi.mocked(getResendClient).mockReturnValue({
+        emails: { send: mockSend },
+      } as any);
+
+      const headers = {
+        'List-Unsubscribe': '<https://example.com/unsub?t=secret-token>',
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      };
+
+      await sendEmail({
+        to: 'user@example.com',
+        subject: 'Reminder',
+        react: createMockEmail(),
+        headers,
+      });
+
+      expect(mockSend.mock.calls[0][0].headers).toEqual(headers);
+
+      const sendingLog = vi
+        .mocked(logger.info)
+        .mock.calls.find(([message]) => message === 'Sending email');
+      expect(sendingLog?.[1]).toEqual(
+        expect.objectContaining({
+          headerNames: ['List-Unsubscribe', 'List-Unsubscribe-Post'],
+        })
+      );
+      expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain('secret-token');
+    });
+
+    it('should not send a headers field when none are given', async () => {
+      const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isEmailEnabled).mockReturnValue(true);
+      const mockSend = vi.fn().mockResolvedValue({
+        data: { id: 'email-nohdr' },
+      });
+      vi.mocked(getResendClient).mockReturnValue({
+        emails: { send: mockSend },
+      } as any);
+
+      await sendEmail({
+        to: 'user@example.com',
+        subject: 'Test Email',
+        react: createMockEmail(),
+      });
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockSend.mock.calls[0][0]).not.toHaveProperty('headers');
+      const sendingLog = vi
+        .mocked(logger.info)
+        .mock.calls.find(([message]) => message === 'Sending email');
+      expect(sendingLog?.[1]).not.toHaveProperty('headerNames');
+    });
+
     it('should handle Resend API error response', async () => {
       const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
       const { logger } = await import('@/lib/logging');

@@ -18,6 +18,11 @@ release process.
 
 ### Added
 
+- **`sendEmail` takes message headers (t-935, #854).** New optional
+  `headers` on `SendEmailOptions` (`lib/email/send.ts`) is passed to Resend
+  unchanged, so a fork can send the one-click unsubscribe headers
+  (`List-Unsubscribe`, `List-Unsubscribe-Post`) bulk senders need. Only the
+  header names are logged. No change to sends that omit it.
 - **A fork's org-tier admin routes (§111, t-927).** New scaffold
   `lib/app/admin-tier-routes.ts` (`APP_ORG_TIER_ADMIN_ROUTES`, ships empty)
   lists the fork's admin API routes and wrappers that declare `tier: 'org'`, so

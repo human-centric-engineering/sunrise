@@ -99,13 +99,14 @@ Exports: `sendEmail()`, `SendEmailOptions`, `SendEmailResult`, `EmailStatus`
 
 **SendEmailOptions:**
 
-| Property  | Type                 | Required | Description                                                    |
-| --------- | -------------------- | -------- | -------------------------------------------------------------- |
-| `to`      | `string \| string[]` | Yes      | Recipient email address(es)                                    |
-| `subject` | `string`             | Yes      | Email subject line                                             |
-| `react`   | `React.ReactElement` | Yes      | React Email template component                                 |
-| `from`    | `string`             | No       | Override default sender (uses `getDefaultSender()` if omitted) |
-| `replyTo` | `string`             | No       | Reply-to address (used by contact form)                        |
+| Property  | Type                     | Required | Description                                                                                                                                                 |
+| --------- | ------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `to`      | `string \| string[]`     | Yes      | Recipient email address(es)                                                                                                                                 |
+| `subject` | `string`                 | Yes      | Email subject line                                                                                                                                          |
+| `react`   | `React.ReactElement`     | Yes      | React Email template component                                                                                                                              |
+| `from`    | `string`                 | No       | Override default sender (uses `getDefaultSender()` if omitted)                                                                                              |
+| `replyTo` | `string`                 | No       | Reply-to address (used by contact form)                                                                                                                     |
+| `headers` | `Record<string, string>` | No       | Extra message headers passed to Resend unchanged, e.g. `List-Unsubscribe` / `List-Unsubscribe-Post` for one-click unsubscribe. Only header names are logged |
 
 ### Templates
 
