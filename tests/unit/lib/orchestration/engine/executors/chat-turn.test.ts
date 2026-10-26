@@ -582,6 +582,33 @@ describe('chat_turn — provider config precedence', () => {
     const { opts } = await lastChatCall();
     expect(opts.reasoningEffort).toBe('high');
   });
+
+  it("forwards the agent's model parameters to the provider (t-911, t-913)", async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      messages: [],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+      ...mockAgent,
+      stopSequences: ['END'],
+      topP: 0.8,
+      verbosity: 'low',
+      parallelToolCalls: false,
+      serviceTier: 'flex',
+    } as never);
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    const { opts } = await lastChatCall();
+    expect(opts).toMatchObject({
+      stopSequences: ['END'],
+      topP: 0.8,
+      verbosity: 'low',
+      parallelToolCalls: false,
+      serviceTier: 'flex',
+    });
+  });
 });
 
 // ─── Resilience to unusual upstream shapes ───────────────────────────────────

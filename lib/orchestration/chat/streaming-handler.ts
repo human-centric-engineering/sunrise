@@ -46,6 +46,7 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   assertModelSupportsAttachments,
@@ -1572,6 +1573,7 @@ export class StreamingChatHandler {
           ...(narrowedReasoningEffort !== undefined
             ? { reasoningEffort: narrowedReasoningEffort }
             : {}),
+          ...modelParamOptions(agent),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
           // Only pin the forced tool on the first iteration — see forcedToolChoice above.
           ...(iteration === 1 && forcedToolChoice ? { toolChoice: forcedToolChoice } : {}),
@@ -1684,6 +1686,7 @@ export class StreamingChatHandler {
                     outputTokens: errUsage.outputTokens,
                     cacheReadTokens: errUsage.cacheReadTokens,
                     cacheWriteTokens: errUsage.cacheWriteTokens,
+                    serviceTier: errUsage.serviceTier,
                     operation: CostOperation.CHAT,
                     // Read off the span directly: `llmTraceId`/`llmSpanId` are
                     // only assigned on the success path below, so they are
@@ -2186,6 +2189,7 @@ export class StreamingChatHandler {
               outputTokens: u.outputTokens,
               cacheReadTokens: u.cacheReadTokens,
               cacheWriteTokens: u.cacheWriteTokens,
+              serviceTier: u.serviceTier,
               operation: CostOperation.CHAT,
               traceId: llmTraceId,
               spanId: llmSpanId,
@@ -2285,6 +2289,7 @@ export class StreamingChatHandler {
             outputTokens: turnUsage.outputTokens,
             cacheReadTokens: turnUsage.cacheReadTokens,
             cacheWriteTokens: turnUsage.cacheWriteTokens,
+            serviceTier: turnUsage.serviceTier,
             operation: CostOperation.CHAT,
             traceId: llmTraceId,
             spanId: llmSpanId,

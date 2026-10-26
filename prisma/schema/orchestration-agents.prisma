@@ -33,6 +33,20 @@ model AiAgent {
   // dropped silently by other models. See lib/orchestration/llm/
   // model-heuristics.ts → supportsReasoningEffort().
   reasoningEffort           String?
+  // Further model parameters (LlmOptions in lib/orchestration/llm/types.ts),
+  // each sent only to models that take it and dropped elsewhere. Null / empty
+  // = not sent, the provider default.
+  //   stopSequences     — text that ends the response; at most 4.
+  //   topP              — nucleus sampling, 0–1; older Claude and non-reasoning
+  //                       OpenAI-compatible models only.
+  //   verbosity         — 'low' | 'medium' | 'high'; GPT-5 only.
+  //   parallelToolCalls — false = at most one tool call per turn.
+  //   serviceTier       — 'auto' | 'default' | 'flex' | 'priority'; OpenAI only.
+  stopSequences             String[]  @default([])
+  topP                      Float?
+  verbosity                 String?
+  parallelToolCalls         Boolean?
+  serviceTier               String?
   monthlyBudgetUsd          Float?
   // Per-turn hard cost cap (USD) for chat. Caps total LLM + tool spend for a
   // single assistant turn — defends against a reflect/orchestrator/tool loop

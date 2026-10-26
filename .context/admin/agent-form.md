@@ -93,7 +93,7 @@ On a system agent, `GET /agents/:id` returns `platformAgent: { lockedFields, tun
 
 - **Locked controls.** Each control whose field is locked gets its own `disabled`: the General tab's name, slug, description, profile, active and visibility; the Model tab's temperature, max tokens, reasoning effort, inputs, history and guard modes; and every Instructions-tab control (`KnowledgeAccessSection` and `ReasoningEffortSelect` take a `disabled` prop for this). Not a disabled `fieldset`: that would also disable the `<FieldHelp>` buttons inside it, and a locked field's help is still worth reading. Retention, provider, model, fallbacks, budget, per-turn cap and rate limit stay editable.
 - **The payload.** A save drops every locked field, so a field the admin never touched cannot be refused.
-- **The banner.** It says the platform sets what the agent is and updates it with each release, then names, as prose built from `tunableFields`, what this org sets here: "its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept". `providerConfig` has no control on this form, so the banner leaves it out. On `mcp-system` it adds "which capabilities it may use".
+- **The banner.** It says the platform sets what the agent is and updates it with each release, then names, as prose built from `tunableFields`, what this org sets here: "its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept". `providerConfig` has no control on this form, so the banner leaves it out. On `mcp-system` it adds "which capabilities it may use".
 
 The Capabilities tab takes `bindingsLocked`: the Available column and Detach are hidden (Attached takes the full width), the switch is disabled, and Configure stays open: a binding's custom config and rate limit are the org's, because the reconcile never writes them. A blank config or rate limit sends `null`, which clears it ("leave blank to inherit"). The Embed tab passes `appearanceLocked` to `EmbedConfigPanel`, which shows a note in place of the widget-appearance editor and keeps the embed tokens; the instructions history takes `readOnly` and offers diffs but no Revert (the revert route refuses system agents).
 
@@ -117,6 +117,16 @@ Honoured only by reasoning-capable models:
 - **Everything else** — silently dropped. No 400. The caller intent is still recorded on `LlmRequestParamsSnapshot.reasoningEffort` so a misconfigured agent shows up in the execution trace's request-envelope line.
 
 When set on a thinking-capable Anthropic model, the provider class also strips thinking blocks from the response content (callers see only the answer). Streaming `chatStream()` applies the same filter — thinking-delta events are not yielded as text. See `lib/orchestration/llm/anthropic.ts` and `lib/orchestration/llm/model-heuristics.ts → supportsReasoningEffort()` / `anthropicThinkingBudget()`.
+
+### Stop sequences, top P, verbosity, parallel tool calls, service tier
+
+`<ModelParamsFields>` (`components/admin/orchestration/model-params-fields.tsx`), shared with the `llm_call` step editor. Each control's ⓘ says which models take it; everywhere else the value is dropped, never a 400 (see `LlmOptions` in `.context/orchestration/llm-providers.md`).
+
+- **Stop sequences** — textarea, one per line, at most 4 (`AiAgent.stopSequences`, empty = none). The box keeps blank lines while typing; the form gets the parsed list, and the box takes a list replaced from outside (a reset or restore).
+- **Top P** — number 0–1, empty = null.
+- **Verbosity** — select; _Model default_ persists null. GPT-5 only.
+- **Parallel tool calls** — _Model default_ (null) / _Allowed_ (true) / _One at a time_ (false).
+- **Service tier** — _Provider default_ (null) / auto / default / flex / priority. OpenAI only. On a platform agent this one is the org's, the other four the platform's.
 
 ### Max history tokens
 

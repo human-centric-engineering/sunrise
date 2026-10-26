@@ -251,6 +251,7 @@ export const POST = withAdminAuth<{ id: string }>(
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,
         cacheWriteTokens: response.usage.cacheWriteTokens,
+        serviceTier: response.usage.serviceTier,
         operation: CostOperation.EVALUATION,
         isLocal: cost.isLocal,
         metadata: { phase: 'retroactive_supervisor' },

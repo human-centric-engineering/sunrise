@@ -396,6 +396,11 @@ async function importParsed(
               temperature: agent.temperature,
               maxTokens: agent.maxTokens,
               reasoningEffort: agent.reasoningEffort ?? null,
+              stopSequences: agent.stopSequences ?? [],
+              topP: agent.topP ?? null,
+              verbosity: agent.verbosity ?? null,
+              parallelToolCalls: agent.parallelToolCalls ?? null,
+              serviceTier: agent.serviceTier ?? null,
               monthlyBudgetUsd: agent.monthlyBudgetUsd,
               // Older backup bundles omit this field — treat absent as
               // null (no per-turn cap). The schema validator allows the

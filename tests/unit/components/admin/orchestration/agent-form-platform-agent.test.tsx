@@ -163,7 +163,7 @@ describe('AgentForm — platform agent', () => {
     expect(banner).toHaveTextContent('This is a platform agent');
     expect(banner).toHaveTextContent('knowledge and capabilities');
     expect(banner).toHaveTextContent(
-      'Here, this org sets its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept.'
+      'Here, this org sets its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept.'
     );
     // providerConfig is tunable through the API but has no control on this form.
     expect(banner).not.toHaveTextContent(/provider config/i);
@@ -272,7 +272,7 @@ describe('AgentForm — platform agent', () => {
       // The same list the API enforces (`platformAgentFieldNames('org')`),
       // including the provider configuration the form has no control for.
       expect(dialog).toHaveTextContent(
-        "only this org's settings from version 1: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept."
+        "only this org's settings from version 1: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept."
       );
       expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
     });

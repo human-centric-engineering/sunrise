@@ -205,6 +205,7 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,
         cacheWriteTokens: response.usage.cacheWriteTokens,
+        serviceTier: response.usage.serviceTier,
         operation: CostOperation.KNOWLEDGE_ENRICH_KEYWORDS,
         isLocal: cost.isLocal,
         metadata: { documentId, chunkId: chunk.id },

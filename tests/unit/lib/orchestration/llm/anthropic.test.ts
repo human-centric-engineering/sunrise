@@ -3712,3 +3712,121 @@ describe('AnthropicProvider — prompt caching (t-909)', () => {
     });
   });
 });
+
+describe('AnthropicProvider — stop sequences, top_p, parallel tool use (t-911, t-913)', () => {
+  const ok = {
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 10, output_tokens: 3 },
+    model: 'claude-sonnet-4-5',
+    stop_reason: 'end_turn',
+  };
+  const tool = { name: 'lookup', description: 'Look up', parameters: { type: 'object' } };
+
+  it('sends stop sequences to every Claude model', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      stopSequences: ['END', '###'],
+    });
+
+    expect(createMock.mock.calls[0][0].stop_sequences).toEqual(['END', '###']);
+  });
+
+  it('sends top_p instead of the temperature on a model that refuses both together', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-sonnet-4-5',
+      temperature: 0.7,
+      topP: 0.9,
+    });
+
+    const params = createMock.mock.calls[0][0];
+    expect(params.top_p).toBe(0.9);
+    expect(params).not.toHaveProperty('temperature');
+  });
+
+  it('keeps sending the temperature when no top_p is set', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-sonnet-4-5',
+      temperature: 0.7,
+    });
+
+    expect(createMock.mock.calls[0][0].temperature).toBe(0.7);
+  });
+
+  it.each([
+    ['a model that refuses sampling parameters', 'claude-opus-5-5', undefined],
+    ['a thinking request', 'claude-sonnet-4-5', 'high' as const],
+  ])('drops top_p on %s rather than 400', async (_label, model, reasoningEffort) => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model,
+      maxTokens: 32_000,
+      topP: 0.9,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    });
+
+    expect(createMock.mock.calls[0][0]).not.toHaveProperty('top_p');
+  });
+
+  it('drops verbosity and service tier, which Claude has no use for', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      verbosity: 'low',
+      serviceTier: 'flex',
+    });
+
+    const params = createMock.mock.calls[0][0];
+    expect(params).not.toHaveProperty('verbosity');
+    expect(params).not.toHaveProperty('service_tier');
+  });
+
+  it('limits a turn to one tool call when parallel tool calls are off', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      tools: [tool],
+      parallelToolCalls: false,
+    });
+
+    expect(createMock.mock.calls[0][0].tool_choice).toEqual({
+      type: 'auto',
+      disable_parallel_tool_use: true,
+    });
+  });
+
+  it('keeps a named tool choice when limiting to one call', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-sonnet-4-5',
+      tools: [tool],
+      toolChoice: { name: 'lookup' },
+      parallelToolCalls: false,
+    });
+
+    expect(createMock.mock.calls[0][0].tool_choice).toEqual({
+      type: 'tool',
+      name: 'lookup',
+      disable_parallel_tool_use: true,
+    });
+  });
+
+  it('sends no tool_choice for parallel tool calls without tools, or when allowed', async () => {
+    createMock.mockResolvedValue(ok);
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      parallelToolCalls: false,
+    });
+    await provider.chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+      tools: [tool],
+      parallelToolCalls: true,
+    });
+
+    expect(createMock.mock.calls[0][0]).not.toHaveProperty('tool_choice');
+    expect(createMock.mock.calls[1][0]).not.toHaveProperty('tool_choice');
+  });
+});

@@ -157,6 +157,24 @@ export const REASONING_EFFORTS = [
   'max',
 ] as const satisfies readonly ReasoningEffort[];
 
+/**
+ * How long a GPT-5 model's answers run (`verbosity`). Other models drop it.
+ */
+export const VERBOSITIES = ['low', 'medium', 'high'] as const;
+export type Verbosity = (typeof VERBOSITIES)[number];
+
+/**
+ * Which OpenAI processing tier serves the request (`service_tier`). `flex` is
+ * slower and half price on the models that offer it; `priority` is faster
+ * and dearer. Sent only to OpenAI itself (`api.openai.com`); other providers
+ * drop it. The tier the response reports is what `calculateCost` prices.
+ */
+export const SERVICE_TIERS = ['auto', 'default', 'flex', 'priority'] as const;
+export type ServiceTier = (typeof SERVICE_TIERS)[number];
+
+/** Most stop sequences a request may carry — OpenAI's limit, the lower one. */
+export const MAX_STOP_SEQUENCES = 4;
+
 /** Per-call options passed to a provider. */
 export interface LlmOptions {
   /** Model id understood by the target provider. */
@@ -174,6 +192,29 @@ export interface LlmOptions {
    * mapping.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Text that ends the response when the model writes it (Anthropic
+   * `stop_sequences`, OpenAI `stop`). At most {@link MAX_STOP_SEQUENCES}.
+   * Dropped on OpenAI reasoning models, which refuse it.
+   */
+  stopSequences?: string[];
+  /**
+   * Nucleus sampling, 0–1. Sent only to models that still take sampling
+   * parameters: older Claude models (`acceptsSamplingTemperature`), without
+   * thinking, where it replaces `temperature` (several refuse both), and
+   * non-reasoning OpenAI-compatible models. Dropped elsewhere.
+   */
+  topP?: number;
+  /** GPT-5 answer length. Dropped by every other model. */
+  verbosity?: Verbosity;
+  /**
+   * `false` asks for at most one tool call per turn (OpenAI
+   * `parallel_tool_calls`, Anthropic `disable_parallel_tool_use`). Sent only
+   * with tools. Unset leaves the provider default, which allows several.
+   */
+  parallelToolCalls?: boolean;
+  /** OpenAI processing tier — see {@link ServiceTier}. */
+  serviceTier?: ServiceTier;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */
@@ -209,6 +250,12 @@ export interface LlmUsage {
   cacheReadTokens?: number;
   /** Input tokens written to the provider's prompt cache (Anthropic). */
   cacheWriteTokens?: number;
+  /**
+   * The processing tier that served the call, when the provider reported
+   * one other than its standard tier (OpenAI `flex` / `priority`). Priced
+   * by `calculateCost`.
+   */
+  serviceTier?: 'flex' | 'priority';
 }
 
 /** A complete, non-streaming response from a provider. */

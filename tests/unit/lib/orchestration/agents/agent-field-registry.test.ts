@@ -223,10 +223,20 @@ describe('agent-field-registry — divergence ledger vs current hand-lists', () 
     const registry = versionedFieldNames();
     // Everything currently versioned stays versioned...
     expect(diff(CURRENT_VERSIONED_FIELDS, registry)).toEqual([]);
-    // ...plus reasoningEffort (user config, never versioned) and the two grant
-    // relations (snapshotted but absent from VERSIONED_FIELDS).
+    // ...plus reasoningEffort (user config, never versioned), the two grant
+    // relations (snapshotted but absent from VERSIONED_FIELDS), and the model
+    // parameters added after the ledger was taken (t-911, t-913).
     expect(diff(registry, CURRENT_VERSIONED_FIELDS)).toEqual(
-      ['grantedDocumentIds', 'grantedTagIds', 'reasoningEffort'].sort()
+      [
+        'grantedDocumentIds',
+        'grantedTagIds',
+        'parallelToolCalls',
+        'reasoningEffort',
+        'serviceTier',
+        'stopSequences',
+        'topP',
+        'verbosity',
+      ].sort()
     );
   });
 });
@@ -322,6 +332,7 @@ describe('ownership on a platform agent (§116 t-724)', () => {
   it('lets an org tune exactly the fields the ruling names — how the agent runs', () => {
     // Ruling on §116, 2026-09-29: provider, model, fallbacks, budget, per-turn
     // cap, rate limit, retention. `providerConfig` rides with the provider.
+    // `serviceTier` (t-911) is OpenAI's cost-or-speed choice, like the budget.
     // A field moving across this line changes what every org may edit on
     // every platform agent, so it is pinned rather than derived.
     expect(platformAgentFieldNames('org').sort()).toEqual(
@@ -334,6 +345,7 @@ describe('ownership on a platform agent (§116 t-724)', () => {
         'providerConfig',
         'rateLimitRpm',
         'retentionDays',
+        'serviceTier',
       ].sort()
     );
   });

@@ -26,7 +26,8 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
-import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
+import { ModelParamsFields } from '@/components/admin/orchestration/model-params-fields';
+import type { ReasoningEffort, ServiceTier, Verbosity } from '@/lib/orchestration/llm/types';
 
 export interface LlmCallConfig extends Record<string, unknown> {
   prompt: string;
@@ -35,6 +36,11 @@ export interface LlmCallConfig extends Record<string, unknown> {
   maxTokens?: number;
   reasoningEffort?: ReasoningEffort | null;
   responseFormat?: 'text' | 'json';
+  stopSequences?: string[];
+  topP?: number | null;
+  verbosity?: Verbosity | null;
+  parallelToolCalls?: boolean | null;
+  serviceTier?: ServiceTier | null;
 }
 
 export function LlmCallEditor({ config, onChange }: EditorProps<LlmCallConfig>) {
@@ -116,6 +122,18 @@ export function LlmCallEditor({ config, onChange }: EditorProps<LlmCallConfig>) 
         id="llm-reasoning-effort"
         value={toReasoningEffortFormValue(config.reasoningEffort)}
         onChange={(v) => onChange({ reasoningEffort: fromReasoningEffortFormValue(v) })}
+      />
+
+      <ModelParamsFields
+        idPrefix="llm"
+        value={{
+          stopSequences: config.stopSequences ?? [],
+          topP: config.topP ?? null,
+          verbosity: config.verbosity ?? null,
+          parallelToolCalls: config.parallelToolCalls ?? null,
+          serviceTier: config.serviceTier ?? null,
+        }}
+        onChange={onChange}
       />
 
       <div className="space-y-1.5">

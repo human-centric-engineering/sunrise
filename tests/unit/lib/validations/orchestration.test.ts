@@ -3832,3 +3832,46 @@ describe('llmCallConfigSchema reasoningEffort', () => {
     expect(result.success && result.data.reasoningEffort).toBe(reasoningEffort);
   });
 });
+
+describe('agent model parameters (t-911, t-913)', () => {
+  const VALID_AGENT = {
+    name: 'Test Agent',
+    slug: VALID_SLUG,
+    description: 'A test agent description.',
+    systemInstructions: 'You are a helpful assistant.',
+    provider: 'anthropic',
+    model: 'claude-opus-5-5',
+  };
+
+  it('accepts every parameter on create', () => {
+    const result = createAgentSchema.safeParse({
+      ...VALID_AGENT,
+      stopSequences: ['END'],
+      topP: 0.95,
+      verbosity: 'low',
+      parallelToolCalls: false,
+      serviceTier: 'flex',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    ['more than four stop sequences', { stopSequences: ['a', 'b', 'c', 'd', 'e'] }],
+    ['an empty stop sequence', { stopSequences: [''] }],
+    ['a top P above 1', { topP: 1.5 }],
+    ['an unknown verbosity', { verbosity: 'verbose' }],
+    ['an unknown service tier', { serviceTier: 'scale' }],
+  ])('rejects %s', (_label, field) => {
+    expect(createAgentSchema.safeParse({ ...VALID_AGENT, ...field }).success).toBe(false);
+  });
+
+  it('accepts the parameters on an llm_call step', () => {
+    const result = llmCallConfigSchema.safeParse({
+      prompt: 'hi',
+      stopSequences: ['END'],
+      verbosity: 'high',
+      serviceTier: null,
+    });
+    expect(result.success && result.data.verbosity).toBe('high');
+  });
+});

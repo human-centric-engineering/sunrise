@@ -598,15 +598,15 @@ export class AnthropicProvider implements LlmProvider {
     const { systemParts, conversation } = splitSystemMessages(messages, thinkingEnabled);
     params.messages = conversation;
     // Claude models from Opus 4.7 / Sonnet 5 / Haiku 5 on refuse any
-    // temperature (400), so it is sent only to the older families that
-    // honour one. The caller's value stays on the trace's requestParams.
-    if (
-      !thinkingEnabled &&
-      options.temperature !== undefined &&
-      acceptsSamplingTemperature(options.model)
-    ) {
-      params.temperature = options.temperature;
+    // temperature or top_p (400), so they are sent only to the older families
+    // that honour one. The caller's value stays on the trace's requestParams.
+    // A `top_p` replaces the temperature: Sonnet 4.5, Haiku 4.5 and Opus 4.1+
+    // refuse the two together, and an agent always has a temperature.
+    if (!thinkingEnabled && acceptsSamplingTemperature(options.model)) {
+      if (options.topP !== undefined) params.top_p = options.topP;
+      else if (options.temperature !== undefined) params.temperature = options.temperature;
     }
+    if (options.stopSequences?.length) params.stop_sequences = options.stopSequences;
     // Anthropic refuses a forced tool alongside thinking, and Opus 5.5 /
     // Sonnet 5.5 / Fable 5.1 refuse one outright — both a 400.
     const forcedToolRefusal = thinkingEnabled
@@ -635,6 +635,14 @@ export class AnthropicProvider implements LlmProvider {
         params.tool_choice = { type: 'auto' };
       } else if (toolChoice) {
         params.tool_choice = toolChoice;
+      }
+      // At most one tool call per turn. `none` offers no tool, so it has
+      // nothing to limit.
+      if (options.parallelToolCalls === false) {
+        const choice = params.tool_choice ?? { type: 'auto' };
+        if (choice.type !== 'none') {
+          params.tool_choice = { ...choice, disable_parallel_tool_use: true };
+        }
       }
     }
     // Structured output, only when no other tools are present (structured

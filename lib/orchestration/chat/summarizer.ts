@@ -303,6 +303,7 @@ export async function summarizeMessages(
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,
           cacheWriteTokens: response.usage.cacheWriteTokens,
+          serviceTier: response.usage.serviceTier,
           operation: CostOperation.CHAT,
           // Caller keys first, this module's own facts last — the precedence
           // rule every cost sink in the engine follows (#600). A caller must

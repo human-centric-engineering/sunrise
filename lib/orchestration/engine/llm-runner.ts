@@ -21,7 +21,7 @@
 import { logger } from '@/lib/logging';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmRequestParamsSnapshot } from '@/types/orchestration';
-import type { LlmResponseFormat, ReasoningEffort } from '@/lib/orchestration/llm/types';
+import type { LlmOptions, LlmResponseFormat, ReasoningEffort } from '@/lib/orchestration/llm/types';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
@@ -70,6 +70,14 @@ export interface LlmRunParams {
   reasoningEffort?: ReasoningEffort;
   /** Request structured JSON output from the model. */
   responseFormat?: LlmResponseFormat;
+  /**
+   * Stop sequences, top_p, verbosity, parallel tool calls and service tier —
+   * see `modelParamOptions`. Each is dropped by models that don't take it.
+   */
+  modelParams?: Pick<
+    LlmOptions,
+    'stopSequences' | 'topP' | 'verbosity' | 'parallelToolCalls' | 'serviceTier'
+  >;
   /**
    * Origin tag for steps whose `ctx.stepTelemetry` mixes calls of
    * different intent (today: only `orchestrator`'s planner call).
@@ -202,6 +210,7 @@ export async function runLlmCall(
           maxTokens: params.maxTokens,
           ...(params.reasoningEffort ? { reasoningEffort: params.reasoningEffort } : {}),
           ...(params.responseFormat ? { responseFormat: params.responseFormat } : {}),
+          ...params.modelParams,
           signal: ctx.signal,
         });
       } catch (err) {
@@ -278,6 +287,7 @@ export async function runLlmCall(
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,
         cacheWriteTokens: response.usage.cacheWriteTokens,
+        serviceTier: response.usage.serviceTier,
         operation: CostOperation.CHAT,
         isLocal: cost.isLocal,
         traceId: span.traceId(),

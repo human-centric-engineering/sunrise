@@ -302,6 +302,8 @@ If a new step type (`WorkflowStep.type`) carries required config, add the check 
 
 ## Reasoning effort on step configs
 
+An `llm_call` step also accepts `stopSequences`, `topP`, `verbosity`, `parallelToolCalls` and `serviceTier` (`modelParamFields` in `lib/validations/orchestration.ts`), with the same meaning and per-model dropping as on an agent; other step types don't take them yet — adding one is that spread plus `<ModelParamsFields>` in its editor and `modelParams` on its `runLlmCall`.
+
 Every step config that already exposes `temperature` / `maxTokens` also accepts an optional `reasoningEffort` (`'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null`). The runtime forwards it into `LlmOptions.reasoningEffort` when the executor calls `runLlmCall`. See [`llm-providers.md` § Reasoning-effort knob](./llm-providers.md) for the per-provider wire mapping.
 
 | Step type      | What it controls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |

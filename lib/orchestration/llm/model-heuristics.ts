@@ -636,3 +636,13 @@ export function anthropicAdaptiveEffort(
 ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
   return effort === 'minimal' ? 'low' : effort;
 }
+
+/**
+ * Does this model take OpenAI's `verbosity`? The GPT-5 family does; the
+ * o-series and older chat models refuse it. Anchored at the start of the
+ * bare id, so `openai/gpt-5-mini` and dated snapshots match and a fine-tune
+ * named `my-gpt-5` does not.
+ */
+export function acceptsVerbosity(modelId: string): boolean {
+  return /^gpt-5(?:$|[-.])/.test(modelId.toLowerCase().replace(/^(openai|azure)\//, ''));
+}

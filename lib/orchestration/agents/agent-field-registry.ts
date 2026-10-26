@@ -237,6 +237,33 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'Reasoning effort', tab: 'Model', order: 135 },
   },
+  stopSequences: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Stop sequences', tab: 'Model', order: 136 },
+  },
+  topP: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Top P', tab: 'Model', order: 137 },
+  },
+  verbosity: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Verbosity', tab: 'Model', order: 138 },
+  },
+  parallelToolCalls: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Parallel tool calls', tab: 'Model', order: 139 },
+  },
+  // A cost choice (flex is half price, priority about double), so it is how
+  // an agent runs in one org, like its budget.
+  serviceTier: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Service tier', tab: 'Model', order: 139.5 },
+  },
   maxHistoryTokens: {
     platformAgent: 'code',
     versioned: true,
@@ -525,7 +552,8 @@ export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
  * there. Written once when the agent is materialised in the org, never by a
  * reconcile afterwards. Ruling on §116 (2026-09-29): provider, model and its
  * fallbacks and config, what the agent may spend, how fast it may be called,
- * and how long its conversations are kept.
+ * and how long its conversations are kept. Its OpenAI service tier joined them
+ * with t-911: a choice between cost and speed, like the budget.
  */
 export type PlatformAgentOrgTunableField = {
   [

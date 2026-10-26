@@ -54,6 +54,7 @@ import {
   resolveEffectivePrompt,
 } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
 import {
@@ -191,6 +192,7 @@ async function runSingleTurn(
             ...(effectiveReasoningEffort !== undefined
               ? { reasoningEffort: effectiveReasoningEffort }
               : {}),
+            ...modelParamOptions(agent!),
             ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
             signal: ctx.signal,
           });
@@ -268,6 +270,7 @@ async function runSingleTurn(
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,
           cacheWriteTokens: response.usage.cacheWriteTokens,
+          serviceTier: response.usage.serviceTier,
           operation: CostOperation.CHAT,
           isLocal: turnCost.isLocal,
           traceId: span.traceId(),

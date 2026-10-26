@@ -1163,3 +1163,44 @@ describe('prompt-cache pricing (t-909)', () => {
     expect(call.data.inputCostUsd).toBeCloseTo(1);
   });
 });
+
+describe('service-tier pricing (t-911)', () => {
+  const gpt5: ModelInfo = {
+    id: 'tier-model',
+    name: 'Tier model',
+    provider: 'openai',
+    tier: 'frontier',
+    inputCostPerMillion: 1.25,
+    outputCostPerMillion: 10,
+    maxContext: 400_000,
+    supportsTools: true,
+  };
+
+  it.each([
+    ['flex', 0.5],
+    ['priority', 2],
+  ] as const)('prices a %s call at %dx the standard rate, input and output', (serviceTier, x) => {
+    vi.mocked(getModel).mockReturnValueOnce(gpt5);
+    const cost = calculateCost('tier-model', 1_000_000, 1_000_000, { serviceTier });
+    expect(cost.inputCostUsd).toBeCloseTo(1.25 * x);
+    expect(cost.outputCostUsd).toBeCloseTo(10 * x);
+  });
+
+  it('stamps the tier on the cost row, whose costs include it', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    vi.mocked(getModel).mockReturnValueOnce(gpt5);
+
+    await logCost({
+      model: 'tier-model',
+      provider: 'openai',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      serviceTier: 'flex',
+      operation: 'chat',
+    });
+
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.metadata).toEqual({ serviceTier: 'flex' });
+    expect(call.data.inputCostUsd).toBeCloseTo(0.625);
+  });
+});

@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **Stop sequences, top P, verbosity, parallel tool calls and service tier
+  (t-911, t-913).** New `LlmOptions` fields `stopSequences`, `topP`,
+  `verbosity`, `parallelToolCalls`, `serviceTier` (types and their lists
+  `VERBOSITIES`, `SERVICE_TIERS`, `MAX_STOP_SEQUENCES` in `types.ts`), each
+  sent only to models that take it and dropped elsewhere. `AiAgent` gains the
+  same five columns (migration `20261026130000_agent_model_params`), in the
+  agent registry, the create / update / export / backup schemas
+  (`modelParamFields`) and the agent form; `serviceTier` is org-owned on a
+  platform agent, the rest platform-owned. An `llm_call` step takes them as
+  config. `modelParamOptions()` (new `lib/orchestration/llm/model-params.ts`)
+  turns stored values into options. `LlmUsage.serviceTier` reports a flex or
+  priority call, which `calculateCost` prices at 0.5× / 2× and `logCost`
+  stamps on the row's `metadata.serviceTier`. **Forks:** an `AiAgent` fixture
+  typed against Prisma needs the five fields, and the platform-agent banner
+  now lists the service tier among the org's settings.
 - **Prompt caching on Claude, and cache-priced cost rows (t-909).** Every
   Anthropic request now carries two `cache_control` breakpoints: the agent's
   composed system prompt (with the tools ahead of it) and the last turn. No

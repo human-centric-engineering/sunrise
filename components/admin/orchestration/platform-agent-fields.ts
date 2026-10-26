@@ -24,6 +24,7 @@ const TUNABLE_FIELD_PHRASES: Record<string, string> = {
   monthlyBudgetUsd: 'monthly budget',
   maxCostPerTurnUsd: 'per-turn cost cap',
   rateLimitRpm: 'rate limit',
+  serviceTier: 'service tier',
   retentionDays: 'how long its conversations are kept',
 };
 

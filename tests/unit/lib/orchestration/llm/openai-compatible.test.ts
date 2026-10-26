@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LlmOptions } from '@/lib/orchestration/llm/types';
 
 // ---------------------------------------------------------------------------
 // Module-level mock stubs (must be declared before vi.mock hoisting)
@@ -2449,5 +2450,75 @@ describe('cached prompt tokens (t-909)', () => {
       usage: { inputTokens: 1500, outputTokens: 2, cacheReadTokens: 1024 },
       finishReason: 'stop',
     });
+  });
+});
+
+describe('stop, top_p, verbosity, parallel tool calls, service tier (t-911, t-913)', () => {
+  const tool = { name: 'lookup', description: 'Look up', parameters: { type: 'object' } };
+  async function sent(model: string, options: Partial<LlmOptions>, baseUrl?: string) {
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    await makeProvider(baseUrl ? { baseUrl } : {}).chat([{ role: 'user', content: 'x' }], {
+      model,
+      ...options,
+    });
+    return chatCreateMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+  }
+
+  it('sends stop and top_p to a non-reasoning model', async () => {
+    const params = await sent('gpt-4o', { stopSequences: ['END'], topP: 0.8 });
+    expect(params.stop).toEqual(['END']);
+    expect(params.top_p).toBe(0.8);
+  });
+
+  it('drops stop and top_p on a reasoning model, which refuses them', async () => {
+    const params = await sent('gpt-5', { stopSequences: ['END'], topP: 0.8 });
+    expect(params).not.toHaveProperty('stop');
+    expect(params).not.toHaveProperty('top_p');
+  });
+
+  it.each(['gpt-5', 'gpt-5-mini', 'openai/gpt-5.4'])('sends verbosity to %s', async (model) => {
+    expect((await sent(model, { verbosity: 'low' })).verbosity).toBe('low');
+  });
+
+  it.each(['o3-mini', 'gpt-4o', 'my-gpt-5'])('drops verbosity on %s', async (model) => {
+    expect(await sent(model, { verbosity: 'low' })).not.toHaveProperty('verbosity');
+  });
+
+  it('sends parallel_tool_calls only alongside tools', async () => {
+    expect(
+      (await sent('gpt-5', { tools: [tool], parallelToolCalls: false })).parallel_tool_calls
+    ).toBe(false);
+    expect(await sent('gpt-5', { parallelToolCalls: false })).not.toHaveProperty(
+      'parallel_tool_calls'
+    );
+  });
+
+  it('sends service_tier to OpenAI itself and to no other host', async () => {
+    expect(
+      (await sent('gpt-5', { serviceTier: 'flex' }, 'https://api.openai.com/v1')).service_tier
+    ).toBe('flex');
+    expect(
+      await sent('gpt-5', { serviceTier: 'flex' }, 'https://api.groq.com/openai/v1')
+    ).not.toHaveProperty('service_tier');
+  });
+
+  it('reports a flex or priority tier the response says served it, and not the standard one', async () => {
+    chatCreateMock.mockResolvedValueOnce({
+      ...makeChatCompletion('ok', 'stop'),
+      service_tier: 'priority',
+    });
+    const priority = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+    });
+    chatCreateMock.mockResolvedValueOnce({
+      ...makeChatCompletion('ok', 'stop'),
+      service_tier: 'default',
+    });
+    const standard = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+    });
+
+    expect(priority.usage.serviceTier).toBe('priority');
+    expect(standard.usage).not.toHaveProperty('serviceTier');
   });
 });

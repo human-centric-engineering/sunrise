@@ -107,6 +107,35 @@ describe('executeLlmCall', () => {
       modelOverride: 'gpt-3.5',
       temperature: 0.7,
       maxTokens: 500,
+      modelParams: {},
+    });
+  });
+
+  it('forwards the model parameters from config, leaving unset ones out', async () => {
+    vi.mocked(runLlmCall).mockResolvedValue({
+      content: 'response',
+      tokensUsed: 5,
+      costUsd: 0.005,
+      model: 'gpt-5',
+    });
+
+    await executeLlmCall(
+      makeStep({
+        prompt: 'p',
+        stopSequences: ['END'],
+        topP: 0.9,
+        verbosity: 'low',
+        parallelToolCalls: false,
+        serviceTier: null,
+      }),
+      makeCtx()
+    );
+
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].modelParams).toEqual({
+      stopSequences: ['END'],
+      topP: 0.9,
+      verbosity: 'low',
+      parallelToolCalls: false,
     });
   });
 

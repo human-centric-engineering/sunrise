@@ -14,6 +14,7 @@ import { llmCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executeLlmCall(
@@ -37,6 +38,7 @@ export async function executeLlmCall(
     // sentinel the provider class would have to special-case.
     reasoningEffort: config.reasoningEffort ?? undefined,
     responseFormat: config.responseFormat,
+    modelParams: modelParamOptions(config),
   });
 
   return {

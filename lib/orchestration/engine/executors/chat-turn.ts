@@ -54,6 +54,7 @@ import {
 } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 import {
   LATEST_AGENT_VERSION_ID_INCLUDE,
@@ -243,6 +244,7 @@ export async function executeChatTurn(
           ? { maxTokens: agent.maxTokens }
           : {}),
       ...(effectiveReasoning !== undefined ? { reasoningEffort: effectiveReasoning } : {}),
+      ...modelParamOptions(agent),
       signal: ctx.signal,
     });
   } catch (err) {
@@ -292,6 +294,7 @@ export async function executeChatTurn(
     outputTokens: response.usage?.outputTokens ?? 0,
     cacheReadTokens: response.usage?.cacheReadTokens,
     cacheWriteTokens: response.usage?.cacheWriteTokens,
+    serviceTier: response.usage?.serviceTier,
     metadata: {
       ...(ctx.costLogMetadata ?? {}),
       stepId: step.id,

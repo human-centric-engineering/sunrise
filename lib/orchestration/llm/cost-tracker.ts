@@ -31,7 +31,7 @@ import {
   utcMonthStart,
 } from '@/lib/orchestration/llm/spend-caps';
 import type { AgentCostSummary, CostOperation, LocalSavingsResult } from '@/types/orchestration';
-import type { ModelInfo } from '@/lib/orchestration/llm/types';
+import type { LlmUsage, ModelInfo } from '@/lib/orchestration/llm/types';
 
 /** Computed cost breakdown for a single operation. */
 export interface ComputedCost {
@@ -169,6 +169,8 @@ export interface LogCostParams {
   cacheReadTokens?: number;
   /** The subset of `inputTokens` written to the prompt cache. */
   cacheWriteTokens?: number;
+  /** The tier that served the call, when priced apart (`LlmUsage.serviceTier`). */
+  serviceTier?: LlmUsage['serviceTier'];
   operation: CostOperation;
   /**
    * Audio duration in milliseconds — required when `operation` is
@@ -295,7 +297,7 @@ export function calculateCost(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
-  cached: CachedInputTokens = {}
+  usage: PricedUsage = {}
 ): ComputedCost {
   if (
     !Number.isFinite(inputTokens) ||
@@ -339,16 +341,18 @@ export function calculateCost(
   // The cache counts are subsets of `inputTokens`, each billed at its own
   // rate. Clamped so a provider over-reporting one can't price more input
   // than there was.
-  const readTokens = clampTokens(cached.cacheReadTokens, inputTokens);
-  const writeTokens = clampTokens(cached.cacheWriteTokens, inputTokens - readTokens);
+  const readTokens = clampTokens(usage.cacheReadTokens, inputTokens);
+  const writeTokens = clampTokens(usage.cacheWriteTokens, inputTokens - readTokens);
   const uncachedTokens = inputTokens - readTokens - writeTokens;
   const rates = cacheRates(model);
+  const tier = usage.serviceTier ? SERVICE_TIER_MULTIPLIER[usage.serviceTier] : 1;
   const inputCostUsd =
-    (uncachedTokens * model.inputCostPerMillion +
+    ((uncachedTokens * model.inputCostPerMillion +
       readTokens * rates.read +
       writeTokens * rates.write) /
-    1_000_000;
-  const outputCostUsd = (outputTokens / 1_000_000) * model.outputCostPerMillion;
+      1_000_000) *
+    tier;
+  const outputCostUsd = (outputTokens / 1_000_000) * model.outputCostPerMillion * tier;
   return {
     inputCostUsd,
     outputCostUsd,
@@ -357,11 +361,23 @@ export function calculateCost(
   };
 }
 
-/** The parts of a call's input billed at prompt-cache rates (`LlmUsage`). */
-export interface CachedInputTokens {
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-}
+/**
+ * What, beyond the token totals, changes a call's price: the parts of its
+ * input billed at prompt-cache rates, and the tier that served it. An
+ * `LlmUsage` fits.
+ */
+export type PricedUsage = Pick<LlmUsage, 'cacheReadTokens' | 'cacheWriteTokens' | 'serviceTier'>;
+
+/**
+ * OpenAI's processing tiers against the standard rate. Flex is half price
+ * across the models that offer it. Priority runs 1.7–2× by model and the
+ * registry carries no per-tier rates, so 2× — over, never under, the real
+ * cost, which is the side a budget cap needs to err on.
+ */
+const SERVICE_TIER_MULTIPLIER: Record<NonNullable<LlmUsage['serviceTier']>, number> = {
+  flex: 0.5,
+  priority: 2,
+};
 
 /**
  * Anthropic's published cache multipliers, for a model whose pricing source
@@ -446,6 +462,11 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
   // tells them apart on the row (#813). A local turn is free, not unpriced.
   if (cost.unpriced && !isLocal) {
     metadata = { ...(metadata ?? {}), pricing: 'unknown' };
+  }
+  // The row's costs include the tier's multiplier; this says why they differ
+  // from the model's list rate.
+  if (params.serviceTier) {
+    metadata = { ...(metadata ?? {}), serviceTier: params.serviceTier };
   }
 
   const data: Prisma.AiCostLogUncheckedCreateInput = {

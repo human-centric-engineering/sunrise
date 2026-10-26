@@ -30,7 +30,7 @@ A `'code'` field also needs a value in `PLATFORM_AGENT_BASELINE` (`lib/orchestra
 Every core field declares `platformAgent: 'code' | 'org'`: who decides its value on one of the [platform agents](./platform-agents.md), the agents every org gets its own instance of.
 
 - **`'code'`** is what the agent _is_: its name, prompt, temperature, knowledge settings, guardrails, and the rest. Every reconcile writes the definition's value back, or the platform baseline's where the definition says nothing.
-- **`'org'`** is how it _runs_ in one org. That covers `provider`, `model`, `fallbackProviders`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `rateLimitRpm` and `retentionDays` (ruling on §116, 2026-09-29). These are set once when the instance is created and never touched by a reconcile, so an org's choice of model or budget survives every release.
+- **`'org'`** is how it _runs_ in one org. That covers `provider`, `model`, `fallbackProviders`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `rateLimitRpm` and `retentionDays` (ruling on §116, 2026-09-29), and `serviceTier`, OpenAI's choice between cost and speed (t-911). These are set once when the instance is created and never touched by a reconcile, so an org's choice of model or budget survives every release.
 
 The API holds the same line: on a system agent it refuses a change to any `'code'` field and accepts the `'org'` ones (`lib/orchestration/agents/platform-agent-guard.ts`), and the agent form shows the `'code'` ones read-only.
 
