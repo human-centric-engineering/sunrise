@@ -187,11 +187,18 @@ async function askPick(
 function pickFailure(error: unknown): { error: string; cause?: string } {
   const message = error instanceof Error ? error.message : String(error);
   if (!(error instanceof Error) || error.cause === undefined) return { error: message };
-  const { cause } = error;
-  return {
-    error: message,
-    cause: cause instanceof Error ? cause.message : (JSON.stringify(cause) ?? typeof cause),
-  };
+  return { error: message, cause: describeCause(error.cause) };
+}
+
+/** A cause as text, without throwing: this runs inside a failure's own report. */
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === 'string') return cause;
+  try {
+    return JSON.stringify(cause) ?? typeof cause;
+  } catch {
+    return typeof cause;
+  }
 }
 
 /** A pick the run could not get (the org's policy unreadable, say). */
