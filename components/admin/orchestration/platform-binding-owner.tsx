@@ -11,12 +11,15 @@
  * model the org can reach and moves it when that changes. Once an admin sets
  * provider or model, the binding is the org's and the platform stops moving
  * it; this is where they hand it back, with `PATCH { bindingOwner: 'platform' }`.
- * The API reconciles the org before it responds, so the agent is already on
- * the platform's pick when `onHandedBack` runs.
+ * The API tries to reconcile the org before it responds, and returns the row
+ * as it then stands, which `onHandedBack` is given: on the platform's pick, or,
+ * if the platform could not pick just then, where it was, until the next
+ * maintenance pass moves it.
  *
- * The hand-back is offered only with nothing unsaved on the form: the API
+ * The hand-back is offered only with nothing unsaved on the form. The API
  * refuses a hand-back that also changes provider or model, and the form
- * reloads the agent afterwards, which would discard any other edit.
+ * re-seeds itself from the row afterwards, which would make any other
+ * unsaved edit look saved.
  *
  * @see .context/orchestration/platform-agents.md — "What an org's admin can change"
  */
@@ -35,8 +38,8 @@ export interface PlatformBindingOwnerProps {
   bindingOwner: string | null;
   /** The form has unsaved changes, so the hand-back is not offered yet. */
   hasUnsavedChanges: boolean;
-  /** Called after a successful hand-back, so the form can reload the agent. */
-  onHandedBack: () => void | Promise<void>;
+  /** Called after a successful hand-back with the row's provider and model as they now stand. */
+  onHandedBack: (agent: { provider: string; model: string }) => void;
 }
 
 export function PlatformBindingOwner({
@@ -53,10 +56,11 @@ export function PlatformBindingOwner({
     setHandingBack(true);
     setError(null);
     try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agentId), {
-        body: { bindingOwner: 'platform' },
-      });
-      await onHandedBack();
+      const agent = await apiClient.patch<{ provider: string; model: string }>(
+        API.ADMIN.ORCHESTRATION.agentById(agentId),
+        { body: { bindingOwner: 'platform' } }
+      );
+      onHandedBack(agent);
     } catch (err) {
       setError(
         err instanceof APIClientError
@@ -81,7 +85,8 @@ export function PlatformBindingOwner({
           and moves it when that changes: a provider approved or revoked, a key added, a stronger
           model switched on. Choosing a provider or model below and saving makes them this
           organisation&apos;s, and the platform then leaves them alone. &ldquo;Let the platform
-          choose&rdquo; hands them back: the agent moves to the platform&apos;s pick straight away.
+          choose&rdquo; hands them back: the agent moves to the platform&apos;s pick straight away,
+          or, if the platform cannot pick just then, on its next maintenance pass.
         </FieldHelp>
       </p>
       {platformDecides ? (
@@ -109,7 +114,7 @@ export function PlatformBindingOwner({
             </Button>
             {hasUnsavedChanges && (
               <span data-testid="binding-owner-unsaved" className="text-muted-foreground text-xs">
-                Save or discard your changes first.
+                Save your changes first.
               </span>
             )}
           </div>

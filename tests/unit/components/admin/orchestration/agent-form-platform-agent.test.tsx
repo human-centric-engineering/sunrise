@@ -288,6 +288,7 @@ describe('AgentForm — platform agent', () => {
             tunableFields: platformAgentFieldNames('org'),
             bindingsLocked: true,
             picksOwnBinding: true,
+            bindingFollowsPlatform: true,
           },
         })
       );
@@ -295,7 +296,8 @@ describe('AgentForm — platform agent', () => {
       expect(dialog).toHaveTextContent(
         "only this org's settings from version 1: its fallback providers"
       );
-      expect(dialog).toHaveTextContent('and so are its provider and model');
+      expect(dialog).toHaveTextContent('and so are its provider, model and provider configuration');
+      expect(dialog).not.toHaveTextContent(/its fallback providers, provider configuration/);
     });
 
     it("keeps the full-restore wording on an org's own agent", async () => {
@@ -340,6 +342,7 @@ describe('AgentForm — platform agent', () => {
           tunableFields: platformAgentFieldNames('org'),
           bindingsLocked: true,
           picksOwnBinding: true,
+          bindingFollowsPlatform: bindingOwner === 'platform',
         },
       });
 
@@ -369,11 +372,10 @@ describe('AgentForm — platform agent', () => {
       }
     });
 
-    it('hands the binding back, reloads the agent onto the platform’s pick, and refreshes the page', async () => {
+    it('hands the binding back, takes the row it returned, and refreshes the page', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.patch).mockResolvedValue({});
-      // The row after the hand-back: on the platform's pick.
-      vi.mocked(apiClient.get).mockResolvedValue({
+      // The row after the hand-back's reconcile: on the platform's pick.
+      vi.mocked(apiClient.patch).mockResolvedValue({
         ...cleanupAgent('platform'),
         provider: 'openai',
         model: 'gpt-4.1',
@@ -386,11 +388,10 @@ describe('AgentForm — platform agent', () => {
       expect(apiClient.patch).toHaveBeenCalledWith(expect.stringContaining('agent-1'), {
         body: { bindingOwner: 'platform' },
       });
-      expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('agent-1'));
-      // The form now holds the row's new binding, not the one it opened with.
-      await waitFor(() =>
-        expect(screen.getByRole('textbox', { name: /^provider/i })).toHaveValue('openai')
-      );
+      // The form now holds the row's new binding, not the one it opened with,
+      // and without a second read of the agent.
+      expect(screen.getByRole('textbox', { name: /^provider/i })).toHaveValue('openai');
+      expect(apiClient.get).not.toHaveBeenCalledWith(expect.stringMatching(/agents\/agent-1$/)); // test-review:accept no_arg_called — the PATCH's row replaces the reload
     });
 
     it('withholds the hand-back while provider or model has an unsaved edit', async () => {

@@ -146,9 +146,14 @@ accepted and then quietly undone
   version holds another pair, and restoring one would freeze the agent on an
   old pick, or be refused outright if that pick's provider has since been
   revoked. The provider the restore leaves alone is not one it asks approval
-  for. An admin who wants an old pair sets it on the form. Once the org owns
-  the binding, a restore brings provider and model back, and keeps the
-  binding the org's.
+  for. It leaves the provider configuration as well, since that belongs to
+  whichever provider is primary. It does bring back the version's
+  fallbacks, the org's own list, minus the current primary, which would
+  otherwise fall back to itself. A fallback whose provider has since been
+  revoked still refuses the restore, as on any agent. An admin who wants an
+  old pair sets it on the form. Once the org owns the binding, a restore
+  brings provider, model and configuration back, and keeps the binding the
+  org's.
 - **Delete, bulk actions and the instructions revert** refuse system agents,
   as they always have. **Clone** is allowed: the copy is the org's own agent.
 

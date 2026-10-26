@@ -226,7 +226,13 @@ describe('AgentVersionHistoryTab', () => {
       render(
         <AgentVersionHistoryTab
           agentId={AGENT_ID}
-          platformTunableFields={['provider', 'model', 'monthlyBudgetUsd', 'retentionDays']}
+          platformTunableFields={[
+            'provider',
+            'model',
+            'providerConfig',
+            'monthlyBudgetUsd',
+            'retentionDays',
+          ]}
           bindingFollowsPlatform
         />
       );
@@ -238,7 +244,7 @@ describe('AgentVersionHistoryTab', () => {
         "only this org's settings from version 2: its monthly budget and how long its conversations are kept."
       );
       expect(dialog).toHaveTextContent(
-        'left as they are, and so are its provider and model: the platform picks those for this org'
+        'left as they are, and so are its provider, model and provider configuration: the platform picks the provider and model for this org'
       );
     });
 

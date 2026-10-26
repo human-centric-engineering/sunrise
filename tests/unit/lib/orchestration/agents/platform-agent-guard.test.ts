@@ -27,6 +27,7 @@ import {
   changedPlatformOwnedFields,
   picksOwnBinding,
   isReservedAgentSlug,
+  bindingFollowsPlatform,
   platformAgentEditPolicy,
   platformBindingsLocked,
   platformSlugWhere,
@@ -195,25 +196,50 @@ describe('bindings', () => {
 
 describe('platformAgentEditPolicy', () => {
   it('gives a system agent the registry split and its bindings answer', () => {
-    expect(platformAgentEditPolicy({ isSystem: true, slug: 'mcp-system' })).toEqual({
+    expect(
+      platformAgentEditPolicy({ isSystem: true, slug: 'mcp-system', bindingOwner: null })
+    ).toEqual({
       lockedFields: platformAgentFieldNames('code'),
       tunableFields: platformAgentFieldNames('org'),
       bindingsLocked: false,
       picksOwnBinding: false,
+      bindingFollowsPlatform: false,
     });
   });
 
-  it('says whether the platform picks the agent’s provider and model (t-818)', () => {
-    expect(platformAgentEditPolicy({ isSystem: true, slug: 'cleanup-agent' })).toMatchObject({
+  it('says whether the platform picks the agent’s provider and model, and holds them now (t-818, t-821)', () => {
+    const cleanup = (bindingOwner: string | null) =>
+      platformAgentEditPolicy({ isSystem: true, slug: 'cleanup-agent', bindingOwner });
+    expect(cleanup('platform')).toMatchObject({
       picksOwnBinding: true,
+      bindingFollowsPlatform: true,
     });
-    expect(platformAgentEditPolicy({ isSystem: true, slug: 'pattern-advisor' })).toMatchObject({
-      picksOwnBinding: false,
-    });
+    expect(cleanup('org')).toMatchObject({ picksOwnBinding: true, bindingFollowsPlatform: false });
+    expect(cleanup(null)).toMatchObject({ picksOwnBinding: true, bindingFollowsPlatform: false });
+    expect(
+      platformAgentEditPolicy({ isSystem: true, slug: 'pattern-advisor', bindingOwner: 'platform' })
+    ).toMatchObject({ picksOwnBinding: false, bindingFollowsPlatform: false });
   });
 
   it("is null for an org's own agent", () => {
-    expect(platformAgentEditPolicy({ isSystem: false, slug: 'mine' })).toBeNull();
+    expect(
+      platformAgentEditPolicy({ isSystem: false, slug: 'mine', bindingOwner: null })
+    ).toBeNull();
+  });
+});
+
+describe('bindingFollowsPlatform (t-821)', () => {
+  it('holds only for an agent that picks its binding while the platform owns it', () => {
+    expect(
+      bindingFollowsPlatform({ isSystem: true, slug: 'cleanup-agent', bindingOwner: 'platform' })
+    ).toBe(true);
+    expect(
+      bindingFollowsPlatform({ isSystem: true, slug: 'cleanup-agent', bindingOwner: 'org' })
+    ).toBe(false);
+    // A stray owner on an agent that does not pick its own binding counts for nothing.
+    expect(
+      bindingFollowsPlatform({ isSystem: false, slug: 'cleanup-agent', bindingOwner: 'platform' })
+    ).toBe(false);
   });
 });
 

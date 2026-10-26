@@ -216,6 +216,8 @@ export type AgentWithGrants = AiAgent & {
     bindingsLocked: boolean;
     /** The platform picks this agent's provider and model while it owns them (t-818). */
     picksOwnBinding?: boolean;
+    /** It does, and owns them now, so a version restore leaves them as they are (t-821). */
+    bindingFollowsPlatform?: boolean;
   } | null;
   /**
    * Providers the agent names that its org is no longer approved for (§120
@@ -1096,27 +1098,16 @@ export function AgentForm({
               agentId={agent.id}
               bindingOwner={agent.bindingOwner}
               hasUnsavedChanges={isDirty || authored.provider || authored.model}
-              onHandedBack={async () => {
-                // The PATCH reconciled the org before responding, so the row
-                // already holds the platform's pick. Nothing else was unsaved
-                // (the control is disabled otherwise), so the form keeps its
-                // values and takes the row's provider and model, seeded as at
-                // mount: the row's own values, never the preview.
-                try {
-                  const fresh = await apiClient.get<AgentWithGrants>(
-                    API.ADMIN.ORCHESTRATION.agentById(agent.id)
-                  );
-                  reset({ ...getValues(), provider: fresh.provider, model: fresh.model });
-                  setAuthored({ provider: false, model: false });
-                } catch {
-                  // The hand-back itself succeeded; only the reload failed, so
-                  // it is not reported as a failed hand-back. The refresh
-                  // below still shows the new owner.
-                } finally {
-                  // Re-render the server page, so the owner shown here and
-                  // the restore dialog follow the hand-back.
-                  router.refresh();
-                }
+              onHandedBack={(handedBack) => {
+                // The PATCH returns the row after its reconcile. Nothing else
+                // was unsaved (the control is disabled otherwise), so the form
+                // keeps its values and takes the row's provider and model,
+                // seeded as at mount: the row's own values, never the preview.
+                reset({ ...getValues(), provider: handedBack.provider, model: handedBack.model });
+                setAuthored({ provider: false, model: false });
+                // Re-render the server page, so the owner shown here and the
+                // restore dialog follow the hand-back.
+                router.refresh();
               }}
             />
           )}
@@ -2275,9 +2266,7 @@ export function AgentForm({
             <AgentVersionHistoryTab
               agentId={agent.id}
               platformTunableFields={platformAgent?.tunableFields ?? null}
-              bindingFollowsPlatform={
-                platformAgent?.picksOwnBinding === true && agent.bindingOwner === 'platform'
-              }
+              bindingFollowsPlatform={platformAgent?.bindingFollowsPlatform === true}
               onRestored={() => {
                 // Re-pull the fresh agent into the form after a version restore.
                 void (async () => {

@@ -104,11 +104,14 @@ export interface AgentVersionHistoryTabProps {
   /**
    * The platform picks this agent's provider and model and currently owns
    * them (`bindingOwner: 'platform'`), so a restore leaves them as they are
-   * (t-821). The dialog then leaves them out of what it says a restore brings
-   * back, and says why.
+   * (t-821), and its provider configuration. The dialog then leaves those
+   * out of what it says a restore brings back, and says why.
    */
   bindingFollowsPlatform?: boolean;
 }
+
+/** What a restore leaves alone while the platform owns the binding (t-821). */
+const LEFT_WITH_THE_PLATFORM = new Set(['provider', 'model', 'providerConfig']);
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -185,9 +188,10 @@ export function AgentVersionHistoryTab({
   bindingFollowsPlatform = false,
 }: AgentVersionHistoryTabProps) {
   const isPlatformAgent = platformTunableFields != null;
-  // What a restore brings back on a platform agent (t-821).
+  // What a restore brings back on a platform agent: while the platform owns
+  // the binding, not the provider, model or provider configuration (t-821).
   const restoredFields = (platformTunableFields ?? []).filter(
-    (f) => !bindingFollowsPlatform || (f !== 'provider' && f !== 'model')
+    (f) => !bindingFollowsPlatform || !LEFT_WITH_THE_PLATFORM.has(f)
   );
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -475,7 +479,7 @@ export function AgentVersionHistoryTab({
                   instructions, knowledge and the other settings the platform owns are left as they
                   are
                   {bindingFollowsPlatform
-                    ? ', and so are its provider and model: the platform picks those for this org, and keeps them on the strongest model it can reach'
+                    ? ', and so are its provider, model and provider configuration: the platform picks the provider and model for this org, and keeps them on the strongest model it can reach'
                     : ''}
                   . A new version entry will be created to record this action. Conversations and
                   cost history are not affected.

@@ -181,11 +181,14 @@ export interface PlatformAgentEditPolicy {
    * the binding back to the platform (t-818).
    */
   picksOwnBinding: boolean;
+  /** {@link bindingFollowsPlatform}: what a version restore leaves alone (t-821). */
+  bindingFollowsPlatform: boolean;
 }
 
 export function platformAgentEditPolicy(agent: {
   isSystem: boolean;
   slug: string;
+  bindingOwner: string | null;
 }): PlatformAgentEditPolicy | null {
   if (!agent.isSystem) return null;
   return {
@@ -193,6 +196,7 @@ export function platformAgentEditPolicy(agent: {
     tunableFields: platformAgentFieldNames('org'),
     bindingsLocked: platformBindingsLocked(agent),
     picksOwnBinding: picksOwnBinding(agent),
+    bindingFollowsPlatform: bindingFollowsPlatform(agent),
   };
 }
 
@@ -244,6 +248,21 @@ export function picksOwnBinding(agent: { isSystem: boolean; slug: string }): boo
   if (!agent.isSystem) return false;
   const definition = getPlatformAgent(agent.slug);
   return definition !== undefined && definitionPicksBinding(definition);
+}
+
+/**
+ * Whether `agent`'s provider and model currently follow the platform's pick:
+ * it {@link picksOwnBinding} and the platform owns its binding. A version
+ * restore then leaves the binding as it is (t-821). The one rule the restore
+ * route applies and `GET /agents/:id` reports, so the restore dialog cannot
+ * describe a different restore from the one the route performs.
+ */
+export function bindingFollowsPlatform(agent: {
+  isSystem: boolean;
+  slug: string;
+  bindingOwner: string | null;
+}): boolean {
+  return picksOwnBinding(agent) && agent.bindingOwner === 'platform';
 }
 
 /**

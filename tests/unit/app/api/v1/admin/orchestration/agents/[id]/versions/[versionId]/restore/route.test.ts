@@ -539,6 +539,23 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
       expect(data).not.toHaveProperty('bindingOwner');
     });
 
+    it('leaves the provider configuration too, and drops a restored fallback that is now the primary', async () => {
+      // v3 was on anthropic with openai as its fallback; the platform has since
+      // moved the agent to openai.
+      const { data } = await restoreWith(
+        {
+          provider: 'anthropic',
+          model: 'claude',
+          providerConfig: { anthropicOnly: true },
+          fallbackProviders: ['openai', 'mistral'],
+        },
+        { ...cleanup('platform'), provider: 'openai', model: 'gpt-4.1' }
+      );
+
+      expect(data).not.toHaveProperty('providerConfig');
+      expect(data).toMatchObject({ fallbackProviders: ['mistral'] });
+    });
+
     it('restores the org’s settings even when that older pick’s provider has since been revoked', async () => {
       // The provider it leaves alone is not one the restore brings back, so it
       // is not one it asks approval for.
@@ -559,9 +576,23 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     });
 
     it('brings provider and model back once the org owns them, keeping the owner the org’s', async () => {
-      const { data } = await restoreWith({ provider: 'openai', model: 'gpt-5' }, cleanup('org'));
+      const { data } = await restoreWith(
+        {
+          provider: 'openai',
+          model: 'gpt-5',
+          providerConfig: { openaiOnly: true },
+          fallbackProviders: ['anthropic'],
+        },
+        cleanup('org')
+      );
 
-      expect(data).toMatchObject({ provider: 'openai', model: 'gpt-5', bindingOwner: 'org' });
+      expect(data).toMatchObject({
+        provider: 'openai',
+        model: 'gpt-5',
+        bindingOwner: 'org',
+        providerConfig: { openaiOnly: true },
+        fallbackProviders: ['anthropic'],
+      });
     });
 
     it('treats one nobody has classified yet as before: another pair makes it the org’s', async () => {

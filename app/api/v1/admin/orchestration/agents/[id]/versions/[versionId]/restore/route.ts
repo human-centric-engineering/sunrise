@@ -39,7 +39,10 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { bindingOwnerAfterWrite } from '@/lib/orchestration/agents/binding-owner';
-import { picksOwnBinding } from '@/lib/orchestration/agents/platform-agent-guard';
+import {
+  bindingFollowsPlatform,
+  picksOwnBinding,
+} from '@/lib/orchestration/agents/platform-agent-guard';
 import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 /**
@@ -127,11 +130,20 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // 2026-10-26, t-821); an admin who wants the old pair sets it on the form,
     // which makes the binding the org's. Once the org owns it, a restore
     // brings them back as before.
-    const bindingFollowsPlatform = picksOwnBinding(agent) && agent.bindingOwner === 'platform';
-    if (bindingFollowsPlatform) {
+    //
+    // `providerConfig` stays too: it is the configuration of whichever
+    // provider is primary, and the old one's would land on the platform's.
+    const followsPlatform = bindingFollowsPlatform(agent);
+    if (followsPlatform) {
       skip.add('provider');
       skip.add('model');
+      skip.add('providerConfig');
     }
+    // The old fallbacks were chosen beside the old primary. Kept, but not the
+    // platform's current primary, which would then fall back to itself.
+    const restoredFallbacks = followsPlatform
+      ? snapshot.fallbackProviders?.filter((slug) => slug !== agent.provider)
+      : snapshot.fallbackProviders;
 
     const updateData: Record<string, unknown> = {};
 
@@ -180,11 +192,12 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       // coerce to Prisma.JsonNull, as the create/clone/import paths do.
       updateData[field] = getAgentField(field)?.json && value === null ? Prisma.JsonNull : value;
     }
+    if ('fallbackProviders' in updateData) updateData.fallbackProviders = restoredFallbacks;
 
     // On a platform agent that picks its own binding, bringing back a
     // different provider or model is an admin's choice like any PATCH
     // (t-798): the binding becomes the org's, and the platform stops moving it.
-    if (picksOwnBinding(agent) && !bindingFollowsPlatform) {
+    if (picksOwnBinding(agent) && !followsPlatform) {
       const bindingOwner = bindingOwnerAfterWrite(agent, {
         provider: snapshot.provider,
         model: snapshot.model,
@@ -200,8 +213,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // nor does one whose provider this restore leaves alone.
     await assertAgentProvidersApproved(
       {
-        provider: bindingFollowsPlatform ? undefined : snapshot.provider || undefined,
-        fallbackProviders: snapshot.fallbackProviders,
+        provider: followsPlatform ? undefined : snapshot.provider || undefined,
+        fallbackProviders: restoredFallbacks,
       },
       agent
     );

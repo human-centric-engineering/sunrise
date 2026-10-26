@@ -65,9 +65,9 @@ describe('PlatformBindingOwner', () => {
     expect(screen.getByTestId('binding-owner-org')).toHaveTextContent(/not yet decided/i);
   });
 
-  it('hands the binding back with a PATCH, then lets the form reload', async () => {
+  it('hands the binding back with a PATCH, and gives the form the row it returned', async () => {
     const user = userEvent.setup();
-    vi.mocked(apiClient.patch).mockResolvedValue({});
+    vi.mocked(apiClient.patch).mockResolvedValue({ provider: 'openai', model: 'gpt-4.1' });
     const { onHandedBack } = renderOwner();
 
     await user.click(screen.getByRole('button', { name: /let the platform choose/i }));
@@ -75,7 +75,9 @@ describe('PlatformBindingOwner', () => {
     expect(apiClient.patch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.agentById(AGENT_ID), {
       body: { bindingOwner: 'platform' },
     });
-    await waitFor(() => expect(onHandedBack).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(onHandedBack).toHaveBeenCalledWith({ provider: 'openai', model: 'gpt-4.1' })
+    );
   });
 
   it('does not offer the hand-back while the form has unsaved changes', async () => {
@@ -85,7 +87,7 @@ describe('PlatformBindingOwner', () => {
     const button = screen.getByRole('button', { name: /let the platform choose/i });
     expect(button).toBeDisabled();
     expect(screen.getByTestId('binding-owner-unsaved')).toHaveTextContent(
-      'Save or discard your changes first.'
+      'Save your changes first.'
     );
     await user.click(button);
     expect(apiClient.patch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the disabled button must send nothing
