@@ -106,7 +106,7 @@
   },
   "homepage": "https://github.com/human-centric-engineering/sunrise#readme",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
+    "@anthropic-ai/sdk": "^0.137.0",
     "@aws-sdk/client-s3": "^3.1156.0",
     "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@better-auth/core": "1.7.13",
