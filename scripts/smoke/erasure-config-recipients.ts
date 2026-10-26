@@ -18,7 +18,10 @@
  *   • a schedule's input template loses the address (blanked where it stood
  *     alone) and stays enabled; a colleague's run paused at an approval loses
  *     the subject's id and address and stays paused; the subject's own run
- *     cascades (t-804);
+ *     cascades (t-804); the paused run's supervisor report, step turns,
+ *     cached step result and lease events lose them too, and so does a
+ *     colleague's run that names them **only** in those side rows — the
+ *     narrowing reads them (t-882);
  *   • erasing the escalation list's only recipient leaves it empty and keeps
  *     the webhook.
  *
@@ -228,6 +231,53 @@ async function main(): Promise<void> {
         ],
       },
     });
+    // What else a run keeps (t-882): on the paused run beside its trace, and on
+    // a completed run whose own columns do not name the subject at all.
+    await prisma.aiWorkflowExecution.update({
+      where: { id: pausedRun.id },
+      data: {
+        supervisorVerdict: 'concerns',
+        supervisorReport: { summary: `Approver ${subject.id} not reached`, cites: [typed] },
+      },
+    });
+    await prisma.aiWorkflowRunningStep.create({
+      data: {
+        executionId: pausedRun.id,
+        orgId: INSTALL_ORG_ID,
+        stepId: 'ap',
+        label: 'Approve',
+        stepType: 'human_approval',
+        turns: [{ kind: 'reflect', iteration: 0, draft: typed, converged: false }],
+      },
+    });
+    const sideOnlyRun = await prisma.aiWorkflowExecution.create({
+      data: {
+        workflowId: workflow.id,
+        orgId: INSTALL_ORG_ID,
+        userId: other.id,
+        status: 'failed',
+        inputData: { region: 'eu' },
+        executionTrace: [],
+      },
+    });
+    await prisma.aiWorkflowStepDispatch.create({
+      data: {
+        executionId: sideOnlyRun.id,
+        orgId: INSTALL_ORG_ID,
+        stepId: 'lookup',
+        idempotencyKey: `${sideOnlyRun.id}:lookup`,
+        result: { output: { owner: typed, colleague: COLLEAGUE } },
+      },
+    });
+    await prisma.aiWorkflowExecutionLeaseEvent.create({
+      data: {
+        executionId: sideOnlyRun.id,
+        orgId: INSTALL_ORG_ID,
+        event: 'force-failed',
+        reason: 'admin-force-fail',
+        metadata: { actorUserId: subject.id, previousStatus: 'running' },
+      },
+    });
     const ownRun = await prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
@@ -362,6 +412,45 @@ async function main(): Promise<void> {
     check(
       (await prisma.aiWorkflowExecution.findUnique({ where: { id: ownRun.id } })) === null,
       'their own run went with them'
+    );
+    const namesSubject = (value: unknown): boolean => {
+      const text = JSON.stringify(value).toLowerCase();
+      return text.includes(subject.email.toLowerCase()) || text.includes(subject.id);
+    };
+    check(
+      jsonEquals(pausedAfter.supervisorReport, {
+        summary: 'Approver [erased] not reached',
+        cites: [],
+      }),
+      'the paused run’s supervisor report loses their id and address (t-882)'
+    );
+    const turnsAfter = await prisma.aiWorkflowRunningStep.findMany({
+      where: { executionId: pausedRun.id },
+    });
+    check(
+      turnsAfter.length === 1 && !namesSubject(turnsAfter[0].turns),
+      'and so do its step turns'
+    );
+    const dispatchAfter = await prisma.aiWorkflowStepDispatch.findMany({
+      where: { executionId: sideOnlyRun.id },
+    });
+    check(
+      dispatchAfter.length === 1 &&
+        jsonEquals(dispatchAfter[0].result, {
+          output: { owner: '[erased]', colleague: COLLEAGUE },
+        }),
+      'a run naming them only in a cached step result is found, and the result redacted'
+    );
+    const leaseAfter = await prisma.aiWorkflowExecutionLeaseEvent.findMany({
+      where: { executionId: sideOnlyRun.id },
+    });
+    check(
+      leaseAfter.length === 1 &&
+        jsonEquals(leaseAfter[0].metadata, {
+          actorUserId: '[erased]',
+          previousStatus: 'running',
+        }),
+      'and its lease event no longer names them as the admin who force-failed it'
     );
 
     // ── Unverified subject ────────────────────────────────────────────────

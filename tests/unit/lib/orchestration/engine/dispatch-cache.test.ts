@@ -6,6 +6,10 @@
  *   lookupDispatch      — thin Prisma read; returns cached result or null; propagates errors
  *   recordDispatch      — Prisma write with P2002 race-loss handling; returns true/false
  *
+ * recordDispatch writes inside a transaction that takes the run's row lock and
+ * checks for anyone erased since the run started (t-882). `findErasedSinceRunStarted`
+ * and `lockRunRow` run for real against a hand-built transaction client.
+ *
  * Critical invariants tested here:
  *   - turnIndex === 0 (falsy but defined) MUST produce the :turn=0 suffix
  *   - recordDispatch omits `turnIndex` entirely when not provided (not undefined / null)
@@ -14,17 +18,32 @@
  * @see lib/orchestration/engine/dispatch-cache.ts
  */
 
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── module mocks ─────────────────────────────────────────────────────────────
 // Must appear before any import of the modules under test.
 
+// recordDispatch writes through the transaction client, not the pool client, so
+// `create` lives on `tx`; the pool client only reads (lookupDispatch) and opens
+// the transaction.
+const { tx, mockTransaction } = vi.hoisted(() => {
+  const tx = {
+    $queryRaw: vi.fn(),
+    aiWorkflowStepDispatch: { create: vi.fn() },
+    dataErasureReceipt: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+  };
+  const mockTransaction = vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx));
+  return { tx, mockTransaction };
+});
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
+    $transaction: mockTransaction,
     aiWorkflowStepDispatch: {
       findUnique: vi.fn(),
-      create: vi.fn(),
     },
   },
 }));
@@ -50,7 +69,7 @@ import {
 
 // ─── typed mock references ────────────────────────────────────────────────────
 const mockFindUnique = vi.mocked(prisma.aiWorkflowStepDispatch.findUnique);
-const mockCreate = vi.mocked(prisma.aiWorkflowStepDispatch.create);
+const mockCreate = tx.aiWorkflowStepDispatch.create;
 const mockLoggerWarn = vi.mocked(logger.warn);
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -191,6 +210,10 @@ describe('lookupDispatch', () => {
 describe('recordDispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // No receipts by default: nobody was erased since the run started.
+    tx.$queryRaw.mockResolvedValue([]);
+    tx.dataErasureReceipt.findMany.mockResolvedValue([]);
+    tx.user.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -199,7 +222,7 @@ describe('recordDispatch', () => {
 
   it('returns true when the row is inserted successfully', async () => {
     // Arrange
-    mockCreate.mockResolvedValue({} as never);
+    mockCreate.mockResolvedValue({});
 
     // Act
     const result = await recordDispatch({
@@ -214,7 +237,7 @@ describe('recordDispatch', () => {
 
   it('calls create with the correct data shape when turnIndex is omitted', async () => {
     // Arrange
-    mockCreate.mockResolvedValue({} as never);
+    mockCreate.mockResolvedValue({});
 
     // Act
     await recordDispatch({
@@ -236,7 +259,7 @@ describe('recordDispatch', () => {
 
   it('includes turnIndex in data when it is explicitly provided', async () => {
     // Arrange
-    mockCreate.mockResolvedValue({} as never);
+    mockCreate.mockResolvedValue({});
 
     // Act
     await recordDispatch({
@@ -260,7 +283,7 @@ describe('recordDispatch', () => {
 
   it('does NOT include turnIndex field at all when turnIndex is omitted', async () => {
     // Arrange
-    mockCreate.mockResolvedValue({} as never);
+    mockCreate.mockResolvedValue({});
 
     // Act
     await recordDispatch({
@@ -337,5 +360,168 @@ describe('recordDispatch', () => {
 
     // Assert — P2002 branch was not entered; no warn logged
     expect(mockLoggerWarn).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ─── recordDispatch — erasure while the run is in flight (t-882) ─────────────
+describe('recordDispatch — erased since the run started (t-882)', () => {
+  const ERASED_ID = 'cmuser00000000000000erase';
+  const ERASED_ADDRESS = 'gone@bar.com';
+  const emailHash = createHash('sha256').update(ERASED_ADDRESS).digest('hex');
+
+  /** The text of a tagged-template `$queryRaw` call. */
+  function sqlOf(call: unknown[]): string {
+    return (call[0] as TemplateStringsArray).join('?');
+  }
+
+  /** Make the transaction's receipts query return `receipts`; the lock returns nothing. */
+  function withReceipts(
+    receipts: Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+  ) {
+    tx.$queryRaw.mockImplementation(async (...call: unknown[]) =>
+      sqlOf(call).includes('data_erasure_receipt') ? receipts : []
+    );
+    tx.dataErasureReceipt.findMany.mockResolvedValue(
+      receipts.map((r) => ({ ...r, metadata: { addressVerified: true } }))
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tx.$queryRaw.mockResolvedValue([]);
+    tx.dataErasureReceipt.findMany.mockResolvedValue([]);
+    tx.user.findMany.mockResolvedValue([]);
+    mockCreate.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('replaces an erased address and id in the stored result with [erased], keeping the rest', async () => {
+    withReceipts([{ subjectUserId: ERASED_ID, subjectEmailHash: emailHash }]);
+
+    const ok = await recordDispatch({
+      executionId: 'exec-abc',
+      stepId: 'step-xyz',
+      result: {
+        sentTo: ' Gone@BAR.com ',
+        approvedBy: `admin:${ERASED_ID}`,
+        messageId: 'msg-4821',
+        cc: ['keep@bar.com'],
+      },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockCreate).toHaveBeenCalledWith({
+      data: {
+        executionId: 'exec-abc',
+        stepId: 'step-xyz',
+        idempotencyKey: 'exec-abc:step-xyz',
+        result: {
+          sentTo: '[erased]',
+          approvedBy: 'admin:[erased]',
+          messageId: 'msg-4821',
+          cc: ['keep@bar.com'],
+        },
+      },
+    });
+  });
+
+  it('takes the run lock, then reads receipts, then creates, all on the transaction client', async () => {
+    withReceipts([]);
+    const order: string[] = [];
+    tx.$queryRaw.mockImplementation(async (...call: unknown[]) => {
+      const sql = sqlOf(call);
+      if (sql.includes('FOR NO KEY UPDATE')) order.push('lock');
+      else if (sql.includes('data_erasure_receipt')) order.push('receipts');
+      return [];
+    });
+    mockCreate.mockImplementation((async () => {
+      order.push('create');
+      return {};
+    }) as never);
+
+    await recordDispatch({ executionId: 'exec-abc', stepId: 'step-xyz', result: { ok: true } });
+
+    expect(order).toEqual(['lock', 'receipts', 'create']);
+    expect(mockTransaction).toHaveBeenCalledOnce();
+    // The lock and the receipts are asked about this run.
+    const lockCall = tx.$queryRaw.mock.calls.find((c) => sqlOf(c).includes('FOR NO KEY UPDATE'));
+    const receiptsCall = tx.$queryRaw.mock.calls.find((c) =>
+      sqlOf(c).includes('data_erasure_receipt')
+    );
+    expect(lockCall).toContain('exec-abc');
+    expect(receiptsCall).toContain('exec-abc');
+    // Waits for the row as the engine's other writes do, not Prisma's 5 s default.
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ maxWait: 10_000 })
+    );
+  });
+
+  it('writes the result unchanged when nobody was erased since the run started', async () => {
+    withReceipts([]);
+    const result = { sentTo: ERASED_ADDRESS, approvedBy: ERASED_ID, messageId: 'msg-4821' };
+
+    await recordDispatch({ executionId: 'exec-abc', stepId: 'step-xyz', result });
+
+    // Receipts were actually consulted, and none matched.
+    expect(tx.$queryRaw.mock.calls.some((c) => sqlOf(c).includes('data_erasure_receipt'))).toBe(
+      true
+    );
+    expect(mockCreate).toHaveBeenCalledWith({
+      data: {
+        executionId: 'exec-abc',
+        stepId: 'step-xyz',
+        idempotencyKey: 'exec-abc:step-xyz',
+        result,
+      },
+    });
+  });
+
+  it('writes the result unchanged when someone was erased but the result does not name them', async () => {
+    withReceipts([{ subjectUserId: ERASED_ID, subjectEmailHash: emailHash }]);
+
+    await recordDispatch({
+      executionId: 'exec-abc',
+      stepId: 'step-xyz',
+      result: { sentTo: 'keep@bar.com', approvedBy: 'cmuser00000000000000other' },
+    });
+
+    // A receipt exists, so the result was checked against it and found clean.
+    expect(tx.$queryRaw.mock.calls.some((c) => sqlOf(c).includes('data_erasure_receipt'))).toBe(
+      true
+    );
+    const data = mockCreate.mock.calls[0]?.[0]?.data;
+    expect(data?.result).toEqual({
+      sentTo: 'keep@bar.com',
+      approvedBy: 'cmuser00000000000000other',
+    });
+  });
+
+  it('returns false when the create inside the transaction loses the unique-key race', async () => {
+    withReceipts([]);
+    mockCreate.mockRejectedValue(makePrismaError('P2002'));
+
+    const ok = await recordDispatch({
+      executionId: 'exec-abc',
+      stepId: 'step-xyz',
+      result: { ok: true },
+    });
+
+    expect(ok).toBe(false);
+    expect(mockTransaction).toHaveBeenCalledOnce();
+    expect(mockLoggerWarn).toHaveBeenCalledOnce();
+  });
+
+  it('does not create when the lock query fails, and rethrows', async () => {
+    tx.$queryRaw.mockRejectedValue(new Error('lock wait timeout'));
+
+    await expect(
+      recordDispatch({ executionId: 'exec-abc', stepId: 'step-xyz', result: { ok: true } })
+    ).rejects.toThrow('lock wait timeout');
+
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

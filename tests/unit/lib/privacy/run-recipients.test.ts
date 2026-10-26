@@ -148,15 +148,38 @@ type ExecutionRow = {
   executionTrace: Prisma.JsonValue;
   outputData?: Prisma.JsonValue | null;
   errorMessage?: string | null;
+  supervisorReport?: Prisma.JsonValue | null;
 };
+/** A row of one of the run's side tables, found by the run it belongs to. */
+type SideRow = { id: string; executionId: string } & Record<string, Prisma.JsonValue | string>;
+type SideRows = { steps?: SideRow[]; dispatches?: SideRow[]; events?: SideRow[] };
 
 function sqlOf(call: unknown[]): string {
   const strings = call[0] as TemplateStringsArray;
   return strings.join('?');
 }
 
+/** A side-table delegate whose reads return the rows of the run asked for. */
+function makeSideDelegate(rows: SideRow[] = []) {
+  return {
+    findMany: vi.fn(async (args: { where: { executionId: string } }) =>
+      rows.filter((r) => r.executionId === args.where.executionId)
+    ),
+    update: vi.fn(),
+  };
+}
+
+/** The three side tables a run keeps rows in, as a tx exposes them (t-882). */
+function makeSideTables(side: SideRows = {}) {
+  return {
+    aiWorkflowRunningStep: makeSideDelegate(side.steps),
+    aiWorkflowStepDispatch: makeSideDelegate(side.dispatches),
+    aiWorkflowExecutionLeaseEvent: makeSideDelegate(side.events),
+  };
+}
+
 /** A tx whose raw reads page through the given rows by table. */
-function makeTx(schedules: ScheduleRow[][], executions: ExecutionRow[][]) {
+function makeTx(schedules: ScheduleRow[][], executions: ExecutionRow[][], side: SideRows = {}) {
   const pages = { schedules: [...schedules], executions: [...executions] };
   return {
     $queryRaw: vi.fn((...call: unknown[]) => {
@@ -170,6 +193,7 @@ function makeTx(schedules: ScheduleRow[][], executions: ExecutionRow[][]) {
     }),
     aiWorkflowSchedule: { update: vi.fn() },
     aiWorkflowExecution: { update: vi.fn() },
+    ...makeSideTables(side),
     aiAdminAuditLog: { create: vi.fn() },
   };
 }
@@ -352,6 +376,148 @@ describe('eraseFromRunInputs — runs', () => {
 
     expect((await run(tx)).executionsRedacted).toBe(0);
     expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('eraseFromRunInputs — supervisor report and side rows (t-882)', () => {
+  const cleanRun = (id: string, extra: Partial<ExecutionRow> = {}): ExecutionRow => ({
+    id,
+    inputData: { region: 'eu' },
+    executionTrace: [],
+    ...extra,
+  });
+
+  it('redacts the person from a supervisor report: their id in prose, their address as a whole value', async () => {
+    const report: Prisma.JsonValue = {
+      verdict: 'pass',
+      summary: `Step approve was signed off by ${USER_ID} after review.`,
+      recipient: ADDRESS,
+      findings: ['retained: nothing sensitive'],
+    };
+    const tx = makeTx([[]], [[cleanRun('exec-report', { supervisorReport: report })]]);
+
+    const result = await run(tx);
+
+    expect(result.executionsRedacted).toBe(1);
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec-report' },
+      data: {
+        supervisorReport: {
+          verdict: 'pass',
+          summary: `Step approve was signed off by ${ERASED_VALUE} after review.`,
+          recipient: ERASED_VALUE,
+          findings: ['retained: nothing sensitive'],
+        },
+      },
+    });
+  });
+
+  it('rewrites side rows of a run whose own columns do not name them, and counts the run once', async () => {
+    const tx = makeTx([[]], [[cleanRun('exec-side')]], {
+      steps: [
+        {
+          id: 'step-1',
+          executionId: 'exec-side',
+          turns: [{ role: 'user', content: `Please ask ${USER_ID} to confirm` }],
+        },
+      ],
+      dispatches: [
+        {
+          id: 'disp-1',
+          executionId: 'exec-side',
+          result: { sentTo: ADDRESS, messageId: 'msg-77' },
+        },
+      ],
+      events: [
+        {
+          id: 'evt-1',
+          executionId: 'exec-side',
+          metadata: { actorUserId: USER_ID, reason: 'stuck' },
+        },
+      ],
+    });
+
+    const result = await run(tx);
+
+    expect(result.executionsRedacted).toBe(1);
+    expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowRunningStep.update).toHaveBeenCalledWith({
+      where: { id: 'step-1' },
+      data: { turns: [{ role: 'user', content: `Please ask ${ERASED_VALUE} to confirm` }] },
+    });
+    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith({
+      where: { id: 'disp-1' },
+      data: { result: { sentTo: ERASED_VALUE, messageId: 'msg-77' } },
+    });
+    expect(tx.aiWorkflowExecutionLeaseEvent.update).toHaveBeenCalledWith({
+      where: { id: 'evt-1' },
+      data: { metadata: { actorUserId: ERASED_VALUE, reason: 'stuck' } },
+    });
+  });
+
+  it('reads each side table for the run it is redacting', async () => {
+    const tx = makeTx([[]], [[cleanRun('exec-side')]]);
+
+    await run(tx);
+
+    for (const table of [
+      tx.aiWorkflowRunningStep,
+      tx.aiWorkflowStepDispatch,
+      tx.aiWorkflowExecutionLeaseEvent,
+    ]) {
+      expect(table.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { executionId: 'exec-side' } })
+      );
+    }
+  });
+
+  it('writes no side row that names someone else, while still rewriting one that names them', async () => {
+    const tx = makeTx([[]], [[cleanRun('exec-other'), cleanRun('exec-mine')]], {
+      steps: [
+        { id: 'step-other', executionId: 'exec-other', turns: [{ content: 'ask cmsomeoneelse' }] },
+      ],
+      dispatches: [
+        { id: 'disp-other', executionId: 'exec-other', result: { to: 'gone@bar.com.au' } },
+        { id: 'disp-mine', executionId: 'exec-mine', result: { to: ADDRESS } },
+      ],
+      events: [
+        { id: 'evt-other', executionId: 'exec-other', metadata: { actorUserId: ACTOR } },
+        { id: 'evt-null', executionId: 'exec-mine', metadata: null },
+      ],
+    });
+
+    const result = await run(tx);
+
+    // Positive control: the run that does name them was rewritten, so the
+    // side rows of the other run were read and judged, not skipped.
+    expect(result.executionsRedacted).toBe(1);
+    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'disp-mine' } })
+    );
+    expect(tx.aiWorkflowRunningStep.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowExecutionLeaseEvent.update).not.toHaveBeenCalled();
+  });
+
+  it('narrows the runs it reads by the supervisor report and the three side tables', async () => {
+    const tx = makeTx([[]], [[]]);
+
+    await run(tx);
+
+    const execCall = tx.$queryRaw.mock.calls.find((c) =>
+      sqlOf(c).includes('FROM ai_workflow_execution e')
+    );
+    expect(execCall).toBeDefined();
+    const sql = sqlOf(execCall as unknown[]);
+    expect(sql).toContain('e."supervisorReport"::text');
+    expect(sql).toContain('FROM ai_workflow_running_step s');
+    expect(sql).toContain('s.turns::text');
+    expect(sql).toContain('FROM ai_workflow_step_dispatch d');
+    expect(sql).toContain('d.result::text');
+    expect(sql).toContain('FROM ai_workflow_execution_lease_event l');
+    expect(sql).toContain('l.metadata::text');
+    // The report is also selected, so redactRunRow can rewrite it.
+    expect(sql.split('FROM ai_workflow_execution e')[0]).toContain('e."supervisorReport"');
   });
 });
 
@@ -558,13 +724,16 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
   const since = new Date('2026-10-20T10:00:00.000Z');
 
   /** A client whose id reads page through `pages`, and whose row reads come from `rows`. */
-  function makeClient(pages: string[][], rows: Record<string, ExecutionRow>) {
+  function makeClient(pages: string[][], rows: Record<string, ExecutionRow>, side: SideRows = {}) {
     const tx = {
       $queryRaw: vi.fn(async (...call: unknown[]) => {
         const id = call[1] as string;
-        return rows[id] ? [{ outputData: null, errorMessage: null, ...rows[id] }] : [];
+        return rows[id]
+          ? [{ outputData: null, errorMessage: null, supervisorReport: null, ...rows[id] }]
+          : [];
       }),
       aiWorkflowExecution: { update: vi.fn() },
+      ...makeSideTables(side),
     };
     const client = {
       $queryRaw: vi.fn(async () => (pages.shift() ?? []).map((id) => ({ id }))),
@@ -609,6 +778,53 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
     expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
       where: { id: 'exec-1' },
       data: { executionTrace: [{ output: { to: ERASED_VALUE } }] },
+    });
+  });
+
+  it('reads the supervisor report with the row it locks, and redacts it', async () => {
+    const { client, tx } = makeClient([['exec-rep']], {
+      'exec-rep': {
+        id: 'exec-rep',
+        inputData: {},
+        executionTrace: [],
+        supervisorReport: { summary: `Approved by ${USER_ID}` },
+      },
+    });
+
+    const result = await redactSubjectFromRunsSince(client as never, subject, since);
+
+    expect(sqlOf(tx.$queryRaw.mock.calls[0])).toContain('e."supervisorReport"');
+    expect(result.redacted).toBe(1);
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec-rep' },
+      data: { supervisorReport: { summary: `Approved by ${ERASED_VALUE}` } },
+    });
+  });
+
+  it('redacts a side row written since, and counts the run, when its own columns are clean', async () => {
+    const { client, tx } = makeClient(
+      [['exec-clean', 'exec-late']],
+      {
+        'exec-clean': { id: 'exec-clean', inputData: {}, executionTrace: [] },
+        'exec-late': { id: 'exec-late', inputData: {}, executionTrace: [] },
+      },
+      {
+        dispatches: [
+          { id: 'disp-keep', executionId: 'exec-clean', result: { to: 'keep@bar.com' } },
+          { id: 'disp-late', executionId: 'exec-late', result: { to: ADDRESS, ok: true } },
+        ],
+      }
+    );
+
+    const result = await redactSubjectFromRunsSince(client as never, subject, since);
+
+    // Positive control: exec-clean's side row was read and left; exec-late's was rewritten.
+    expect(result).toEqual({ redacted: 1, failed: 0, lastError: null });
+    expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith({
+      where: { id: 'disp-late' },
+      data: { result: { to: ERASED_VALUE, ok: true } },
     });
   });
 
