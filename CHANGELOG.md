@@ -94,6 +94,19 @@ release process.
 
 ### Changed
 
+- **Erasure reaches the rest of what a run keeps (t-882).** Besides a run's
+  input, trace, output and error, erasure now redacts its `supervisorReport`,
+  its running-step `turns`, its cached step-dispatch `result` and its
+  lease-event `metadata`, under the run's row lock; a run naming the person
+  only in those rows is found too. The engine's writes of the report and the
+  turns, and `recordDispatch`, now leave out anyone erased since the run
+  started.
+  `SCRUBBED_COLUMNS` (`lib/privacy/stale-writers.ts`) gains the four, so **a
+  fork file that writes `AiWorkflowRunningStep`, `AiWorkflowStepDispatch`,
+  `AiWorkflowExecutionLeaseEvent` or `supervisorReport` fails
+  `stale-writers.test.ts` until it declares itself** with
+  `registerStaleWriter()`. See `.context/privacy/data-erasure.md`.
+
 - **Erasure hooks are told the subject's email and whether it is verified
   (t-944).** `ErasureExternalContext` and `ErasureTxContext`
   (`lib/privacy/erasure-hooks.ts`) gain required `email` and `emailVerified`,
@@ -207,6 +220,13 @@ release process.
   `.context/privacy/data-erasure.md`.
 
 ### Fixed
+
+- **A run's supervisor verdict history is kept (t-925, t-951).** Two
+  overlapping retroactive reviews of one run both stay in
+  `supervisorReport.previousVerdicts[]`, and an in-workflow supervisor step
+  that runs again on a retried run archives the verdict it replaces instead of
+  dropping the history. `POST …/executions/:id/review` now answers **409**,
+  writing nothing, when the run was retried during its model call.
 
 - **Agent-opened turns work on Claude agents (t-937).** An `openingTurn` now
   reaches Anthropic as the request's last turn: a user turn headed as an
