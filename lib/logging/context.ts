@@ -209,7 +209,8 @@ export async function getFullContext(request?: Request): Promise<{
  * parse), with id- and credential-shaped segments collapsed to `[param]` by
  * `collapseDynamicSegments()` — the logger redacts by key name only, so a
  * token in a route path would otherwise be logged verbatim. A route whose
- * dynamic segment the heuristic cannot recognise pins its pattern instead:
+ * credential segment the heuristic cannot recognise declares it
+ * (`lib/app/credential-paths.ts`), or pins its pattern:
  * `getRouteLogger(request, { endpoint })`.
  *
  * @example
