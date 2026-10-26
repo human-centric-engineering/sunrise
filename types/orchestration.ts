@@ -879,6 +879,16 @@ export type ChatEvent =
   // than the wire contract. No bundled consumer reads it off `start`.
   | { type: 'start'; conversationId: string; messageId?: string }
   | { type: 'content'; delta: string }
+  | {
+      // Admin-only: the model's reasoning text as it streams (Claude's
+      // summarized thinking, or an OpenAI-compatible provider's reasoning
+      // deltas). Emitted only when the request sets `includeTrace: true`,
+      // so consumer and embed streams never carry it. Cleared by
+      // `content_reset` along with the content. The persisted copy is
+      // `MessageMetadata.reasoningSummary`.
+      type: 'reasoning';
+      delta: string;
+    }
   | { type: 'status'; message: string }
   | {
       type: 'capability_result';
@@ -1162,6 +1172,14 @@ export interface MessageMetadata {
    * full picture even on reloads / when replayed from history.
    */
   sideEffectModels?: SideEffectModelUsage[];
+  /**
+   * The model's readable reasoning for this turn, concatenated as it streamed
+   * (Claude's summarized thinking, or an OpenAI-compatible provider's
+   * reasoning deltas). Always persisted when the provider sent any, so the
+   * admin trace viewer can show it; it streams live only on `includeTrace`.
+   * Display only — the replayable thinking blocks are not stored here.
+   */
+  reasoningSummary?: string;
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;

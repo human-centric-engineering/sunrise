@@ -4228,6 +4228,7 @@ export const messageMetadataSchema = z.object({
   latencyMs: z.number().optional(),
   costUsd: z.number().optional(),
   pendingApproval: pendingApprovalSchema.optional(),
+  reasoningSummary: z.string().optional(),
 });
 
 // ============================================================================

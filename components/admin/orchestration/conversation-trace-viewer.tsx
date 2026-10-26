@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils';
 import { messageMetadataSchema, messageProvenanceSchema } from '@/lib/validations/orchestration';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import { ReasoningPanel } from '@/components/admin/orchestration/chat/reasoning-panel';
 import { SaveToDatasetButton } from '@/components/admin/orchestration/evaluations-foundations/save-to-dataset-button';
 import type { Citation, ToolCallTrace } from '@/types/orchestration';
 
@@ -41,6 +42,7 @@ interface MessageMetadata {
   tokenUsage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   latencyMs?: number;
   costUsd?: number;
+  reasoningSummary?: string;
 }
 
 interface MessageProvenance {
@@ -157,6 +159,7 @@ function MessageCard({ message }: { message: ConversationMessage }) {
           </pre>
         ) : message.role === 'assistant' ? (
           <>
+            {meta.reasoningSummary && <ReasoningPanel text={meta.reasoningSummary} />}
             <MessageWithCitations
               content={message.content}
               citations={prov.citations}

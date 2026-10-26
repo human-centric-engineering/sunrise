@@ -1536,6 +1536,10 @@ export class StreamingChatHandler {
        */
       let turnCostUsd = summariserCostUsd;
 
+      // Whether any reasoning has streamed yet this turn, so the next tool-loop
+      // iteration's reasoning starts on a new paragraph in the live panel.
+      let reasoningStreamed = false;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
@@ -1549,6 +1553,9 @@ export class StreamingChatHandler {
         }
 
         let assistantText = '';
+        // Readable reasoning streamed this turn — display only, persisted on
+        // the assistant message. Not the replayable blocks (`reasoning`).
+        let reasoningSummary = '';
         const toolCalls = new Map<number, LlmToolCall>();
         // Thinking blocks from this turn, replayed on the assistant message the
         // tool loop appends — Anthropic requires them back unchanged.
@@ -1624,6 +1631,13 @@ export class StreamingChatHandler {
                     if (toolCalls.size > 0) continue;
                     assistantText += chunk.content;
                     yield { type: 'content', delta: chunk.content };
+                  } else if (chunk.type === 'reasoning') {
+                    if (request.includeTrace) {
+                      const separator = reasoningStreamed && !reasoningSummary ? '\n\n' : '';
+                      yield { type: 'reasoning', delta: separator + chunk.text };
+                      reasoningStreamed = true;
+                    }
+                    reasoningSummary += chunk.text;
                   } else if (chunk.type === 'tool_call') {
                     toolCalls.set(toolCallIndex++, chunk.toolCall);
                   } else if (chunk.type === 'done') {
@@ -1880,6 +1894,9 @@ export class StreamingChatHandler {
 
                 // Reset accumulated content for the retry
                 assistantText = '';
+                reasoningSummary = '';
+                // The client clears its reasoning panel on `content_reset` too.
+                reasoningStreamed = false;
                 toolCalls.clear();
                 reasoning = undefined;
                 usage = null;
@@ -2053,6 +2070,7 @@ export class StreamingChatHandler {
             ).totalCostUsd;
           }
           assistantMetadata.latencyMs = Date.now() - iterationStartedAt;
+          if (reasoningSummary.length > 0) assistantMetadata.reasoningSummary = reasoningSummary;
           if (isTerminalTurn && citations.length > 0) {
             assistantProvenance.citations = citations;
           }

@@ -79,6 +79,7 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
     messageId: z.string().optional(),
   }),
   z.object({ type: z.literal('content'), delta: z.string() }),
+  z.object({ type: z.literal('reasoning'), delta: z.string() }),
   z.object({ type: z.literal('status'), message: z.string() }),
   z.object({ type: z.literal('content_reset'), reason: z.string().optional() }),
   z.object({

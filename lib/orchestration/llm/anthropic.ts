@@ -352,6 +352,7 @@ export class AnthropicProvider implements LlmProvider {
                 thinking: block.thinking,
                 signature: block.signature,
               });
+              if (block.thinking) yield { type: 'reasoning', text: block.thinking };
             } else if (block.type === 'redacted_thinking') {
               reasoningBlocks.set(event.index, { type: 'redacted_thinking', data: block.data });
             }
@@ -369,6 +370,7 @@ export class AnthropicProvider implements LlmProvider {
             } else if (event.delta.type === 'thinking_delta') {
               const block = reasoningBlocks.get(event.index);
               if (block?.type === 'thinking') block.thinking += event.delta.thinking;
+              if (event.delta.thinking) yield { type: 'reasoning', text: event.delta.thinking };
             } else if (event.delta.type === 'signature_delta') {
               const block = reasoningBlocks.get(event.index);
               if (block?.type === 'thinking') block.signature = event.delta.signature;
@@ -558,7 +560,10 @@ export class AnthropicProvider implements LlmProvider {
       : undefined;
     if (effort !== undefined && !acceptsThinkingBudget(options.model)) {
       if (effort !== 'minimal') {
-        params.thinking = { type: 'adaptive' };
+        // These models default `display` to `'omitted'`, which streams the
+        // thinking blocks with empty text. `'summarized'` asks for a readable
+        // summary instead — same billing, and the blocks replay unchanged.
+        params.thinking = { type: 'adaptive', display: 'summarized' };
         thinkingEnabled = true;
       }
       params.output_config = { effort: anthropicAdaptiveEffort(effort) };

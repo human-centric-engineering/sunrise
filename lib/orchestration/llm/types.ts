@@ -279,12 +279,18 @@ export interface LlmResponse {
  * - `text` — incremental assistant text.
  * - `tool_call` — a fully-assembled tool invocation (we buffer streaming
  *   fragments and emit one chunk per call for consumer simplicity).
+ * - `reasoning` — incremental, human-readable reasoning text as the model
+ *   thinks: Claude's summarized thinking, or the `reasoning_content` /
+ *   `reasoning` deltas some OpenAI-compatible providers send. For display
+ *   only — the replayable blocks still arrive on `done`. A consumer that
+ *   doesn't show reasoning ignores this chunk.
  * - `done` — terminal chunk with usage, finish reason and any reasoning
  *   blocks the turn produced.
  */
 export type StreamChunk =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; toolCall: LlmToolCall }
+  | { type: 'reasoning'; text: string }
   | {
       type: 'done';
       usage: LlmUsage;

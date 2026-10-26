@@ -90,6 +90,7 @@ import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
+import { ReasoningPanel } from '@/components/admin/orchestration/chat/reasoning-panel';
 import {
   CitationsList,
   MessageWithCitations,
@@ -316,6 +317,12 @@ interface ChatMessage {
    * the `<MessageTrace>` strip rendered under the assistant bubble.
    */
   toolCalls?: ToolCallTrace[];
+  /**
+   * The model's readable reasoning for this turn, from the `reasoning` SSE
+   * event — sent only when the request opts into the trace. Drives the
+   * collapsed `<ReasoningPanel>` above the reply.
+   */
+  reasoning?: string;
   /**
    * Number of attachments the user submitted with this turn. Rendered
    * as a small "📎 N file(s)" chip below the bubble so attachment-only
@@ -964,6 +971,22 @@ export function ChatInterface({
                     return updated;
                   });
                 }
+              } else if (parsed.type === 'reasoning') {
+                const typed = showInlineTrace ? parseChatStreamEvent(block) : null;
+                if (typed?.type === 'reasoning') {
+                  const delta = typed.delta;
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        reasoning: (last.reasoning ?? '') + delta,
+                      };
+                    }
+                    return updated;
+                  });
+                }
               } else if (parsed.type === 'content_reset') {
                 fullText = '';
                 typing.reset();
@@ -971,7 +994,7 @@ export function ChatInterface({
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
                   if (last?.role === 'assistant') {
-                    updated[updated.length - 1] = { ...last, content: '' };
+                    updated[updated.length - 1] = { ...last, content: '', reasoning: undefined };
                   }
                   return updated;
                 });
@@ -1446,6 +1469,12 @@ export function ChatInterface({
                 {msg.role === 'user' ? '❯' : ' '}
               </span>
               <div className="min-w-0 flex-1">
+                {showInlineTrace && msg.role === 'assistant' && msg.reasoning && (
+                  <ReasoningPanel
+                    text={msg.reasoning}
+                    streaming={streaming && isLastAssistant && !liveContent}
+                  />
+                )}
                 {isLastAssistantEmpty(i, msg) && !liveContent && !msg.pendingApproval ? (
                   <ThinkingIndicator message={status} />
                 ) : msg.role === 'assistant' ? (
