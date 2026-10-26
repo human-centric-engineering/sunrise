@@ -476,9 +476,9 @@ async function redactRunRow(
  *
  *   • a running step's `turns` — a multi-turn step's state, kept while the run
  *     is paused at an approval (resume reads it back) or its host died;
- *   • a step dispatch's `result` — a `tool_call` or `external_call` step's
- *     whole result, cached so a re-drive replays it into the trace instead of
- *     calling out again;
+ *   • a step dispatch's `result` — a `tool_call`, `external_call` or
+ *     `send_notification` step's result, cached so a re-drive replays it into
+ *     the trace instead of repeating the side effect;
  *   • a lease event's `metadata` — the admin who force-failed the run.
  */
 async function redactRunSideRows(

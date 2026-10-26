@@ -165,9 +165,12 @@ export async function executeSupervisor(
 
 /**
  * Build the column-patch object lifted into the next checkpoint /
- * finalize write. Kept here (not in the engine) so the engine doesn't
- * grow knowledge of supervisor semantics — the engine's allowlist is
- * the gate; the executor decides what to publish.
+ * finalize write. The executor decides what to publish; the engine's
+ * allowlist is the gate. The engine does know one thing about the report:
+ * when it writes one it archives the stored verdict into
+ * `previousVerdicts[]` under the run's row lock, by the rule the
+ * retroactive review shares (`lib/orchestration/supervisor/verdict-history.ts`,
+ * t-951), and leaves out anyone erased since the run started (t-882).
  */
 function buildVerdictContextPatch(report: SupervisorReport): Record<string, unknown> {
   return {

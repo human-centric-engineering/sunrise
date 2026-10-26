@@ -310,7 +310,9 @@ export const STALE_WRITERS: readonly StaleWriter[] = [
     anchor: 'intent',
     how:
       'Inserts lease events. The only person one names is the admin force-failing the run in the ' +
-      'request in hand (`actorUserId`); nothing stored is copied in (t-882).',
+      'request in hand (`actorUserId`); nothing stored is copied in (t-882). Written after the ' +
+      'response without the run lock, so one landing as that admin is erased can outlast the ' +
+      "erasure's passes (documented as not reached).",
   },
   {
     file: 'lib/orchestration/engine/execution-reaper.ts',

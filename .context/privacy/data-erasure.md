@@ -626,12 +626,15 @@ transaction):
      under the run's row lock, by the same rule (t-882):
      `ai_workflow_running_step.turns` (a multi-turn step's state, kept while
      the run is paused at an approval or its host died mid-step, because
-     resume reads it back), `ai_workflow_step_dispatch.result` (a
-     `tool_call` or `external_call` step's whole result, cached so a crash
-     re-drive replays it into the trace) and
-     `ai_workflow_execution_lease_event.metadata` (`actorUserId`, the admin who
-     force-failed the run). A run is read when any of them names the person,
-     and counted once. A run **paused at an
+     resume reads it back), `ai_workflow_step_dispatch.result` (the result
+     of a `tool_call`, `external_call` or `send_notification` step, cached so
+     a crash re-drive replays it into the trace rather than repeating the side
+     effect) and `ai_workflow_execution_lease_event.metadata` (`actorUserId`,
+     the admin who force-failed the run). A run is read when any of them names
+     the person, and counted once. **Not reached:** the force-fail lease event
+     is written after the route responds, without the run's row lock, so one
+     whose admin is erased in the same moment can land after erasure's last
+     pass over the run and keep their id until retention prunes it. A run **paused at an
      approval** keeps its `approverUserIds` and notification target there,
      and the approval routes read them until retention prunes the run. In
      both columns the subject's id leaves every approver list, a notification
