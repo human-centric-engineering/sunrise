@@ -273,9 +273,11 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     // Built field by field, not by passing `subject`: a field core later adds
     // to `SubjectQuery` for its own sources does not reach fork code unasked,
     // and the collector cannot mutate the object the sources read.
-    // A typed local, not a literal at the call: the literal would trip the
-    // excess-property check against the scaffold's narrower type.
-    const appSubject: SubjectQuery = {
+    // Typed with its own three fields, not `SubjectQuery`, so that holds:
+    // a field added there does not have to be added here. A local, not a
+    // literal at the call: the literal would trip the excess-property check
+    // against the scaffold's narrower type.
+    const appSubject: { userId: string; email: string; emailVerified: boolean } = {
       userId: subject.userId,
       email: subject.email,
       emailVerified: subject.emailVerified,

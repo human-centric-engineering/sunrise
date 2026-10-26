@@ -58,7 +58,11 @@ import type { AnchoredStaleWriter } from '@/lib/privacy/stale-writers';
 export interface ErasureExternalContext {
   /** Id of the user being erased. */
   userId: string;
-  /** The account's email, read from the user row — for app tables keyed by address. */
+  /**
+   * The account's email as the user row stores it — for app tables keyed by
+   * address. Not normalised: match it the way your writer stores addresses
+   * (core's `contactSubmissionsUnder()` trims and lower-cases it first).
+   */
   email: string;
   /**
    * Whether the account has proven it owns `email`. Match rows by address only

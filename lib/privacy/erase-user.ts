@@ -163,8 +163,9 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   // system model — but a fork's hook that clears a tenant-owned table would
   // otherwise reach only the caller's org, or throw "No tenant context". Every
   // hook is handed only this person's id, address and whether it is verified,
-  // so the bypass widens it to that person's rows in every org. At `single` there is one org and no
-  // policy, so nothing is entered: a hook keeps the implicit install org.
+  // so the bypass widens it to that person's rows in every org. At `single`
+  // there is one org and no policy, so nothing is entered: a hook keeps the
+  // implicit install org.
   const receipt = isMultiTenant()
     ? await runAsSystem(
         // Whose rows, and who asked: logged before the work, so a failed
@@ -247,30 +248,30 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // Each hook is told the stored address and whether it is verified (t-944),
   // read here only when a hook will use them, so an install with none makes
   // no extra read. Not best-effort: an account that cannot be read cannot be
-  // erased either, and the transaction would throw the same way.
-  const externalHooks = getErasureCleanupHooks().filter((hook) => hook.cleanupExternal);
-  const externalSubject =
-    externalHooks.length > 0
-      ? await prisma.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { email: true, emailVerified: true },
-        })
-      : null;
-  for (const hook of externalHooks) {
-    if (!hook.cleanupExternal || !externalSubject) continue;
-    checkDeadline(deadline, `the ${hook.name} cleanup hook`);
-    try {
-      await hook.cleanupExternal({
-        userId,
-        email: externalSubject.email,
-        emailVerified: externalSubject.emailVerified,
-      });
-    } catch (error) {
-      logger.error('Erasure cleanup hook (external) failed', {
-        userId,
-        hook: hook.name,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  // erased either, and the transaction would throw the same way. Read before
+  // the transaction and its locks, like the phase itself, so an address
+  // changed mid-erasure reaches these hooks as it was; the transaction's
+  // hooks and the receipt read it again.
+  const externalHooks = getErasureCleanupHooks().flatMap((hook) =>
+    hook.cleanupExternal ? [{ name: hook.name, cleanupExternal: hook.cleanupExternal }] : []
+  );
+  if (externalHooks.length > 0) {
+    checkDeadline(deadline, 'the cleanup hooks');
+    const { email, emailVerified } = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, emailVerified: true },
+    });
+    for (const hook of externalHooks) {
+      checkDeadline(deadline, `the ${hook.name} cleanup hook`);
+      try {
+        await hook.cleanupExternal({ userId, email, emailVerified });
+      } catch (error) {
+        logger.error('Erasure cleanup hook (external) failed', {
+          userId,
+          hook: hook.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

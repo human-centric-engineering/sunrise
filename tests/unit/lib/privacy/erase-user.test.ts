@@ -1874,6 +1874,25 @@ describe('eraseUser', () => {
         expect(mockPreRedact).not.toHaveBeenCalled();
         expect(mockPrisma.$transaction).not.toHaveBeenCalled();
       });
+
+      it('stops before reading the account for the hooks, once the avatars used the time', async () => {
+        mockIsStorageEnabled.mockReturnValue(true);
+        mockDeleteByPrefix.mockImplementationOnce(async () => {
+          advance(9_000);
+        });
+        const hook = vi.fn();
+        registerErasureCleanupHook({ name: 'late-hook', cleanupExternal: hook });
+
+        const error = await eraseUser({
+          ...BASE_PARAMS,
+          deadline: new Date(Date.now() + 8_000),
+        }).catch((e: unknown) => e);
+
+        expect((error as ErasureDeferredError).stage).toBe('the cleanup hooks');
+        expect(mockUserFind).not.toHaveBeenCalled();
+        expect(hook).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
     });
 
     describe('a transaction that fails', () => {

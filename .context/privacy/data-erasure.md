@@ -1303,8 +1303,11 @@ export function initAppErasureHooks(): void {
 **A fork table keyed by email (no `userId` at all) is the `ContactSubmission`
 case** — no FK, so delete it in `scrubInTransaction`. Both phases are handed
 the account's `email` and `emailVerified` alongside `userId`, read from the
-user row (inside the transaction, from the transaction's own read). Match the
-address exactly, normalised as your writer stores it. If the writer takes an
+user row: inside the transaction, from the transaction's own read; for
+`cleanupExternal`, from a read just before the transaction, so an address
+changed while the erasure runs reaches that phase as it was. The address is
+passed as stored, not normalised: match it exactly, normalised as your writer
+stores it. If the writer takes an
 address nobody proved (a public form), match nothing when `emailVerified` is
 false, as `contactSubmissionsOf()` does: deleting by an unproven address erases
 a stranger's rows.
