@@ -8,7 +8,8 @@
  * or `path`. This replaces each segment that looks like an id or a secret with
  * `[param]`, so a log line names the route shape rather than the value.
  *
- * Collapsed (a whole segment, compared before any decoding):
+ * Collapsed (a whole segment; the shapes are compared before any decoding,
+ * a declaration against the decoded segment):
  * - a segment a route declares as a credential, whatever its length or shape
  *   (`CREDENTIAL_PATHS` below for Sunrise's own routes, `appCredentialPaths` in
  *   `lib/app/credential-paths.ts` for a fork's) — the declaration is the rule,
@@ -237,9 +238,6 @@ export function loggablePath(pathname: string | undefined): string | undefined {
 const BUILD_ASSETS = '/_next/static/';
 const FILE_PATH_KEPT = [BUILD_ASSETS, '/node_modules/'];
 
-/** A path ending in a script or source map: a stack frame's file, not a route. */
-const SOURCE_FILE = /\.(?:[cm]?[jt]sx?|map)$/i;
-
 /** An absolute URL's `scheme://authority`, and the rest. */
 const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
 
@@ -264,11 +262,14 @@ export function scrubUrl(url: string): string {
   // non-http scheme such as `file://` or `app://`) also keeps a package tail.
   const web = /^https?:/i.test(origin);
   const kept = web ? [BUILD_ASSETS] : FILE_PATH_KEPT;
-  // A source file's path (a server stack frame) is not a route, so the route
-  // declarations stay off it: `/m/[joinRef]` would otherwise turn
-  // `lib/m/scoring.js` into `lib/m/[param]` and break its source map. The
-  // shape rules still apply.
-  const declarations = web || !SOURCE_FILE.test(path);
+  // A path under a non-http scheme (`app://`, `file://`, `webpack-internal://`)
+  // is a stack frame's file, not a route, so the route declarations stay off
+  // it: `/m/[joinRef]` would otherwise turn `app:///lib/m/scoring.js` into
+  // `app:///lib/m/[param]` and break its source map. The shape rules still
+  // apply. A path with no origin keeps them: it cannot be told from a request
+  // path (`GET /m/<code>/widget.js`), and losing a frame's detail is the
+  // cheaper error.
+  const declarations = web || origin === '';
   const tail = Math.min(...kept.map((prefix) => path.indexOf(prefix)).filter((i) => i >= 0));
   if (!Number.isFinite(tail)) return origin + collapseSegments(path, declarations);
   return origin + collapseSegments(path.slice(0, tail), declarations) + path.slice(tail);

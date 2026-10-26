@@ -258,6 +258,13 @@ describe('the buffer stays out of the browser bundle', () => {
 
   it.each(IMPORT_FREE_DEPENDENCIES)('%s reaches no other module', (spec) => {
     expect(runtimeImportsOf(spec)).toEqual([]);
+    // Stricter than the line check: a plain data module has no `from '…'`
+    // at all, which also catches a re-export split across lines.
+    const source = readFileSync(resolve(process.cwd(), `${spec.replace('@/', '')}.ts`), 'utf8');
+    const code = source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'));
+    expect(code.filter((line) => /\bfrom\s*['"]/.test(line))).toEqual([]);
   });
 
   it.each([

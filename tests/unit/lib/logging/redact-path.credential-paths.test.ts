@@ -173,26 +173,35 @@ describe('every sink honours a declared credential path', () => {
   });
 });
 
-describe('declarations stay off source-file paths', () => {
+describe('declarations stay off stack-frame files under a non-http scheme', () => {
   it.each([
-    ['app:///lib/m/scoring.js', 'app:///lib/m/scoring.js'],
-    ['/app/components/files/share/dialog.tsx', '/app/components/files/share/dialog.tsx'],
-    ['webpack-internal:///./lib/m/x.ts', 'webpack-internal:///./lib/m/x.ts'],
-  ])('keeps the frame %s as built', (frame, expected) => {
-    expect(scrubUrl(frame)).toBe(expected);
+    'app:///lib/m/scoring.js',
+    'file:///srv/app/components/files/share/dialog.tsx',
+    'webpack-internal:///./lib/m/x.ts',
+  ])('keeps the frame %s as built', (frame) => {
+    expect(scrubUrl(frame)).toBe(frame);
   });
 
-  it('still applies the shape rules to a source-file path', () => {
-    expect(scrubUrl('/srv/cmtd5heg2001804ky8pgo6odx/m/x.js')).toBe('/srv/[param]/m/x.js');
+  it('still applies the shape rules to such a frame', () => {
+    expect(scrubUrl('app:///srv/cmtd5heg2001804ky8pgo6odx/m/x.js')).toBe(
+      'app:///srv/[param]/m/x.js'
+    );
   });
 
-  it('still applies declarations to a web URL that ends like a file', () => {
+  it('keeps declarations on a path with no origin, even one ending like a file', () => {
+    // A span name: indistinguishable from a bare server frame path, so the
+    // redaction wins.
+    expect(scrubUrlsInText(`GET /m/${CODE}/widget.js`)).toBe('GET /m/[param]/widget.js');
+    expect(scrubUrl('/app/lib/m/scoring.js')).toBe('/app/lib/m/[param]');
+  });
+
+  it('keeps declarations on a web URL that ends like a file', () => {
     expect(scrubUrl(`https://app.example.com/m/${CODE}.js`)).toBe(
       'https://app.example.com/m/[param]'
     );
   });
 
-  it('still applies declarations to a page path in free text', () => {
+  it('keeps declarations on a page URL in a stack frame', () => {
     expect(scrubUrlsInText(`at https://app.example.com/m/${CODE}:1:2`)).toBe(
       'at https://app.example.com/m/[param]:1:2'
     );
