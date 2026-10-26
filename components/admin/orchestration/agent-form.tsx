@@ -2249,6 +2249,7 @@ export function AgentForm({
                     const fresh = await apiClient.get<AgentWithGrants>(
                       API.ADMIN.ORCHESTRATION.agentById(agent.id)
                     );
+                    const modelParams = toModelParamsValue(fresh);
                     reset({
                       name: fresh.name,
                       slug: fresh.slug,
@@ -2269,7 +2270,13 @@ export function AgentForm({
                       temperature: fresh.temperature,
                       maxTokens: fresh.maxTokens,
                       reasoningEffort: toReasoningEffortFormValue(fresh.reasoningEffort),
-                      ...toModelParamsValue(fresh),
+                      // Named, not spread: the reset-parity test reads these keys
+                      // from the source.
+                      stopSequences: modelParams.stopSequences,
+                      topP: modelParams.topP,
+                      verbosity: modelParams.verbosity,
+                      parallelToolCalls: modelParams.parallelToolCalls,
+                      serviceTier: modelParams.serviceTier,
                       monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
                       maxCostPerTurnUsd: fresh.maxCostPerTurnUsd ?? null,
                       isActive: fresh.isActive,
