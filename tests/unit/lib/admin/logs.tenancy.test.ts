@@ -196,7 +196,8 @@ describe('the buffer stays out of the browser bundle', () => {
   // a literal specifier whichever form it takes, so a lazy
   // `const { x } = require('@/lib/tenancy/context')` inside a function would
   // reproduce the same build failure while an import-only regex stayed green.
-  const RUNTIME_IMPORT = /^import\s+(?!type\b)|\brequire\s*\(|\bimport\s*\(/;
+  const RUNTIME_IMPORT =
+    /^import\s+(?!type\b)|^export\s+(?!type\b).*\bfrom\s*['"]|\brequire\s*\(|\bimport\s*\(/;
 
   it('lib/admin/logs.ts reaches no other module at runtime', () => {
     const source = readFileSync(resolve(process.cwd(), 'lib/admin/logs.ts'), 'utf8');
@@ -263,6 +264,10 @@ describe('the buffer stays out of the browser bundle', () => {
     ["import { getTenantContext } from '@/lib/tenancy/context';", true],
     ["const { getTenantContext } = require('@/lib/tenancy/context');", true],
     ["const mod = await import('@/lib/tenancy/context');", true],
+    ["export { appCredentialPaths } from '@/lib/app/routes';", true],
+    ["export * from '@/lib/app/routes';", true],
+    ["export type { LogEntry } from '@/types/admin';", false],
+    ['export const appCredentialPaths: readonly string[] = [];', false],
     ["import type { LogEntry } from '@/types/admin';", false],
   ])('proves it can fail — %s is a hit: %s', (line, expected) => {
     expect(RUNTIME_IMPORT.test(line)).toBe(expected);

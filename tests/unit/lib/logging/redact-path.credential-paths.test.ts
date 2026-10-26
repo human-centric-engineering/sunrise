@@ -55,7 +55,8 @@ describe('collapseDynamicSegments with declared credential paths', () => {
   it.each([
     [`/possibilities/${CODE}`, '/possibilities/[param]'],
     ['/m/ab12', '/m/[param]'],
-    // A one-letter word is still a credential when the route says so.
+    // A real word in the declared position is collapsed too: the route says
+    // what the segment is, not its shape.
     ['/m/join', '/m/[param]'],
   ])('collapses the declared segment of %s', (path, expected) => {
     expect(collapseDynamicSegments(path)).toBe(expected);
@@ -168,6 +169,32 @@ describe('every sink honours a declared credential path', () => {
     expect(analyticsPath(`/possibilities/${CODE}`)).toBe('/possibilities/[param]');
     expect(analyticsUrl(`https://app.example.com/m/${CODE}?utm_source=news`)).toBe(
       'https://app.example.com/m/[param]?utm_source=news'
+    );
+  });
+});
+
+describe('declarations stay off source-file paths', () => {
+  it.each([
+    ['app:///lib/m/scoring.js', 'app:///lib/m/scoring.js'],
+    ['/app/components/files/share/dialog.tsx', '/app/components/files/share/dialog.tsx'],
+    ['webpack-internal:///./lib/m/x.ts', 'webpack-internal:///./lib/m/x.ts'],
+  ])('keeps the frame %s as built', (frame, expected) => {
+    expect(scrubUrl(frame)).toBe(expected);
+  });
+
+  it('still applies the shape rules to a source-file path', () => {
+    expect(scrubUrl('/srv/cmtd5heg2001804ky8pgo6odx/m/x.js')).toBe('/srv/[param]/m/x.js');
+  });
+
+  it('still applies declarations to a web URL that ends like a file', () => {
+    expect(scrubUrl(`https://app.example.com/m/${CODE}.js`)).toBe(
+      'https://app.example.com/m/[param]'
+    );
+  });
+
+  it('still applies declarations to a page path in free text', () => {
+    expect(scrubUrlsInText(`at https://app.example.com/m/${CODE}:1:2`)).toBe(
+      'at https://app.example.com/m/[param]:1:2'
     );
   });
 });

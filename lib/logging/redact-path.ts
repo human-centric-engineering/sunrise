@@ -198,9 +198,17 @@ function isSensitiveSegment(segment: string): boolean {
  * // '/api/v1/users/[param]/posts'
  */
 export function collapseDynamicSegments(pathname: string): string {
+  return collapseSegments(pathname, true);
+}
+
+/**
+ * `collapseDynamicSegments`, with the route declarations optionally left out:
+ * they describe URLs, and a source file's path is not one (see `scrubUrl`).
+ */
+function collapseSegments(pathname: string, applyDeclarations: boolean): string {
   const segments = pathname.split('/');
   const declared = new Array<boolean>(segments.length).fill(false);
-  if (DECLARED_PATTERNS.length > 0) {
+  if (applyDeclarations) {
     const decoded = segments.map(decodeSegment);
     for (const pattern of DECLARED_PATTERNS) markDeclaredSegments(decoded, pattern, declared);
   }
@@ -229,6 +237,9 @@ export function loggablePath(pathname: string | undefined): string | undefined {
 const BUILD_ASSETS = '/_next/static/';
 const FILE_PATH_KEPT = [BUILD_ASSETS, '/node_modules/'];
 
+/** A path ending in a script or source map: a stack frame's file, not a route. */
+const SOURCE_FILE = /\.(?:[cm]?[jt]sx?|map)$/i;
+
 /** An absolute URL's `scheme://authority`, and the rest. */
 const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
 
@@ -251,10 +262,16 @@ export function scrubUrl(url: string): string {
   const path = match?.[2] ?? '';
   // A web URL keeps only a build-asset tail; a file path (no origin, or a
   // non-http scheme such as `file://` or `app://`) also keeps a package tail.
-  const kept = /^https?:/i.test(origin) ? [BUILD_ASSETS] : FILE_PATH_KEPT;
+  const web = /^https?:/i.test(origin);
+  const kept = web ? [BUILD_ASSETS] : FILE_PATH_KEPT;
+  // A source file's path (a server stack frame) is not a route, so the route
+  // declarations stay off it: `/m/[joinRef]` would otherwise turn
+  // `lib/m/scoring.js` into `lib/m/[param]` and break its source map. The
+  // shape rules still apply.
+  const declarations = web || !SOURCE_FILE.test(path);
   const tail = Math.min(...kept.map((prefix) => path.indexOf(prefix)).filter((i) => i >= 0));
-  if (!Number.isFinite(tail)) return origin + collapseDynamicSegments(path);
-  return origin + collapseDynamicSegments(path.slice(0, tail)) + path.slice(tail);
+  if (!Number.isFinite(tail)) return origin + collapseSegments(path, declarations);
+  return origin + collapseSegments(path.slice(0, tail), declarations) + path.slice(tail);
 }
 
 /**
