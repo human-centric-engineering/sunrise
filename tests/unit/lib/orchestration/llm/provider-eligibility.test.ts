@@ -117,6 +117,32 @@ describe('provider eligibility registry', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  it("throws instead, and logs nothing, when the rule throws under onFailure: 'throw' (t-819)", async () => {
+    // For a caller that records the answer: "could not ask" must not read as "no".
+    const cause = new Error('policy backend down');
+    registerProviderEligibility(() => {
+      throw cause;
+    });
+
+    await expect(
+      resolveEligibleProviders(['a', 'b'], CTX, { onFailure: 'throw' })
+    ).rejects.toMatchObject({ name: 'ProviderSeamUnavailableError', cause });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("answers as usual under onFailure: 'throw' when the rule answers, an empty answer included", async () => {
+    registerProviderEligibility((c) => c.filter((s) => s !== 'b'));
+    await expect(
+      resolveEligibleProviders(['a', 'b'], CTX, { onFailure: 'throw' })
+    ).resolves.toEqual(['a']);
+
+    resetProviderEligibility();
+    registerProviderEligibility(() => []);
+    await expect(
+      resolveEligibleProviders(['a', 'b'], CTX, { onFailure: 'throw' })
+    ).resolves.toEqual([]);
+  });
+
   it('__reset restores the default', async () => {
     registerProviderEligibility(() => []);
     expect(hasProviderEligibilityResolver()).toBe(true);

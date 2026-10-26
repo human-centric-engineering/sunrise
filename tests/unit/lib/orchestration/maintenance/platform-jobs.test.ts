@@ -541,7 +541,28 @@ describe('runDuePlatformJobs — tenant scope (§108)', () => {
 
     // The org comes from the job's own scope, not from a parameter the job
     // could get wrong.
-    expect(vi.mocked(reconcilePlatformAgentsIfStale).mock.calls).toEqual([[ORG_A], [ORG_B]]);
+    expect(vi.mocked(reconcilePlatformAgentsIfStale).mock.calls.map(([orgId]) => orgId)).toEqual([
+      ORG_A,
+      ORG_B,
+    ]);
+  });
+
+  it('hands every org of one run the same provider catalogue, and the next run a new one (t-816)', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+
+    await runDuePlatformJobs(T0);
+    await runDuePlatformJobs(T0 + 15 * MINUTE);
+
+    const catalogues = vi
+      .mocked(reconcilePlatformAgentsIfStale)
+      .mock.calls.map(([, options]) => options?.catalogue);
+    expect(catalogues).toHaveLength(4);
+    expect(catalogues[0]).toBeDefined();
+    // One run's two orgs share one; the next run, read 15 minutes later, does not.
+    expect(catalogues[1]).toBe(catalogues[0]);
+    expect(catalogues[3]).toBe(catalogues[2]);
+    expect(catalogues[2]).not.toBe(catalogues[0]);
   });
 
   it('runs the audit-table prune under the system scope, not inside any org', async () => {

@@ -99,9 +99,13 @@ Every agent field declares its side (see
   Ownership is stored rather than inferred from the values because a value
   can't say who wrote it. The pick is asked at most once per agent per run,
   and only for a binding the platform owns or has yet to classify. A pick
-  that can't be answered (the org's policy unreadable, say) leaves that
-  agent's binding as it is and holds the org's marker back so the next pass
-  asks again; every other agent is still reconciled.
+  that can't be answered (the org's policy unreadable, or a fork's
+  eligibility or credential resolver down) leaves that agent's binding as it
+  is and holds the org's marker back so the next pass asks again; every
+  other agent is still reconciled. The clean-up pick asks both fork seams
+  with `onFailure: 'throw'` for this reason (t-819): their default answers
+  "nothing eligible" when a resolver fails, which would move the agent to
+  inherit, version the move, and move it back on the next pass.
 
 ## What an org's admin can change
 
@@ -202,7 +206,11 @@ the org's own scope itself, and it has five callers:
    jurisdiction) keep their 60-second TTL, so a pick made in that minute is
    corrected next pass. Otherwise it is one `Org` read per org, plus, where
    an agent picks its own binding, that agent's binding, the org's provider
-   policy and the pick's provider and model reads.
+   policy and the pick's per-org filters (credential, eligibility). The
+   provider and model rows are read once per run, not once per org: the job
+   hands every org of a run one `PlatformAgentCatalogue` (t-816), since both
+   tables are global. A drifted org's reconcile reuses the picks its drift
+   check made, so it asks once per pass.
 
 The digest covers every definition, the baseline, and the patterns
 document's slug (`PATTERNS_DOCUMENT_SLUG` in
@@ -299,6 +307,20 @@ It runs once, lazily, before the registry's first read, through the shared
 init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
 init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
 definition in every org, and that is logged at warn.
+
+A definition can pick its own provider and model with `defaultBinding(db,
+catalogue)`, as the clean-up agent does (`pickCleanupBinding`). The
+maintenance job asks it every pass while the platform owns the binding, so:
+
+- **Read provider and model rows from `catalogue`**, not `db`. It is shared by
+  every org of one run, so the tables are read once per run (t-816).
+- **Ask the per-org rules with `onFailure: 'throw'`**:
+  `resolveEligibleProviders(slugs, context, { onFailure: 'throw' })` and
+  `filterProvidersWithCredential(rows, { onFailure: 'throw' })` (t-819).
+  Return `null` only for a real "nothing qualifies"; throw when you can't
+  tell.
+- **Keep it deterministic**: a total order with no locale-dependent
+  comparison, or the agent moves back and forth between passes.
 
 Core's tests whose assertions a fork's agents would change hold this seam
 empty, so they measure core's registry alone, and the two-org smoke (`smoke:tenancy-isolation`,

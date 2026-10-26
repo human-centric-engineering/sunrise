@@ -103,6 +103,16 @@ release process.
   you list it. Unlike other seams it needs no `SEAM_DEFAULTS` pin: its row
   checks the entries instead. A fork others build on should not declare. See CUSTOMIZATION.md §4.
 
+- **Provider seams can throw instead of answering "nothing" (t-819).**
+  `resolveEligibleProviders` and `filterProvidersWithCredential` take an
+  optional `{ onFailure: 'throw' }`. Under it, a fork resolver that throws, a
+  registrar that failed, or an unreadable org policy throws instead of
+  answering "nothing eligible". The eligibility seam throws the new
+  `ProviderSeamUnavailableError` and the credential seam throws its usual
+  `credential_unavailable` error. This is for a caller that records the answer
+  rather than acting on it. The default is unchanged: every call-time path
+  still fails closed.
+
 ### Changed
 
 - **Erasure reaches the rest of what a run keeps (t-882).** Besides a run's
@@ -229,6 +239,25 @@ release process.
   cannot run is retried without counting against the delivery's attempts, for
   the row's first hour. See
   `.context/privacy/data-erasure.md`.
+
+- **A platform agent's `defaultBinding` is handed a shared provider catalogue
+  (t-816).** `PlatformAgentDefinition.defaultBinding` is now called as
+  `(db, catalogue)`. The new `PlatformAgentCatalogue`
+  (`createPlatformAgentCatalogue()` in
+  `lib/orchestration/agents/platform-agents.ts`) holds the active provider and
+  model rows, each read once on first use. The `platformAgents` maintenance
+  job shares one catalogue across every org it visits in a run, so a pass over
+  N orgs reads those tables once, not N times. A drifted org's reconcile also
+  reuses the pick its drift check made, so the pick runs once instead of
+  twice. A one-argument `defaultBinding` still type-checks and works.
+  **Forks:** if you implement one, read rows from `catalogue`, and ask the
+  per-org rules with `onFailure: 'throw'` (see Added).
+- **The clean-up agent stays put while a fork resolver is down (t-819).**
+  Since t-798, a fork's eligibility or credential resolver that threw during
+  a maintenance pass moved the clean-up agent to inherit and wrote a version
+  row. The next pass moved it back and wrote another. `pickCleanupBinding`
+  now asks both seams with `onFailure: 'throw'`, so the binding stays where
+  it is and the job asks again next pass.
 
 ### Fixed
 

@@ -32,6 +32,7 @@ vi.mock('@/lib/orchestration/knowledge/patterns-knowledge', () => patternsKnowle
 import {
   CORE_PLATFORM_AGENTS,
   PLATFORM_AGENT_BASELINE,
+  createPlatformAgentCatalogue,
   listPlatformAgents,
   platformAgentRegistryHash,
   platformAgentsForOrg,
@@ -40,6 +41,7 @@ import {
   type PlatformAgentDefinition,
 } from '@/lib/orchestration/agents/platform-agents';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
+import type { TenancyClient } from '@/lib/db/tenancy-extension';
 
 const EVERY_ORG = [
   'mcp-system',
@@ -264,5 +266,64 @@ describe('platformAgentRegistryHash', () => {
     });
 
     expect(platformAgentRegistryHash()).toBe(forward);
+  });
+});
+
+describe('createPlatformAgentCatalogue (t-816)', () => {
+  function client(providers: () => Promise<unknown[]>) {
+    const providerFindMany = vi.fn(providers);
+    const modelFindMany = vi.fn(async () => [{ modelId: 'm' }]);
+    return {
+      db: {
+        aiProviderConfig: { findMany: providerFindMany },
+        aiProviderModel: { findMany: modelFindMany },
+      } as unknown as TenancyClient,
+      providerFindMany,
+      modelFindMany,
+    };
+  }
+
+  it('reads each table once, on first use, and shares the rows with every later caller', async () => {
+    const { db, providerFindMany, modelFindMany } = client(async () => [{ slug: 'a' }]);
+    const catalogue = createPlatformAgentCatalogue();
+    expect(providerFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — lazy: nothing read until asked
+
+    const [first, second] = await Promise.all([
+      catalogue.activeProviders(db),
+      catalogue.activeProviders(db),
+    ]);
+    await catalogue.activeModels(db);
+    await catalogue.activeModels(db);
+
+    expect(first).toEqual([{ slug: 'a' }]);
+    expect(second).toBe(first);
+    expect(providerFindMany).toHaveBeenCalledTimes(1);
+    expect(providerFindMany).toHaveBeenCalledWith({
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(modelFindMany).toHaveBeenCalledTimes(1);
+    expect(modelFindMany).toHaveBeenCalledWith({ where: { isActive: true } });
+  });
+
+  it('does not keep a failed read, so the next caller reads again', async () => {
+    let fail = true;
+    const { db, providerFindMany } = client(async () => {
+      if (fail) throw new Error('connection reset');
+      return [{ slug: 'a' }];
+    });
+    const catalogue = createPlatformAgentCatalogue();
+
+    await expect(catalogue.activeProviders(db)).rejects.toThrow('connection reset');
+    fail = false;
+    await expect(catalogue.activeProviders(db)).resolves.toEqual([{ slug: 'a' }]);
+    expect(providerFindMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives each catalogue its own reads', async () => {
+    const { db, providerFindMany } = client(async () => []);
+    await createPlatformAgentCatalogue().activeProviders(db);
+    await createPlatformAgentCatalogue().activeProviders(db);
+    expect(providerFindMany).toHaveBeenCalledTimes(2);
   });
 });

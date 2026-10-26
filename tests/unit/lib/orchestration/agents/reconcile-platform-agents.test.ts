@@ -89,6 +89,8 @@ const fake = vi.hoisted(() => {
     models: [] as Array<Record<string, unknown>>,
     /** Every mutating call, in order: `model.method`. */
     writes: [] as string[],
+    /** Every provider or model table read, in order (t-816). */
+    catalogueReads: [] as string[],
     failOn: null as string | null,
     orgOf: () => 'install' as string,
     /** Runs as an agent update starts: an admin saving in between. */
@@ -261,8 +263,18 @@ const fake = vi.hoisted(() => {
         return row;
       },
     },
-    aiProviderConfig: { findMany: async () => state.providers },
-    aiProviderModel: { findMany: async () => state.models },
+    aiProviderConfig: {
+      findMany: async () => {
+        state.catalogueReads.push('aiProviderConfig');
+        return state.providers;
+      },
+    },
+    aiProviderModel: {
+      findMany: async () => {
+        state.catalogueReads.push('aiProviderModel');
+        return state.models;
+      },
+    },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   };
   return { state, db };
@@ -379,6 +391,7 @@ beforeEach(() => {
   s.providers = [];
   s.models = [];
   s.writes = [];
+  s.catalogueReads = [];
   s.failOn = null;
   s.beforeBindingWrite = null;
   // The org the data layer would stamp: whatever the REAL context holds.
@@ -1549,6 +1562,45 @@ describe('one pass of the job: the shared catalogue and the pick (t-816)', () =>
     expect(outcome).toMatchObject({ reconciled: true, result: { updated: ['advisor'] } });
     expect(agent('advisor')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
     expect(asked).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the provider and model tables once for a quiet pass over two orgs', async () => {
+    const savedKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-key';
+    try {
+      fake.state.providers = [{ slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_API_KEY' }];
+      fake.state.models = [
+        {
+          providerSlug: 'openai',
+          modelId: 'gpt-4.1',
+          tierRole: 'worker',
+          reasoningDepth: 'high',
+          toolUse: 'strong',
+          capabilities: ['chat'],
+        },
+      ];
+      registry.definitions = [definition('cleanup', { defaultBinding: pickCleanupBinding })];
+      // The install org pins openai; ORG_B, granted nothing, inherits. Both
+      // bindings are the platform's, so a quiet pass asks both picks.
+      await reconcilePlatformAgentsIfStale('install');
+      await reconcilePlatformAgentsIfStale(ORG_B);
+      fake.state.catalogueReads = [];
+
+      // One run of the job: a catalogue shared by both orgs, nothing drifted.
+      const catalogue = createPlatformAgentCatalogue();
+      expect(await reconcilePlatformAgentsIfStale('install', { catalogue })).toEqual({
+        reconciled: false,
+      });
+      expect(await reconcilePlatformAgentsIfStale(ORG_B, { catalogue })).toEqual({
+        reconciled: false,
+      });
+
+      expect(fake.state.catalogueReads).toEqual(['aiProviderConfig', 'aiProviderModel']);
+      expect(agent('cleanup', ORG_B)).toMatchObject({ provider: '', bindingOwner: 'platform' });
+    } finally {
+      if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedKey;
+    }
   });
 
   it('asks again on a registry change, which skips the drift check', async () => {

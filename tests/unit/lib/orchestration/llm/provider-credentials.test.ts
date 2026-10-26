@@ -178,6 +178,37 @@ describe('a registered resolver', () => {
     await expect(hasProviderCredential(row())).resolves.toBe(false);
   });
 
+  it("throws the resolver's failure from the filter under onFailure: 'throw', rather than dropping the row (t-819)", async () => {
+    registerProviderCredentialResolver((config) => {
+      if (config.slug === 'b') throw new Error('vault down');
+      return { apiKey: 'k', identity: '' };
+    });
+    const rows = [row({ slug: 'a' }), row({ slug: 'b' })];
+
+    // The default still drops the row it cannot answer for…
+    await expect(filterProvidersWithCredential(rows)).resolves.toEqual([rows[0]]);
+    // …and the strict form says it could not ask.
+    await expect(filterProvidersWithCredential(rows, { onFailure: 'throw' })).rejects.toMatchObject(
+      { code: 'credential_unavailable' }
+    );
+  });
+
+  it("keeps the default's answer under onFailure: 'throw' when the resolver answers", async () => {
+    registerProviderCredentialResolver((config) => ({
+      apiKey: config.slug === 'a' ? 'k' : undefined,
+      identity: '',
+    }));
+    const rows = [
+      row({ slug: 'a' }),
+      row({ slug: 'b' }),
+      row({ slug: 'c', isLocal: true, apiKeyEnvVar: null }),
+    ];
+
+    const strict = await filterProvidersWithCredential(rows, { onFailure: 'throw' });
+    expect(strict.map((r) => r.slug)).toEqual(['a', 'c']);
+    expect(strict).toEqual(await filterProvidersWithCredential(rows));
+  });
+
   it('asks the resolver about a local row too: one it cannot answer for is not reachable', async () => {
     // getProvider asks the resolver for every row, local or not, so a row the
     // resolver throws for can never be built — reachability must agree.
