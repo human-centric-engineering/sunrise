@@ -366,6 +366,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
       supervisorReport: v0,
     };
     const storedAtWrite = {
+      status: 'completed',
       supervisorVerdict: 'fail',
       supervisorScore: 0.2,
       supervisorReviewedAt: new Date('2026-05-17T12:00:00.000Z'),
@@ -394,7 +395,15 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     const res = await POST(makeRequest(), makeContext());
 
     expect(res.status).toBe(200);
-    expect(lockedRead).toHaveBeenCalledWith(expect.objectContaining({ where: { id: EXEC_ID } }));
+    expect(lockedRead).toHaveBeenCalledWith({
+      where: { id: EXEC_ID },
+      select: {
+        status: true,
+        supervisorVerdict: true,
+        supervisorReport: true,
+        supervisorReviewedAt: true,
+      },
+    });
     const written = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0].data
       .supervisorReport as { previousVerdicts: unknown[] };
     expect(written.previousVerdicts).toEqual([
@@ -406,6 +415,41 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
         triggeredBy: 'retroactive',
       },
     ]);
+  });
+
+  it('refuses with 409, writing nothing, when the run left its terminal state during the review', async () => {
+    // A retry-step during the model call puts the run back to running.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(withRunRowLocked).mockImplementationOnce((_id, fn) =>
+      fn({
+        aiWorkflowExecution: {
+          findUnique: vi.fn().mockResolvedValue({ ...happyExecution(), status: 'running' }),
+          update: prisma.aiWorkflowExecution.update,
+        },
+      } as never)
+    );
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(409);
+    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+
+  it('answers 404, writing nothing, when the run was removed during the review', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(withRunRowLocked).mockImplementationOnce((_id, fn) =>
+      fn({
+        aiWorkflowExecution: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          update: prisma.aiWorkflowExecution.update,
+        },
+      } as never)
+    );
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(404);
+    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
   });
 
   it('returns 400 on an invalid CUID id', async () => {

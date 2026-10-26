@@ -359,11 +359,25 @@ export const POST = withAdminAuth<{ id: string }>(
       // The prior verdict is read here, under the lock, not taken from the
       // read above: a second review of the run that overlapped this one may
       // have written since, and archiving the older copy would drop its
-      // verdict from the history (t-925).
+      // verdict from the history (t-925). The status is checked again with it:
+      // a retry-step during the model call puts the run back to running, and a
+      // retroactive verdict on a run still executing reviews a trace that is
+      // being rewritten (code review).
       const prior = await tx.aiWorkflowExecution.findUnique({
         where: { id },
-        select: { supervisorVerdict: true, supervisorReport: true, supervisorReviewedAt: true },
+        select: {
+          status: true,
+          supervisorVerdict: true,
+          supervisorReport: true,
+          supervisorReviewedAt: true,
+        },
       });
+      if (!prior) throw new NotFoundError(`Execution ${id} not found`);
+      if (!TERMINAL_STATUSES.has(prior.status)) {
+        throw new ConflictError(
+          `Execution is ${prior.status}. Retroactive review is only available on terminal executions.`
+        );
+      }
       const finalReport = withPriorArchived(assessment.report, prior, id);
       const erased = await findErasedSinceCopy(tx, takenAt, [finalReport]);
       const stored = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
