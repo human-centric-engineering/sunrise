@@ -120,8 +120,8 @@ like that **declares its credential segments** (t-933): core's
 `lib/app/credential-paths.ts`. A declared segment is collapsed whatever its
 length, in every sink above as well as Sentry and page-view analytics, because
 they all call `collapseDynamicSegments()`. Patterns are written like the
-route's folders (`/m/[joinRef]`, `/files/[...path]`), start with a literal
-segment, cover the paths below them, and are tried at every offset so a
+route's folders (`/m/[joinRef]`, `/files/[...path]`) without route groups
+or slots, start with a literal segment, cover the paths below them, and are tried at every offset so a
 `basePath` or locale prefix does not hide the route. A malformed one is skipped
 (the logger depends on this module, so it cannot log the skip) and
 `redact-path.test.ts` fails, naming it.

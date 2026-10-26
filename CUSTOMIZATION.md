@@ -748,7 +748,8 @@ anything under 20 characters, so an 8-character room code would be logged on
 every request. A declared segment becomes `[param]` whatever its length. Write
 the pattern the way the route's folders are named: `[name]` for one segment,
 `[...name]` or `[[...name]]` for every segment from there on, with a literal
-first segment. A pattern covers the paths below it and matches further into a
+first segment, leaving out route groups `(name)` and slots `@name`, which are
+not in the URL. A pattern covers the paths below it and matches further into a
 path (behind a `basePath` or a locale prefix). A malformed entry is skipped and
 `tests/unit/lib/logging/redact-path.test.ts` fails, naming it.
 

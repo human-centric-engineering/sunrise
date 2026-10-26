@@ -15,7 +15,8 @@
  *
  * Write each entry as the route's pattern, the way its folder is named:
  * `[name]` for one segment, `[...name]` or `[[...name]]` for every segment from
- * there on. The first segment must be a literal word. A pattern also matches
+ * there on, leaving out folders that are not in the URL (`(group)`, `@slot`).
+ * The first segment must be a literal word. A pattern also matches
  * the paths below it (`/m/[joinRef]` covers `/m/X7K2/results`) and further into
  * a path (`/en/m/X7K2`, or the same route behind a `basePath`); a third-party
  * URL that happens to have the same shape is collapsed too, which only costs a

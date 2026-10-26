@@ -63,9 +63,24 @@ export const CREDENTIAL_PATHS: readonly string[] = ['/api/auth/reset-password/[t
 type PatternSegment =
   { kind: 'literal'; value: string } | { kind: 'param' } | { kind: 'rest'; optional: boolean };
 
-const PARAM_SEGMENT = /^\[([A-Za-z_]\w*)\]$/;
-const REST_SEGMENT = /^\[\.\.\.([A-Za-z_]\w*)\]$/;
-const OPTIONAL_REST_SEGMENT = /^\[\[\.\.\.([A-Za-z_]\w*)\]\]$/;
+// A param name is anything Next accepts in a folder name between the brackets
+// (`[joinRef]`, `[join-ref]`); a leading `.` is left to the catch-all forms.
+const PARAM_SEGMENT = /^\[[^[\].][^[\]]*\]$/;
+const REST_SEGMENT = /^\[\.\.\.[^[\]]+\]$/;
+const OPTIONAL_REST_SEGMENT = /^\[\[\.\.\.[^[\]]+\]\]$/;
+// Folders that organise routes without appearing in the URL: a route group
+// `(public)`, a parallel-route slot `@modal`, an intercepting route `(.)photo`.
+const NOT_IN_URL_SEGMENT = /^(?:\(|@)/;
+
+/** `decodeURIComponent`, or the segment as it is when it does not decode. */
+function decodeSegment(segment: string): string {
+  if (!segment.includes('%')) return segment;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
 
 function parsePattern(pattern: string): PatternSegment[] | string {
   if (!pattern.startsWith('/')) return 'must start with `/`';
@@ -74,6 +89,9 @@ function parsePattern(pattern: string): PatternSegment[] | string {
   const parsed: PatternSegment[] = [];
   for (const [index, segment] of segments.entries()) {
     if (segment === '') return 'has an empty segment (`//`)';
+    if (NOT_IN_URL_SEGMENT.test(segment)) {
+      return `\`${segment}\` is a route group, slot or interception folder, which is not in the URL: leave it out`;
+    }
     const last = index === segments.length - 1;
     if (PARAM_SEGMENT.test(segment)) parsed.push({ kind: 'param' });
     else if (REST_SEGMENT.test(segment) || OPTIONAL_REST_SEGMENT.test(segment)) {
@@ -81,7 +99,7 @@ function parsePattern(pattern: string): PatternSegment[] | string {
       parsed.push({ kind: 'rest', optional: segment.startsWith('[[') });
     } else if (/[[\]]/.test(segment)) {
       return `\`${segment}\` is not \`[name]\`, \`[...name]\` or \`[[...name]]\``;
-    } else parsed.push({ kind: 'literal', value: segment });
+    } else parsed.push({ kind: 'literal', value: decodeSegment(segment) });
   }
   // A leading literal is what keeps a pattern from matching everywhere: it is
   // tried at every offset, and `/[code]` would collapse every segment of
@@ -114,25 +132,31 @@ const DECLARED_PATTERNS: readonly PatternSegment[][] = [
 
 /**
  * Mark the segments `pattern` declares as credentials, wherever it matches in
- * `segments`. It is tried at every offset, so a `basePath`, a locale prefix or
- * a referrer from another origin does not hide the route; a pattern also
- * covers the paths below it.
+ * `segments` (decoded, so `/caf%C3%A9/…` matches a `/café/…` pattern). It is
+ * tried at every offset, so a `basePath`, a locale prefix or a referrer from
+ * another origin does not hide the route; a pattern also covers the paths
+ * below it.
  */
 function markDeclaredSegments(
   segments: readonly string[],
   pattern: readonly PatternSegment[],
   marked: boolean[]
 ): void {
+  const [first] = pattern;
   for (let start = 0; start < segments.length; start++) {
+    // Every pattern starts with a literal (`parsePattern`), so most offsets
+    // are ruled out here, before any work.
+    if (first?.kind !== 'literal' || segments[start] !== first.value) continue;
     const hits: number[] = [];
     let matched = true;
     for (const [offset, part] of pattern.entries()) {
       const index = start + offset;
       if (part.kind === 'rest') {
+        const before = hits.length;
         for (let rest = index; rest < segments.length; rest++) {
           if (segments[rest] !== '') hits.push(rest);
         }
-        matched = part.optional || hits.length > 0;
+        matched = part.optional || hits.length > before;
         break;
       }
       const segment = segments[index];
@@ -176,7 +200,10 @@ function isSensitiveSegment(segment: string): boolean {
 export function collapseDynamicSegments(pathname: string): string {
   const segments = pathname.split('/');
   const declared = new Array<boolean>(segments.length).fill(false);
-  for (const pattern of DECLARED_PATTERNS) markDeclaredSegments(segments, pattern, declared);
+  if (DECLARED_PATTERNS.length > 0) {
+    const decoded = segments.map(decodeSegment);
+    for (const pattern of DECLARED_PATTERNS) markDeclaredSegments(decoded, pattern, declared);
+  }
   return segments
     .map((segment, index) =>
       declared[index] || isSensitiveSegment(segment) ? PLACEHOLDER : segment

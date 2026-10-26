@@ -22,6 +22,9 @@ vi.mock('@/lib/app/credential-paths', () => ({
     '/possibilities/[publicRef]',
     '/m/[joinRef]',
     '/files/[share]/[[...path]]',
+    '/vault/[box]/[...key]',
+    '/café/[code]',
+    '/join/[join-ref]',
     // Malformed: each is skipped. `/[code]` would collapse every segment of
     // every path if it were tried at every offset.
     '/[code]',
@@ -90,6 +93,27 @@ describe('collapseDynamicSegments with declared credential paths', () => {
     expect(collapseDynamicSegments(`/files/${CODE}`)).toBe('/files/[param]');
   });
 
+  it('requires at least one segment for a required catch-all, even after a param', () => {
+    expect(collapseDynamicSegments('/vault/box1')).toBe('/vault/box1');
+    expect(collapseDynamicSegments('/vault/box1/a/b')).toBe('/vault/[param]/[param]/[param]');
+  });
+
+  it('matches a non-ASCII literal against the percent-encoded path a request carries', () => {
+    expect(collapseDynamicSegments(`/caf%C3%A9/${CODE}`)).toBe('/caf%C3%A9/[param]');
+  });
+
+  it('matches a percent-encoded spelling of an ASCII literal', () => {
+    expect(collapseDynamicSegments(`/%6D/${CODE}`)).toBe('/%6D/[param]');
+  });
+
+  it('keeps a segment that does not decode, and still matches the rest', () => {
+    expect(collapseDynamicSegments(`/m/%E0%A4%A/m/${CODE}`)).toBe('/m/[param]/m/[param]');
+  });
+
+  it('accepts a hyphenated param name, as Next does', () => {
+    expect(collapseDynamicSegments(`/join/${CODE}`)).toBe('/join/[param]');
+  });
+
   it('skips malformed entries rather than guessing at them', () => {
     // `/[code]` was skipped: nothing else is collapsed.
     expect(collapseDynamicSegments('/api/v1/admin/orchestration')).toBe(
@@ -155,6 +179,8 @@ describe('credentialPathProblem', () => {
     '/files/[...path]',
     '/files/[share]/[[...path]]',
     '/m/[joinRef]/',
+    '/m/[join-ref]',
+    '/café/[code]',
   ])('accepts %j', (pattern) => {
     expect(credentialPathProblem(pattern)).toBeNull();
   });
@@ -169,6 +195,18 @@ describe('credentialPathProblem', () => {
     ['/m/[joinRef', '`[joinRef` is not `[name]`, `[...name]` or `[[...name]]`'],
     ['/m/ref-[code]', '`ref-[code]` is not `[name]`, `[...name]` or `[[...name]]`'],
     ['/files/[...path]/edit', 'catch-all `[...path]` must be the last segment'],
+    [
+      '/(public)/m/[joinRef]',
+      '`(public)` is a route group, slot or interception folder, which is not in the URL: leave it out',
+    ],
+    [
+      '/m/@modal/[joinRef]',
+      '`@modal` is a route group, slot or interception folder, which is not in the URL: leave it out',
+    ],
+    [
+      '/photos/(.)p/[id]',
+      '`(.)p` is a route group, slot or interception folder, which is not in the URL: leave it out',
+    ],
     ['', 'must start with `/`'],
     ['/', 'must start with a literal segment'],
   ])('rejects %j: %s', (pattern, reason) => {
