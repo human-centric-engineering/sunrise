@@ -1301,12 +1301,28 @@ export function initAppErasureHooks(): void {
 ```
 
 **A fork table keyed by email (no `userId` at all) is the `ContactSubmission`
-case** — no FK, so delete it in `scrubInTransaction`. The hook is handed only
-the `userId`, but the user row still exists at that point, so read the address
-from `tx.user` and match it exactly, normalised as your writer stores it. If the
-writer takes an address nobody proved (a public form), also read
-`emailVerified` and match nothing when it is false, as `contactSubmissionsOf()`
-does.
+case** — no FK, so delete it in `scrubInTransaction`. Both phases are handed
+the account's `email` and `emailVerified` alongside `userId`, read from the
+user row (inside the transaction, from the transaction's own read). Match the
+address exactly, normalised as your writer stores it. If the writer takes an
+address nobody proved (a public form), match nothing when `emailVerified` is
+false, as `contactSubmissionsOf()` does: deleting by an unproven address erases
+a stranger's rows.
+
+The export collector is given the same three fields, so write the match once
+and call it from both, as core does:
+
+```ts
+// One rule for export and erasure, so the two cannot drift apart.
+function enquiriesOf({ email, emailVerified }: { email: string; emailVerified: boolean }) {
+  return emailVerified ? { email: email.trim().toLowerCase() } : null;
+}
+
+async scrubInTransaction({ tx, email, emailVerified }) {
+  const where = enquiriesOf({ email, emailVerified });
+  if (where) await tx.appEnquiry.deleteMany({ where });
+},
+```
 
 `getErasureCleanupHooks()` runs `initAppErasureHooks()` once, before its first
 read, in the module graph `eraseUser()` runs in. Keep it synchronous: register

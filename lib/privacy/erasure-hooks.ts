@@ -49,18 +49,30 @@ import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppErasureHooks } from '@/lib/app/erasure';
 import type { AnchoredStaleWriter } from '@/lib/privacy/stale-writers';
 
-/** Context passed to {@link ErasureCleanupHook.cleanupExternal}. */
+/**
+ * Context passed to {@link ErasureCleanupHook.cleanupExternal}: who is being
+ * erased. The same fields the export collector gets (`collectAppSubjectData()`),
+ * so a table matched by address can share one match between the two, as core's
+ * `contactSubmissionsOf()` does.
+ */
 export interface ErasureExternalContext {
   /** Id of the user being erased. */
   userId: string;
+  /** The account's email, read from the user row — for app tables keyed by address. */
+  email: string;
+  /**
+   * Whether the account has proven it owns `email`. Match rows by address only
+   * when it is `true`: a public form records whatever address was typed, and
+   * with verification off anyone can open an account under someone else's —
+   * deleting by an unproven address erases a stranger's rows.
+   */
+  emailVerified: boolean;
 }
 
 /** Context passed to {@link ErasureCleanupHook.scrubInTransaction}. */
-export interface ErasureTxContext {
+export interface ErasureTxContext extends ErasureExternalContext {
   /** The erasure transaction client. Use this — not the global `prisma`. */
   tx: Prisma.TransactionClient;
-  /** Id of the user being erased. */
-  userId: string;
 }
 
 /**

@@ -94,6 +94,16 @@ release process.
 
 ### Changed
 
+- **Erasure hooks are told the subject's email and whether it is verified
+  (t-944).** `ErasureExternalContext` and `ErasureTxContext`
+  (`lib/privacy/erasure-hooks.ts`) gain required `email` and `emailVerified`,
+  read from the user row. These are the same fields the export collector gets,
+  so a fork table keyed by address can share one match between export and
+  erasure, and delete by address only for a verified account. Hooks only read
+  the context, so hook code is unaffected, but **a fork test that builds a
+  context by hand stops compiling** until it adds the two fields. An install
+  with a `cleanupExternal` hook makes one extra user-row read per erasure. See
+  `.context/privacy/data-erasure.md` ("What the FK cascade can't do").
 - **The app export collector is told whether the subject's email is verified
   (t-934, #972).** `exportUserData()` now passes `emailVerified` to
   `collectAppSubjectData()` alongside `userId` and `email`, so a fork table

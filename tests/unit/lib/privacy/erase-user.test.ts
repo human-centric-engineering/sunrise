@@ -2619,6 +2619,68 @@ describe('eraseUser', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Hook Case 3b (t-944): both phases are told the stored address and whether
+  // it is verified, so a by-address app table can apply the verified rule
+  // -------------------------------------------------------------------------
+
+  describe('the subject fields each hook phase is given', () => {
+    const registerBoth = () => {
+      const cleanupExternal = vi.fn().mockResolvedValue(undefined);
+      const scrubInTransaction = vi.fn().mockResolvedValue(undefined);
+      registerErasureCleanupHook({ name: 'by-address', cleanupExternal, scrubInTransaction });
+      return { cleanupExternal, scrubInTransaction };
+    };
+
+    it('gives both phases the stored email and emailVerified: true for a verified account', async () => {
+      const { cleanupExternal, scrubInTransaction } = registerBoth();
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(cleanupExternal).toHaveBeenCalledWith({
+        userId: BASE_PARAMS.userId,
+        email: 'foo@bar.com',
+        emailVerified: true,
+      });
+      expect(scrubInTransaction).toHaveBeenCalledWith({
+        tx: mockPrisma,
+        userId: BASE_PARAMS.userId,
+        email: 'foo@bar.com',
+        emailVerified: true,
+      });
+    });
+
+    it('tells both phases emailVerified: false for an unverified account', async () => {
+      mockUserFind.mockResolvedValue({ email: 'squatter@bar.com', emailVerified: false });
+      const { cleanupExternal, scrubInTransaction } = registerBoth();
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(cleanupExternal).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'squatter@bar.com', emailVerified: false })
+      );
+      expect(scrubInTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'squatter@bar.com', emailVerified: false })
+      );
+    });
+
+    it('reads the user row for the external phase only when a hook has one', async () => {
+      await eraseUser(BASE_PARAMS);
+      const readsWithoutHooks = mockUserFind.mock.calls.length;
+      expect(readsWithoutHooks).toBeGreaterThan(0);
+
+      mockUserFind.mockClear();
+      registerErasureCleanupHook({ name: 'tx-only', scrubInTransaction: vi.fn() });
+      await eraseUser(BASE_PARAMS);
+      expect(mockUserFind).toHaveBeenCalledTimes(readsWithoutHooks);
+
+      mockUserFind.mockClear();
+      registerErasureCleanupHook({ name: 'external', cleanupExternal: vi.fn() });
+      await eraseUser(BASE_PARAMS);
+      expect(mockUserFind).toHaveBeenCalledTimes(readsWithoutHooks + 1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Hook Case 4 (CRITICAL): scrubInTransaction throw ⇒ full rollback — user.delete
   // and dataErasureReceipt.create are NEVER called
   // -------------------------------------------------------------------------

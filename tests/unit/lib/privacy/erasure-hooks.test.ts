@@ -126,7 +126,12 @@ describe('erasure-hooks registry', () => {
       registerErasureCleanupHook(firstHook);
       registerErasureCleanupHook(secondHook);
       const [survivor] = getErasureCleanupHooks();
-      await survivor.scrubInTransaction?.({ tx: {} as never, userId: 'u-1' });
+      await survivor.scrubInTransaction?.({
+        tx: {} as never,
+        userId: 'u-1',
+        email: 'u-1@example.com',
+        emailVerified: true,
+      });
 
       // Assert — only the second scrub ran, proving the first was fully replaced
       expect(secondScrub).toHaveBeenCalledTimes(1);

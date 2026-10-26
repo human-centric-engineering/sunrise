@@ -162,8 +162,8 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   // actions, which RLS does not filter, and the audit-log scrub touches a
   // system model — but a fork's hook that clears a tenant-owned table would
   // otherwise reach only the caller's org, or throw "No tenant context". Every
-  // hook is handed the `userId` and nothing else, so the bypass widens it to
-  // that person's rows in every org. At `single` there is one org and no
+  // hook is handed only this person's id, address and whether it is verified,
+  // so the bypass widens it to that person's rows in every org. At `single` there is one org and no
   // policy, so nothing is entered: a hook keeps the implicit install org.
   const receipt = isMultiTenant()
     ? await runAsSystem(
@@ -244,11 +244,27 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // 1b. App-registered external cleanup (object storage, search indexes, …).
   // Best-effort like the avatar cleanup above: a hook failure is logged and
   // swallowed so app-side trouble can never block the user's erasure.
-  for (const hook of getErasureCleanupHooks()) {
-    if (!hook.cleanupExternal) continue;
+  // Each hook is told the stored address and whether it is verified (t-944),
+  // read here only when a hook will use them, so an install with none makes
+  // no extra read. Not best-effort: an account that cannot be read cannot be
+  // erased either, and the transaction would throw the same way.
+  const externalHooks = getErasureCleanupHooks().filter((hook) => hook.cleanupExternal);
+  const externalSubject =
+    externalHooks.length > 0
+      ? await prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { email: true, emailVerified: true },
+        })
+      : null;
+  for (const hook of externalHooks) {
+    if (!hook.cleanupExternal || !externalSubject) continue;
     checkDeadline(deadline, `the ${hook.name} cleanup hook`);
     try {
-      await hook.cleanupExternal({ userId });
+      await hook.cleanupExternal({
+        userId,
+        email: externalSubject.email,
+        emailVerified: externalSubject.emailVerified,
+      });
     } catch (error) {
       logger.error('Erasure cleanup hook (external) failed', {
         userId,
@@ -680,7 +696,12 @@ async function eraseInTransaction(
   // delete — a throw here rolls the entire erasure back.
   for (const hook of getErasureCleanupHooks()) {
     if (!hook.scrubInTransaction) continue;
-    await hook.scrubInTransaction({ tx, userId });
+    await hook.scrubInTransaction({
+      tx,
+      userId,
+      email: account.email,
+      emailVerified: account.emailVerified,
+    });
   }
 
   const created = await tx.dataErasureReceipt.create({
