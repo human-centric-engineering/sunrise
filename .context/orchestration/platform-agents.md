@@ -102,10 +102,14 @@ Every agent field declares its side (see
   that can't be answered (the org's policy unreadable, or a fork's
   eligibility or credential resolver down) leaves that agent's binding as it
   is and holds the org's marker back so the next pass asks again; every
-  other agent is still reconciled. The clean-up pick asks both fork seams
-  with `onFailure: 'throw'` for this reason (t-819): their default answers
-  "nothing eligible" when a resolver fails, which would move the agent to
-  inherit, version the move, and move it back on the next pass.
+  other agent is still reconciled. Both fork seams answer "nothing" by
+  default when a resolver fails, which would move the agent to inherit,
+  version the move, and move it back on the next pass. So the clean-up pick
+  asks for the difference (t-819): eligibility with `onFailure: 'throw'`, and
+  credentials through `classifyProvidersByCredential`, which keeps the rows
+  a resolver failed for apart. A failed row blocks the pick only when its
+  model would have won. A resolver that throws for a provider it doesn't
+  serve therefore changes nothing unless that provider has the best model.
 
 ## What an org's admin can change
 
@@ -314,11 +318,12 @@ maintenance job asks it every pass while the platform owns the binding, so:
 
 - **Read provider and model rows from `catalogue`**, not `db`. It is shared by
   every org of one run, so the tables are read once per run (t-816).
-- **Ask the per-org rules with `onFailure: 'throw'`**:
-  `resolveEligibleProviders(slugs, context, { onFailure: 'throw' })` and
-  `filterProvidersWithCredential(rows, { onFailure: 'throw' })` (t-819).
-  Return `null` only for a real "nothing qualifies"; throw when you can't
-  tell.
+- **Tell "no" from "could not ask"** (t-819): call
+  `resolveEligibleProviders(slugs, context, { onFailure: 'throw' })`, and
+  `classifyProvidersByCredential(rows)` rather than
+  `filterProvidersWithCredential`. Return `null` only for a real "nothing
+  qualifies", and throw when a row you couldn't ask about could change the
+  answer.
 - **Keep it deterministic**: a total order with no locale-dependent
   comparison, or the agent moves back and forth between passes.
 

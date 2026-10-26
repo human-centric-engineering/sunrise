@@ -103,15 +103,16 @@ release process.
   you list it. Unlike other seams it needs no `SEAM_DEFAULTS` pin: its row
   checks the entries instead. A fork others build on should not declare. See CUSTOMIZATION.md §4.
 
-- **Provider seams can throw instead of answering "nothing" (t-819).**
-  `resolveEligibleProviders` and `filterProvidersWithCredential` take an
-  optional `{ onFailure: 'throw' }`. Under it, a fork resolver that throws, a
-  registrar that failed, or an unreadable org policy throws instead of
-  answering "nothing eligible". The eligibility seam throws the new
-  `ProviderSeamUnavailableError` and the credential seam throws its usual
-  `credential_unavailable` error. This is for a caller that records the answer
-  rather than acting on it. The default is unchanged: every call-time path
-  still fails closed.
+- **Provider seams can say "could not ask" instead of "nothing" (t-819).**
+  `resolveEligibleProviders` takes an optional `{ onFailure: 'throw' }`.
+  Under it, a fork resolver that throws, a registrar that failed, or an
+  unreadable org policy throws the new `ProviderSeamUnavailableError` instead
+  of answering "nothing eligible". The new `classifyProvidersByCredential`
+  (`lib/orchestration/llm/provider-credentials.ts`) returns the rows
+  `filterProvidersWithCredential` would keep, plus, separately, each row the
+  credential resolver failed for, with its error. Both are for a caller that
+  records its answer rather than acting on it. The defaults are unchanged:
+  every call-time path still fails closed.
 
 ### Changed
 
@@ -250,14 +251,17 @@ release process.
   N orgs reads those tables once, not N times. A drifted org's reconcile also
   reuses the pick its drift check made, so the pick runs once instead of
   twice. A one-argument `defaultBinding` still type-checks and works.
-  **Forks:** if you implement one, read rows from `catalogue`, and ask the
-  per-org rules with `onFailure: 'throw'` (see Added).
+  **Forks:** if you implement one, read rows from `catalogue`, and use the
+  seams' "could not ask" forms (see Added).
 - **The clean-up agent stays put while a fork resolver is down (t-819).**
   Since t-798, a fork's eligibility or credential resolver that threw during
   a maintenance pass moved the clean-up agent to inherit and wrote a version
   row. The next pass moved it back and wrote another. `pickCleanupBinding`
-  now asks both seams with `onFailure: 'throw'`, so the binding stays where
-  it is and the job asks again next pass.
+  now leaves the binding where it is, and the job asks again next pass. This
+  happens when the eligibility resolver fails, or when the credential
+  resolver fails for a provider whose model would have won. A credential
+  failure for any other provider can't change the pick, so the pick goes
+  ahead.
 
 ### Fixed
 
