@@ -213,6 +213,31 @@ export type ProviderEligibilityResolver = (
   context: ProviderEligibilityContext
 ) => readonly string[] | Promise<readonly string[]>;
 
+/**
+ * What a provider seam does when it cannot answer: a resolver that throws, a
+ * scaffold that failed to register, a policy that cannot be read (t-819).
+ *
+ * - `'deny'` (the default): answer "nothing", logged. Right wherever the
+ *   answer is acted on at once — a restriction that cannot be evaluated must
+ *   not be read as permission.
+ * - `'throw'`: throw, and log nothing; the caller reports it. For a caller
+ *   that RECORDS the answer, such as a platform agent's `defaultBinding`,
+ *   where "nothing" would move the agent to inherit and version the move, and
+ *   a throw leaves it where it is to be asked again.
+ */
+export type ProviderSeamFailure = 'deny' | 'throw';
+
+/**
+ * A provider seam could not answer, under `onFailure: 'throw'`. The cause is
+ * on `cause`.
+ */
+export class ProviderSeamUnavailableError extends Error {
+  constructor(message: string, options: { cause: unknown }) {
+    super(message, options);
+    this.name = 'ProviderSeamUnavailableError';
+  }
+}
+
 let appResolver: ProviderEligibilityResolver | null = null;
 
 /**
@@ -338,11 +363,16 @@ export function hasProviderEligibilityResolver(): boolean {
  *
  * At `single` with no registered resolver this returns `candidates` unchanged
  * — the identity default that keeps single-tenant behaviour byte-identical.
+ *
+ * When either rule cannot be asked it denies everything, unless
+ * `options.onFailure` is `'throw'` ({@link ProviderSeamFailure}).
  */
 export async function resolveEligibleProviders(
   candidates: readonly string[],
-  context: ProviderEligibilityContext
+  context: ProviderEligibilityContext,
+  options: { onFailure?: ProviderSeamFailure } = {}
 ): Promise<readonly string[]> {
+  const throwOnFailure = options.onFailure === 'throw';
   // Before the null check, not after: the whole point is that the rule is
   // registered no matter which module reached us.
   //
@@ -356,6 +386,14 @@ export async function resolveEligibleProviders(
   try {
     await ensureWired();
   } catch (error) {
+    if (throwOnFailure) {
+      throw new ProviderSeamUnavailableError(
+        'The provider eligibility scaffold failed to register',
+        {
+          cause: error,
+        }
+      );
+    }
     logger.error('provider eligibility scaffold failed to register; denying every candidate', {
       task: context.task,
       source: context.source,
@@ -378,6 +416,11 @@ export async function resolveEligibleProviders(
   try {
     permitted = await applyOrgProviderPolicy(candidates);
   } catch (error) {
+    if (throwOnFailure) {
+      throw new ProviderSeamUnavailableError('The org provider policy could not be read', {
+        cause: error,
+      });
+    }
     logger.error('org provider policy could not be read; denying every candidate', {
       task: context.task,
       source: context.source,
@@ -399,6 +442,11 @@ export async function resolveEligibleProviders(
     // caller's order.
     return permitted.filter((slug) => allowed.has(slug));
   } catch (error) {
+    if (throwOnFailure) {
+      throw new ProviderSeamUnavailableError('The provider eligibility resolver threw', {
+        cause: error,
+      });
+    }
     logger.error('provider eligibility resolver threw; denying every candidate', {
       task: context.task,
       primarySlug: context.primarySlug,

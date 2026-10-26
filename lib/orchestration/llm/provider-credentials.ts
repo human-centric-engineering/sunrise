@@ -57,6 +57,7 @@ import { initAppProviderCredentials } from '@/lib/app/provider-credentials';
 import { createAppInitGate } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
+import type { ProviderSeamFailure } from '@/lib/orchestration/llm/provider-eligibility';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import type { AiProviderConfig } from '@/types/prisma';
@@ -283,10 +284,23 @@ export async function hasProviderKey(config: ProviderCredentialConfig): Promise<
 /**
  * The rows of `configs` that {@link hasProviderCredential}, in their order.
  * Order is load-bearing for every caller (the first reachable row wins).
+ *
+ * A row the resolver fails for is left out, unless `options.onFailure` is
+ * `'throw'` (t-819): then the resolver's `credential_unavailable` error is
+ * thrown instead, so a caller that records the answer can tell "no key" from
+ * "could not ask". A resolver should therefore answer "no key" for a
+ * provider it does not serve, not throw.
  */
 export async function filterProvidersWithCredential<T extends ProviderCredentialConfig>(
-  configs: readonly T[]
+  configs: readonly T[],
+  options: { onFailure?: ProviderSeamFailure } = {}
 ): Promise<T[]> {
-  const reachable = await Promise.all(configs.map((config) => hasProviderCredential(config)));
+  const reachable = await Promise.all(
+    configs.map(async (config) => {
+      if (options.onFailure !== 'throw') return hasProviderCredential(config);
+      const { apiKey } = await resolveProviderCredential(config);
+      return config.isLocal || apiKey !== undefined;
+    })
+  );
   return configs.filter((_, index) => reachable[index]);
 }

@@ -14,7 +14,7 @@
  *
  * @see lib/orchestration/agents/reconcile-platform-agents.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 
 import type { PlatformAgentDefinition } from '@/lib/orchestration/agents/platform-agents';
@@ -304,7 +304,17 @@ import {
 import {
   CORE_PLATFORM_AGENTS,
   PLATFORM_AGENT_BASELINE,
+  createPlatformAgentCatalogue,
 } from '@/lib/orchestration/agents/platform-agents';
+import { pickCleanupBinding } from '@/lib/orchestration/agents/platform-agent-definitions/cleanup-agent';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  registerProviderCredentialResolver,
+  resetProviderCredentialResolver,
+} from '@/lib/orchestration/llm/provider-credentials';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
 import { PATTERNS_TAG_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import { getTenantContext } from '@/lib/tenancy/context';
@@ -1497,6 +1507,130 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
 
     expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
     expect(fake.state.writes).toEqual([]);
+  });
+});
+
+describe('one pass of the job: the shared catalogue and the pick (t-816)', () => {
+  beforeEach(() => {
+    mockEnv.TENANCY_MODE = 'multi';
+  });
+
+  it('hands every pick of the pass the catalogue it was given', async () => {
+    const seen: unknown[] = [];
+    let pick = { provider: 'anthropic', model: 'claude' };
+    registry.definitions = [
+      definition('advisor', {
+        defaultBinding: async (_db, catalogue) => {
+          seen.push(catalogue);
+          return pick;
+        },
+      }),
+    ];
+    const catalogue = createPlatformAgentCatalogue();
+    await reconcilePlatformAgentsIfStale('install', { catalogue });
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    await reconcilePlatformAgentsIfStale(ORG_B, { catalogue });
+
+    // The install org's create, then ORG_B's create.
+    expect(seen).toHaveLength(2);
+    expect(seen.every((c) => c === catalogue)).toBe(true);
+  });
+
+  it('asks a drifted org’s pick once: the reconcile reuses the drift check’s answer', async () => {
+    let pick = { provider: 'anthropic', model: 'claude' };
+    const asked = vi.fn(async () => pick);
+    registry.definitions = [definition('advisor', { defaultBinding: asked })];
+    await reconcilePlatformAgentsIfStale('install');
+    asked.mockClear();
+
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    const outcome = await reconcilePlatformAgentsIfStale('install');
+
+    expect(outcome).toMatchObject({ reconciled: true, result: { updated: ['advisor'] } });
+    expect(agent('advisor')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
+    expect(asked).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again on a registry change, which skips the drift check', async () => {
+    const asked = vi.fn(async () => ({ provider: 'anthropic', model: 'claude' }));
+    registry.definitions = [definition('advisor', { defaultBinding: asked })];
+    await reconcilePlatformAgentsIfStale('install');
+    registry.definitions = [definition('advisor', { defaultBinding: asked }), definition('quiz')];
+    asked.mockClear();
+
+    await reconcilePlatformAgentsIfStale('install');
+    expect(asked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a fork resolver that is down during a pass (t-819)', () => {
+  const savedKey = process.env.OPENAI_API_KEY;
+  beforeEach(async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    process.env.OPENAI_API_KEY = 'test-key';
+    resetProviderEligibility();
+    resetProviderCredentialResolver();
+    fake.state.providers = [{ slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_API_KEY' }];
+    fake.state.models = [
+      {
+        providerSlug: 'openai',
+        modelId: 'gpt-4.1',
+        tierRole: 'worker',
+        reasoningDepth: 'high',
+        toolUse: 'strong',
+        capabilities: ['chat'],
+      },
+    ];
+    // The real clean-up pick, on a platform-owned binding at the install org.
+    registry.definitions = [definition('cleanup', { defaultBinding: pickCleanupBinding })];
+    await reconcilePlatformAgentsIfStale('install');
+    expect(agent('cleanup')).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4.1',
+      bindingOwner: 'platform',
+    });
+  });
+  afterEach(() => {
+    resetProviderEligibility();
+    resetProviderCredentialResolver();
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+  });
+
+  /** The pass the job runs, and what it left behind. */
+  async function pass() {
+    const versionsBefore = fake.state.versions.length;
+    const outcome = await reconcilePlatformAgentsIfStale('install');
+    return { outcome, newVersions: fake.state.versions.length - versionsBefore };
+  }
+
+  it('leaves the binding where it is, with no version row, when the eligibility resolver throws', async () => {
+    registerProviderEligibility(() => {
+      throw new Error('policy service down');
+    });
+
+    expect(await pass()).toEqual({ outcome: { reconciled: false }, newVersions: 0 });
+    expect(agent('cleanup')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
+  });
+
+  it('leaves the binding where it is, with no version row, when the credential resolver throws', async () => {
+    registerProviderCredentialResolver(() => {
+      throw new Error('vault down');
+    });
+
+    expect(await pass()).toEqual({ outcome: { reconciled: false }, newVersions: 0 });
+    expect(agent('cleanup')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
+  });
+
+  it('still moves the binding to inherit when the resolver answers that nothing is eligible', async () => {
+    // The real "no" these tests are told apart from.
+    registerProviderEligibility(() => []);
+
+    const { outcome, newVersions } = await pass();
+
+    expect(outcome).toMatchObject({ reconciled: true });
+    expect(newVersions).toBe(1);
+    expect(agent('cleanup')).toMatchObject({ provider: '', model: '' });
   });
 });
 

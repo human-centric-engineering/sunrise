@@ -33,7 +33,7 @@
  * Server-only (`node:crypto`).
  */
 import { createHash } from 'node:crypto';
-import type { AiAgent } from '@prisma/client';
+import type { AiAgent, AiProviderConfig, AiProviderModel } from '@prisma/client';
 
 import { initAppPlatformAgents } from '@/lib/app/platform-agents';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
@@ -90,6 +90,45 @@ export interface PlatformAgentBinding {
   model: string;
 }
 
+/**
+ * The provider and model rows a `defaultBinding` picks from (t-816). Both
+ * tables are global, so the rows are the same for every org; only which of
+ * them an org may use differs, and that is the pick's to ask, in the org's
+ * scope (policy, eligibility, credential). The maintenance job hands every
+ * org of one run the same catalogue, so a pass over N orgs reads each table
+ * once rather than N times. Every other caller gets a fresh one.
+ *
+ * Each read is made on first use, through the `db` of whichever caller asks
+ * first, and kept for the catalogue's life; a read that fails is not kept, so
+ * the next org asks again.
+ */
+export interface PlatformAgentCatalogue {
+  /** Every active provider row, oldest first. */
+  activeProviders(db: TenancyClient): Promise<readonly AiProviderConfig[]>;
+  /** Every active model row. */
+  activeModels(db: TenancyClient): Promise<readonly AiProviderModel[]>;
+}
+
+/** A catalogue that reads each table at most once (see {@link PlatformAgentCatalogue}). */
+export function createPlatformAgentCatalogue(): PlatformAgentCatalogue {
+  return {
+    activeProviders: once((db) =>
+      db.aiProviderConfig.findMany({ where: { isActive: true }, orderBy: { createdAt: 'asc' } })
+    ),
+    activeModels: once((db) => db.aiProviderModel.findMany({ where: { isActive: true } })),
+  };
+}
+
+/** `read`, made on the first call and shared by the rest — unless it fails. */
+function once<T>(read: (db: TenancyClient) => Promise<T>): (db: TenancyClient) => Promise<T> {
+  let answer: Promise<T> | undefined;
+  return (db) =>
+    (answer ??= read(db).catch((error: unknown) => {
+      answer = undefined;
+      throw error;
+    }));
+}
+
 export interface PlatformAgentDefinition {
   /** The agent's slug in every org. Unique in the registry. */
   slug: string;
@@ -142,8 +181,17 @@ export interface PlatformAgentDefinition {
    * qualifies" and moves the agent, where a throw leaves it as it is and is
    * asked again next pass. A definition that also sets `defaults.provider` or
    * `defaults.model` gives the org that starting binding instead.
+   *
+   * Read provider and model rows from `catalogue` rather than `db`, so one
+   * maintenance run reads them once for every org (t-816). The org-specific
+   * filters stay per call: `resolveEligibleProviders` and
+   * `filterProvidersWithCredential`, both with `onFailure: 'throw'` so that a
+   * resolver that is down throws rather than answers "nothing" (t-819).
    */
-  defaultBinding?: (db: TenancyClient) => Promise<PlatformAgentBinding | null>;
+  defaultBinding?: (
+    db: TenancyClient,
+    catalogue: PlatformAgentCatalogue
+  ) => Promise<PlatformAgentBinding | null>;
 }
 
 /**

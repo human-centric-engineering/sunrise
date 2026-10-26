@@ -44,6 +44,7 @@ import {
   CLEANUP_AGENT,
   pickCleanupBinding,
 } from '@/lib/orchestration/agents/platform-agent-definitions/cleanup-agent';
+import { createPlatformAgentCatalogue } from '@/lib/orchestration/agents/platform-agents';
 import {
   forgetOrgProviderPolicy,
   forgetProviderRow,
@@ -52,6 +53,10 @@ import {
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  registerProviderCredentialResolver,
+  resetProviderCredentialResolver,
+} from '@/lib/orchestration/llm/provider-credentials';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 
@@ -63,9 +68,18 @@ function modelRow(
   providerSlug: string,
   modelId: string,
   tierRole = 'worker',
-  reasoningDepth = 'high'
+  reasoningDepth = 'high',
+  {
+    toolUse = 'strong',
+    capabilities = ['chat'],
+  }: { toolUse?: string; capabilities?: string[] } = {}
 ) {
-  return { providerSlug, modelId, tierRole, reasoningDepth };
+  return { providerSlug, modelId, tierRole, reasoningDepth, toolUse, capabilities };
+}
+
+/** The pick with a catalogue of its own, as every caller but the job asks it. */
+function pick(client: TenancyClient) {
+  return pickCleanupBinding(client, createPlatformAgentCatalogue());
 }
 
 function db(providers: unknown[], models: unknown[]) {
@@ -91,21 +105,30 @@ describe('pickCleanupBinding', () => {
 
   it('picks the strongest reachable tool-using model, with a stable tie-break', async () => {
     // Both worker-tier with strong tools; the model id decides.
-    const { client, modelFindMany } = db(
+    const { client } = db(
       [providerRow('openai', 'OPENAI_API_KEY')],
       [modelRow('openai', 'gpt-4o'), modelRow('openai', 'gpt-4.1')]
     );
 
-    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'gpt-4.1' });
-    expect(modelFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          providerSlug: { in: ['openai'] },
-          toolUse: 'strong',
-          capabilities: { has: 'chat' },
-        }),
-      })
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+  });
+
+  it('picks only a strong tool-using chat model of a reachable provider (t-816)', async () => {
+    // The catalogue holds every active model; the pick filters it. Each of
+    // these would win the ranking (worker tier, very high, first by id) if a
+    // filter were missing.
+    delete process.env.NOT_SET_KEY;
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY'), providerRow('ghost', 'NOT_SET_KEY')],
+      [
+        modelRow('ghost', 'a-unreachable', 'worker', 'very_high'),
+        modelRow('openai', 'b-weak-tools', 'worker', 'very_high', { toolUse: 'moderate' }),
+        modelRow('openai', 'c-no-chat', 'worker', 'very_high', { capabilities: ['embedding'] }),
+        modelRow('openai', 'z-eligible', 'worker', 'medium'),
+      ]
     );
+
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'z-eligible' });
   });
 
   it('gives the same answer whatever order the database returns two providers of one model in (t-798)', async () => {
@@ -117,11 +140,11 @@ describe('pickCleanupBinding', () => {
     ];
     const models = [modelRow('openai', 'gpt-4.1'), modelRow('azure', 'gpt-4.1')];
 
-    expect(await pickCleanupBinding(db(providers, models).client)).toEqual({
+    expect(await pick(db(providers, models).client)).toEqual({
       provider: 'azure',
       model: 'gpt-4.1',
     });
-    expect(await pickCleanupBinding(db(providers, [...models].reverse()).client)).toEqual({
+    expect(await pick(db(providers, [...models].reverse()).client)).toEqual({
       provider: 'azure',
       model: 'gpt-4.1',
     });
@@ -133,7 +156,7 @@ describe('pickCleanupBinding', () => {
       [providerRow('openai', 'OPENAI_API_KEY')],
       [modelRow('openai', 'a-model'), modelRow('openai', 'B-model')]
     );
-    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'B-model' });
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'B-model' });
   });
 
   it('prefers a worker-tier model over a thinking-tier one', async () => {
@@ -144,7 +167,7 @@ describe('pickCleanupBinding', () => {
       [modelRow('openai', 'gpt-5', 'thinking', 'very_high'), modelRow('openai', 'gpt-4.1')]
     );
 
-    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'gpt-4.1' });
   });
 
   it('ignores a provider whose api-key env var is not set', async () => {
@@ -155,14 +178,14 @@ describe('pickCleanupBinding', () => {
       [modelRow('ghost', 'ghost-1')]
     );
 
-    expect(await pickCleanupBinding(client)).toBeNull();
+    expect(await pick(client)).toBeNull();
     expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing reachable, so no model read at all
   });
 
   it('accepts a local provider that needs no api key', async () => {
     const { client } = db([providerRow('ollama', null, true)], [modelRow('ollama', 'llama3')]);
 
-    expect(await pickCleanupBinding(client)).toEqual({ provider: 'ollama', model: 'llama3' });
+    expect(await pick(client)).toEqual({ provider: 'ollama', model: 'llama3' });
   });
 
   it('breaks a tier tie by reasoning depth, and ranks an unknown tier or depth last', async () => {
@@ -177,7 +200,7 @@ describe('pickCleanupBinding', () => {
     );
 
     // Worker tier first; within it, a known depth beats an unknown one.
-    expect(await pickCleanupBinding(client)).toEqual({
+    expect(await pick(client)).toEqual({
       provider: 'openai',
       model: 'c-worker-medium',
     });
@@ -189,13 +212,13 @@ describe('pickCleanupBinding', () => {
       [modelRow('openai', 'a-unknown', 'mystery'), modelRow('openai', 'z-control', 'control_plane')]
     );
 
-    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'z-control' });
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'z-control' });
   });
 
   it('returns null when no reachable model is tool-capable', async () => {
     const { client } = db([providerRow('openai', 'OPENAI_API_KEY')], []);
 
-    expect(await pickCleanupBinding(client)).toBeNull();
+    expect(await pick(client)).toBeNull();
   });
 });
 
@@ -227,24 +250,12 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
   const ORG = 'cmorg00000000000000grant';
   const saved = { openai: process.env.OPENAI_API_KEY, anthropic: process.env.ANTHROPIC_API_KEY };
 
-  /**
-   * Both providers reachable; openai has the stronger pick. The model query
-   * honours its `providerSlug` filter, as the real one does.
-   */
+  /** Both providers reachable; openai has the stronger pick. */
   function reachableBoth() {
-    const models = [
-      modelRow('openai', 'gpt-4.1'),
-      modelRow('anthropic', 'claude-sonnet', 'thinking'),
-    ];
-    const handle = db(
+    return db(
       [providerRow('openai', 'OPENAI_API_KEY'), providerRow('anthropic', 'ANTHROPIC_API_KEY')],
-      models
+      [modelRow('openai', 'gpt-4.1'), modelRow('anthropic', 'claude-sonnet', 'thinking')]
     );
-    handle.modelFindMany.mockImplementation(
-      async (args: { where: { providerSlug: { in: string[] } } }) =>
-        models.filter((m) => args.where.providerSlug.in.includes(m.providerSlug))
-    );
-    return handle;
   }
 
   /** The org is approved for these provider rows (by id). */
@@ -260,6 +271,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     forgetOrgProviderPolicy();
     forgetProviderRow();
     resetProviderEligibility();
+    resetProviderCredentialResolver();
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.ANTHROPIC_API_KEY = 'test-key';
     vi.mocked(prisma.aiProviderConfig.findMany).mockImplementation((async (args: {
@@ -275,6 +287,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
   afterEach(() => {
     mockMode.value = 'single';
     resetProviderEligibility();
+    resetProviderCredentialResolver();
     for (const [name, value] of [
       ['OPENAI_API_KEY', saved.openai],
       ['ANTHROPIC_API_KEY', saved.anthropic],
@@ -288,7 +301,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     approve('anthropic');
     const { client } = reachableBoth();
 
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toEqual({
+    expect(await runAsOrg(ORG, () => pick(client))).toEqual({
       provider: 'anthropic',
       model: 'claude-sonnet',
     });
@@ -298,7 +311,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     approve();
     const { client, modelFindMany } = reachableBoth();
 
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+    expect(await runAsOrg(ORG, () => pick(client))).toBeNull();
     expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing usable, so no model read at all
   });
 
@@ -307,14 +320,14 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     // policy, then reconcile. A new org has no grant, so its first pick is null.
     approve();
     const { client } = reachableBoth();
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+    expect(await runAsOrg(ORG, () => pick(client))).toBeNull();
 
     approve('anthropic');
     // Still the cached empty policy: reconciling before the forget pins nothing.
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+    expect(await runAsOrg(ORG, () => pick(client))).toBeNull();
 
     forgetOrgProviderPolicy(ORG);
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toEqual({
+    expect(await runAsOrg(ORG, () => pick(client))).toEqual({
       provider: 'anthropic',
       model: 'claude-sonnet',
     });
@@ -326,9 +339,43 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     vi.mocked(prisma.org.findUnique).mockRejectedValue(new Error('connection reset'));
     const { client } = reachableBoth();
 
-    await expect(runAsOrg(ORG, () => pickCleanupBinding(client))).rejects.toThrow(
-      'connection reset'
-    );
+    await expect(runAsOrg(ORG, () => pick(client))).rejects.toMatchObject({
+      name: 'ProviderSeamUnavailableError',
+      cause: expect.objectContaining({ message: 'connection reset' }),
+    });
+  });
+
+  it("throws when a fork's eligibility resolver throws, rather than pinning nothing (t-819)", async () => {
+    // Null would move the agent to inherit, version the move, and move it
+    // back on the next pass once the resolver's backend was up again.
+    registerProviderEligibility(() => {
+      throw new Error('policy service down');
+    });
+    const { client } = reachableBoth();
+
+    await expect(runAsOrg(INSTALL_ORG_ID, () => pick(client))).rejects.toMatchObject({
+      name: 'ProviderSeamUnavailableError',
+      cause: expect.objectContaining({ message: 'policy service down' }),
+    });
+  });
+
+  it("throws when a fork's credential resolver throws, rather than pinning nothing (t-819)", async () => {
+    registerProviderCredentialResolver(() => {
+      throw new Error('vault down');
+    });
+    const { client } = reachableBoth();
+
+    await expect(runAsOrg(INSTALL_ORG_ID, () => pick(client))).rejects.toMatchObject({
+      code: 'credential_unavailable',
+    });
+  });
+
+  it('still pins nothing when the resolvers answer, but answer "none" (t-819)', async () => {
+    // The other side of the two tests above: a real "no" is still null.
+    registerProviderCredentialResolver(() => ({ apiKey: undefined, identity: '' }));
+    const { client } = reachableBoth();
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toBeNull();
   });
 
   it("does not pin a provider a fork's eligibility rule refuses to an explicit provider", async () => {
@@ -339,7 +386,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     });
     const { client } = reachableBoth();
 
-    expect(await runAsOrg(INSTALL_ORG_ID, () => pickCleanupBinding(client))).toEqual({
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toEqual({
       provider: 'anthropic',
       model: 'claude-sonnet',
     });
@@ -350,13 +397,13 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
   it('pins nothing with no org in scope', async () => {
     const { client } = reachableBoth();
 
-    expect(await pickCleanupBinding(client)).toBeNull();
+    expect(await pick(client)).toBeNull();
   });
 
   it('is unchanged for the install org, which may use every provider', async () => {
     const { client } = reachableBoth();
 
-    expect(await runAsOrg(INSTALL_ORG_ID, () => pickCleanupBinding(client))).toEqual({
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toEqual({
       provider: 'openai',
       model: 'gpt-4.1',
     });
@@ -368,7 +415,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     approve();
     const { client } = reachableBoth();
 
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toEqual({
+    expect(await runAsOrg(ORG, () => pick(client))).toEqual({
       provider: 'openai',
       model: 'gpt-4.1',
     });
