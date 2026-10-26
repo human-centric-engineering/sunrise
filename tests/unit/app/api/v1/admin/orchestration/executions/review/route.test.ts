@@ -399,6 +399,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
       where: { id: EXEC_ID },
       select: {
         status: true,
+        completedAt: true,
         supervisorVerdict: true,
         supervisorReport: true,
         supervisorReviewedAt: true,
@@ -417,23 +418,31 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     ]);
   });
 
-  it('refuses with 409, writing nothing, when the run left its terminal state during the review', async () => {
-    // A retry-step during the model call puts the run back to running.
-    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
-    vi.mocked(withRunRowLocked).mockImplementationOnce((_id, fn) =>
-      fn({
-        aiWorkflowExecution: {
-          findUnique: vi.fn().mockResolvedValue({ ...happyExecution(), status: 'running' }),
-          update: prisma.aiWorkflowExecution.update,
-        },
-      } as never)
-    );
+  it.each([
+    // retry-step (`prepareRetryStep`) sets pending and clears completedAt.
+    ['retried and not yet finished', { status: 'pending', completedAt: null }],
+    // The retried run finished again: terminal, but on a new trace.
+    ['retried and finished again', { completedAt: new Date('2026-05-17T11:00:00.000Z') }],
+  ])(
+    'refuses with 409, writing nothing, when the run was %s during the review',
+    async (_label, moved) => {
+      const read = { ...happyExecution(), completedAt: new Date('2026-05-17T10:00:01.000Z') };
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(read as never);
+      vi.mocked(withRunRowLocked).mockImplementationOnce((_id, fn) =>
+        fn({
+          aiWorkflowExecution: {
+            findUnique: vi.fn().mockResolvedValue({ ...read, ...moved }),
+            update: prisma.aiWorkflowExecution.update,
+          },
+        } as never)
+      );
 
-    const res = await POST(makeRequest(), makeContext());
+      const res = await POST(makeRequest(), makeContext());
 
-    expect(res.status).toBe(409);
-    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(409);
+      expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
+    }
+  );
 
   it('answers 404, writing nothing, when the run was removed during the review', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);

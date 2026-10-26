@@ -142,11 +142,11 @@ function withPriorArchived(
   stored: Pick<
     AiWorkflowExecution,
     'supervisorVerdict' | 'supervisorReport' | 'supervisorReviewedAt'
-  > | null,
+  >,
   executionId: string
 ): SupervisorReport {
   const finalReport: SupervisorReport = { ...report };
-  if (!stored?.supervisorVerdict || !stored.supervisorReport) return finalReport;
+  if (!stored.supervisorVerdict || !stored.supervisorReport) return finalReport;
   const priorParsed = priorSupervisorReportSchema.safeParse(stored.supervisorReport);
   if (!priorParsed.success) {
     logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
@@ -359,23 +359,29 @@ export const POST = withAdminAuth<{ id: string }>(
       // The prior verdict is read here, under the lock, not taken from the
       // read above: a second review of the run that overlapped this one may
       // have written since, and archiving the older copy would drop its
-      // verdict from the history (t-925). The status is checked again with it:
-      // a retry-step during the model call puts the run back to running, and a
-      // retroactive verdict on a run still executing reviews a trace that is
-      // being rewritten (code review).
+      // verdict from the history (t-925). The run itself must not have moved on
+      // since the read the report was built from (code review): a retry-step
+      // during the model call sets it back to pending and clears `completedAt`,
+      // and a run that then finishes again stamps a new one — either way the
+      // report would judge a trace that no longer exists. `updatedAt` is not
+      // compared: an overlapping review moves it, and that one is archived.
       const prior = await tx.aiWorkflowExecution.findUnique({
         where: { id },
         select: {
           status: true,
+          completedAt: true,
           supervisorVerdict: true,
           supervisorReport: true,
           supervisorReviewedAt: true,
         },
       });
       if (!prior) throw new NotFoundError(`Execution ${id} not found`);
-      if (!TERMINAL_STATUSES.has(prior.status)) {
+      if (
+        prior.status !== execution.status ||
+        prior.completedAt?.getTime() !== execution.completedAt?.getTime()
+      ) {
         throw new ConflictError(
-          `Execution is ${prior.status}. Retroactive review is only available on terminal executions.`
+          'The execution was retried during the review; nothing was written. Review it again.'
         );
       }
       const finalReport = withPriorArchived(assessment.report, prior, id);
