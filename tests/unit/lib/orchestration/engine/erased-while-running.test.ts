@@ -343,6 +343,47 @@ describe('the rest of what a running workflow writes, erased while it runs (t-88
     ]);
   });
 
+  it('drops signed reasoning that names them rather than editing it, and redacts the rest', async () => {
+    const keptReasoning = [{ type: 'thinking' as const, thinking: 'plan', signature: 'sig-kept' }];
+    registerStepType('llm_call', async (step, ctx) => {
+      if (step.id === 'a') {
+        erase();
+        const turn = (index: number, thinking: string) => ({
+          kind: 'agent_call' as const,
+          phase: 'continuing' as const,
+          index,
+          assistantContent: `asking ${GONE}`,
+          toolCall: { id: `call-${index}`, name: 'lookup', arguments: { to: GONE } },
+          toolResult: { ok: true },
+          reasoning:
+            thinking === 'plan'
+              ? keptReasoning
+              : [{ type: 'thinking' as const, thinking, signature: 'sig-gone' }],
+          tokensUsed: 0,
+          costUsd: 0,
+        });
+        await ctx.recordTurn?.(turn(0, `look up ${GONE_ID}`));
+        await ctx.recordTurn?.(turn(1, 'plan'));
+      }
+      return { output: 'done', tokensUsed: 0, costUsd: 0 };
+    });
+
+    await run();
+
+    const last = turnsWritten()
+      .filter((t) => Array.isArray(t) && t.length === 2)
+      .at(-1) as Array<Record<string, unknown>>;
+    expect(last).toBeDefined();
+    // An edited thinking block fails its signature on resume: it goes whole.
+    expect(last[0]).not.toHaveProperty('reasoning');
+    expect(last[0]).toMatchObject({
+      assistantContent: `asking ${GONE}`,
+      toolCall: { arguments: { to: '[erased]' } },
+    });
+    // A block that does not name them is replayed untouched.
+    expect(last[1].reasoning).toEqual(keptReasoning);
+  });
+
   it('writes the turns as recorded when nobody was erased', async () => {
     registerStepType('llm_call', async (step, ctx) => {
       if (step.id === 'a') {

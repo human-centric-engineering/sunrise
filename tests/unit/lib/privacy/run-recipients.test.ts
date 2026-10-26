@@ -159,23 +159,43 @@ function sqlOf(call: unknown[]): string {
   return strings.join('?');
 }
 
-/** A side-table delegate whose reads return the rows of the run asked for. */
-function makeSideDelegate(rows: SideRow[] = []) {
-  return {
-    findMany: vi.fn(async (args: { where: { executionId: string } }) =>
-      rows.filter((r) => r.executionId === args.where.executionId)
-    ),
-    update: vi.fn(),
-  };
+/** A side-table delegate: the run's rows are read by `$queryRaw`, written by `updateMany`. */
+function makeSideDelegate() {
+  return { updateMany: vi.fn(async (..._args: unknown[]) => ({ count: 1 })) };
 }
 
 /** The three side tables a run keeps rows in, as a tx exposes them (t-882). */
-function makeSideTables(side: SideRows = {}) {
+function makeSideTables() {
   return {
-    aiWorkflowRunningStep: makeSideDelegate(side.steps),
-    aiWorkflowStepDispatch: makeSideDelegate(side.dispatches),
-    aiWorkflowExecutionLeaseEvent: makeSideDelegate(side.events),
+    aiWorkflowRunningStep: makeSideDelegate(),
+    aiWorkflowStepDispatch: makeSideDelegate(),
+    aiWorkflowExecutionLeaseEvent: makeSideDelegate(),
   };
+}
+
+/**
+ * Answer a side-table read (`SELECT s.id, s.turns ...`) with the rows of the
+ * run it was asked about, or null when `call` is not one. The real SQL narrows
+ * by the row's own text; here every row of the run comes back and the code
+ * under test decides what to write.
+ */
+function sideRowsFor(side: SideRows, call: unknown[]): SideRow[] | null {
+  const sql = sqlOf(call);
+  const executionId = call[1];
+  const table = sql.includes('SELECT s.id, s.turns')
+    ? side.steps
+    : sql.includes('SELECT d.id, d.result')
+      ? side.dispatches
+      : sql.includes('SELECT l.id, l.metadata')
+        ? side.events
+        : undefined;
+  if (
+    !sql.includes('SELECT s.id, s.turns') &&
+    !sql.includes('SELECT d.id, d.result') &&
+    !sql.includes('SELECT l.id, l.metadata')
+  )
+    return null;
+  return (table ?? []).filter((r) => r.executionId === executionId);
 }
 
 /** A tx whose raw reads page through the given rows by table. */
@@ -184,6 +204,8 @@ function makeTx(schedules: ScheduleRow[][], executions: ExecutionRow[][], side: 
   return {
     $queryRaw: vi.fn((...call: unknown[]) => {
       const sql = sqlOf(call);
+      const sideRows = sideRowsFor(side, call);
+      if (sideRows) return Promise.resolve(sideRows);
       if (sql.includes('ai_workflow_schedule'))
         return Promise.resolve(pages.schedules.shift() ?? []);
       if (sql.includes('ai_workflow_execution')) {
@@ -193,7 +215,7 @@ function makeTx(schedules: ScheduleRow[][], executions: ExecutionRow[][], side: 
     }),
     aiWorkflowSchedule: { update: vi.fn() },
     aiWorkflowExecution: { update: vi.fn() },
-    ...makeSideTables(side),
+    ...makeSideTables(),
     aiAdminAuditLog: { create: vi.fn() },
   };
 }
@@ -361,7 +383,7 @@ describe('eraseFromRunInputs — runs', () => {
 
     expect(result.executionsRedacted).toBe(RUN_PAGE_SIZE + 3);
     const execCalls = tx.$queryRaw.mock.calls.filter((c) =>
-      sqlOf(c).includes('ai_workflow_execution')
+      sqlOf(c).includes('FROM ai_workflow_execution e')
     );
     expect(execCalls).toHaveLength(2);
     // The second page starts after the last id of the first.
@@ -441,34 +463,18 @@ describe('eraseFromRunInputs — supervisor report and side rows (t-882)', () =>
 
     expect(result.executionsRedacted).toBe(1);
     expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
-    expect(tx.aiWorkflowRunningStep.update).toHaveBeenCalledWith({
+    expect(tx.aiWorkflowRunningStep.updateMany).toHaveBeenCalledWith({
       where: { id: 'step-1' },
       data: { turns: [{ role: 'user', content: `Please ask ${ERASED_VALUE} to confirm` }] },
     });
-    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith({
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledWith({
       where: { id: 'disp-1' },
       data: { result: { sentTo: ERASED_VALUE, messageId: 'msg-77' } },
     });
-    expect(tx.aiWorkflowExecutionLeaseEvent.update).toHaveBeenCalledWith({
+    expect(tx.aiWorkflowExecutionLeaseEvent.updateMany).toHaveBeenCalledWith({
       where: { id: 'evt-1' },
       data: { metadata: { actorUserId: ERASED_VALUE, reason: 'stuck' } },
     });
-  });
-
-  it('reads each side table for the run it is redacting', async () => {
-    const tx = makeTx([[]], [[cleanRun('exec-side')]]);
-
-    await run(tx);
-
-    for (const table of [
-      tx.aiWorkflowRunningStep,
-      tx.aiWorkflowStepDispatch,
-      tx.aiWorkflowExecutionLeaseEvent,
-    ]) {
-      expect(table.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { executionId: 'exec-side' } })
-      );
-    }
   });
 
   it('writes no side row that names someone else, while still rewriting one that names them', async () => {
@@ -491,12 +497,12 @@ describe('eraseFromRunInputs — supervisor report and side rows (t-882)', () =>
     // Positive control: the run that does name them was rewritten, so the
     // side rows of the other run were read and judged, not skipped.
     expect(result.executionsRedacted).toBe(1);
-    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledOnce();
-    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith(
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'disp-mine' } })
     );
-    expect(tx.aiWorkflowRunningStep.update).not.toHaveBeenCalled();
-    expect(tx.aiWorkflowExecutionLeaseEvent.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowRunningStep.updateMany).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowExecutionLeaseEvent.updateMany).not.toHaveBeenCalled();
   });
 
   it('narrows the runs it reads by the supervisor report and the three side tables', async () => {
@@ -727,13 +733,15 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
   function makeClient(pages: string[][], rows: Record<string, ExecutionRow>, side: SideRows = {}) {
     const tx = {
       $queryRaw: vi.fn(async (...call: unknown[]) => {
+        const sideRows = sideRowsFor(side, call);
+        if (sideRows) return sideRows;
         const id = call[1] as string;
         return rows[id]
           ? [{ outputData: null, errorMessage: null, supervisorReport: null, ...rows[id] }]
           : [];
       }),
       aiWorkflowExecution: { update: vi.fn() },
-      ...makeSideTables(side),
+      ...makeSideTables(),
     };
     const client = {
       $queryRaw: vi.fn(async () => (pages.shift() ?? []).map((id) => ({ id }))),
@@ -821,8 +829,8 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
     // Positive control: exec-clean's side row was read and left; exec-late's was rewritten.
     expect(result).toEqual({ redacted: 1, failed: 0, lastError: null });
     expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
-    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledOnce();
-    expect(tx.aiWorkflowStepDispatch.update).toHaveBeenCalledWith({
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledOnce();
+    expect(tx.aiWorkflowStepDispatch.updateMany).toHaveBeenCalledWith({
       where: { id: 'disp-late' },
       data: { result: { to: ERASED_VALUE, ok: true } },
     });
