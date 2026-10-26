@@ -509,7 +509,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       });
 
       const callArgs = sentParams();
-      expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+      expect(callArgs.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
       expect(callArgs.output_config).toEqual({ effort: 'high' });
     }
   );
@@ -659,7 +659,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       });
 
       const callArgs = sentParams();
-      expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+      expect(callArgs.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
       expect(callArgs.output_config).toEqual({ effort });
       expect(callArgs.temperature).toBeUndefined();
     }
@@ -2511,7 +2511,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
     });
 
     const callArgs = sentParams();
-    expect(callArgs.thinking).toEqual({ type: 'adaptive' });
+    expect(callArgs.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
     expect(callArgs.output_config.effort).toBe('medium');
     expect(callArgs.output_config.format.type).toBe('json_schema');
     expect(callArgs.tool_choice).toBeUndefined();
@@ -2812,6 +2812,88 @@ describe('AnthropicProvider — thinking blocks across a tool loop (t-897, t-908
       ],
     });
     expect(chunks.filter((c) => c.type === 'tool_call')).toHaveLength(1);
+  });
+
+  it('streams each thinking delta as a reasoning chunk, before the text it precedes', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '', signature: '' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'Weighing ' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'the options.' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Answer.' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } },
+      ])
+    );
+
+    const chunks = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-5-5',
+      reasoningEffort: 'high',
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.filter((c) => c.type !== 'done')).toEqual([
+      { type: 'reasoning', text: 'Weighing ' },
+      { type: 'reasoning', text: 'the options.' },
+      { type: 'text', content: 'Answer.' },
+    ]);
+    // The replayable block is still assembled from the same deltas.
+    expect(chunks.find((c) => c.type === 'done')).toMatchObject({
+      reasoning: [{ type: 'thinking', thinking: 'Weighing the options.' }],
+    });
+    expect(sentParams().thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+  });
+
+  it('streams no reasoning chunk for an omitted (empty) thinking block or a redacted one', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '', signature: '' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'signature_delta', signature: 'sig' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'redacted_thinking', data: 'opaque' },
+        },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+      ])
+    );
+
+    const chunks = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-5-5',
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.map((c) => c.type)).toEqual(['done']);
   });
 
   it('leaves reasoning off a response with no thinking blocks', async () => {

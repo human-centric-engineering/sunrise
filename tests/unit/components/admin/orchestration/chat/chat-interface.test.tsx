@@ -1855,6 +1855,75 @@ describe('ChatInterface', () => {
       expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
     });
 
+    describe('reasoning panel (t-953)', () => {
+      function reasoningFrame(delta: string): string {
+        return `event: reasoning\ndata: ${JSON.stringify({ delta })}\n\n`;
+      }
+
+      async function send(stream: ReadableStream<Uint8Array>, showInlineTrace: boolean) {
+        const user = userEvent.setup();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+        render(<ChatInterface agentSlug="test-agent" showInlineTrace={showInlineTrace} />);
+        await user.type(screen.getByPlaceholderText(/type a message/i), 'help');
+        await user.click(screen.getByRole('button', { name: /send/i }));
+        await waitFor(() => expect(screen.getByText('Done.')).toBeInTheDocument());
+        return user;
+      }
+
+      it('shows the streamed reasoning collapsed, and expands it on click', async () => {
+        const user = await send(
+          makeSseStream([
+            startFrame('conv-1', 'msg-1'),
+            reasoningFrame('Check the '),
+            reasoningFrame('refund policy.'),
+            contentFrame('Done.'),
+            doneFrame(),
+          ]),
+          true
+        );
+
+        const panel = screen.getByTestId('reasoning-panel');
+        expect(panel).toHaveTextContent('Reasoning · 4 words');
+        expect(screen.queryByTestId('reasoning-panel-text')).not.toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: /reasoning/i }));
+        expect(screen.getByTestId('reasoning-panel-text')).toHaveTextContent(
+          'Check the refund policy.'
+        );
+      });
+
+      it('drops reasoning streamed before a content_reset', async () => {
+        const user = await send(
+          makeSseStream([
+            startFrame('conv-1', 'msg-1'),
+            reasoningFrame('Stale plan.'),
+            'event: content_reset\ndata: {}\n\n',
+            reasoningFrame('Fresh plan.'),
+            contentFrame('Done.'),
+            doneFrame(),
+          ]),
+          true
+        );
+
+        await user.click(screen.getByRole('button', { name: /reasoning/i }));
+        expect(screen.getByTestId('reasoning-panel-text')).toHaveTextContent(/^Fresh plan\.$/);
+      });
+
+      it('renders no panel when showInlineTrace is off, even if a reasoning event arrives', async () => {
+        await send(
+          makeSseStream([
+            startFrame('conv-1', 'msg-1'),
+            reasoningFrame('Should not show.'),
+            contentFrame('Done.'),
+            doneFrame(),
+          ]),
+          false
+        );
+
+        expect(screen.queryByTestId('reasoning-panel')).not.toBeInTheDocument();
+      });
+    });
+
     it('aggregates traces from a parallel capability_results batch', async () => {
       const user = userEvent.setup();
       const stream = makeSseStream([

@@ -40,6 +40,40 @@ function makeMessage(overrides: Partial<ConversationMessage>): ConversationMessa
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ConversationTraceViewer', () => {
+  describe('Reasoning summary (t-953)', () => {
+    it('shows the persisted reasoning collapsed on an assistant message, expanding on click', async () => {
+      const user = userEvent.setup();
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'a1',
+              role: 'assistant',
+              content: 'Your order shipped.',
+              metadata: { reasoningSummary: 'Look up the order first.' },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('reasoning-panel')).toHaveTextContent('Reasoning · 5 words');
+      expect(screen.queryByTestId('reasoning-panel-text')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /reasoning/i }));
+      expect(screen.getByTestId('reasoning-panel-text')).toHaveTextContent(
+        'Look up the order first.'
+      );
+    });
+
+    it('renders no reasoning panel when the message has none', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[makeMessage({ id: 'a1', role: 'assistant', content: 'Hi.', metadata: {} })]}
+        />
+      );
+      expect(screen.queryByTestId('reasoning-panel')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Empty state', () => {
     it('shows "No messages in this conversation." when messages is empty', () => {
       render(<ConversationTraceViewer messages={[]} />);

@@ -7278,6 +7278,90 @@ describe('attachment gate', () => {
     expect(assertModelSupportsAttachments).not.toHaveBeenCalled();
   });
 
+  // ─── Reasoning summary (t-953) ─────────────────────────────────────────────
+
+  describe('reasoning summary', () => {
+    function setupReasoningTurns() {
+      const provider = mockProvider([
+        [
+          { type: 'reasoning', text: 'Need the order. ' },
+          { type: 'reasoning', text: 'Look it up.' },
+          {
+            type: 'tool_call',
+            toolCall: { id: 'tc1', name: 'lookup_order', arguments: { orderId: 'o_1' } },
+          },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'tool_use' },
+        ],
+        [
+          { type: 'reasoning', text: 'It shipped.' },
+          { type: 'text', content: 'Your order shipped.' },
+          { type: 'done', usage: { inputTokens: 6, outputTokens: 4 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: { id: 'o_1' },
+      });
+    }
+
+    function persistedAssistantMetadata(): Array<Record<string, unknown> | undefined> {
+      return (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls
+        .map(
+          ([args]) => (args as { data: { role: string; metadata?: Record<string, unknown> } }).data
+        )
+        .filter((data) => data.role === 'assistant')
+        .map((data) => data.metadata);
+    }
+
+    it('streams reasoning deltas on includeTrace, with a paragraph break between iterations', async () => {
+      setupReasoningTurns();
+      const events = await collect(streamChat({ ...baseRequest, includeTrace: true }));
+      const reasoning = events.filter((e) => (e as { type: string }).type === 'reasoning');
+      expect(reasoning).toEqual([
+        { type: 'reasoning', delta: 'Need the order. ' },
+        { type: 'reasoning', delta: 'Look it up.' },
+        { type: 'reasoning', delta: '\n\nIt shipped.' },
+      ]);
+    });
+
+    it('streams no reasoning event when includeTrace is unset (consumer and embed)', async () => {
+      setupReasoningTurns();
+      const events = await collect(streamChat(baseRequest));
+      expect(events.some((e) => (e as { type: string }).type === 'content')).toBe(true);
+      expect(events.some((e) => (e as { type: string }).type === 'reasoning')).toBe(false);
+    });
+
+    it('persists each iteration’s reasoning on its own assistant message, with or without includeTrace', async () => {
+      setupReasoningTurns();
+      await collect(streamChat(baseRequest));
+      expect(persistedAssistantMetadata().map((m) => m?.reasoningSummary)).toEqual([
+        'Need the order. Look it up.',
+        'It shipped.',
+      ]);
+    });
+
+    it('leaves reasoningSummary off when the provider streamed none', async () => {
+      const provider = mockProvider([
+        [
+          { type: 'text', content: 'Hi.' },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      await collect(streamChat({ ...baseRequest, includeTrace: true }));
+      const metadata = persistedAssistantMetadata();
+      expect(metadata).toHaveLength(1);
+      expect(metadata[0]).not.toHaveProperty('reasoningSummary');
+    });
+  });
+
   // ─── includeTrace opt-in ─────────────────────────────────────────────────
 
   describe('includeTrace', () => {

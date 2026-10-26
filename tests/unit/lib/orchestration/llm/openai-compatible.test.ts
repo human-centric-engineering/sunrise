@@ -704,6 +704,63 @@ describe('chatStream', () => {
     });
   });
 
+  it.each([
+    ['reasoning_content', 'DeepSeek / vLLM'],
+    ['reasoning', 'OpenRouter'],
+  ])('yields %s deltas (%s) as reasoning chunks ahead of the text', async (field) => {
+    const reasoningChunk = (text: string) => ({
+      id: 'chunk-r',
+      model: 'deepseek-reasoner',
+      choices: [{ index: 0, delta: { [field]: text }, finish_reason: null }],
+    });
+    chatCreateMock.mockResolvedValue(
+      toAsyncIterable([
+        reasoningChunk('Check '),
+        reasoningChunk('the date.'),
+        makeChunk({ content: 'Tuesday.' }),
+        makeChunk({ finishReason: 'stop', usage: { prompt_tokens: 3, completion_tokens: 2 } }),
+      ])
+    );
+
+    const collected: Array<{ type: string }> = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+      model: 'deepseek-reasoner',
+    })) {
+      collected.push(chunk);
+    }
+
+    expect(collected.filter((c) => c.type !== 'done')).toEqual([
+      { type: 'reasoning', text: 'Check ' },
+      { type: 'reasoning', text: 'the date.' },
+      { type: 'text', content: 'Tuesday.' },
+    ]);
+  });
+
+  it('yields no reasoning chunk for a null, empty or non-string reasoning field', async () => {
+    const withDelta = (delta: Record<string, unknown>) => ({
+      id: 'chunk-x',
+      model: 'gpt-4o',
+      choices: [{ index: 0, delta, finish_reason: null }],
+    });
+    chatCreateMock.mockResolvedValue(
+      toAsyncIterable([
+        withDelta({ reasoning_content: null, content: 'a' }),
+        withDelta({ reasoning: '' }),
+        withDelta({ reasoning: { summary: 'not a string' } }),
+        makeChunk({ finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+      ])
+    );
+
+    const collected: Array<{ type: string }> = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+      model: 'gpt-4o',
+    })) {
+      collected.push(chunk);
+    }
+
+    expect(collected.map((c) => c.type)).toEqual(['text', 'done']);
+  });
+
   it('captures usage from trailing usage-only chunk (OpenAI style)', async () => {
     // Arrange — the usage chunk has no choices
     const chunks = [

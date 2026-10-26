@@ -113,6 +113,27 @@ describe('drainStreamChat', () => {
     expect(result.assistantText).toBe('Hello, world!');
   });
 
+  it('ignores reasoning events — they never leak into the assistant text (t-953)', async () => {
+    // The eval runner opts into includeTrace, so it does receive these.
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        { type: 'reasoning', delta: 'Thinking about it.' },
+        { type: 'content', delta: 'Answer.' },
+        { type: 'reasoning', delta: '\n\nMore thought.' },
+        {
+          type: 'done',
+          tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0.01,
+        },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+
+    expect(result.assistantText).toBe('Answer.');
+    expect(result.costUsd).toBe(0.01);
+  });
+
   it('treats a missing/empty delta as the empty string', async () => {
     mockedStreamChat.mockReturnValueOnce(
       fromEvents([

@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **The model's reasoning in the admin chat and trace (t-953).** `StreamChunk`
+  (`lib/orchestration/llm/types.ts`) gains a `{ type: 'reasoning'; text }`
+  variant, yielded as the model reasons: Claude's thinking deltas (adaptive
+  models now send `thinking.display: 'summarized'`, since they default to
+  `'omitted'`), and the `reasoning_content` / `reasoning` deltas some
+  OpenAI-compatible providers (DeepSeek, OpenRouter, vLLM) put on Chat
+  Completions. OpenAI's own summaries need the Responses API and are not
+  included. `ChatEvent` gains `{ type: 'reasoning'; delta }`, sent only when
+  the request sets `includeTrace`, so consumer and embed streams don't carry
+  it. `MessageMetadata.reasoningSummary` stores the text on every assistant
+  message that had some. The admin chat and the conversation trace viewer
+  show it in a collapsed panel. **Forks:** a fork `LlmProvider` doesn't have
+  to yield the new chunk, and a fork consumer of `chatStream` or `streamChat`
+  that switches on `type` can ignore it.
+
 - **Stop sequences, top P, verbosity, parallel tool calls and service tier
   (t-911, t-913).** New `LlmOptions` fields `stopSequences`, `topP`,
   `verbosity`, `parallelToolCalls`, `serviceTier` (types and their lists

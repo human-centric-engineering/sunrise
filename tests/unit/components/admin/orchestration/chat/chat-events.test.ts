@@ -229,6 +229,17 @@ describe('schema/type parity', () => {
   });
 });
 
+describe('reasoning', () => {
+  it('parses a reasoning delta (t-953)', () => {
+    const parsed = parseChatStreamEvent(frame('reasoning', { delta: 'Weighing it up.' }));
+    expect(parsed).toEqual({ type: 'reasoning', delta: 'Weighing it up.' });
+  });
+
+  it('rejects a reasoning frame whose delta is not a string', () => {
+    expect(parseChatStreamEvent(frame('reasoning', { delta: 42 }))).toBeNull();
+  });
+});
+
 describe('budget_exceeded_per_turn', () => {
   it('parses the cap event so consumers can surface it', () => {
     // Regression (#461): the variant was missing from the union, so the
