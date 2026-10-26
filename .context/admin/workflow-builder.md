@@ -150,7 +150,7 @@ Anti-optimism mechanics are structural:
 - Mandatory `unverifiedAreas[]` makes blind spots first-class.
 - Temperature 0.2; one retry at temperature 0 on parse failure; double-failure produces `inconclusive` verdict (never throws).
 
-**Persisted columns** on `AiWorkflowExecution`: `supervisorVerdict`, `supervisorScore`, `supervisorReport`, `supervisorReviewedAt`. Written via the generic `StepResult.contextPatch` mechanism (allowlisted in `lib/orchestration/engine/orchestration-engine.ts:drainContextPatch`) so the supervisor and any future post-hoc audit step share one write path.
+**Persisted columns** on `AiWorkflowExecution`: `supervisorVerdict`, `supervisorScore`, `supervisorReport`, `supervisorReviewedAt`. Written via the generic `StepResult.contextPatch` mechanism (allowlisted in `lib/orchestration/engine/orchestration-engine.ts:drainContextPatch`) so the supervisor and any future post-hoc audit step share one write path. When the patch carries a `supervisorReport`, the engine reads the run's stored verdict under its row lock and archives it into `previousVerdicts[]`, by the same rule the retroactive review route uses (`lib/orchestration/supervisor/verdict-history.ts`), so a retried run's supervisor step keeps the history.
 
 **Run-time toggle.** The "Execute workflow" dialog renders a **"Run neutral supervisor review"** checkbox when the workflow contains a `supervisor` step. Pre-checked from the step's `defaultEnabled` config. On submit, the dialog injects `inputData.__runSupervisor: <boolean>`. When explicitly false, the executor short-circuits with `expectedSkip: true` — no judge-model tokens billed.
 

@@ -177,7 +177,7 @@ The three execute/read/approve admin routes are live; see [`admin-api.md`](./adm
 
 A long-running workflow can be killed mid-step by a deploy, an OOM, a Vercel function timeout, or a process restart. The recovery model in [`engine.md`](./engine.md#recovery-model) handles re-driving the execution; this section documents what each side-effecting step type does to stay safe across the re-drive.
 
-The mechanism is a **dispatch cache** keyed on a deterministic idempotency key. Before firing a side effect the executor calls `lookupDispatch(key)` — a cache hit returns the prior result and skips the side effect entirely. After a successful side effect the executor calls `recordDispatch({...})`, which inserts a row keyed on `idempotencyKey UNIQUE`. The schema and helpers live in `lib/orchestration/engine/dispatch-cache.ts`; the underlying table is `AiWorkflowStepDispatch` (FK CASCADE to `AiWorkflowExecution`, so dropping a failed execution drops its cache rows).
+The mechanism is a **dispatch cache** keyed on a deterministic idempotency key. Before firing a side effect the executor calls `lookupDispatch(key)` — a cache hit returns the prior result and skips the side effect entirely. After a successful side effect the executor calls `recordDispatch({...})`, which inserts a row keyed on `idempotencyKey UNIQUE` — under the run's row lock, with anyone erased since the run started left out of the cached result, since a re-drive replays it into the trace (see `.context/privacy/data-erasure.md`). The schema and helpers live in `lib/orchestration/engine/dispatch-cache.ts`; the underlying table is `AiWorkflowStepDispatch` (FK CASCADE to `AiWorkflowExecution`, so dropping a failed execution drops its cache rows).
 
 **Key shape (deterministic per attempt):**
 
