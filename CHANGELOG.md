@@ -208,6 +208,13 @@ release process.
 
 ### Fixed
 
+- **A tool call with invalid arguments names the field on a dev server
+  (t-946, #1058).** `CapabilityValidationError`
+  (`lib/orchestration/capabilities/base-capability.ts`) is now recognised by
+  `instanceof` across module graphs, so a capability loaded from a different
+  graph under `next dev` returns `invalid_args` with the field at fault, not a
+  generic execution failure. Production was unaffected.
+
 - **Agent-opened turns work on Claude agents (t-937).** An `openingTurn` now
   reaches Anthropic as the request's last turn: a user turn headed as an
   instruction from the application, not the person's words. Before, it was

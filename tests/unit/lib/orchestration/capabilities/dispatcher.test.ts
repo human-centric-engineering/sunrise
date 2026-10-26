@@ -982,6 +982,34 @@ describe('CapabilityDispatcher', () => {
       expect(result.error?.code).toBe('invalid_args');
       expect(result.error?.message.length).toBeGreaterThan(0);
     });
+
+    it('names the field at fault when the capability loads from another module graph (#1058)', async () => {
+      // Under `next dev` a capability can import its own copy of
+      // base-capability, so the error it throws is not an instance of the
+      // dispatcher's class by prototype. A fresh module registry reproduces it.
+      vi.resetModules();
+      const other = await import('@/lib/orchestration/capabilities/base-capability');
+      expect(other.BaseCapability).not.toBe(BaseCapability);
+
+      class OtherGraphCapability extends other.BaseCapability<{ n: number }, { n: number }> {
+        readonly slug = 'ok';
+        readonly functionDefinition = { name: 'ok', description: '', parameters: {} };
+        protected readonly schema = z.object({ n: z.number() });
+
+        async execute(args: { n: number }) {
+          return this.success(args);
+        }
+      }
+
+      capabilityDispatcher.register(new OtherGraphCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 'not-a-number' }, ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
+      expect(result.error?.message).toMatch(/^n: /);
+    });
   });
 
   describe('handler throws', () => {
