@@ -48,6 +48,11 @@
  *  - A seed whose source writes `aiCapability` by name but was seen writing
  *    none: its writes sit behind a path the mock did not drive.
  *
+ * A row a seed looks up carries the fields its `select` names (every scalar,
+ * when it names none), each an empty value of the column's type: `''`, `0`,
+ * `false`, `{}`, `[]`, the enum's first value, `null` when optional. A seed
+ * may read them; it should not branch on them expecting real data.
+ *
  * A seed this cannot run — raw SQL, the app client — goes in
  * `APP_UNCHECKED_SEEDS` (same file) with the reason it writes no capability;
  * the first two rules then skip it. One whose source writes `aiCapability` by
@@ -57,7 +62,7 @@
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
@@ -86,6 +91,9 @@ vi.mock('@/lib/db/client', () => {
   );
   return { prisma: refuse, default: refuse };
 });
+// 019 erases legacy seed users through eraseUser(), which writes with the app
+// client. Stubbed, so the rest of that seed still runs through the strict one.
+vi.mock('@/lib/privacy/erase-user', () => ({ eraseUser: vi.fn() }));
 
 import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { isRecord } from '@/lib/utils';
@@ -151,6 +159,107 @@ const UNCHECKED_SEEDS: ReadonlyMap<string, string> = new Map([
 /** What a capability `…OrThrow` lookup throws in 'absent' mode, as Prisma would. */
 const NOT_FOUND = 'parity mock: no such capability';
 const ID_PREFIX = 'parity-mock-id:';
+
+/** A column as the schema declares it. */
+interface Column {
+  type: string;
+  list: boolean;
+  optional: boolean;
+}
+
+/**
+ * Every model's columns and every enum's first value, read from the schema
+ * files — so a looked-up row can carry the fields a seed asked for (#1070).
+ * The runtime DMMF does not say which fields are lists or optional.
+ */
+function readSchema(): { models: Map<string, Map<string, Column>>; enums: Map<string, string> } {
+  const models = new Map<string, Map<string, Column>>();
+  const enums = new Map<string, string>();
+  const dir = join(process.cwd(), 'prisma', 'schema');
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.prisma'))) {
+    let model: Map<string, Column> | null = null;
+    let enumName: string | null = null;
+    for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
+      const open = /^(model|enum)\s+(\w+)\s*\{/.exec(line);
+      if (open) {
+        if (open[1] === 'model') models.set(open[2], (model = new Map()));
+        else enumName = open[2];
+        continue;
+      }
+      if (line.startsWith('}')) {
+        model = null;
+        enumName = null;
+        continue;
+      }
+      if (/^\s*(\/\/|@@)/.test(line)) continue;
+      if (enumName) {
+        const value = /^\s*(\w+)/.exec(line);
+        if (value && !enums.has(enumName)) enums.set(enumName, value[1]);
+      } else if (model) {
+        const field = /^\s*(\w+)\s+(\w+)(\[\])?(\?)?(\s|$)/.exec(line);
+        if (field) {
+          model.set(field[1], { type: field[2], list: !!field[3], optional: !!field[4] });
+        }
+      }
+    }
+  }
+  return { models, enums };
+}
+
+const SCHEMA = readSchema();
+
+/** An empty value of each scalar type; a type not listed here is a relation. */
+const EMPTY: Readonly<Partial<Record<string, () => unknown>>> = {
+  String: () => '',
+  Int: () => 0,
+  Float: () => 0,
+  Decimal: () => 0,
+  BigInt: () => BigInt(0),
+  Boolean: () => false,
+  DateTime: () => new Date(0),
+  Json: () => ({}),
+  Bytes: () => new Uint8Array(0),
+};
+
+/**
+ * The row Prisma would return for `args` — the fields its `select` names, else
+ * every scalar plus what its `include` names — each an empty value of its type.
+ * A model the schema does not declare (a client property that is not one)
+ * gets no fields.
+ */
+function placeholderRow(model: string, args: unknown): Record<string, unknown> {
+  const columns = SCHEMA.models.get(model.charAt(0).toUpperCase() + model.slice(1));
+  const row: Record<string, unknown> = {};
+  if (!columns) return row;
+  const select = isRecord(args) && isRecord(args.select) ? args.select : null;
+  const include = isRecord(args) && isRecord(args.include) ? args.include : null;
+  for (const [name, column] of columns) {
+    const empty =
+      EMPTY[column.type] ??
+      (SCHEMA.enums.has(column.type) ? () => SCHEMA.enums.get(column.type) : null);
+    const wanted = select ? select[name] : empty ? true : include?.[name];
+    if (!wanted) continue;
+    if (column.optional) row[name] = null;
+    else if (column.list) row[name] = [];
+    else if (empty) row[name] = empty();
+    else row[name] = placeholderRow(column.type, wanted);
+  }
+  // `_count: { select: { accounts: true } }`, or `_count: true` for every list.
+  const count = select?._count ?? include?._count;
+  if (count) {
+    const counted = isRecord(count) && isRecord(count.select) ? count.select : null;
+    row._count = Object.fromEntries(
+      [...columns]
+        .filter(([name, column]) =>
+          counted
+            ? counted[name]
+            : column.list && !EMPTY[column.type] && !SCHEMA.enums.has(column.type)
+        )
+        .map(([name]) => [name, 0])
+    );
+  }
+  return row;
+}
 
 /** One capability write a seed performed. */
 interface Captured {
@@ -228,7 +337,8 @@ function refuseNestedCapabilityWrite(value: unknown, path: string): void {
  * create-if-missing branch runs) or `'present'` (one row per lookup, so an
  * update-if-exists or update-each branch does). Each seed runs once each way.
  * Other models: a single read returns a row with an id (so a seed that looks
- * up its owner proceeds), a list returns none.
+ * up its owner proceeds), a list returns none. A returned row also carries
+ * the fields the call selected, as `placeholderRow()` fills them.
  */
 function strictClient(
   file: string,
@@ -267,7 +377,9 @@ function strictClient(
           return (args: unknown) => {
             const where = isRecord(args) && isRecord(args.where) ? args.where : {};
             const rowFor = (slug: unknown) => ({
+              ...placeholderRow(name, args),
               id: `${ID_PREFIX}${typeof slug === 'string' ? slug : ''}`,
+              // No placeholder `''`: a write keyed on it would hide the id fallback.
               slug: typeof slug === 'string' ? slug : undefined,
             });
             const row = rowFor(where.slug);
@@ -415,5 +527,69 @@ describe('capabilities — seeded definition matches the class (#545, #646)', ()
       expect(write.functionDefinition).toEqual(instance.functionDefinition);
     }
     expect(instance.functionDefinition).toMatchObject({ name: slug });
+  });
+});
+
+describe('the strict mock answers a read with the fields it asked for (#1070)', () => {
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const run = (seed: SeedUnit['run']) =>
+    seed({
+      prisma: strictClient('probe.ts', [], 'present'),
+      logger,
+    } as unknown as SeedContext);
+
+  it('fills a select, so a seed can call string methods on what it selected', async () => {
+    let seen: Record<string, unknown> = {};
+    await run(async ({ prisma }) => {
+      const row = await prisma.aiCapability.findUnique({
+        where: { slug: 'probe' },
+        select: { name: true, description: true },
+      });
+      if (!row) throw new Error('no row');
+      seen = { ...row, renamed: row.name.replace(/^/, 'x'), trimmed: row.description.trim() };
+    });
+    expect(seen).toMatchObject({ name: '', description: '', renamed: 'x', trimmed: '' });
+    // Only what was selected, plus the id and slug the mock records writes by.
+    expect(Object.keys(seen).sort()).toEqual(
+      ['description', 'id', 'name', 'renamed', 'slug', 'trimmed'].sort()
+    );
+  });
+
+  it('fills every scalar when nothing is selected, by type', async () => {
+    let seen: Record<string, unknown> = {};
+    await run(async ({ prisma }) => {
+      seen = { ...(await prisma.aiCapability.findFirst({ where: { slug: 'probe' } })) };
+    });
+    expect(seen).toMatchObject({
+      slug: 'probe',
+      name: '',
+      functionDefinition: {},
+      requiresApproval: false,
+      approvalTimeoutMs: null,
+      quarantineUntil: null,
+    });
+  });
+
+  it("answers another model's select, enum and _count", async () => {
+    let seen: Record<string, unknown> = {};
+    await run(async ({ prisma }) => {
+      const user = await prisma.user.findUnique({
+        where: { id: 'u' },
+        select: {
+          email: true,
+          accountType: true,
+          createdAt: true,
+          _count: { select: { accounts: true } },
+        },
+      });
+      if (!user) throw new Error('no row');
+      seen = { ...user, accounts: user._count.accounts };
+    });
+    expect(seen).toMatchObject({
+      email: '',
+      accountType: expect.any(String),
+      createdAt: new Date(0),
+      accounts: 0,
+    });
   });
 });

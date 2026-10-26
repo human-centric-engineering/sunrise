@@ -114,7 +114,20 @@ longer), one with other
 characters (dots outside a JWT), a
 20+ character secret that reads as a slug or is one case with no digits, or a
 secret split across short catch-all segments. A route with a dynamic segment
-like that **pins its pattern**, which is then logged verbatim:
+like that **declares its credential segments** (t-933): core's
+`CREDENTIAL_PATHS` in `lib/logging/redact-path.ts` (better-auth's
+`/api/auth/reset-password/[token]`) and a fork's `appCredentialPaths` in
+`lib/app/credential-paths.ts`. A declared segment is collapsed whatever its
+length, in every sink above as well as Sentry and page-view analytics, because
+they all call `collapseDynamicSegments()`. Patterns are written like the
+route's folders (`/m/[joinRef]`, `/files/[...path]`) without route groups
+or slots, start with a literal segment, cover the paths below them, and are tried at every offset so a
+`basePath` or locale prefix does not hide the route. A malformed one is skipped
+(the logger depends on this module, so it cannot log the skip) and
+`redact-path.test.ts` fails, naming it.
+
+An API route can still **pin its pattern** for its own log lines, which is
+then logged verbatim:
 
 ```typescript
 const log = await getRouteLogger(request, { endpoint: '/api/v1/admin/invitations/[email]' });

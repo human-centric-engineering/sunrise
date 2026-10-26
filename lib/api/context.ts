@@ -29,7 +29,10 @@ export interface RouteLoggerOptions {
    * segment is a credential or personal data, and always where
    * `getEndpointPath()`'s heuristic cannot recognise it (a token under 20
    * characters, one with dots or other punctuation, a one-case or slug-shaped
-   * secret — see `lib/logging/redact-path.ts`). Without it, `endpoint` is the
+   * secret — see `lib/logging/redact-path.ts`). Pinning covers this logger
+   * only: for a credential segment, also declare the route in
+   * `lib/app/credential-paths.ts`, which covers the proxy, guards, Sentry and
+   * analytics as well. Without it, `endpoint` is the
    * resolved path with id- and credential-shaped segments collapsed to
    * `[param]` (#685).
    */

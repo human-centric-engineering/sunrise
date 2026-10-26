@@ -157,3 +157,26 @@ describe('BaseCapability.processesPii and redactProvenance defaults', () => {
     ).not.toThrow();
   });
 });
+
+describe('CapabilityValidationError instanceof', () => {
+  it('rejects an ordinary error that carries an issues array', () => {
+    const lookalike = Object.assign(new Error('Capability argument validation failed'), {
+      issues: [],
+    });
+    expect(lookalike instanceof CapabilityValidationError).toBe(false);
+    const nothing: unknown = null;
+    expect(nothing instanceof CapabilityValidationError).toBe(false);
+  });
+
+  it('rejects a plain-object copy of a real one', () => {
+    const copy: unknown = { ...new CapabilityValidationError([]) };
+    expect(copy instanceof CapabilityValidationError).toBe(false);
+  });
+
+  it('keeps the prototype check for a subclass, so a sibling error is not one', () => {
+    class NarrowerError extends CapabilityValidationError {}
+    expect(new NarrowerError([]) instanceof NarrowerError).toBe(true);
+    expect(new NarrowerError([]) instanceof CapabilityValidationError).toBe(true);
+    expect(new CapabilityValidationError([]) instanceof NarrowerError).toBe(false);
+  });
+});

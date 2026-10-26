@@ -196,7 +196,8 @@ describe('the buffer stays out of the browser bundle', () => {
   // a literal specifier whichever form it takes, so a lazy
   // `const { x } = require('@/lib/tenancy/context')` inside a function would
   // reproduce the same build failure while an import-only regex stayed green.
-  const RUNTIME_IMPORT = /^import\s+(?!type\b)|\brequire\s*\(|\bimport\s*\(/;
+  const RUNTIME_IMPORT =
+    /^import\s+(?!type\b)|^export\s+(?!type\b).*\bfrom\s*['"]|\brequire\s*\(|\bimport\s*\(/;
 
   it('lib/admin/logs.ts reaches no other module at runtime', () => {
     const source = readFileSync(resolve(process.cwd(), 'lib/admin/logs.ts'), 'utf8');
@@ -215,6 +216,22 @@ describe('the buffer stays out of the browser bundle', () => {
   // bundle through `lib/errors/sentry.ts`.
   const LOGGER_IMPORTABLE = ['@/lib/logging/redact-path'];
 
+  // Modules those may import in turn, each asserted import-free itself, so the
+  // chain still ends one step down. `credential-paths` is the fork's list of
+  // credential routes `redact-path` collapses (t-933).
+  // FORK NOTE: your `lib/app/credential-paths.ts` must stay a plain array with
+  // no runtime imports — this fails if it gains one, because anything it
+  // imports lands in every client component that imports the logger.
+  const IMPORT_FREE_DEPENDENCIES = ['@/lib/app/credential-paths'];
+
+  function runtimeImportsOf(spec: string): string[] {
+    const source = readFileSync(resolve(process.cwd(), `${spec.replace('@/', '')}.ts`), 'utf8');
+    return source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
+      .filter((line) => RUNTIME_IMPORT.test(line.trim()));
+  }
+
   it('lib/logging/index.ts statically imports only import-free modules', () => {
     // The other half of the same invariant: the logger is what the client
     // components import, so anything it pulls in statically is in their
@@ -228,21 +245,36 @@ describe('the buffer stays out of the browser bundle', () => {
     expect(staticImports).toEqual([]);
   });
 
-  it.each(LOGGER_IMPORTABLE)('%s, which the logger imports, reaches no other module', (spec) => {
-    const file = `${spec.replace('@/', '')}.ts`;
-    const source = readFileSync(resolve(process.cwd(), file), 'utf8');
-    const runtimeImports = source
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
-      .filter((line) => RUNTIME_IMPORT.test(line.trim()));
+  it.each(LOGGER_IMPORTABLE)(
+    '%s, which the logger imports, reaches only import-free modules',
+    (spec) => {
+      const runtimeImports = runtimeImportsOf(spec).filter(
+        (line) => !IMPORT_FREE_DEPENDENCIES.some((dep) => line.includes(`'${dep}'`))
+      );
 
-    expect(runtimeImports).toEqual([]);
+      expect(runtimeImports).toEqual([]);
+    }
+  );
+
+  it.each(IMPORT_FREE_DEPENDENCIES)('%s reaches no other module', (spec) => {
+    expect(runtimeImportsOf(spec)).toEqual([]);
+    // Stricter than the line check: a plain data module has no `from '…'`
+    // at all, which also catches a re-export split across lines.
+    const source = readFileSync(resolve(process.cwd(), `${spec.replace('@/', '')}.ts`), 'utf8');
+    const code = source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'));
+    expect(code.filter((line) => /\bfrom\s*['"]/.test(line))).toEqual([]);
   });
 
   it.each([
     ["import { getTenantContext } from '@/lib/tenancy/context';", true],
     ["const { getTenantContext } = require('@/lib/tenancy/context');", true],
     ["const mod = await import('@/lib/tenancy/context');", true],
+    ["export { appCredentialPaths } from '@/lib/app/routes';", true],
+    ["export * from '@/lib/app/routes';", true],
+    ["export type { LogEntry } from '@/types/admin';", false],
+    ['export const appCredentialPaths: readonly string[] = [];', false],
     ["import type { LogEntry } from '@/types/admin';", false],
   ])('proves it can fail — %s is a hit: %s', (line, expected) => {
     expect(RUNTIME_IMPORT.test(line)).toBe(expected);

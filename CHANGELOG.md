@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **Routes can declare credential path segments (t-933, #971).** New scaffold
+  `lib/app/credential-paths.ts` (`appCredentialPaths`, ships empty) lists route
+  patterns such as `'/m/[joinRef]'`; the declared segments are collapsed to
+  `[param]` whatever their length by `collapseDynamicSegments()`, so a short
+  share or room code no longer reaches the access log, guard log lines, client
+  error reports, Sentry or page-view analytics. Core declares its own in the
+  exported `CREDENTIAL_PATHS` (better-auth's
+  `/api/auth/reset-password/[token]`), so that token is now collapsed
+  whatever its length; nothing else changes while the fork's list is empty.
+  `credentialPathProblem()` says why a pattern would be skipped. The
+  20-character shape rule stays as the backstop.
 - **`sendEmail` takes message headers (t-935, #854).** New optional
   `headers` on `SendEmailOptions` (`lib/email/send.ts`) is passed to Resend
   unchanged, so a fork can send the one-click unsubscribe headers
@@ -227,6 +238,13 @@ release process.
   that runs again on a retried run archives the verdict it replaces instead of
   dropping the history. `POST …/executions/:id/review` now answers **409**,
   writing nothing, when the run was retried during its model call.
+
+- **A tool call with invalid arguments names the field on a dev server
+  (t-946, #1058).** `CapabilityValidationError`
+  (`lib/orchestration/capabilities/base-capability.ts`) is now recognised by
+  `instanceof` across module graphs, so a capability loaded from a different
+  graph under `next dev` returns `invalid_args` with the field at fault, not a
+  generic execution failure. Production was unaffected.
 
 - **Agent-opened turns work on Claude agents (t-937).** An `openingTurn` now
   reaches Anthropic as the request's last turn: a user turn headed as an

@@ -8,7 +8,12 @@
  * or `path`. This replaces each segment that looks like an id or a secret with
  * `[param]`, so a log line names the route shape rather than the value.
  *
- * Collapsed (a whole segment, compared before any decoding):
+ * Collapsed (a whole segment; the shapes are compared before any decoding,
+ * a declaration against the decoded segment):
+ * - a segment a route declares as a credential, whatever its length or shape
+ *   (`CREDENTIAL_PATHS` below for Sunrise's own routes, `appCredentialPaths` in
+ *   `lib/app/credential-paths.ts` for a fork's) — the declaration is the rule,
+ *   and the shapes after it are the backstop for routes nobody declared;
  * - a UUID (`8-4-4-4-12` hex);
  * - a cuid (`c` + 24 lowercase alphanumerics);
  * - hex of 20 or more characters;
@@ -26,8 +31,9 @@
  * shapes above (`v1`, `admin`, `orchestration`, a short numeric id), and
  * readable slugs of any length (`provider-models`).
  *
- * What it cannot catch — pin the route pattern with
- * `getRouteLogger(request, { endpoint })` for these:
+ * What the shapes cannot catch in an undeclared route — declare the route (or,
+ * for an API route's own log lines, pin its pattern with
+ * `getRouteLogger(request, { endpoint })`) for these:
  * - a secret under 20 characters. Deliberate: below that length a token cannot
  *   be told from a route word or a short id (`gpt-4o-mini`, `v1beta`), and the
  *   webhook secrets this exists for are longer (Slack 24, Telegram 35,
@@ -42,7 +48,127 @@
  * cheaper error.
  */
 
+import { appCredentialPaths } from '@/lib/app/credential-paths';
+
 const PLACEHOLDER = '[param]';
+
+/**
+ * Sunrise's own routes with a credential in the path (t-933). better-auth's
+ * reset link carries its token as a segment; it is long enough for the shape
+ * rules today, but whether it stays so is better-auth's choice, not ours.
+ * Patterns follow the rules `credentialPathProblem` checks.
+ */
+export const CREDENTIAL_PATHS: readonly string[] = ['/api/auth/reset-password/[token]'];
+
+/** One segment of a declared pattern: a word to match, or what to collapse. */
+type PatternSegment =
+  { kind: 'literal'; value: string } | { kind: 'param' } | { kind: 'rest'; optional: boolean };
+
+// A param name is anything Next accepts in a folder name between the brackets
+// (`[joinRef]`, `[join-ref]`); a leading `.` is left to the catch-all forms.
+const PARAM_SEGMENT = /^\[[^[\].][^[\]]*\]$/;
+const REST_SEGMENT = /^\[\.\.\.[^[\]]+\]$/;
+const OPTIONAL_REST_SEGMENT = /^\[\[\.\.\.[^[\]]+\]\]$/;
+// Folders that organise routes without appearing in the URL: a route group
+// `(public)`, a parallel-route slot `@modal`, an intercepting route `(.)photo`.
+const NOT_IN_URL_SEGMENT = /^(?:\(|@)/;
+
+/** `decodeURIComponent`, or the segment as it is when it does not decode. */
+function decodeSegment(segment: string): string {
+  if (!segment.includes('%')) return segment;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function parsePattern(pattern: string): PatternSegment[] | string {
+  if (!pattern.startsWith('/')) return 'must start with `/`';
+  if (/[?#\s]/.test(pattern)) return 'must be a path only: no query, fragment or whitespace';
+  const segments = pattern.replace(/\/$/, '').split('/').slice(1);
+  const parsed: PatternSegment[] = [];
+  for (const [index, segment] of segments.entries()) {
+    if (segment === '') return 'has an empty segment (`//`)';
+    if (NOT_IN_URL_SEGMENT.test(segment)) {
+      return `\`${segment}\` is a route group, slot or interception folder, which is not in the URL: leave it out`;
+    }
+    const last = index === segments.length - 1;
+    if (PARAM_SEGMENT.test(segment)) parsed.push({ kind: 'param' });
+    else if (REST_SEGMENT.test(segment) || OPTIONAL_REST_SEGMENT.test(segment)) {
+      if (!last) return `catch-all \`${segment}\` must be the last segment`;
+      parsed.push({ kind: 'rest', optional: segment.startsWith('[[') });
+    } else if (/[[\]]/.test(segment)) {
+      return `\`${segment}\` is not \`[name]\`, \`[...name]\` or \`[[...name]]\``;
+    } else parsed.push({ kind: 'literal', value: decodeSegment(segment) });
+  }
+  // A leading literal is what keeps a pattern from matching everywhere: it is
+  // tried at every offset, and `/[code]` would collapse every segment of
+  // every path.
+  if (parsed[0]?.kind !== 'literal') return 'must start with a literal segment';
+  if (!parsed.some((segment) => segment.kind !== 'literal')) {
+    return 'declares no credential segment (`[name]`)';
+  }
+  return parsed;
+}
+
+/**
+ * Why `pattern` cannot be used as a credential-path declaration, or `null`
+ * when it can. A pattern that fails is skipped by `collapseDynamicSegments`,
+ * which cannot log the skip (the logger depends on this module), so the tests
+ * run every declaration through this instead.
+ */
+export function credentialPathProblem(pattern: string): string | null {
+  const parsed = parsePattern(pattern);
+  return typeof parsed === 'string' ? parsed : null;
+}
+
+const DECLARED_PATTERNS: readonly PatternSegment[][] = [
+  ...CREDENTIAL_PATHS,
+  ...appCredentialPaths,
+].flatMap((pattern) => {
+  const parsed = parsePattern(pattern);
+  return typeof parsed === 'string' ? [] : [parsed];
+});
+
+/**
+ * Mark the segments `pattern` declares as credentials, wherever it matches in
+ * `segments` (decoded, so `/caf%C3%A9/…` matches a `/café/…` pattern). It is
+ * tried at every offset, so a `basePath`, a locale prefix or a referrer from
+ * another origin does not hide the route; a pattern also covers the paths
+ * below it.
+ */
+function markDeclaredSegments(
+  segments: readonly string[],
+  pattern: readonly PatternSegment[],
+  marked: boolean[]
+): void {
+  const [first] = pattern;
+  for (let start = 0; start < segments.length; start++) {
+    // Every pattern starts with a literal (`parsePattern`), so most offsets
+    // are ruled out here, before any work.
+    if (first?.kind !== 'literal' || segments[start] !== first.value) continue;
+    const hits: number[] = [];
+    let matched = true;
+    for (const [offset, part] of pattern.entries()) {
+      const index = start + offset;
+      if (part.kind === 'rest') {
+        const before = hits.length;
+        for (let rest = index; rest < segments.length; rest++) {
+          if (segments[rest] !== '') hits.push(rest);
+        }
+        matched = part.optional || hits.length > before;
+        break;
+      }
+      const segment = segments[index];
+      if (segment === undefined || segment === '') matched = false;
+      else if (part.kind === 'literal') matched = segment === part.value;
+      else hits.push(index);
+      if (!matched) break;
+    }
+    if (matched) for (const index of hits) marked[index] = true;
+  }
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CUID = /^c[a-z0-9]{24}$/;
@@ -64,17 +190,33 @@ function isSensitiveSegment(segment: string): boolean {
 }
 
 /**
- * Replace every id- or credential-shaped segment of `pathname` with `[param]`.
- * Expects a pathname with no query string.
+ * Replace every declared credential segment, and every id- or
+ * credential-shaped one, of `pathname` with `[param]`. Expects a pathname with
+ * no query string.
  *
  * @example
  * collapseDynamicSegments('/api/v1/users/cmtd5heg2001804ky8pgo6odx/posts');
  * // '/api/v1/users/[param]/posts'
  */
 export function collapseDynamicSegments(pathname: string): string {
-  return pathname
-    .split('/')
-    .map((segment) => (isSensitiveSegment(segment) ? PLACEHOLDER : segment))
+  return collapseSegments(pathname, true);
+}
+
+/**
+ * `collapseDynamicSegments`, with the route declarations optionally left out:
+ * they describe URLs, and a source file's path is not one (see `scrubUrl`).
+ */
+function collapseSegments(pathname: string, applyDeclarations: boolean): string {
+  const segments = pathname.split('/');
+  const declared = new Array<boolean>(segments.length).fill(false);
+  if (applyDeclarations) {
+    const decoded = segments.map(decodeSegment);
+    for (const pattern of DECLARED_PATTERNS) markDeclaredSegments(decoded, pattern, declared);
+  }
+  return segments
+    .map((segment, index) =>
+      declared[index] || isSensitiveSegment(segment) ? PLACEHOLDER : segment
+    )
     .join('/');
 }
 
@@ -118,10 +260,19 @@ export function scrubUrl(url: string): string {
   const path = match?.[2] ?? '';
   // A web URL keeps only a build-asset tail; a file path (no origin, or a
   // non-http scheme such as `file://` or `app://`) also keeps a package tail.
-  const kept = /^https?:/i.test(origin) ? [BUILD_ASSETS] : FILE_PATH_KEPT;
+  const web = /^https?:/i.test(origin);
+  const kept = web ? [BUILD_ASSETS] : FILE_PATH_KEPT;
+  // A path under a non-http scheme (`app://`, `file://`, `webpack-internal://`)
+  // is a stack frame's file, not a route, so the route declarations stay off
+  // it: `/m/[joinRef]` would otherwise turn `app:///lib/m/scoring.js` into
+  // `app:///lib/m/[param]` and break its source map. The shape rules still
+  // apply. A path with no origin keeps them: it cannot be told from a request
+  // path (`GET /m/<code>/widget.js`), and losing a frame's detail is the
+  // cheaper error.
+  const declarations = web || origin === '';
   const tail = Math.min(...kept.map((prefix) => path.indexOf(prefix)).filter((i) => i >= 0));
-  if (!Number.isFinite(tail)) return origin + collapseDynamicSegments(path);
-  return origin + collapseDynamicSegments(path.slice(0, tail)) + path.slice(tail);
+  if (!Number.isFinite(tail)) return origin + collapseSegments(path, declarations);
+  return origin + collapseSegments(path.slice(0, tail), declarations) + path.slice(tail);
 }
 
 /**

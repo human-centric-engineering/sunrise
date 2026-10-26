@@ -147,10 +147,34 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
  * Thrown by `BaseCapability.validate` when the supplied args don't
  * match the capability's Zod schema. The dispatcher catches this and
  * emits `{ success: false, error: { code: 'invalid_args', ... } }`.
+ *
+ * `instanceof` checks a `Symbol.for` brand rather than the prototype chain.
+ * Under `next dev` the dispatcher and a capability can load from different
+ * module graphs, each with its own copy of this class, and a plain prototype
+ * check then misses — the caller sees a generic failure instead of the field
+ * at fault (#1058).
  */
+const CAPABILITY_VALIDATION_ERROR = Symbol.for('sunrise.capabilities.validationError');
+
 export class CapabilityValidationError extends Error {
   constructor(public readonly issues: unknown[]) {
     super('Capability argument validation failed');
     this.name = 'CapabilityValidationError';
   }
+
+  static [Symbol.hasInstance](value: unknown): boolean {
+    // A subclass keeps the ordinary prototype check.
+    if (this !== CapabilityValidationError) {
+      return Function.prototype[Symbol.hasInstance].call(this, value);
+    }
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      Reflect.get(value, CAPABILITY_VALIDATION_ERROR) === true
+    );
+  }
 }
+// On the prototype, not each instance: a `{ ...err }` copy is not one.
+Object.defineProperty(CapabilityValidationError.prototype, CAPABILITY_VALIDATION_ERROR, {
+  value: true,
+});

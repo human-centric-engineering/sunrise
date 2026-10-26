@@ -449,6 +449,7 @@ small and conflict-free.)
 | `lib/app/env.ts`                           | server env vars (`appEnvSchema`)                                      | `lib/env.ts` startup parse (server)                                                                                   |
 | `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                                              | rate-limit middleware (middleware runtime)                                                                            |
 | `lib/app/protected-routes.ts`              | extra authed route prefixes (append)                                  | `proxy.ts` edge redirect-to-login (proxy runtime)                                                                     |
+| `lib/app/credential-paths.ts`              | route patterns whose segments are credentials (`[param]` in logs)     | `collapseDynamicSegments()` → proxy, guards, error reports, Sentry, analytics (every runtime)                         |
 | `lib/app/capabilities.ts`                  | agent capabilities (tools)                                            | the capability registry (server route-handler)                                                                        |
 | `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)                         | the chat context builder (server route-handler)                                                                       |
 | `lib/app/admin-nav.ts`                     | admin sidebar sections                                                | `admin-sidebar.tsx` (client)                                                                                          |
@@ -730,6 +731,27 @@ with `/`, including an empty string that would otherwise match every path) are
 dropped, so a typo can't lock the whole app behind the login redirect. Matching
 is by whole path segment: `/projects` covers `/projects` and `/projects/…`, not
 a public `/projectsroadmap` beside it.
+
+**Credential path segments — `lib/app/credential-paths.ts`.** When a route
+puts a credential in its path (a share, invite, join or room code, where holding
+the URL is the access), declare its pattern here so the code never reaches a log
+line, an error report or your analytics provider:
+
+```typescript
+// lib/app/credential-paths.ts — yours to edit (ships empty)
+export const appCredentialPaths: readonly string[] = ['/possibilities/[publicRef]', '/m/[joinRef]'];
+```
+
+Every logged, reported or analytics path goes through `collapseDynamicSegments()`
+(`lib/logging/redact-path.ts`). On its own it guesses from shape and leaves
+anything under 20 characters, so an 8-character room code would be logged on
+every request. A declared segment becomes `[param]` whatever its length. Write
+the pattern the way the route's folders are named: `[name]` for one segment,
+`[...name]` or `[[...name]]` for every segment from there on, with a literal
+first segment, leaving out route groups `(name)` and slots `@name`, which are
+not in the URL. A pattern covers the paths below it and matches further into a
+path (behind a `basePath` or a locale prefix). A malformed entry is skipped and
+`tests/unit/lib/logging/redact-path.test.ts` fails, naming it.
 
 **Agent capabilities — `lib/app/capabilities.ts`.** Fill in the auto-wired
 `initAppCapabilities()` with `registerAppCapability(new YourTool())` calls (your

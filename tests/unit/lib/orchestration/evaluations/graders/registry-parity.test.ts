@@ -9,7 +9,12 @@
  * Mirrors the workflow executor-registry parity test pattern.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Count only core's graders. `getRegisteredSlugs()` runs the fork seam first,
+// so a fork that registers its own grader would otherwise show up as `extra`.
+vi.mock('@/lib/app/evaluations', () => ({ initAppGraders: vi.fn() }));
+
 import { KNOWN_GRADER_SLUGS, getRegisteredSlugs } from '@/lib/orchestration/evaluations/graders';
 
 describe('grader registry parity', () => {
