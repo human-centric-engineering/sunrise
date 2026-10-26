@@ -114,20 +114,22 @@ export default defineConfig({
 
     // Applies to the files that opt into happy-dom above.
     //
-    // happy-dom loads `<script src>` for real by default
-    // (`disableJavaScriptFileLoading: false`), using its own `node:http`
-    // client in `happy-dom/lib/fetch/`. Its default document URL is
-    // `http://localhost:3000`, so every relative asset in a rendered
-    // component resolved there and was fetched over the network, producing
-    // ~600 `ECONNREFUSED ::1:3000` lines per run. Because that client is
-    // internal to happy-dom, patching `globalThis.fetch` does not intercept
-    // it, which is what made the noise so hard to attribute (#597).
+    // happy-dom fetches the assets a rendered component references with its
+    // own `node:http` client in `happy-dom/lib/fetch/`. Its default document
+    // URL is `http://localhost:3000`, so every relative asset resolved there
+    // and went over the network, producing ~600 `ECONNREFUSED ::1:3000` lines
+    // per run. Because that client is internal to happy-dom, patching
+    // `globalThis.fetch` does not intercept it, which is what made the noise
+    // so hard to attribute (#597).
     //
-    // Nothing in the suite asserts on a fetched script, so turning it off
-    // removes the network entirely. Stylesheets and iframes have been off by
-    // default since happy-dom 21 (`enableCSSFileLoading`,
-    // `enableIframePageLoading`), and images were already
-    // (`enableImageFileLoading`), so none of them needs a flag here.
+    // As of happy-dom 21 none of those loads is on by default: stylesheets
+    // (`enableCSSFileLoading`), iframes (`enableIframePageLoading`) and images
+    // (`enableImageFileLoading`) are opt-in, and `<script src>` is fetched
+    // only when `enableJavaScriptEvaluation` is on. `disableJavaScriptFileLoading`
+    // stays so that a file turning evaluation on does not also start fetching
+    // scripts. Anything else that reaches happy-dom's client — a component's
+    // own `fetch()`, a `<link rel=preload as=fetch>`, which no setting gates —
+    // is caught by the interceptor in `tests/setup.ts`, not by these settings.
     //
     // `handleDisabledFileLoadingAsSuccess` makes a blocked `<script>` or
     // `<link rel=stylesheet>` fire `load` instead of `error`. It does not
