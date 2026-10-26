@@ -36,22 +36,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { REASONING_EFFORTS, narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 /** Resolved form value — `'auto'` is the sentinel for null. */
-export type ReasoningEffortFormValue = 'auto' | 'minimal' | 'low' | 'medium' | 'high';
+export type ReasoningEffortFormValue = 'auto' | ReasoningEffort;
+
+/** Every form value, `'auto'` first — for a caller's Zod schema. */
+export const REASONING_EFFORT_FORM_VALUES = ['auto', ...REASONING_EFFORTS] as const;
 
 /** Convert a database column value (string | null) to the form value. */
 export function toReasoningEffortFormValue(
   raw: string | null | undefined
 ): ReasoningEffortFormValue {
-  if (raw === 'minimal' || raw === 'low' || raw === 'medium' || raw === 'high') return raw;
-  return 'auto';
+  return narrowReasoningEffort(raw) ?? 'auto';
 }
 
 /** Convert the form value back to the database column value. */
 export function fromReasoningEffortFormValue(
   value: ReasoningEffortFormValue
-): 'minimal' | 'low' | 'medium' | 'high' | null {
+): ReasoningEffort | null {
   return value === 'auto' ? null : value;
 }
 
@@ -88,11 +92,17 @@ const DEFAULT_HELP: React.ReactNode = (
     <ul className="mt-2 list-disc space-y-1 pl-4">
       <li>
         <strong>OpenAI o-series / gpt-5</strong> — sends <code>reasoning_effort</code> with the
-        chosen bucket.
+        chosen level. Extra high and Max are sent as <code>high</code>, because not every OpenAI
+        model accepts them.
       </li>
       <li>
-        <strong>Anthropic Claude 4 Opus / Sonnet 4.5+</strong> — enables extended thinking with a
-        token budget derived from the bucket (low ≈ 1k, medium ≈ 4k, high ≈ 16k tokens).
+        <strong>Claude Opus 4.7+, Sonnet 5+, Haiku 5+, Fable</strong> — sends the chosen level as
+        the model&rsquo;s effort setting. Minimal is sent as low.
+      </li>
+      <li>
+        <strong>Older Claude models (Opus 4–4.6, Sonnet 4.5–4.6, Haiku 4.5)</strong> — turns on
+        extended thinking with a token budget for the level (low ≈ 1k, medium ≈ 4k, high ≈ 16k,
+        extra high ≈ 32k, max ≈ 64k tokens), kept below the agent&rsquo;s max output tokens.
       </li>
       <li>
         <strong>All other models</strong> — the field is dropped silently. No 400.
@@ -132,6 +142,8 @@ export function ReasoningEffortSelect({
           <SelectItem value="low">Low</SelectItem>
           <SelectItem value="medium">Medium</SelectItem>
           <SelectItem value="high">High</SelectItem>
+          <SelectItem value="xhigh">Extra high</SelectItem>
+          <SelectItem value="max">Max</SelectItem>
         </SelectContent>
       </Select>
     </div>

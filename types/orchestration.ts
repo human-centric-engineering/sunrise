@@ -24,7 +24,11 @@ import type {
   AiProviderModel,
 } from '@/types/prisma';
 import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
-import type { LlmFinishReason, LlmReasoningBlock } from '@/lib/orchestration/llm/types';
+import type {
+  LlmFinishReason,
+  LlmReasoningBlock,
+  ReasoningEffort,
+} from '@/lib/orchestration/llm/types';
 
 // ============================================================================
 // Enums
@@ -658,7 +662,7 @@ export interface LlmRequestParamsSnapshot {
    * the caller intent so a misconfiguration (caller set 'high' on a
    * model that ignores it) is visible in the trace.
    */
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**

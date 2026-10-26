@@ -311,7 +311,7 @@ function normalizeClaudeId(modelId: string): string {
  * Two distinct routes lead to true:
  *   1. **OpenAI reasoning family** — any model resolved to the
  *      `openai-reasoning` param profile accepts `reasoning_effort`
- *      (`minimal | low | medium | high`).
+ *      (see `supportedReasoningEfforts` for which values).
  *   2. **Anthropic extended thinking** — only specific Claude models
  *      accept the `thinking` field. We check this via a prefix match
  *      because the matrix doesn't carry a separate "supports thinking"
@@ -514,6 +514,9 @@ export function acceptsThinkingBudget(modelId: string): boolean {
  *   - o-series (o1, o1-mini, o3-mini, o4-mini, …) accept
  *     `'low' | 'medium' | 'high'` — they reject `'minimal'` with a 400.
  *   - The gpt-5 family added `'minimal'` to the set.
+ *   - `'xhigh'` / `'max'` are never in the set: OpenAI accepts them on some
+ *     models only, without a per-id list. The provider clamps them to
+ *     `'high'` (`openAiReasoningEffort`) before consulting this.
  *
  * For non-`openai-reasoning` profiles, the field is dropped regardless
  * of value, so this returns the full set — the openai-compatible
@@ -549,6 +552,17 @@ export function supportedReasoningEfforts(
 }
 
 /**
+ * The `reasoning_effort` an OpenAI-compatible reasoning model is sent for
+ * this bucket: `xhigh` and `max` become `high` (see
+ * {@link supportedReasoningEfforts}); the rest go as they are.
+ */
+export function openAiReasoningEffort(
+  effort: ReasoningEffort
+): 'minimal' | 'low' | 'medium' | 'high' {
+  return effort === 'xhigh' || effort === 'max' ? 'high' : effort;
+}
+
+/**
  * Narrow an arbitrary string (typically a DB column read) into the
  * `ReasoningEffort` union, or return `undefined` for any unrecognised
  * value.
@@ -564,9 +578,21 @@ export function supportedReasoningEfforts(
  * Mirror of `narrowParamProfile` in `db-model-adapter.ts`.
  */
 export function narrowReasoningEffort(raw: string | null | undefined): ReasoningEffort | undefined {
-  if (raw === 'minimal' || raw === 'low' || raw === 'medium' || raw === 'high') return raw;
-  return undefined;
+  return REASONING_EFFORTS.find((effort) => effort === raw);
 }
+
+/**
+ * Every {@link ReasoningEffort} value, lowest first. The validation schemas,
+ * backup format and admin select are built from this list.
+ */
+export const REASONING_EFFORTS = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const satisfies readonly ReasoningEffort[];
 
 /**
  * Map a {@link ReasoningEffort} value to Anthropic's `thinking.budget_tokens`.
@@ -580,14 +606,14 @@ export function narrowReasoningEffort(raw: string | null | undefined): Reasoning
  *   - `low`     — 1024 tokens.
  *   - `medium`  — 4096 tokens.
  *   - `high`    — 16384 tokens.
+ *   - `xhigh`   — 32768 tokens.
+ *   - `max`     — 65536 tokens.
  *
  * The provider class applies a final clamp against `max_tokens` so the
  * budget can never exceed the visible-output cap; that clamp is the
  * provider's responsibility, not this function's.
  */
-export function anthropicThinkingBudget(
-  effort: 'minimal' | 'low' | 'medium' | 'high'
-): number | undefined {
+export function anthropicThinkingBudget(effort: ReasoningEffort): number | undefined {
   switch (effort) {
     case 'minimal':
       return undefined;
@@ -597,6 +623,10 @@ export function anthropicThinkingBudget(
       return 4096;
     case 'high':
       return 16384;
+    case 'xhigh':
+      return 32768;
+    case 'max':
+      return 65536;
   }
 }
 
@@ -608,10 +638,13 @@ export function anthropicThinkingBudget(
  *                 (Opus 5.5 and Sonnet 5.5 400 on `{ type: 'disabled' }`),
  *                 so the lowest effort is the nearest they get. The
  *                 provider sends it without a `thinking` field.
- *   - `low` / `medium` / `high` — the same name.
- *
- * `xhigh` and `max` have no bucket of their own, so they are never sent.
+ *   - `low` / `medium` / `high` / `xhigh` / `max` — the same name. Every
+ *                 adaptive-thinking model (Opus 4.7+, Sonnet 5+, Haiku 5+,
+ *                 Fable, Mythos) takes all five; Opus 4.6 / Sonnet 4.6,
+ *                 which lack `xhigh`, are on a thinking budget instead.
  */
-export function anthropicAdaptiveEffort(effort: ReasoningEffort): 'low' | 'medium' | 'high' {
+export function anthropicAdaptiveEffort(
+  effort: ReasoningEffort
+): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
   return effort === 'minimal' ? 'low' : effort;
 }

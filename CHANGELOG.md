@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **`xhigh` and `max` reasoning effort (t-906).** `ReasoningEffort`
+  (`lib/orchestration/llm/types.ts`) gains `'xhigh' | 'max'`, accepted on
+  agents, every LLM step's `reasoningEffort`, the agent export bundle and the
+  backup format, and offered as Extra high / Max in the admin select. The full
+  list is the new exported `REASONING_EFFORTS` (`model-heuristics.ts`).
+  Adaptive-thinking Claude models get them as `output_config.effort`;
+  budget-taking Claude models get a 32768 / 65536 thinking budget, clamped as
+  before; OpenAI-compatible reasoning models get `high`
+  (`openAiReasoningEffort()`). Older bundles import unchanged. **Forks:** a
+  `switch` over `ReasoningEffort` needs the two new cases.
 - **Routes can declare credential path segments (t-933, #971).** New scaffold
   `lib/app/credential-paths.ts` (`appCredentialPaths`, ships empty) lists route
   patterns such as `'/m/[joinRef]'`; the declared segments are collapsed to

@@ -75,7 +75,7 @@ An agent is the primary deployment unit: a configured AI persona with model sele
 | `systemInstructions`           | Persona, behaviour rules, domain context                                                                                                                                            |
 | `model` / `provider`           | LLM model and provider selection                                                                                                                                                    |
 | `temperature` / `maxTokens`    | Generation parameters                                                                                                                                                               |
-| `reasoningEffort`              | Optional `minimal` / `low` / `medium` / `high` knob; honoured by reasoning-capable models (o-series, gpt-5, Claude 4 thinking) and silently dropped elsewhere                       |
+| `reasoningEffort`              | Optional `minimal` / `low` / `medium` / `high` / `xhigh` / `max` knob; honoured by reasoning-capable models (o-series, gpt-5, Claude 4 thinking) and silently dropped elsewhere     |
 | `profileId` + `*Mode` fields   | Optional FK to `AiAgentProfile` (inheritable persona / brand voice / guardrails); per-field `personaMode` / `voiceMode` / `guardrailsMode` choose `inherit` / `override` / `append` |
 | `monthlyBudgetUsd`             | Per-agent spend cap with 80% warning threshold                                                                                                                                      |
 | `fallbackProviders`            | Ordered failover chain (up to 5 providers)                                                                                                                                          |
@@ -250,7 +250,7 @@ Workflows are directed acyclic graphs of steps, validated at save time and execu
 
 ### 5.2 Step Types
 
-Every step carries an optional `description` (≤500 chars, trimmed) that is captured onto the trace entry at execution time and surfaced as a hover tooltip in the builder canvas and the execution detail view. Every LLM-bearing step type (`llm_call`, `plan`, `route`, `evaluate`, `reflect`, `guard.llm`, `agent_call`, `orchestrator`, `supervisor`) accepts an optional `reasoningEffort` (`minimal` / `low` / `medium` / `high`) override that honours the same precedence rules as the agent-level knob.
+Every step carries an optional `description` (≤500 chars, trimmed) that is captured onto the trace entry at execution time and surfaced as a hover tooltip in the builder canvas and the execution detail view. Every LLM-bearing step type (`llm_call`, `plan`, `route`, `evaluate`, `reflect`, `guard.llm`, `agent_call`, `orchestrator`, `supervisor`) accepts an optional `reasoningEffort` (`minimal` / `low` / `medium` / `high` / `xhigh` / `max`) override that honours the same precedence rules as the agent-level knob.
 
 `guard` runs in three modes: `llm` (model evaluates rules), `regex` (pattern match against `JSON.stringify(ctx.inputData)`), and **`schema`** — Zod-schema validation via `schemaName` looked up in `lib/orchestration/schemas/registry.ts`, with an optional `inputStepId` to validate the named step's output instead of the workflow input. Schema mode is deterministic, zero-LLM-cost, and surfaces full Zod `issues` arrays so a downstream retry can interpolate precise failure paths into the next prompt. The provider-model-audit workflow's `validate_proposals` step is the first adopter.
 

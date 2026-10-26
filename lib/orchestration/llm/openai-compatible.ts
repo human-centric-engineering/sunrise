@@ -42,6 +42,7 @@ import { logger } from '@/lib/logging';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   deriveParamProfile,
+  openAiReasoningEffort,
   supportedReasoningEfforts,
 } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -688,9 +689,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     // Caller intent is still recorded on the trace's requestParams so
     // a misconfigured "minimal on o3-mini" is visible after the fact.
     if (isReasoning && options.reasoningEffort !== undefined) {
+      const effort = openAiReasoningEffort(options.reasoningEffort);
       const accepted = supportedReasoningEfforts(options.model, this.name);
-      if (accepted.has(options.reasoningEffort)) {
-        (params as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+      if (accepted.has(effort)) {
+        (params as unknown as Record<string, unknown>).reasoning_effort = effort;
       }
     }
     if (options.tools?.length) {

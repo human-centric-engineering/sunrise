@@ -22,6 +22,7 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 export interface GuardConfig extends Record<string, unknown> {
   rules: string;
@@ -29,7 +30,7 @@ export interface GuardConfig extends Record<string, unknown> {
   failAction: 'block' | 'flag';
   modelOverride?: string;
   temperature?: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  reasoningEffort?: ReasoningEffort | null;
   /**
    * Required when `mode === 'schema'`. Slug into the schema registry
    * (`lib/orchestration/schemas/registry.ts`). The executor surfaces

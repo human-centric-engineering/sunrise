@@ -27,7 +27,7 @@ model AiAgent {
   maxTokens                 Int       @default(4096)
   // How much reasoning the model should do before producing visible output.
   // Maps to ReasoningEffort in lib/orchestration/llm/types.ts:
-  //   'minimal' | 'low' | 'medium' | 'high'
+  //   'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   // Null = use the provider's default (no `reasoning_effort` / `thinking`
   // is sent on the wire). Honoured only by reasoning-capable models;
   // dropped silently by other models. See lib/orchestration/llm/

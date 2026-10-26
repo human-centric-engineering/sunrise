@@ -551,7 +551,8 @@ export class AnthropicProvider implements LlmProvider {
         const VISIBLE_OUTPUT_FLOOR = 1024;
         const maxAllowedBudget = maxTokens - VISIBLE_OUTPUT_FLOOR;
         if (maxAllowedBudget >= MIN_THINKING_BUDGET) {
-          // `rawBudget` is one of {1024, 4096, 16384} — all ≥ MIN_THINKING_BUDGET.
+          // `rawBudget` is one of {1024, 4096, 16384, 32768, 65536} — all ≥
+          // MIN_THINKING_BUDGET.
           // `maxAllowedBudget` is ≥ MIN_THINKING_BUDGET by the branch
           // guard. Their min is therefore ≥ MIN_THINKING_BUDGET too.
           const budget = Math.min(rawBudget, maxAllowedBudget);

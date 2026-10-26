@@ -31,6 +31,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
 import {
   exportAgentsSchema,
   systemInstructionsHistorySchema,
@@ -41,7 +42,7 @@ import {
 const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
 const guardModeSchema = z.enum(['log_only', 'warn_and_continue', 'block']).nullable();
 const visibilitySchema = z.enum(['internal', 'public', 'invite_only']);
-const reasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional();
+const reasoningEffortSchema = z.enum(REASONING_EFFORTS).nullable().optional();
 // Non-null enum columns — `.catch(default)` so a single legacy/malformed row
 // degrades to the default instead of failing the whole export.
 const kindSchema = z.enum(['chat', 'judge']).catch('chat');

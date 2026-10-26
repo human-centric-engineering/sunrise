@@ -26,13 +26,14 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 export interface LlmCallConfig extends Record<string, unknown> {
   prompt: string;
   modelOverride?: string;
   temperature?: number;
   maxTokens?: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  reasoningEffort?: ReasoningEffort | null;
   responseFormat?: 'text' | 'json';
 }
 

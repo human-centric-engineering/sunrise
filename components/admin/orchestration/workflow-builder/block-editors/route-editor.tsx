@@ -25,6 +25,7 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 interface RouteBranch {
   label: string;
@@ -33,7 +34,7 @@ interface RouteBranch {
 export interface RouteConfig extends Record<string, unknown> {
   classificationPrompt: string;
   routes: RouteBranch[];
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 export function RouteEditor({ config, onChange }: EditorProps<RouteConfig>) {

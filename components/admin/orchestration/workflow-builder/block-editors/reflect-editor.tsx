@@ -19,13 +19,14 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 export interface ReflectConfig extends Record<string, unknown> {
   critiquePrompt: string;
   maxIterations?: number;
   modelOverride?: string;
   temperature?: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 export function ReflectEditor({ config, onChange }: EditorProps<ReflectConfig>) {

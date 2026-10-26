@@ -21,6 +21,7 @@ import { bundleContacts, sealExport } from '@/lib/orchestration/backup/export-se
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
 import {
   BUILTIN_TEMPLATE_SLUGS,
   SYSTEM_WORKFLOW_SLUGS,
@@ -221,7 +222,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
   // nested entity each) — flatten them before serialising. The narrowing tables
   // and helper are loop-invariant, so they live outside the per-agent map.
   const retrievalModes = ['model', 'first_turn', 'every_turn', 'keywords'] as const;
-  const reasoningEfforts = ['minimal', 'low', 'medium', 'high'] as const;
+  const reasoningEfforts = REASONING_EFFORTS;
   const narrowMode = (m: string) => (m === 'append' ? ('append' as const) : ('override' as const));
   const flattenedAgents = agents.map((a) => {
     const {

@@ -87,6 +87,7 @@ import {
   updateOrchestrationSettingsSchema,
   executionCountsResponseSchema,
   sendNotificationConfigSchema,
+  llmCallConfigSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -126,6 +127,18 @@ const VALID_WORKFLOW_DEF = {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('createAgentSchema', () => {
+  it.each(['xhigh', 'max'])('accepts the %s reasoning effort', (reasoningEffort) => {
+    const result = createAgentSchema.safeParse({ ...VALID_AGENT, reasoningEffort });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.reasoningEffort).toBe(reasoningEffort);
+  });
+
+  it('rejects an unknown reasoning effort', () => {
+    expect(createAgentSchema.safeParse({ ...VALID_AGENT, reasoningEffort: 'ultra' }).success).toBe(
+      false
+    );
+  });
+
   const VALID_AGENT = {
     name: 'Test Agent',
     slug: VALID_SLUG,
@@ -3810,5 +3823,12 @@ describe('provider model split prices (t-774)', () => {
       );
       expect(result.success).toBe(false);
     });
+  });
+});
+
+describe('llmCallConfigSchema reasoningEffort', () => {
+  it.each(['xhigh', 'max'])('accepts %s on an LLM step', (reasoningEffort) => {
+    const result = llmCallConfigSchema.safeParse({ prompt: 'hi', reasoningEffort });
+    expect(result.success && result.data.reasoningEffort).toBe(reasoningEffort);
   });
 });

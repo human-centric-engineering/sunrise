@@ -25,6 +25,7 @@ import {
 } from '@/components/admin/orchestration/reasoning-effort-select';
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 import type { AgentOption } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 
 export interface AgentCallConfig extends Record<string, unknown> {
@@ -33,7 +34,7 @@ export interface AgentCallConfig extends Record<string, unknown> {
   maxToolIterations?: number;
   mode?: 'single-turn' | 'multi-turn';
   maxTurns?: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 export function AgentCallEditor({

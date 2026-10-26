@@ -7,6 +7,8 @@
 
 import { z } from 'zod';
 
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
+
 export const agentBackupSchema = z.object({
   name: z.string(),
   slug: z.string(),
@@ -20,8 +22,9 @@ export const agentBackupSchema = z.object({
   // Reasoning-effort bucket. Added with the param-profile work; older
   // backup bundles omit the field, in which case the agent is imported
   // with `null` and the runtime sends no reasoning_effort. The enum
-  // includes 'minimal' / 'low' / 'medium' / 'high'.
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  // is `REASONING_EFFORTS`; bundles written before `xhigh` / `max`
+  // existed still parse, since the enum only grew.
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   monthlyBudgetUsd: z.number().nullable(),
   // Per-turn cost cap added with improvement #39. Optional so older
   // backup bundles round-trip; null preserves "no cap" semantics on

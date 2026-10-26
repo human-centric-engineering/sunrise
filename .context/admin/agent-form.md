@@ -107,12 +107,13 @@ Number input. Default 4096. Validation min 1, max 200_000.
 
 ### Reasoning effort
 
-Radix `<Select>` (`AiAgent.reasoningEffort`). Controls how much internal reasoning the model does before producing visible output. Values: `auto` (form sentinel, persists as null) · `minimal` · `low` · `medium` · `high`.
+Radix `<Select>` (`AiAgent.reasoningEffort`). Controls how much internal reasoning the model does before producing visible output. Values: `auto` (form sentinel, persists as null) · `minimal` · `low` · `medium` · `high` · `xhigh` (shown as Extra high) · `max`.
 
 Honoured only by reasoning-capable models:
 
-- **OpenAI o-series / gpt-5** (`paramProfile === 'openai-reasoning'`) — sends `reasoning_effort` with the chosen bucket.
-- **Anthropic Claude 4 Opus and Sonnet 4.5+** — enables extended thinking with a token budget derived from the bucket (low = 1024, medium = 4096, high = 16384 tokens). Anthropic enforces two hard rules: `budget_tokens` must be ≥ 1024, and `budget_tokens + visible output` must fit inside `max_tokens`. The provider class therefore requires `maxTokens ≥ 2048` (1024 minimum budget + 1024 visible-output floor) before sending `thinking` at all — below that, thinking is dropped silently. When sent, the budget is clamped to `min(requested, maxTokens − 1024)` so visible output always has room. `minimal` on Anthropic deliberately means "no extended thinking" (the field is omitted entirely).
+- **OpenAI o-series / gpt-5** (`paramProfile === 'openai-reasoning'`) — sends `reasoning_effort` with the chosen bucket; `xhigh` and `max` go as `high`.
+- **Claude Opus 4.7+, Sonnet 5+, Haiku 5+, Fable, Mythos** — adaptive thinking, with the bucket sent as `output_config.effort` by name (`minimal` as `low`).
+- **Claude Opus 4.0–4.6, Sonnet 4.5–4.6, Haiku 4.5** — enables extended thinking with a token budget derived from the bucket (low = 1024, medium = 4096, high = 16384, xhigh = 32768, max = 65536 tokens). Anthropic enforces two hard rules: `budget_tokens` must be ≥ 1024, and `budget_tokens + visible output` must fit inside `max_tokens`. The provider class therefore requires `maxTokens ≥ 2048` (1024 minimum budget + 1024 visible-output floor) before sending `thinking` at all — below that, thinking is dropped silently. When sent, the budget is clamped to `min(requested, maxTokens − 1024)` so visible output always has room. `minimal` on Anthropic deliberately means "no extended thinking" (the field is omitted entirely).
 - **Everything else** — silently dropped. No 400. The caller intent is still recorded on `LlmRequestParamsSnapshot.reasoningEffort` so a misconfigured agent shows up in the execution trace's request-envelope line.
 
 When set on a thinking-capable Anthropic model, the provider class also strips thinking blocks from the response content (callers see only the answer). Streaming `chatStream()` applies the same filter — thinking-delta events are not yielded as text. See `lib/orchestration/llm/anthropic.ts` and `lib/orchestration/llm/model-heuristics.ts → supportsReasoningEffort()` / `anthropicThinkingBudget()`.

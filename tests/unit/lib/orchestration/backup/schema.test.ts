@@ -84,6 +84,23 @@ describe('backupSchema', () => {
     vi.resetAllMocks();
   });
 
+  it.each(['xhigh', 'max', undefined])(
+    'imports an agent whose reasoning effort is %s',
+    (reasoningEffort) => {
+      const agent = makeValidAgent({ reasoningEffort });
+      const payload = makeValidPayload({
+        data: {
+          agents: [agent],
+          capabilities: [],
+          workflows: [],
+          webhooks: [],
+          settings: makeValidSettings(),
+        },
+      });
+      expect(backupSchema.parse(payload).data.agents[0].reasoningEffort).toBe(reasoningEffort);
+    }
+  );
+
   it('accepts a valid complete payload', () => {
     const payload = makeValidPayload({
       data: {

@@ -130,8 +130,18 @@ export type LlmResponseFormat =
  * `output_config.effort: 'low'` with no `thinking` field — some of those
  * models can't turn thinking off, so they still think, at their lowest
  * effort.
+ *
+ * `xhigh` and `max` sit above `high`:
+ *
+ *   - Adaptive-thinking Claude models send them as `output_config.effort`
+ *     of the same name (every one of them takes all five levels).
+ *   - Budget-taking Claude models get a larger budget: 32768 for `xhigh`,
+ *     65536 for `max`, clamped below `max_tokens` like the others.
+ *   - OpenAI-compatible reasoning models get `high`. Which OpenAI models
+ *     accept `xhigh` / `max` varies by model and is not published per id,
+ *     so a sent value could 400; `high` is the nearest value they all take.
  */
-export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** Per-call options passed to a provider. */
 export interface LlmOptions {

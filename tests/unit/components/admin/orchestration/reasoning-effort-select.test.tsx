@@ -23,6 +23,8 @@ describe('ReasoningEffortSelect helpers', () => {
       expect(toReasoningEffortFormValue('low')).toBe('low');
       expect(toReasoningEffortFormValue('medium')).toBe('medium');
       expect(toReasoningEffortFormValue('high')).toBe('high');
+      expect(toReasoningEffortFormValue('xhigh')).toBe('xhigh');
+      expect(toReasoningEffortFormValue('max')).toBe('max');
     });
 
     it("drops unknown column values to 'auto' rather than narrowing to a wrong enum member", () => {
@@ -82,6 +84,20 @@ describe('ReasoningEffortSelect component', () => {
     await user.click(await screen.findByRole('option', { name: /^high$/i }));
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith('high');
+  });
+
+  it.each([
+    ['Extra high', 'xhigh'],
+    ['Max', 'max'],
+  ])('offers %s, firing onChange with %s', async (name, value) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ReasoningEffortSelect id="rfx-select" value="auto" onChange={onChange} />);
+
+    await user.click(screen.getByRole('combobox', { name: /reasoning effort/i }));
+    await user.click(await screen.findByRole('option', { name }));
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(value);
   });
 
   it('shows the value read-only when disabled, with its help still usable', () => {

@@ -603,6 +603,10 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
     ['claude-opus-4-7', 'medium', 'medium'],
     ['claude-sonnet-5', 'high', 'high'],
     ['claude-sonnet-5-5', 'high', 'high'],
+    ['claude-opus-5-5', 'xhigh', 'xhigh'],
+    ['claude-fable-5-1', 'max', 'max'],
+    ['claude-haiku-5-5', 'max', 'max'],
+    ['claude-opus-4-7', 'xhigh', 'xhigh'],
   ] as const)(
     'sends adaptive thinking, not a budget, on %s at %s effort',
     async (model, reasoningEffort, effort) => {
@@ -648,6 +652,35 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
     expect(callArgs).not.toHaveProperty('thinking');
     expect(callArgs.output_config).toEqual({ effort: 'low' });
   });
+
+  // Budget models have no effort field, so xhigh / max become a larger
+  // budget, still clamped below max_tokens with room for the reply.
+  it.each([
+    ['xhigh', 64_000, 32768],
+    ['max', 128_000, 65536],
+    ['max', 20_000, 20_000 - 1024],
+  ] as const)(
+    'sends a %s thinking budget on Opus 4.6 (maxTokens %d → budget %d)',
+    async (reasoningEffort, maxTokens, budget) => {
+      createMock.mockResolvedValue({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+        model: 'claude-opus-4-6',
+        stop_reason: 'end_turn',
+      });
+
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'hi' }], {
+        model: 'claude-opus-4-6',
+        maxTokens,
+        reasoningEffort,
+      });
+
+      const callArgs = createMock.mock.calls[0][0];
+      expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: budget });
+      expect(callArgs).not.toHaveProperty('output_config');
+    }
+  );
 
   it('keeps the token budget, and sends no effort, on Opus 4.6', async () => {
     createMock.mockResolvedValue({

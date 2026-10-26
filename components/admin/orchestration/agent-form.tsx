@@ -59,6 +59,7 @@ import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card'
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import { KnowledgeAccessSection } from '@/components/admin/orchestration/knowledge-access-section';
 import {
+  REASONING_EFFORT_FORM_VALUES,
   ReasoningEffortSelect,
   toReasoningEffortFormValue,
 } from '@/components/admin/orchestration/reasoning-effort-select';
@@ -113,7 +114,7 @@ const agentFormSchema = z
     // the provider apply its default" — Radix Select forbids empty-string
     // values, so we can't use `''` even though the column persists as
     // null. The submit handler translates `'auto'` → null.
-    reasoningEffort: z.enum(['auto', 'minimal', 'low', 'medium', 'high']),
+    reasoningEffort: z.enum(REASONING_EFFORT_FORM_VALUES),
     monthlyBudgetUsd: z.number().positive().max(10000).optional(),
     // Per-turn cap (improvement #39 runaway-loop guard). Optional /
     // nullable; null means "use the org default" or "no cap" if that

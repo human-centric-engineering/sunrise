@@ -25,6 +25,7 @@ import { BINDING_OWNERS } from '@/lib/orchestration/agents/binding-owner';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
 import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 import { validateScopes, listValidApiKeyScopes } from '@/lib/auth/api-key-scopes';
@@ -135,7 +136,7 @@ export const createAgentObjectSchema = z.object({
   // Reasoning-effort bucket. Honoured only by reasoning-capable models
   // (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking). Silently
   // dropped by other models. Null / undefined = use provider default.
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
 
   monthlyBudgetUsd: z
     .number()
@@ -334,7 +335,7 @@ export const updateAgentObjectSchema = z.object({
     .max(200000, 'Max tokens must be at most 200000')
     .optional(),
 
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
 
   monthlyBudgetUsd: z
     .number()
@@ -1286,7 +1287,7 @@ export const bundledAgentSchema = z.object({
   // Reasoning-effort bucket. Optional — older bundles omit it, in which
   // case the agent is imported with null and the runtime sends no
   // reasoning_effort.
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
   // Per-turn cost cap (USD) — runaway-loop guard from improvement #39.
   // Optional so older backup bundles round-trip; null preserves "no cap".
@@ -3319,7 +3320,7 @@ export const executionTraceEntrySchema = z
         temperature: z.number().optional(),
         responseFormat: z.enum(['json_object', 'json_schema']).optional(),
         toolCount: z.number().int().nonnegative().optional(),
-        reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
+        reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
       })
       .optional()
       .catch(() => undefined),
@@ -3408,10 +3409,7 @@ export const llmResponseFormatSchema = z.discriminatedUnion('type', [
 // Step configs that already expose `temperature` / `maxTokens` get this
 // alongside — same surface area as the agent.reasoningEffort field.
 // Honoured by reasoning-capable models; silently dropped by others.
-const reasoningEffortConfigSchema = z
-  .enum(['minimal', 'low', 'medium', 'high'])
-  .nullable()
-  .optional();
+const reasoningEffortConfigSchema = z.enum(REASONING_EFFORTS).nullable().optional();
 
 export const llmCallConfigSchema = stepErrorConfigSchema.extend({
   prompt: z.string().optional(),

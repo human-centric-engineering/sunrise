@@ -2215,6 +2215,20 @@ describe('buildBaseParams', () => {
       }
     );
 
+    // Not every OpenAI model takes xhigh / max, and none is listed by id, so
+    // both go as `high` rather than risk a 400.
+    it.each([
+      ['gpt-5', 'xhigh'],
+      ['gpt-5', 'max'],
+      ['o3-mini', 'max'],
+    ] as const)('sends %s at high when asked for %s', async (model, value) => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], { model, reasoningEffort: value });
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.reasoning_effort).toBe('high');
+    });
+
     it('forwards `minimal` on gpt-5 (gpt-5 family added this bucket)', async () => {
       chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
       const provider = makeProvider();
