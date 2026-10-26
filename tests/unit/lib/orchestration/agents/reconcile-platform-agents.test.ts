@@ -1455,6 +1455,34 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     expect(agent('advisor')!.bindingOwner).toBe('platform');
   });
 
+  it('reports a pick failure’s cause, and survives a cause that will not stringify', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgents('install');
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const causes: unknown[] = ['vault said no', circular, new Error('inner')];
+    for (const cause of causes) {
+      registry.definitions = [
+        definition('advisor', {
+          defaultBinding: () => Promise.reject(new Error('seam down', { cause })),
+        }),
+        definition('judge'),
+        definition(`quiz-${causes.indexOf(cause)}`),
+      ];
+      mockLogger.warn.mockClear();
+
+      await expect(reconcilePlatformAgents('install')).resolves.toBeDefined();
+      expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Platform agent binding pick unavailable — binding left as it is',
+        expect.objectContaining({
+          error: 'seam down',
+          cause: cause === circular ? 'object' : cause instanceof Error ? 'inner' : cause,
+        })
+      );
+    }
+  });
+
   it('reports a pick the drift check could not get to the caller’s logger', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
     await reconcilePlatformAgents('install');
