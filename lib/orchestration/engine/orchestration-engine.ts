@@ -56,7 +56,11 @@ import {
   SUBJECT_LOCK_WAIT_MS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
-import { RUN_ROW_WRITE_OPTIONS } from '@/lib/orchestration/engine/run-row-lock';
+import { lockRunRow, RUN_ROW_WRITE_OPTIONS } from '@/lib/orchestration/engine/run-row-lock';
+import {
+  STORED_VERDICT_SELECT,
+  withPriorArchived,
+} from '@/lib/orchestration/supervisor/verdict-history';
 import {
   executionTraceEntrySchema,
   stepErrorConfigSchema,
@@ -2254,6 +2258,7 @@ export class OrchestrationEngine {
     const contextPatchData = drainContextPatch(ctx);
     try {
       const result = await prisma.$transaction(async (tx) => {
+        await archivePriorVerdict(tx, executionId, contextPatchData);
         const written = await tx.aiWorkflowExecution.updateMany({
           where: { id: executionId, leaseToken: token },
           data: {
@@ -2476,6 +2481,7 @@ export class OrchestrationEngine {
       status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull;
     try {
       const result = await prisma.$transaction(async (tx) => {
+        await archivePriorVerdict(tx, executionId, contextPatchData);
         const written = await tx.aiWorkflowExecution.updateMany({
           where: { id: executionId, leaseToken: token },
           data: {
@@ -2576,6 +2582,29 @@ function drainContextPatch(ctx: ExecutionContext): Record<string, unknown> {
   }
   ctx.pendingContextPatch = undefined;
   return out;
+}
+
+/**
+ * Archive the run's stored verdict into a supervisor report the patch is about
+ * to write, in place (t-951): the in-workflow step replaces the report whole,
+ * and a run reviewed retroactively, then retried, would otherwise lose every
+ * verdict before it. The stored verdict is read under the run's row lock, as
+ * the review route reads it, so neither writer drops the other's.
+ */
+async function archivePriorVerdict(
+  tx: Prisma.TransactionClient,
+  executionId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  if (!isRecord(patch.supervisorReport)) return;
+  await lockRunRow(tx, executionId);
+  const stored = await tx.aiWorkflowExecution.findUnique({
+    where: { id: executionId },
+    select: STORED_VERDICT_SELECT,
+  });
+  if (stored) {
+    patch.supervisorReport = withPriorArchived(patch.supervisorReport, stored, executionId);
+  }
 }
 
 /**

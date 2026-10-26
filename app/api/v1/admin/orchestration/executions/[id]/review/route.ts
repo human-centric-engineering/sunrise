@@ -31,25 +31,23 @@
  */
 
 import { z } from 'zod';
-import { Prisma, type AiWorkflowExecution } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
-import { logger } from '@/lib/logging';
 import { cuidSchema } from '@/lib/validations/common';
 import {
   adminCanViewExecution,
   executionVisibilityWhere,
 } from '@/lib/orchestration/access/execution-access';
-import { executionTraceSchema, priorSupervisorReportSchema } from '@/lib/validations/orchestration';
+import { executionTraceSchema } from '@/lib/validations/orchestration';
 import {
   CostOperation,
   WorkflowStatus,
   type ExecutionTraceEntry,
-  type SupervisorPreviousVerdict,
   type SupervisorReport,
 } from '@/types/orchestration';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
@@ -63,6 +61,10 @@ import {
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
+import {
+  STORED_VERDICT_SELECT,
+  withPriorArchived,
+} from '@/lib/orchestration/supervisor/verdict-history';
 import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
 import { findErasedSinceCopy, redactErased } from '@/lib/privacy/run-recipients';
 
@@ -127,43 +129,6 @@ function summaryOf(report: SupervisorReport | Prisma.JsonValue): string {
     typeof report.summary === 'string'
     ? report.summary
     : '[erased]';
-}
-
-/**
- * The new report with the run's stored verdict archived into
- * `previousVerdicts[]` — operators rerun for a reason; overwriting silently
- * would discard the history they want to compare against. The prior column
- * shape is validated so a corrupted Json row can't break the archive lift; on
- * parse failure the archive is logged and skipped rather than failing the
- * rerun (the new verdict still writes through cleanly).
- */
-function withPriorArchived(
-  report: SupervisorReport,
-  stored: Pick<
-    AiWorkflowExecution,
-    'supervisorVerdict' | 'supervisorReport' | 'supervisorReviewedAt'
-  >,
-  executionId: string
-): SupervisorReport {
-  const finalReport: SupervisorReport = { ...report };
-  if (!stored.supervisorVerdict || !stored.supervisorReport) return finalReport;
-  const priorParsed = priorSupervisorReportSchema.safeParse(stored.supervisorReport);
-  if (!priorParsed.success) {
-    logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
-      executionId,
-      issues: priorParsed.error.issues.map((i) => i.message),
-    });
-    return finalReport;
-  }
-  const prior = priorParsed.data;
-  const priorEntry: SupervisorPreviousVerdict = {
-    verdict: prior.verdict,
-    score: typeof prior.score === 'number' ? prior.score : null,
-    reviewedAt: stored.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
-    triggeredBy: prior.triggeredBy ?? 'in_workflow',
-  };
-  finalReport.previousVerdicts = [...(prior.previousVerdicts ?? []), priorEntry];
-  return finalReport;
 }
 
 export const POST = withAdminAuth<{ id: string }>(
@@ -367,13 +332,7 @@ export const POST = withAdminAuth<{ id: string }>(
       // compared: an overlapping review moves it, and that one is archived.
       const prior = await tx.aiWorkflowExecution.findUnique({
         where: { id },
-        select: {
-          status: true,
-          completedAt: true,
-          supervisorVerdict: true,
-          supervisorReport: true,
-          supervisorReviewedAt: true,
-        },
+        select: { status: true, completedAt: true, ...STORED_VERDICT_SELECT },
       });
       if (!prior) throw new NotFoundError(`Execution ${id} not found`);
       if (
