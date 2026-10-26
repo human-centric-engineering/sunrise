@@ -359,14 +359,53 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     });
   });
 
-  it("throws when a fork's credential resolver throws, rather than pinning nothing (t-819)", async () => {
-    registerProviderCredentialResolver(() => {
-      throw new Error('vault down');
+  it("throws when a fork's credential resolver fails for the provider that would win (t-819)", async () => {
+    registerProviderCredentialResolver((config) => {
+      if (config.slug === 'openai') throw new Error('vault down');
+      return { apiKey: 'k', identity: '' };
     });
     const { client } = reachableBoth();
 
     await expect(runAsOrg(INSTALL_ORG_ID, () => pick(client))).rejects.toMatchObject({
-      code: 'credential_unavailable',
+      name: 'ProviderSeamUnavailableError',
+      message: expect.stringContaining('"openai"'),
+      cause: expect.objectContaining({ code: 'credential_unavailable' }),
+    });
+  });
+
+  it('picks as usual when the credential resolver fails only for a provider that could not win (t-819)', async () => {
+    // A resolver may throw for a provider it does not serve. Here that is
+    // anthropic, whose only model ranks below openai's: its key cannot change
+    // the answer, so the pick need not wait for it.
+    registerProviderCredentialResolver((config) => {
+      if (config.slug === 'anthropic') throw new Error('not served');
+      return { apiKey: 'k', identity: '' };
+    });
+    const { client } = reachableBoth();
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toEqual({
+      provider: 'openai',
+      model: 'gpt-4.1',
+    });
+  });
+
+  it('picks as usual when the resolver fails for a provider with no model the agent can use (t-819)', async () => {
+    // An embedding-only row, say: it would have the best rank if it qualified.
+    registerProviderCredentialResolver((config) => {
+      if (config.slug === 'voyage') throw new Error('not served');
+      return { apiKey: 'k', identity: '' };
+    });
+    const { client } = db(
+      [providerRow('voyage', 'OPENAI_API_KEY'), providerRow('anthropic', 'ANTHROPIC_API_KEY')],
+      [
+        modelRow('voyage', 'a-embed', 'worker', 'very_high', { capabilities: ['embedding'] }),
+        modelRow('anthropic', 'claude-sonnet', 'thinking'),
+      ]
+    );
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pick(client))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
     });
   });
 

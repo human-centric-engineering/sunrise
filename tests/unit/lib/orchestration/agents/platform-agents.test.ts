@@ -306,6 +306,17 @@ describe('createPlatformAgentCatalogue (t-816)', () => {
     expect(modelFindMany).toHaveBeenCalledWith({ where: { isActive: true } });
   });
 
+  it('hands every caller frozen rows, so one pick cannot change the next one’s', async () => {
+    const { db } = client(async () => [{ slug: 'a', tags: ['x'] }]);
+    const catalogue = createPlatformAgentCatalogue();
+
+    const rows = await catalogue.activeProviders(db);
+
+    expect(Object.isFrozen(rows)).toBe(true);
+    expect(Object.isFrozen(rows[0])).toBe(true);
+    expect(Object.isFrozen((rows[0] as unknown as { tags: string[] }).tags)).toBe(true);
+  });
+
   it('does not keep a failed read, so the next caller reads again', async () => {
     let fail = true;
     const { db, providerFindMany } = client(async () => {

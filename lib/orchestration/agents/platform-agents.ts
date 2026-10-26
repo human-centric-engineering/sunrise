@@ -100,13 +100,17 @@ export interface PlatformAgentBinding {
  *
  * Each read is made on first use, through the `db` of whichever caller asks
  * first, and kept for the catalogue's life; a read that fails is not kept, so
- * the next org asks again.
+ * the next org asks again. So a provider or model switched on or off while a
+ * run is part-way through is seen by the next run, 15 minutes on — the same
+ * order of staleness the policy's 60-second provider-row cache accepts.
+ *
+ * The rows are frozen, since every org of the run is handed the same objects.
  */
 export interface PlatformAgentCatalogue {
   /** Every active provider row, oldest first. */
-  activeProviders(db: TenancyClient): Promise<readonly AiProviderConfig[]>;
+  activeProviders(db: TenancyClient): Promise<ReadonlyArray<Readonly<AiProviderConfig>>>;
   /** Every active model row. */
-  activeModels(db: TenancyClient): Promise<readonly AiProviderModel[]>;
+  activeModels(db: TenancyClient): Promise<ReadonlyArray<Readonly<AiProviderModel>>>;
 }
 
 /** A catalogue that reads each table at most once (see {@link PlatformAgentCatalogue}). */
@@ -119,14 +123,28 @@ export function createPlatformAgentCatalogue(): PlatformAgentCatalogue {
   };
 }
 
-/** `read`, made on the first call and shared by the rest — unless it fails. */
-function once<T>(read: (db: TenancyClient) => Promise<T>): (db: TenancyClient) => Promise<T> {
-  let answer: Promise<T> | undefined;
+/**
+ * `read`, made on the first call and shared by the rest — unless it fails.
+ * Each row is frozen, and so are its array columns (a model's `capabilities`),
+ * so one org's pick cannot change what the next is handed.
+ */
+function once<T extends object>(
+  read: (db: TenancyClient) => Promise<T[]>
+): (db: TenancyClient) => Promise<ReadonlyArray<Readonly<T>>> {
+  let answer: Promise<ReadonlyArray<Readonly<T>>> | undefined;
   return (db) =>
-    (answer ??= read(db).catch((error: unknown) => {
-      answer = undefined;
-      throw error;
-    }));
+    (answer ??= read(db).then(
+      (rows) => Object.freeze(rows.map(freezeRow)),
+      (error: unknown) => {
+        answer = undefined;
+        throw error;
+      }
+    ));
+}
+
+function freezeRow<T extends object>(row: T): Readonly<T> {
+  for (const value of Object.values(row)) if (Array.isArray(value)) Object.freeze(value);
+  return Object.freeze(row);
 }
 
 export interface PlatformAgentDefinition {
@@ -184,9 +202,10 @@ export interface PlatformAgentDefinition {
    *
    * Read provider and model rows from `catalogue` rather than `db`, so one
    * maintenance run reads them once for every org (t-816). The org-specific
-   * filters stay per call: `resolveEligibleProviders` and
-   * `filterProvidersWithCredential`, both with `onFailure: 'throw'` so that a
-   * resolver that is down throws rather than answers "nothing" (t-819).
+   * filters stay per call (t-819): `resolveEligibleProviders` with
+   * `onFailure: 'throw'`, so a resolver that is down throws rather than
+   * answers "nothing", and `classifyProvidersByCredential`, which keeps the
+   * rows a credential resolver failed for apart from the ones with no key.
    */
   defaultBinding?: (
     db: TenancyClient,

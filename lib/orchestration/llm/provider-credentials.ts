@@ -57,7 +57,6 @@ import { initAppProviderCredentials } from '@/lib/app/provider-credentials';
 import { createAppInitGate } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import type { ProviderSeamFailure } from '@/lib/orchestration/llm/provider-eligibility';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import type { AiProviderConfig } from '@/types/prisma';
@@ -236,19 +235,24 @@ export async function resolveProviderCredential(
 }
 
 /**
- * The key the seam gives `config` in this context, or `undefined` for none or
- * for a resolver that failed. The one place the two answers below read it, so
- * how a failure is treated cannot drift between them.
+ * The key the seam gives `config` in this context, or `undefined` for none, or
+ * the failure for a resolver that failed. The one place every answer below
+ * reads it, so how a failure is treated cannot drift between them.
  */
 async function resolvedKey(
   config: ProviderCredentialConfig
-): Promise<{ ok: true; apiKey: string | undefined } | { ok: false }> {
+): Promise<{ ok: true; apiKey: string | undefined } | { ok: false; error: unknown }> {
   try {
     const { apiKey } = await resolveProviderCredential(config);
     return { ok: true, apiKey };
-  } catch {
-    return { ok: false };
+  } catch (error) {
+    return { ok: false, error };
   }
+}
+
+/** A row is reachable with a key, or, if it is local, without one. */
+function reachableWith(config: ProviderCredentialConfig, apiKey: string | undefined): boolean {
+  return config.isLocal || apiKey !== undefined;
 }
 
 /**
@@ -268,7 +272,7 @@ async function resolvedKey(
  */
 export async function hasProviderCredential(config: ProviderCredentialConfig): Promise<boolean> {
   const resolved = await resolvedKey(config);
-  return resolved.ok && (config.isLocal || resolved.apiKey !== undefined);
+  return resolved.ok && reachableWith(config, resolved.apiKey);
 }
 
 /**
@@ -284,23 +288,39 @@ export async function hasProviderKey(config: ProviderCredentialConfig): Promise<
 /**
  * The rows of `configs` that {@link hasProviderCredential}, in their order.
  * Order is load-bearing for every caller (the first reachable row wins).
- *
- * A row the resolver fails for is left out, unless `options.onFailure` is
- * `'throw'` (t-819): then the resolver's `credential_unavailable` error is
- * thrown instead, so a caller that records the answer can tell "no key" from
- * "could not ask". A resolver should therefore answer "no key" for a
- * provider it does not serve, not throw.
  */
 export async function filterProvidersWithCredential<T extends ProviderCredentialConfig>(
-  configs: readonly T[],
-  options: { onFailure?: ProviderSeamFailure } = {}
+  configs: readonly T[]
 ): Promise<T[]> {
-  const reachable = await Promise.all(
-    configs.map(async (config) => {
-      if (options.onFailure !== 'throw') return hasProviderCredential(config);
-      const { apiKey } = await resolveProviderCredential(config);
-      return config.isLocal || apiKey !== undefined;
-    })
-  );
-  return configs.filter((_, index) => reachable[index]);
+  return (await classifyProvidersByCredential(configs)).reachable;
+}
+
+/** {@link classifyProvidersByCredential}'s answer. */
+export interface ProviderCredentialClassification<T> {
+  /** The rows {@link hasProviderCredential}, in their order. */
+  reachable: T[];
+  /** The rows the resolver failed for, in their order, each with its failure. */
+  unavailable: Array<{ config: T; error: unknown }>;
+}
+
+/**
+ * {@link filterProvidersWithCredential}, keeping apart the rows the resolver
+ * failed for (t-819). Those are neither reachable nor unreachable: nobody
+ * knows. A caller that records its answer, such as a platform agent's binding
+ * pick, can then tell "no key" from "could not ask", and decide whether a
+ * failed row could have changed that answer. A resolver may still throw for
+ * a provider it does not serve: to such a caller that row only matters if it
+ * would otherwise have won.
+ */
+export async function classifyProvidersByCredential<T extends ProviderCredentialConfig>(
+  configs: readonly T[]
+): Promise<ProviderCredentialClassification<T>> {
+  const resolved = await Promise.all(configs.map((config) => resolvedKey(config)));
+  const result: ProviderCredentialClassification<T> = { reachable: [], unavailable: [] };
+  configs.forEach((config, index) => {
+    const answer = resolved[index];
+    if (!answer.ok) result.unavailable.push({ config, error: answer.error });
+    else if (reachableWith(config, answer.apiKey)) result.reachable.push(config);
+  });
+  return result;
 }

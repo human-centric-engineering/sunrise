@@ -1663,6 +1663,15 @@ describe('a fork resolver that is down during a pass (t-819)', () => {
 
     expect(await pass()).toEqual({ outcome: { reconciled: false }, newVersions: 0 });
     expect(agent('cleanup')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
+    // The seam logs nothing in this mode, so the resolver's reason is the cause.
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Platform agent binding pick unavailable — drift not checked',
+      expect.objectContaining({
+        slug: 'cleanup',
+        error: 'The provider eligibility resolver threw',
+        cause: 'policy service down',
+      })
+    );
   });
 
   it('leaves the binding where it is, with no version row, when the credential resolver throws', async () => {

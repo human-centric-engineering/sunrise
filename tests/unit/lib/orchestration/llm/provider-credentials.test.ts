@@ -25,6 +25,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import {
+  classifyProvidersByCredential,
   filterProvidersWithCredential,
   hasProviderCredential,
   hasProviderCredentialResolver,
@@ -178,35 +179,31 @@ describe('a registered resolver', () => {
     await expect(hasProviderCredential(row())).resolves.toBe(false);
   });
 
-  it("throws the resolver's failure from the filter under onFailure: 'throw', rather than dropping the row (t-819)", async () => {
+  it('keeps the rows a resolver failed for apart from the ones with no key (t-819)', async () => {
+    const failure = new Error('vault down');
     registerProviderCredentialResolver((config) => {
-      if (config.slug === 'b') throw new Error('vault down');
-      return { apiKey: 'k', identity: '' };
+      if (config.slug === 'b') throw failure;
+      return { apiKey: config.slug === 'a' ? 'k' : undefined, identity: '' };
     });
-    const rows = [row({ slug: 'a' }), row({ slug: 'b' })];
-
-    // The default still drops the row it cannot answer for…
-    await expect(filterProvidersWithCredential(rows)).resolves.toEqual([rows[0]]);
-    // …and the strict form says it could not ask.
-    await expect(filterProvidersWithCredential(rows, { onFailure: 'throw' })).rejects.toMatchObject(
-      { code: 'credential_unavailable' }
-    );
-  });
-
-  it("keeps the default's answer under onFailure: 'throw' when the resolver answers", async () => {
-    registerProviderCredentialResolver((config) => ({
-      apiKey: config.slug === 'a' ? 'k' : undefined,
-      identity: '',
-    }));
     const rows = [
       row({ slug: 'a' }),
       row({ slug: 'b' }),
-      row({ slug: 'c', isLocal: true, apiKeyEnvVar: null }),
+      row({ slug: 'c' }),
+      row({ slug: 'd', isLocal: true, apiKeyEnvVar: null }),
     ];
 
-    const strict = await filterProvidersWithCredential(rows, { onFailure: 'throw' });
-    expect(strict.map((r) => r.slug)).toEqual(['a', 'c']);
-    expect(strict).toEqual(await filterProvidersWithCredential(rows));
+    const { reachable, unavailable } = await classifyProvidersByCredential(rows);
+
+    // 'c' has no key: unreachable, and not "unavailable" — the resolver answered.
+    expect(reachable.map((r) => r.slug)).toEqual(['a', 'd']);
+    expect(unavailable).toHaveLength(1);
+    expect(unavailable[0].config.slug).toBe('b');
+    expect(unavailable[0].error).toMatchObject({
+      code: 'credential_unavailable',
+      message: expect.stringContaining('"b"'),
+    });
+    // The filter is the same answer without the failures.
+    expect(await filterProvidersWithCredential(rows)).toEqual(reachable);
   });
 
   it('asks the resolver about a local row too: one it cannot answer for is not reachable', async () => {

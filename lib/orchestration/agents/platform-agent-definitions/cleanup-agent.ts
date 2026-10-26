@@ -4,8 +4,11 @@
  * capabilities. Cleanup conversations edit one document directly and never
  * query the knowledge base.
  */
-import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
-import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
+import {
+  ProviderSeamUnavailableError,
+  resolveEligibleProviders,
+} from '@/lib/orchestration/llm/provider-eligibility';
+import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import type {
   PlatformAgentBinding,
@@ -90,12 +93,15 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * (`AiAgent.bindingOwner`) and this is not asked for that agent again.
  *
  * A rule that cannot be asked THROWS rather than answering "nothing": core's
- * policy unreadable, or a fork's eligibility or credential resolver down
- * (t-819). The reconcile then leaves this agent's binding as it is and the org
- * unmarked, so the maintenance job asks again, where an answer of null would
- * have moved the agent to inherit, versioned the move, and moved it back on
- * the next pass. At `single`, and for the install org, neither rule narrows
- * anything unless a fork's rule does.
+ * policy unreadable, or a fork's eligibility resolver down (t-819). So does a
+ * credential resolver that failed for a provider that would otherwise have
+ * won; one that failed for a provider ranked lower, or with no model this
+ * agent can use, changes nothing, and the pick goes ahead. The reconcile then
+ * leaves this agent's binding as it is and the org unmarked, so the
+ * maintenance job asks again, where an answer of null would have moved the
+ * agent to inherit, versioned the move, and moved it back on the next pass. At
+ * `single`, and for the install org, neither rule narrows anything unless a
+ * fork's rule does.
  *
  * The provider and model rows come from `catalogue`, which the maintenance
  * job shares across one run's orgs (t-816); only the filters above are asked
@@ -115,22 +121,25 @@ export async function pickCleanupBinding(
 ): Promise<PlatformAgentBinding | null> {
   const providers = await catalogue.activeProviders(db);
   // Through the credential seam (§120 t-744): by default the row's env var, as
-  // this read directly before; a fork's resolver otherwise.
-  const withCredential = await filterProvidersWithCredential(providers, { onFailure: 'throw' });
-  // Core's org policy first, then a fork's rule (see above).
-  const eligible = new Set(
+  // this read directly before; a fork's resolver otherwise. A row the resolver
+  // failed for is kept aside rather than dropped (see above).
+  const credentials = await classifyProvidersByCredential(providers);
+  const unavailable = new Map(credentials.unavailable.map((u) => [u.config.slug, u.error]));
+  const reachable = new Set(credentials.reachable.map((p) => p.slug));
+  // Core's org policy first, then a fork's rule (see above). Asked of every
+  // row not known to have no key, in the catalogue's order.
+  const candidates = new Set(
     await resolveEligibleProviders(
-      withCredential.map((p) => p.slug),
+      providers.map((p) => p.slug).filter((slug) => reachable.has(slug) || unavailable.has(slug)),
       { task: 'chat', source: 'explicit', primarySlug: null },
       { onFailure: 'throw' }
     )
   );
-  const reachable = new Set(withCredential.filter((p) => eligible.has(p.slug)).map((p) => p.slug));
-  if (reachable.size === 0) return null;
+  if (candidates.size === 0) return null;
 
   const models = (await catalogue.activeModels(db)).filter(
     (m) =>
-      reachable.has(m.providerSlug) && m.toolUse === 'strong' && m.capabilities.includes('chat')
+      candidates.has(m.providerSlug) && m.toolUse === 'strong' && m.capabilities.includes('chat')
   );
   if (models.length === 0) return null;
 
@@ -149,6 +158,13 @@ export async function pickCleanupBinding(
     return compareCodeUnits(a.providerSlug, b.providerSlug);
   });
   const best = ranked[0];
+  // Whether this provider has a key is the one thing that would decide.
+  if (unavailable.has(best.providerSlug)) {
+    throw new ProviderSeamUnavailableError(
+      `The credential resolver failed for provider "${best.providerSlug}", which would otherwise be picked`,
+      { cause: unavailable.get(best.providerSlug) }
+    );
+  }
   return { provider: best.providerSlug, model: best.modelId };
 }
 
