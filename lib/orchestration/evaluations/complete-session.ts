@@ -47,7 +47,10 @@ import type {
   RescoreEvaluationParams,
   RescoreEvaluationResult,
 } from '@/lib/orchestration/evaluations/types';
-import { runStructuredCompletion } from '@/lib/orchestration/llm/structured-completion';
+import {
+  runStructuredCompletion,
+  type StructuredCompletionResult,
+} from '@/lib/orchestration/llm/structured-completion';
 import { tryParseJson } from '@/lib/orchestration/evaluations/parse-structured';
 import { scoreResponse } from '@/lib/orchestration/evaluations/score-response';
 import {
@@ -185,6 +188,8 @@ export async function completeEvaluationSession(
     provider: providerSlug,
     inputTokens: analysis.tokenUsage.input,
     outputTokens: analysis.tokenUsage.output,
+    cacheReadTokens: analysis.tokenUsage.cacheRead,
+    cacheWriteTokens: analysis.tokenUsage.cacheWrite,
     operation: CostOperation.EVALUATION,
     metadata: { phase: 'summary' },
   };
@@ -235,7 +240,7 @@ export async function completeEvaluationSession(
     status: 'completed',
     summary: analysis.summary,
     improvementSuggestions: analysis.improvementSuggestions,
-    tokenUsage: analysis.tokenUsage,
+    tokenUsage: { input: analysis.tokenUsage.input, output: analysis.tokenUsage.output },
     costUsd: analysis.costUsd,
     metricSummary,
   };
@@ -298,7 +303,7 @@ export async function rescoreEvaluationSession(
 // ---------------------------------------------------------------------------
 
 interface AnalysisResult extends EvaluationAnalysis {
-  tokenUsage: { input: number; output: number };
+  tokenUsage: StructuredCompletionResult<EvaluationAnalysis>['tokenUsage'];
   costUsd: number;
 }
 

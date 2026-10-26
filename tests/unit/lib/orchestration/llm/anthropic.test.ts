@@ -28,10 +28,42 @@ vi.mock('@/lib/logging', () => ({
 
 const { AnthropicProvider } = await import('@/lib/orchestration/llm/anthropic');
 const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+import type { StreamChunk } from '@/lib/orchestration/llm/types';
 
 beforeEach(() => {
   createMock.mockReset();
 });
+
+/**
+ * The first request's params as the tests below compare them: without the
+ * prompt-cache marks `addCacheBreakpoints` adds, so a test about content is
+ * not also a test about caching. The marked last turn reads as the string it
+ * was converted from, and the system blocks as one prompt joined the way they
+ * were before caching split them. Caching has tests of its own, on the raw
+ * params.
+ */
+function sentParams(): any {
+  const params = structuredClone(createMock.mock.calls[0][0]) as Record<string, any>;
+  const unmark = (block: Record<string, unknown>) => {
+    const marked = 'cache_control' in block;
+    delete block.cache_control;
+    return marked;
+  };
+  if (Array.isArray(params.system)) {
+    params.system = params.system
+      .map((block: Record<string, unknown>) => (unmark(block), block.text))
+      .join('\n\n');
+  }
+  for (const tool of params.tools ?? []) unmark(tool);
+  const last = params.messages?.[params.messages.length - 1];
+  if (last && Array.isArray(last.content)) {
+    const lastBlock = last.content[last.content.length - 1];
+    if (lastBlock && unmark(lastBlock) && last.content.length === 1 && lastBlock.type === 'text') {
+      last.content = lastBlock.text;
+    }
+  }
+  return params;
+}
 
 function makeProvider() {
   return new AnthropicProvider({
@@ -75,7 +107,7 @@ describe('AnthropicProvider.chat', () => {
     expect(response.usage).toEqual({ inputTokens: 10, outputTokens: 3 });
     expect(response.finishReason).toBe('stop');
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.system).toBe('you are helpful');
     expect(callArgs.messages).toEqual([{ role: 'user', content: 'hi' }]);
   });
@@ -136,7 +168,7 @@ describe('AnthropicProvider.chat', () => {
       { model: 'claude-sonnet-4-6' }
     );
 
-    const args = createMock.mock.calls[0][0];
+    const args = sentParams();
     // Last message should be user with tool_result content block.
     const last = args.messages[args.messages.length - 1];
     expect(last.role).toBe('user');
@@ -180,7 +212,7 @@ describe('AnthropicProvider.chat', () => {
     });
 
     // Assert: SDK params contain the tool
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tools).toHaveLength(1);
     expect(callArgs.tools[0].name).toBe('calc');
     expect(callArgs.tools[0].description).toBe('calculator');
@@ -205,7 +237,7 @@ describe('AnthropicProvider.chat', () => {
     });
 
     // Assert: SDK params carry temperature AND response output is correct
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.temperature).toBe(0.7);
     expect(response.content).toBe('cool');
     expect(response.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
@@ -226,7 +258,7 @@ describe('AnthropicProvider.chat', () => {
       temperature: 0.7,
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs).not.toHaveProperty('temperature');
     expect(callArgs.thinking).toBeUndefined();
     expect(response.content).toBe('cool');
@@ -373,7 +405,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'medium',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
   });
 
@@ -393,7 +425,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'low',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.temperature).toBeUndefined();
   });
 
@@ -413,7 +445,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'minimal',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toBeUndefined();
     expect(callArgs.temperature).toBe(0.5);
   });
@@ -433,7 +465,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'high',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toBeUndefined();
     expect(callArgs.output_config).toBeUndefined();
   });
@@ -453,7 +485,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'medium',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
     // Haiku 4.5 errors on `effort`, so the budget path never sends it.
     expect(callArgs.output_config).toBeUndefined();
@@ -476,7 +508,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
         reasoningEffort: 'high',
       });
 
-      const callArgs = createMock.mock.calls[0][0];
+      const callArgs = sentParams();
       expect(callArgs.thinking).toEqual({ type: 'adaptive' });
       expect(callArgs.output_config).toEqual({ effort: 'high' });
     }
@@ -499,7 +531,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'high',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
   });
 
@@ -518,7 +550,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'low',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toBeUndefined();
   });
 
@@ -548,7 +580,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
         reasoningEffort: 'medium',
       });
 
-      const callArgs = createMock.mock.calls[0][0];
+      const callArgs = sentParams();
       expect(callArgs.thinking).toBeUndefined();
     }
   );
@@ -571,7 +603,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'high',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
   });
 
@@ -626,7 +658,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
         reasoningEffort,
       });
 
-      const callArgs = createMock.mock.calls[0][0];
+      const callArgs = sentParams();
       expect(callArgs.thinking).toEqual({ type: 'adaptive' });
       expect(callArgs.output_config).toEqual({ effort });
       expect(callArgs.temperature).toBeUndefined();
@@ -648,7 +680,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'minimal',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs).not.toHaveProperty('thinking');
     expect(callArgs.output_config).toEqual({ effort: 'low' });
   });
@@ -676,7 +708,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
         reasoningEffort,
       });
 
-      const callArgs = createMock.mock.calls[0][0];
+      const callArgs = sentParams();
       expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: budget });
       expect(callArgs).not.toHaveProperty('output_config');
     }
@@ -697,7 +729,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       reasoningEffort: 'medium',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
     expect(callArgs).not.toHaveProperty('output_config');
   });
@@ -716,7 +748,7 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
       maxTokens: 8192,
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs).not.toHaveProperty('thinking');
     expect(callArgs).not.toHaveProperty('output_config');
   });
@@ -1090,7 +1122,7 @@ describe('AnthropicProvider.chatStream', () => {
       // drain
     }
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     // test-review:accept tobe_true — structural assertion on stream boolean parameter passed to Anthropic SDK
     expect(callArgs.stream).toBe(true);
   });
@@ -1275,15 +1307,19 @@ describe('splitSystemMessages helper (via chat params)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
-    expect(callArgs.system).toBe('instruction one\n\ninstruction two');
+    // One block per system message, so a later one that changes per turn
+    // (knowledge context, memories) does not move the cached prefix.
+    expect(createMock.mock.calls[0][0].system).toEqual([
+      { type: 'text', text: 'instruction one', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'instruction two' },
+    ]);
   });
 
   it('omits system key when no system messages are present', async () => {
     const provider = makeProvider();
     await provider.chat([{ role: 'user', content: 'hi' }], { model: 'claude-haiku-4-5' });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.system).toBeUndefined();
   });
 
@@ -1297,7 +1333,7 @@ describe('splitSystemMessages helper (via chat params)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     // Empty string is falsy — splitSystemMessages skips it, so system is undefined
     expect(callArgs.system).toBeUndefined();
   });
@@ -1315,7 +1351,7 @@ describe('splitSystemMessages helper (via chat params)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     // The system content should still be extracted to the system param
     expect(callArgs.system).toBe('late system');
     // Conversation should only have the two user messages
@@ -1339,7 +1375,7 @@ describe('splitSystemMessages helper (via chat params)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const assistantMsg = callArgs.messages[1] as {
       role: string;
       content: Array<{ type: string; text?: string; id?: string; name?: string }>;
@@ -1365,7 +1401,7 @@ describe('splitSystemMessages helper (via chat params)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const assistantMsg = callArgs.messages[1] as {
       role: string;
       content: Array<{ type: string }>;
@@ -1400,7 +1436,7 @@ describe('mapToolChoice helper (via chat params with tools)', () => {
       toolChoice: 'auto',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tool_choice).toEqual({ type: 'auto' });
   });
 
@@ -1412,7 +1448,7 @@ describe('mapToolChoice helper (via chat params with tools)', () => {
       toolChoice: 'none',
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tool_choice).toEqual({ type: 'none' });
   });
 
@@ -1424,7 +1460,7 @@ describe('mapToolChoice helper (via chat params with tools)', () => {
       toolChoice: { name: 'fn' },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tool_choice).toEqual({ type: 'tool', name: 'fn' });
   });
 
@@ -1436,7 +1472,7 @@ describe('mapToolChoice helper (via chat params with tools)', () => {
       // no toolChoice
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tool_choice).toBeUndefined();
   });
 });
@@ -1465,7 +1501,7 @@ describe('buildToolInputSchema helper (via chat params with tools)', () => {
       ],
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tools[0].input_schema.type).toBe('object');
   });
 
@@ -1508,7 +1544,7 @@ describe('buildToolInputSchema helper (via chat params with tools)', () => {
       ],
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const schema = callArgs.tools[0].input_schema as {
       type: string;
       properties: object;
@@ -1652,7 +1688,7 @@ describe('tool message without toolCallId (covers ?? fallback)', () => {
       { model: 'claude-haiku-4-5' }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const toolMsg = callArgs.messages[1] as {
       role: string;
       content: Array<{ tool_use_id: string }>;
@@ -1905,7 +1941,7 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
       },
     });
 
-    const callArgs = createMock.mock.calls[0][0] as {
+    const callArgs = sentParams() as {
       tools: Array<{ name: string; description: string }>;
       tool_choice: { type: string; name: string };
     };
@@ -1934,7 +1970,7 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
       },
     });
 
-    const callArgs = createMock.mock.calls[0][0] as {
+    const callArgs = sentParams() as {
       tools: Array<{ name: string }>;
       tool_choice: { name: string };
     };
@@ -1962,7 +1998,7 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
       },
     });
 
-    const callArgs = createMock.mock.calls[0][0] as { tools: Array<{ name: string }> };
+    const callArgs = sentParams() as { tools: Array<{ name: string }> };
     expect(callArgs.tools[0].name.length).toBe(64);
     expect(callArgs.tools[0].name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
   });
@@ -2035,7 +2071,7 @@ describe('toAnthropicBlocks — multimodal content conversion (via splitSystemMe
     );
 
     // Assert: the SDK received an image block with source.type 'base64'
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const block = callArgs.messages[0].content[0] as {
       type: string;
       source: { type: string; media_type: string; data: string };
@@ -2068,7 +2104,7 @@ describe('toAnthropicBlocks — multimodal content conversion (via splitSystemMe
     );
 
     // Assert: the SDK received an image block with source.type 'url'
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const block = callArgs.messages[0].content[0] as {
       type: string;
       source: { type: string; url: string };
@@ -2103,7 +2139,7 @@ describe('toAnthropicBlocks — multimodal content conversion (via splitSystemMe
     );
 
     // Assert: the SDK received a document block (native PDF support)
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     const block = callArgs.messages[0].content[0] as {
       type: string;
       source: { type: string; media_type: string; data: string };
@@ -2140,7 +2176,8 @@ describe('toAnthropicBlocks — multimodal content conversion (via splitSystemMe
       { model: 'claude-haiku-4-5' }
     );
 
-    // Assert: non-PDF falls back to a text block with the decoded content
+    // Assert: non-PDF falls back to a text block with the decoded content.
+    // Raw params: `sentParams` would read this one-block turn as a string.
     const callArgs = createMock.mock.calls[0][0];
     const block = callArgs.messages[0].content[0] as { type: string; text: string };
     expect(block.type).toBe('text');
@@ -2437,7 +2474,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       responseFormat: { type: 'json_schema', name: 'profile', schema },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tools).toBeUndefined();
     expect(callArgs.tool_choice).toBeUndefined();
     expect(callArgs.output_config).toEqual({
@@ -2473,7 +2510,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       responseFormat: { type: 'json_schema', name: 'profile', schema },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'adaptive' });
     expect(callArgs.output_config.effort).toBe('medium');
     expect(callArgs.output_config.format.type).toBe('json_schema');
@@ -2517,7 +2554,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.output_config).toBeUndefined();
     expect(callArgs.tools[0].name).toBe('__structured_loose');
     expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_loose' });
@@ -2549,7 +2586,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       }
     );
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
     expect(callArgs.tool_choice).toEqual({ type: 'auto' });
     expect(callArgs.system).toBe(
@@ -2572,7 +2609,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       responseFormat: { type: 'json_schema', name: 'profile', schema },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_profile' });
     expect(callArgs.system).toBeUndefined();
   });
@@ -2598,7 +2635,7 @@ describe('AnthropicProvider — structured output without a forced tool (t-896, 
       chunks.push(chunk);
     }
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.output_config.format.type).toBe('json_schema');
     expect(callArgs.tools).toBeUndefined();
     const text = chunks
@@ -2627,7 +2664,7 @@ describe('AnthropicProvider — caller-forced tool choice (t-896, t-907)', () =>
         tools,
         toolChoice: { name: 'lookup' },
       });
-      expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' });
+      expect(sentParams().tool_choice).toEqual({ type: 'auto' });
     }
   );
 
@@ -2640,7 +2677,7 @@ describe('AnthropicProvider — caller-forced tool choice (t-896, t-907)', () =>
       tools,
       toolChoice: { name: 'lookup' },
     });
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.thinking).toBeDefined();
     expect(callArgs.tool_choice).toEqual({ type: 'auto' });
   });
@@ -2652,7 +2689,7 @@ describe('AnthropicProvider — caller-forced tool choice (t-896, t-907)', () =>
       tools,
       toolChoice: { name: 'lookup' },
     });
-    expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'tool', name: 'lookup' });
+    expect(sentParams().tool_choice).toEqual({ type: 'tool', name: 'lookup' });
   });
 });
 
@@ -2709,7 +2746,7 @@ describe('AnthropicProvider — thinking blocks across a tool loop (t-897, t-908
       }
     );
 
-    const assistant = createMock.mock.calls[0][0].messages[1];
+    const assistant = sentParams().messages[1];
     expect(assistant).toEqual({
       role: 'assistant',
       content: [
@@ -2905,7 +2942,7 @@ describe('AnthropicProvider — structured output review fixes', () => {
       },
     });
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.output_config).toBeUndefined();
     expect(callArgs.tools[0].name).toBe('__structured_open');
   });
@@ -2927,7 +2964,7 @@ describe('AnthropicProvider — structured output review fixes', () => {
       },
     });
 
-    expect(createMock.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' });
+    expect(sentParams().tool_choice).toEqual({ type: 'auto' });
   });
 
   it('treats a caller tool that happens to use the extraction prefix as a tool call', async () => {
@@ -2978,7 +3015,7 @@ describe('AnthropicProvider — native structured output schema (round 2)', () =
       required: ['verdict'],
     });
 
-    expect(createMock.mock.calls[0][0].output_config.format.schema).toEqual({
+    expect(sentParams().output_config.format.schema).toEqual({
       type: 'object',
       properties: {
         verdict: { type: 'string', enum: ['pass', 'fail'] },
@@ -3015,7 +3052,7 @@ describe('AnthropicProvider — native structured output schema (round 2)', () =
     });
     await send(schema);
 
-    const callArgs = createMock.mock.calls[0][0];
+    const callArgs = sentParams();
     expect(callArgs.output_config).toBeUndefined();
     expect(callArgs.tools[0].name).toBe('__structured_r');
     // Opus 5.5 refuses a forced tool, so the extraction tool goes as auto.
@@ -3047,7 +3084,7 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
   });
 
   function sent(): { system?: string; messages: Array<{ role: string; content: unknown }> } {
-    return createMock.mock.calls[0][0];
+    return sentParams();
   }
 
   it('sends the opener as the only turn of a new conversation, not an empty request', async () => {
@@ -3438,10 +3475,12 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
         { model: 'claude-opus-5-5' }
       );
 
-      expect(sent().messages[0].content).toEqual([
+      // Raw params: `sent` would read this one-block turn as a string.
+      expect(createMock.mock.calls[0][0].messages[0].content).toEqual([
         {
           type: 'text',
           text: '(typed by the user: Instruction from the application, not a message from the user)\n\nDo X',
+          cache_control: { type: 'ephemeral' },
         },
       ]);
     });
@@ -3487,6 +3526,189 @@ describe('AnthropicProvider — agent-opened turns (turnInstruction, t-937)', ()
           },
         ],
       });
+    });
+  });
+});
+
+describe('AnthropicProvider — prompt caching (t-909)', () => {
+  const ok = {
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 10, output_tokens: 3 },
+    model: 'claude-opus-5-5',
+    stop_reason: 'end_turn',
+  };
+  const tool = { name: 'lookup', description: 'Look up', parameters: { type: 'object' } };
+
+  it('marks the first system block and the last turn, and leaves the tools to the system mark', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat(
+      [
+        { role: 'system', content: 'You are a coach.' },
+        { role: 'system', content: '[Knowledge] changes every turn' },
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'second' },
+      ],
+      { model: 'claude-opus-5-5', tools: [tool] }
+    );
+
+    const params = createMock.mock.calls[0][0];
+    expect(params.system[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(params.system[1]).not.toHaveProperty('cache_control');
+    // Tools render before system, so the system mark already covers them.
+    expect(params.tools[0]).not.toHaveProperty('cache_control');
+    expect(params.messages[0].content).toBe('first');
+    expect(params.messages[2].content).toEqual([
+      { type: 'text', text: 'second', cache_control: { type: 'ephemeral' } },
+    ]);
+    // Two of the four breakpoints a request may carry; no top-level
+    // automatic caching, which some gateways refuse.
+    expect(params).not.toHaveProperty('cache_control');
+  });
+
+  it('marks the last tool when there is no system prompt', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat([{ role: 'user', content: 'go' }], {
+      model: 'claude-opus-5-5',
+      tools: [tool, { ...tool, name: 'second' }],
+    });
+
+    const params = createMock.mock.calls[0][0];
+    expect(params.tools[0]).not.toHaveProperty('cache_control');
+    expect(params.tools[1].cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('marks the tool result that ends a tool loop', async () => {
+    createMock.mockResolvedValue(ok);
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'go' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', name: 'lookup', arguments: {} }],
+        },
+        { role: 'tool', content: 'found it', toolCallId: 'call_1' },
+      ],
+      { model: 'claude-opus-5-5', tools: [tool] }
+    );
+
+    const last = createMock.mock.calls[0][0].messages.at(-1);
+    expect(last.content).toEqual([
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: 'found it',
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
+  });
+
+  it('counts cache reads and writes into inputTokens and reports them apart', async () => {
+    createMock.mockResolvedValue({
+      ...ok,
+      usage: {
+        input_tokens: 50,
+        output_tokens: 20,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 300,
+      },
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+    });
+
+    expect(response.usage).toEqual({
+      inputTokens: 4350,
+      outputTokens: 20,
+      cacheReadTokens: 4000,
+      cacheWriteTokens: 300,
+    });
+  });
+
+  it('reports no cache counts when the response had none', async () => {
+    createMock.mockResolvedValue({
+      ...ok,
+      usage: {
+        input_tokens: 50,
+        output_tokens: 20,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: null,
+      },
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+    });
+
+    expect(response.usage).toEqual({ inputTokens: 50, outputTokens: 20 });
+  });
+
+  it('carries the cache counts from message_start onto the done chunk', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        {
+          type: 'message_start',
+          message: {
+            usage: {
+              input_tokens: 12,
+              output_tokens: 1,
+              cache_read_input_tokens: 2048,
+              cache_creation_input_tokens: 0,
+            },
+          },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } },
+        { type: 'message_stop' },
+      ])
+    );
+
+    const chunks: StreamChunk[] = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.at(-1)).toMatchObject({
+      type: 'done',
+      usage: { inputTokens: 2060, outputTokens: 7, cacheReadTokens: 2048 },
+    });
+    expect((chunks.at(-1) as { usage: object }).usage).not.toHaveProperty('cacheWriteTokens');
+  });
+
+  it('takes the final message_delta input counts over message_start when it sends them', async () => {
+    createMock.mockResolvedValue(
+      makeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn' },
+          usage: {
+            output_tokens: 7,
+            input_tokens: 12,
+            cache_read_input_tokens: null,
+            cache_creation_input_tokens: 900,
+          },
+        },
+        { type: 'message_stop' },
+      ])
+    );
+
+    const chunks: StreamChunk[] = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+      model: 'claude-opus-5-5',
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.at(-1)).toMatchObject({
+      type: 'done',
+      usage: { inputTokens: 912, outputTokens: 7, cacheWriteTokens: 900 },
     });
   });
 });

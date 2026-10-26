@@ -21,7 +21,7 @@ import { bundleContacts, sealExport } from '@/lib/orchestration/backup/export-se
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
-import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
   BUILTIN_TEMPLATE_SLUGS,
   SYSTEM_WORKFLOW_SLUGS,

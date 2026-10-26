@@ -6,8 +6,13 @@ model AiCostLog {
   workflowExecutionId String?
   model               String
   provider            String
+  // Every input token, cached or not. The two cache counts are the subsets
+  // billed at prompt-cache rates (included in inputCostUsd); null when the
+  // provider reported none, and on rows written before they existed.
   inputTokens         Int
   outputTokens        Int
+  cacheReadTokens     Int?
+  cacheWriteTokens    Int?
   inputCostUsd        Float
   outputCostUsd       Float
   totalCostUsd        Float

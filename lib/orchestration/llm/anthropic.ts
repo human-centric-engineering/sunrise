@@ -64,6 +64,7 @@ import type {
   LlmResponse,
   LlmToolCall,
   LlmToolChoice,
+  LlmUsage,
   ModelInfo,
   ProviderConfig,
   StreamChunk,
@@ -259,20 +260,14 @@ export class AnthropicProvider implements LlmProvider {
           retriable: false,
           // Billed in full despite producing nothing usable — carry it so the
           // caller's error path can still cost it.
-          usage: {
-            inputTokens: message.usage.input_tokens,
-            outputTokens: message.usage.output_tokens,
-          },
+          usage: toLlmUsage(message.usage),
         }
       );
     }
 
     const response: LlmResponse = {
       content: joinedContent,
-      usage: {
-        inputTokens: message.usage.input_tokens,
-        outputTokens: message.usage.output_tokens,
-      },
+      usage: toLlmUsage(message.usage),
       model: message.model,
       finishReason: isStructuredExtraction ? 'stop' : mapStopReason(message.stop_reason),
     };
@@ -320,6 +315,8 @@ export class AnthropicProvider implements LlmProvider {
 
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadTokens: number | undefined;
+    let cacheWriteTokens: number | undefined;
     let finishReason: LlmFinishReason = 'stop';
 
     // Buffered tool-use blocks by `content_block` index — Anthropic streams
@@ -337,9 +334,13 @@ export class AnthropicProvider implements LlmProvider {
         }
 
         switch (event.type) {
-          case 'message_start':
-            inputTokens = event.message.usage.input_tokens;
+          case 'message_start': {
+            const usage = toLlmUsage(event.message.usage);
+            inputTokens = usage.inputTokens;
+            cacheReadTokens = usage.cacheReadTokens;
+            cacheWriteTokens = usage.cacheWriteTokens;
             break;
+          }
 
           case 'content_block_start': {
             const block = event.content_block;
@@ -403,6 +404,20 @@ export class AnthropicProvider implements LlmProvider {
             if (event.usage?.output_tokens !== null && event.usage?.output_tokens !== undefined) {
               outputTokens = event.usage.output_tokens;
             }
+            // The final delta can carry the input counts too, cumulative, so
+            // they replace what `message_start` reported.
+            if (typeof event.usage?.input_tokens === 'number') {
+              const usage = toLlmUsage({
+                input_tokens: event.usage.input_tokens,
+                output_tokens: outputTokens,
+                cache_read_input_tokens: event.usage.cache_read_input_tokens ?? cacheReadTokens,
+                cache_creation_input_tokens:
+                  event.usage.cache_creation_input_tokens ?? cacheWriteTokens,
+              });
+              inputTokens = usage.inputTokens;
+              cacheReadTokens = usage.cacheReadTokens;
+              cacheWriteTokens = usage.cacheWriteTokens;
+            }
             break;
 
           default:
@@ -456,7 +471,12 @@ export class AnthropicProvider implements LlmProvider {
       .map(([, block]) => block);
     yield {
       type: 'done',
-      usage: { inputTokens, outputTokens },
+      usage: {
+        inputTokens,
+        outputTokens,
+        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+      },
       finishReason: isStructuredExtraction ? 'stop' : finishReason,
       ...(reasoning.length > 0 ? { reasoning } : {}),
     };
@@ -575,9 +595,8 @@ export class AnthropicProvider implements LlmProvider {
     }
     // Split after thinking is settled: a dangling tool call before an
     // opener only has to go when this request thinks.
-    const { system, conversation } = splitSystemMessages(messages, thinkingEnabled);
+    const { systemParts, conversation } = splitSystemMessages(messages, thinkingEnabled);
     params.messages = conversation;
-    if (system) params.system = system;
     // Claude models from Opus 4.7 / Sonnet 5 / Haiku 5 on refuse any
     // temperature (400), so it is sent only to the older families that
     // honour one. The caller's value stays on the trace's requestParams.
@@ -663,8 +682,9 @@ export class AnthropicProvider implements LlmProvider {
               reason: forcedToolRefusal,
             });
             params.tool_choice = { type: 'auto' };
-            const instruction = `Respond only by calling the ${extractionToolName} tool with the result.`;
-            params.system = system ? `${system}\n\n${instruction}` : instruction;
+            systemParts.push(
+              `Respond only by calling the ${extractionToolName} tool with the result.`
+            );
           } else {
             params.tool_choice = { type: 'tool', name: extractionToolName };
           }
@@ -675,6 +695,10 @@ export class AnthropicProvider implements LlmProvider {
         // instructions should already request JSON output.
       }
     }
+    if (systemParts.length > 0) {
+      params.system = systemParts.map((text) => ({ type: 'text', text }));
+    }
+    addCacheBreakpoints(params);
     return params;
   }
 
@@ -697,11 +721,74 @@ export class AnthropicProvider implements LlmProvider {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Mark the request's stable prefix and its growing tail for Anthropic's
+ * prompt cache, with explicit breakpoints only: the top-level automatic
+ * form is refused (400) by the legacy Bedrock integration and some
+ * gateways, which this provider can sit behind (`ANTHROPIC_BASE_URL`).
+ *
+ * 1. The first system block — the agent's composed prompt, ahead of the
+ *    knowledge context, memories and summary that can change every turn.
+ *    Tools render before system, so this caches them too. With no system
+ *    prompt, the last tool definition takes the mark instead. This is the
+ *    read point every conversation with the same agent shares.
+ * 2. The last block of the last message, so the next request of a tool
+ *    loop or conversation reads the whole history back.
+ *
+ * A prefix shorter than the model's minimum (512–4096 tokens) is simply
+ * not cached and costs nothing extra, so no length check is needed. Moving
+ * a marker between requests is not an edit of the history, so it does not
+ * invalidate thinking blocks being replayed.
+ */
+function addCacheBreakpoints(params: Omit<MessageCreateParamsNonStreaming, 'stream'>): void {
+  const ephemeral = { type: 'ephemeral' } as const;
+  const firstSystem = Array.isArray(params.system) ? params.system[0] : undefined;
+  if (firstSystem) {
+    firstSystem.cache_control = ephemeral;
+  } else if (params.tools?.length) {
+    const last = params.tools[params.tools.length - 1];
+    if ('input_schema' in last) last.cache_control = ephemeral;
+  }
+
+  const lastMessage = params.messages[params.messages.length - 1];
+  if (!lastMessage) return;
+  if (typeof lastMessage.content === 'string') {
+    if (!lastMessage.content) return;
+    lastMessage.content = [{ type: 'text', text: lastMessage.content }];
+  }
+  const lastBlock = lastMessage.content[lastMessage.content.length - 1];
+  // Thinking blocks take no marker; every other block a turn ends on does.
+  if (lastBlock && lastBlock.type !== 'thinking' && lastBlock.type !== 'redacted_thinking') {
+    (lastBlock as { cache_control?: typeof ephemeral }).cache_control = ephemeral;
+  }
+}
+
+/**
+ * Anthropic's usage, in the platform's terms: cache reads and writes are
+ * reported apart from `input_tokens`, so they are added back in to make
+ * `inputTokens` the whole input (see `LlmUsage`).
+ */
+function toLlmUsage(usage: {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}): LlmUsage {
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+  const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
+  return {
+    inputTokens: usage.input_tokens + cacheReadTokens + cacheWriteTokens,
+    outputTokens: usage.output_tokens,
+    ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
+  };
+}
+
 function splitSystemMessages(
   messages: LlmMessage[],
   thinkingEnabled: boolean
 ): {
-  system: string | undefined;
+  systemParts: string[];
   conversation: MessageParam[];
 } {
   const systemParts: string[] = [];
@@ -772,10 +859,7 @@ function splitSystemMessages(
     });
   }
 
-  return {
-    system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
-    conversation,
-  };
+  return { systemParts, conversation };
 }
 
 /** Heads a `turnInstruction` sent as a user turn, so it is not read as the person's. */

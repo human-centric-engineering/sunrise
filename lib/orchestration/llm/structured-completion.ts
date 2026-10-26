@@ -53,6 +53,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmResponseFormat,
+  LlmUsage,
   ReasoningEffort,
 } from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
@@ -168,7 +169,12 @@ export interface StructuredCompletionOptions<T> {
 
 export interface StructuredCompletionResult<T> {
   value: T;
-  tokenUsage: { input: number; output: number };
+  /**
+   * Tokens billed across every attempt. `input` counts cached input too;
+   * `cacheRead` / `cacheWrite` are the parts of it billed at prompt-cache
+   * rates, present when the provider reported any.
+   */
+  tokenUsage: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   costUsd: number;
   /**
    * Finish reason of the attempt that produced `value` (the retry's, when
@@ -212,11 +218,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * full-cap response's billed tokens would otherwise be lost on the way out.
  * Same field the adapters' own guards populate.
  */
-function truncationError(
-  model: string,
-  maxTokens: number,
-  usage?: { inputTokens: number; outputTokens: number }
-): ProviderError {
+function truncationError(model: string, maxTokens: number, usage?: LlmUsage): ProviderError {
   return new ProviderError(
     `Structured completion for model "${model}" was truncated at maxTokens (${maxTokens}) ` +
       `before it could be parsed — the response is incomplete, not schema-invalid. Raise ` +
@@ -278,7 +280,7 @@ export async function runStructuredCompletion<T>(
   ): Promise<{
     parsed: T | null;
     truncated: boolean;
-    usage: { inputTokens: number; outputTokens: number } | null;
+    usage: LlmUsage | null;
     finishReason: LlmFinishReason | null;
   }> => {
     // Note this is a fresh deadline per attempt, so `timeoutMs` bounds each
@@ -344,12 +346,9 @@ export async function runStructuredCompletion<T>(
 
   const first = await attempt(opts.messages, temperature);
   if (first.parsed !== null) {
-    const inputTokens = first.usage?.inputTokens ?? 0;
-    const outputTokens = first.usage?.outputTokens ?? 0;
     return {
       value: first.parsed,
-      tokenUsage: { input: inputTokens, output: outputTokens },
-      costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
+      ...billing(opts.model, [first.usage]),
       finishReason: first.finishReason ?? 'stop',
     };
   }
@@ -379,10 +378,7 @@ export async function runStructuredCompletion<T>(
   // a full cap's worth of output. Attributing only one of them under-reports
   // the most expensive failure shape there is.
   if (retry.truncated) {
-    const billed = {
-      inputTokens: (first.usage?.inputTokens ?? 0) + (retry.usage?.inputTokens ?? 0),
-      outputTokens: (first.usage?.outputTokens ?? 0) + (retry.usage?.outputTokens ?? 0),
-    };
+    const billed = sumUsage([first.usage, retry.usage]);
     // Omit rather than report zeros, matching the adapter guards: a consumer
     // doing `if (err.usage) logCost(...)` would otherwise write the "this turn
     // was free" row those guards exist to avoid. Both attempts can come back
@@ -402,12 +398,43 @@ export async function runStructuredCompletion<T>(
   // Both attempts are billed, so both are counted — including a first attempt
   // that was truncated, which is by definition a full cap's worth of output
   // and so the LARGEST component of the bill.
-  const inputTokens = (first.usage?.inputTokens ?? 0) + (retry.usage?.inputTokens ?? 0);
-  const outputTokens = (first.usage?.outputTokens ?? 0) + (retry.usage?.outputTokens ?? 0);
   return {
     value: retry.parsed,
-    tokenUsage: { input: inputTokens, output: outputTokens },
-    costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
+    ...billing(opts.model, [first.usage, retry.usage]),
     finishReason: retry.finishReason ?? 'stop',
+  };
+}
+
+/** The attempts' usage added together; an attempt with none counts as zero. */
+function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
+  const total: LlmUsage = { inputTokens: 0, outputTokens: 0 };
+  for (const usage of attempts) {
+    if (!usage) continue;
+    total.inputTokens += usage.inputTokens;
+    total.outputTokens += usage.outputTokens;
+    if (usage.cacheReadTokens) {
+      total.cacheReadTokens = (total.cacheReadTokens ?? 0) + usage.cacheReadTokens;
+    }
+    if (usage.cacheWriteTokens) {
+      total.cacheWriteTokens = (total.cacheWriteTokens ?? 0) + usage.cacheWriteTokens;
+    }
+  }
+  return total;
+}
+
+/** `tokenUsage` and `costUsd` for the attempts a result was billed for. */
+function billing(
+  model: string,
+  attempts: Array<LlmUsage | null>
+): Pick<StructuredCompletionResult<unknown>, 'tokenUsage' | 'costUsd'> {
+  const usage = sumUsage(attempts);
+  return {
+    tokenUsage: {
+      input: usage.inputTokens,
+      output: usage.outputTokens,
+      ...(usage.cacheReadTokens ? { cacheRead: usage.cacheReadTokens } : {}),
+      ...(usage.cacheWriteTokens ? { cacheWrite: usage.cacheWriteTokens } : {}),
+    },
+    costUsd: calculateCost(model, usage.inputTokens, usage.outputTokens, usage).totalCostUsd,
   };
 }

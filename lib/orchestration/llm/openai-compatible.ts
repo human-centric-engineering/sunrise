@@ -309,12 +309,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       );
     }
 
+    const cacheReadTokens = completion.usage?.prompt_tokens_details?.cached_tokens;
     const response: LlmResponse = {
       content,
       usage: {
         inputTokens: completion.usage?.prompt_tokens ?? 0,
         outputTokens: completion.usage?.completion_tokens ?? 0,
         ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+        // OpenAI caches long prompts automatically and reports the hits here,
+        // already counted in `prompt_tokens`.
+        ...(cacheReadTokens ? { cacheReadTokens } : {}),
       },
       model: completion.model,
       finishReason: mapFinishReason(choice.finish_reason),
@@ -342,6 +346,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadTokens = 0;
     let finishReason: LlmFinishReason = 'stop';
 
     // Tool-call fragments are streamed incrementally and keyed by index.
@@ -380,6 +385,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         if (chunk.usage) {
           inputTokens = chunk.usage.prompt_tokens;
           outputTokens = chunk.usage.completion_tokens;
+          cacheReadTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
         }
 
         const choice = chunk.choices[0];
@@ -453,7 +459,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     yield {
       type: 'done',
-      usage: { inputTokens, outputTokens },
+      usage: { inputTokens, outputTokens, ...(cacheReadTokens ? { cacheReadTokens } : {}) },
       finishReason,
     };
   }

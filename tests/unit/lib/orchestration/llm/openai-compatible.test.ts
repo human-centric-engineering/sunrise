@@ -147,7 +147,11 @@ function makeChunk(opts: {
     function?: { name?: string; arguments?: string };
   }>;
   finishReason?: string | null;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }) {
   return {
     id: 'chunk-test',
@@ -2374,5 +2378,76 @@ describe('per-request timeout and signal', () => {
 
     // Assert — no `signal: undefined` key, which some SDK versions treat as a value
     expect(chatCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 5_000 });
+  });
+});
+
+describe('cached prompt tokens (t-909)', () => {
+  // OpenAI caches long prompts on its own and reports the hits inside
+  // `prompt_tokens`; they are read back so the cost row can price them.
+  it('reports cached_tokens as cacheReadTokens, leaving inputTokens the whole prompt', async () => {
+    chatCreateMock.mockResolvedValue({
+      ...makeChatCompletion('ok', 'stop'),
+      usage: {
+        prompt_tokens: 3000,
+        completion_tokens: 40,
+        prompt_tokens_details: { cached_tokens: 2048 },
+      },
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+    });
+
+    expect(response.usage).toEqual({
+      inputTokens: 3000,
+      outputTokens: 40,
+      cacheReadTokens: 2048,
+    });
+  });
+
+  it('leaves cacheReadTokens off when nothing came from the cache', async () => {
+    chatCreateMock.mockResolvedValue({
+      ...makeChatCompletion('ok', 'stop'),
+      usage: {
+        prompt_tokens: 30,
+        completion_tokens: 4,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+    });
+
+    const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+    });
+
+    expect(response.usage).toEqual({ inputTokens: 30, outputTokens: 4 });
+  });
+
+  it('carries cached_tokens from the final usage chunk onto the done chunk', async () => {
+    chatCreateMock.mockResolvedValue(
+      toAsyncIterable([
+        makeChunk({ content: 'hi' }),
+        makeChunk({
+          finishReason: 'stop',
+          usage: {
+            prompt_tokens: 1500,
+            completion_tokens: 2,
+            prompt_tokens_details: { cached_tokens: 1024 },
+          },
+        }),
+      ])
+    );
+
+    const collected: unknown[] = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+    })) {
+      collected.push(chunk);
+    }
+
+    expect(collected.at(-1)).toEqual({
+      type: 'done',
+      usage: { inputTokens: 1500, outputTokens: 2, cacheReadTokens: 1024 },
+      finishReason: 'stop',
+    });
   });
 });

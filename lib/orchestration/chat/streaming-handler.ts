@@ -42,6 +42,7 @@ import type {
   LlmToolCall,
   LlmToolChoice,
   LlmToolDefinition,
+  LlmUsage,
 } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
@@ -1551,7 +1552,7 @@ export class StreamingChatHandler {
         // Thinking blocks from this turn, replayed on the assistant message the
         // tool loop appends — Anthropic requires them back unchanged.
         let reasoning: LlmReasoningBlock[] | undefined;
-        let usage: { inputTokens: number; outputTokens: number } | null = null;
+        let usage: LlmUsage | null = null;
         // Per-iteration, deliberately: the `done` event is emitted from inside
         // the terminal iteration, so this carries why the FINAL turn stopped —
         // which is the one whose text a consumer is about to parse.
@@ -1670,7 +1671,8 @@ export class StreamingChatHandler {
                   turnCostUsd += calculateCost(
                     resolvedModel,
                     errUsage.inputTokens,
-                    errUsage.outputTokens
+                    errUsage.outputTokens,
+                    errUsage
                   ).totalCostUsd;
                   void logCost({
                     agentId: agent.id,
@@ -1680,6 +1682,8 @@ export class StreamingChatHandler {
                     provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
                     inputTokens: errUsage.inputTokens,
                     outputTokens: errUsage.outputTokens,
+                    cacheReadTokens: errUsage.cacheReadTokens,
+                    cacheWriteTokens: errUsage.cacheWriteTokens,
                     operation: CostOperation.CHAT,
                     // Read off the span directly: `llmTraceId`/`llmSpanId` are
                     // only assigned on the success path below, so they are
@@ -2031,7 +2035,7 @@ export class StreamingChatHandler {
           // `null` value at this point because the closure mutation inside
           // `withSpanGenerator` isn't visible to flow analysis. The cast
           // restores the declared union shape so the `if` guard works.
-          const finalUsage = usage as { inputTokens: number; outputTokens: number } | null;
+          const finalUsage = usage as LlmUsage | null;
           if (finalUsage) {
             assistantMetadata.tokenUsage = {
               inputTokens: finalUsage.inputTokens,
@@ -2041,7 +2045,8 @@ export class StreamingChatHandler {
             assistantMetadata.costUsd = calculateCost(
               resolvedModel,
               finalUsage.inputTokens,
-              finalUsage.outputTokens
+              finalUsage.outputTokens,
+              finalUsage
             ).totalCostUsd;
           }
           assistantMetadata.latencyMs = Date.now() - iterationStartedAt;
@@ -2140,7 +2145,7 @@ export class StreamingChatHandler {
               ...((): {
                 tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
               } => {
-                const u = usage as { inputTokens: number; outputTokens: number } | null;
+                const u = usage as LlmUsage | null;
                 if (!u) return {};
                 return {
                   tokenUsage: {
@@ -2157,7 +2162,7 @@ export class StreamingChatHandler {
 
         if (toolCalls.size === 0) {
           // Cast re-bind: see comment above the assistantMetadata block.
-          const u = usage as { inputTokens: number; outputTokens: number } | null;
+          const u = usage as LlmUsage | null;
           if (u) {
             // Update the per-turn running total BEFORE the
             // fire-and-forget DB write so the check below never depends
@@ -2165,7 +2170,12 @@ export class StreamingChatHandler {
             // iteration, so even a breach here is informational — we're
             // already returning. We still increment so trace + emitted
             // metadata reflect the true turn cost.
-            turnCostUsd += calculateCost(resolvedModel, u.inputTokens, u.outputTokens).totalCostUsd;
+            turnCostUsd += calculateCost(
+              resolvedModel,
+              u.inputTokens,
+              u.outputTokens,
+              u
+            ).totalCostUsd;
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
@@ -2174,6 +2184,8 @@ export class StreamingChatHandler {
               provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
               inputTokens: u.inputTokens,
               outputTokens: u.outputTokens,
+              cacheReadTokens: u.cacheReadTokens,
+              cacheWriteTokens: u.cacheWriteTokens,
               operation: CostOperation.CHAT,
               traceId: llmTraceId,
               spanId: llmSpanId,
@@ -2252,7 +2264,7 @@ export class StreamingChatHandler {
         // per-turn running total, then re-check both the per-turn cap
         // and the monthly budget before dispatching tools (which will
         // trigger another LLM turn that costs more).
-        const turnUsage = usage as { inputTokens: number; outputTokens: number } | null;
+        const turnUsage = usage as LlmUsage | null;
         if (turnUsage) {
           // Increment the in-process running total BEFORE the
           // fire-and-forget logCost — the per-turn check below must
@@ -2260,7 +2272,8 @@ export class StreamingChatHandler {
           turnCostUsd += calculateCost(
             resolvedModel,
             turnUsage.inputTokens,
-            turnUsage.outputTokens
+            turnUsage.outputTokens,
+            turnUsage
           ).totalCostUsd;
           void logCost({
             agentId: agent.id,
@@ -2270,6 +2283,8 @@ export class StreamingChatHandler {
             provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             inputTokens: turnUsage.inputTokens,
             outputTokens: turnUsage.outputTokens,
+            cacheReadTokens: turnUsage.cacheReadTokens,
+            cacheWriteTokens: turnUsage.cacheWriteTokens,
             operation: CostOperation.CHAT,
             traceId: llmTraceId,
             spanId: llmSpanId,
@@ -3615,7 +3630,7 @@ function extractCompletedWorkflowExecutionId(slug: string, result: unknown): str
 
 function buildDoneEvent(
   model: string,
-  usage: { inputTokens: number; outputTokens: number } | null,
+  usage: LlmUsage | null,
   providerSlug?: string | null,
   inputBreakdown?: InputBreakdown,
   sideEffectModels?: SideEffectModelUsage[],
@@ -3623,7 +3638,7 @@ function buildDoneEvent(
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
-  const costUsd = usage ? calculateCost(model, inputTokens, outputTokens).totalCostUsd : 0;
+  const costUsd = usage ? calculateCost(model, inputTokens, outputTokens, usage).totalCostUsd : 0;
   const reconciled = inputBreakdown
     ? reconcileBreakdownToActual(inputBreakdown, inputTokens)
     : undefined;

@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 
 export const agentBackupSchema = z.object({
   name: z.string(),

@@ -236,7 +236,12 @@ export const POST = withAdminAuth<{ id: string }>(
         model: modelId,
         temperature: opts.temperature,
       });
-      const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
+      const cost = calculateCost(
+        modelId,
+        response.usage.inputTokens,
+        response.usage.outputTokens,
+        response.usage
+      );
       void logCost({
         workflowExecutionId: id,
         userId: session.user.id,
@@ -244,6 +249,8 @@ export const POST = withAdminAuth<{ id: string }>(
         provider: modelInfo.provider,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheWriteTokens: response.usage.cacheWriteTokens,
         operation: CostOperation.EVALUATION,
         isLocal: cost.isLocal,
         metadata: { phase: 'retroactive_supervisor' },

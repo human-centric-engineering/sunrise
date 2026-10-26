@@ -36,8 +36,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { REASONING_EFFORTS, narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
-import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
+import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import { REASONING_EFFORTS, type ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 /** Resolved form value — `'auto'` is the sentinel for null. */
 export type ReasoningEffortFormValue = 'auto' | ReasoningEffort;

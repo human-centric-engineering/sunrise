@@ -56,6 +56,7 @@ vi.mock('@/lib/orchestration/llm/model-registry', async () => {
 const { prisma } = await import('@/lib/db/client');
 const {
   getAvailableModels,
+  getModel,
   registerModels,
   __resetForTests: resetRegistry,
 } = await import('@/lib/orchestration/llm/model-registry');
@@ -1064,5 +1065,101 @@ describe('calculateLocalSavings', () => {
     expect(result.usd).toBe(0);
     expect(result.sampleSize).toBe(0);
     expect(result.methodology).toBe('tier_fallback');
+  });
+});
+
+describe('prompt-cache pricing (t-909)', () => {
+  const model = (overrides: Partial<ModelInfo>): ModelInfo => ({
+    id: 'priced-model',
+    name: 'Priced',
+    provider: 'anthropic',
+    tier: 'frontier',
+    inputCostPerMillion: 10,
+    outputCostPerMillion: 50,
+    maxContext: 200_000,
+    supportsTools: true,
+    ...overrides,
+  });
+
+  it('prices Claude cache reads at 0.1x and writes at 1.25x when no rate is published', () => {
+    vi.mocked(getModel).mockReturnValueOnce(model({}));
+
+    // 1M input: 600k read, 100k written, 300k uncached.
+    const cost = calculateCost('priced-model', 1_000_000, 0, {
+      cacheReadTokens: 600_000,
+      cacheWriteTokens: 100_000,
+    });
+
+    // 0.3 × 10 + 0.6 × 1 + 0.1 × 12.5
+    expect(cost.inputCostUsd).toBeCloseTo(3 + 0.6 + 1.25);
+    expect(cost.totalCostUsd).toBeCloseTo(4.85);
+  });
+
+  it("uses the model's own published cache rates over the multipliers", () => {
+    vi.mocked(getModel).mockReturnValueOnce(
+      model({ cacheReadCostPerMillion: 0.25, cacheWriteCostPerMillion: 12.5 })
+    );
+
+    const cost = calculateCost('priced-model', 1_000_000, 0, { cacheReadTokens: 1_000_000 });
+
+    expect(cost.inputCostUsd).toBeCloseTo(0.25);
+  });
+
+  it('prices an OpenAI cache hit at the full input rate when no cache rate is published', () => {
+    // Its discount varies by model; without a published rate the safe
+    // answer is never to price under the real cost.
+    vi.mocked(getModel).mockReturnValueOnce(model({ provider: 'openai' }));
+
+    const cost = calculateCost('priced-model', 1_000_000, 0, { cacheReadTokens: 800_000 });
+
+    expect(cost.inputCostUsd).toBeCloseTo(10);
+  });
+
+  it('prices an OpenAI cache hit at its published read rate', () => {
+    vi.mocked(getModel).mockReturnValueOnce(
+      model({ provider: 'openai', inputCostPerMillion: 1.25, cacheReadCostPerMillion: 0.125 })
+    );
+
+    const cost = calculateCost('priced-model', 1_000_000, 0, { cacheReadTokens: 800_000 });
+
+    // 0.2 × 1.25 + 0.8 × 0.125
+    expect(cost.inputCostUsd).toBeCloseTo(0.35);
+  });
+
+  it('never prices more cached input than there was input', () => {
+    vi.mocked(getModel).mockReturnValueOnce(model({}));
+
+    const cost = calculateCost('priced-model', 1_000, 0, {
+      cacheReadTokens: 900,
+      cacheWriteTokens: 5_000,
+    });
+
+    // 900 read, the remaining 100 written, none uncached.
+    expect(cost.inputCostUsd).toBeCloseTo((900 * 1 + 100 * 12.5) / 1_000_000);
+  });
+
+  it('prices input as before when the call reported no cache use', () => {
+    vi.mocked(getModel).mockReturnValueOnce(model({}));
+
+    expect(calculateCost('priced-model', 1_000_000, 0).inputCostUsd).toBeCloseTo(10);
+  });
+
+  it('writes the cache counts to the cost row and prices them into inputCostUsd', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    vi.mocked(getModel).mockReturnValueOnce(model({}));
+
+    await logCost({
+      model: 'priced-model',
+      provider: 'anthropic',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheReadTokens: 1_000_000,
+      operation: 'chat',
+    });
+
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.cacheReadTokens).toBe(1_000_000);
+    expect(call.data).not.toHaveProperty('cacheWriteTokens');
+    expect(call.data.inputCostUsd).toBeCloseTo(1);
   });
 });

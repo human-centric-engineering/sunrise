@@ -188,7 +188,12 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
         data: { keywords: keywords.length > 0 ? keywords : null },
       });
 
-      const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
+      const cost = calculateCost(
+        modelId,
+        response.usage.inputTokens,
+        response.usage.outputTokens,
+        response.usage
+      );
       tokensUsed += response.usage.inputTokens + response.usage.outputTokens;
       costUsd += cost.totalCostUsd;
       chunksProcessed += 1;
@@ -198,6 +203,8 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
         provider: modelInfo.provider,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheWriteTokens: response.usage.cacheWriteTokens,
         operation: CostOperation.KNOWLEDGE_ENRICH_KEYWORDS,
         isLocal: cost.isLocal,
         metadata: { documentId, chunkId: chunk.id },

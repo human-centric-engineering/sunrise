@@ -1502,3 +1502,72 @@ describe('registerModels', () => {
     expect(after?.maxContext).toBe(32_000);
   });
 });
+
+describe('prompt-cache rates (t-909)', () => {
+  function serveOpenRouter(pricing: Record<string, string>): void {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [{ id: 'acme/cache-model', name: 'Cache model', context_length: 100_000, pricing }],
+      }),
+    });
+  }
+
+  it("reads OpenRouter's cache read and write rates per million", async () => {
+    serveOpenRouter({
+      prompt: '0.000003',
+      completion: '0.000015',
+      input_cache_read: '0.0000003',
+      input_cache_write: '0.00000375',
+    });
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('cache-model');
+    expect(model?.cacheReadCostPerMillion).toBeCloseTo(0.3);
+    expect(model?.cacheWriteCostPerMillion).toBeCloseTo(3.75);
+  });
+
+  it('leaves the cache rates off when OpenRouter publishes none, rather than reading 0', async () => {
+    // 0 would price every cache hit as free.
+    serveOpenRouter({ prompt: '0.000003', completion: '0.000015', input_cache_read: 'n/a' });
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('cache-model');
+    expect(model).toBeDefined();
+    expect(model).not.toHaveProperty('cacheReadCostPerMillion');
+    expect(model).not.toHaveProperty('cacheWriteCostPerMillion');
+  });
+
+  const matrixRow = {
+    id: 'cache-model',
+    name: 'Cache model (matrix)',
+    provider: 'acme',
+    tier: 'mid' as const,
+    outputCostPerMillion: 0,
+    maxContext: 0,
+    supportsTools: true,
+  };
+
+  it('keeps the registry cache rates when a matrix row leaves its input rate alone', async () => {
+    serveOpenRouter({ prompt: '0.000003', completion: '0.000015', input_cache_read: '0.0000003' });
+    await registry.refreshFromOpenRouter({ force: true });
+
+    registry.registerModels([{ ...matrixRow, inputCostPerMillion: 0 }]);
+
+    expect(registry.getModel('cache-model')?.cacheReadCostPerMillion).toBeCloseTo(0.3);
+  });
+
+  it('drops the registry cache rates once the matrix row owns the input rate they were set against', async () => {
+    // A model the registry had at 0 takes the row's rate; the cache rate
+    // published beside that 0 no longer describes it.
+    serveOpenRouter({ prompt: '0', completion: '0', input_cache_read: '0.0000003' });
+    await registry.refreshFromOpenRouter({ force: true });
+
+    registry.registerModels([{ ...matrixRow, inputCostPerMillion: 5 }]);
+
+    const model = registry.getModel('cache-model');
+    expect(model?.inputCostPerMillion).toBe(5);
+    expect(model).not.toHaveProperty('cacheReadCostPerMillion');
+  });
+});

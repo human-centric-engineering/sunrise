@@ -256,8 +256,12 @@ export async function executeChatTurn(
       // See the note in `llm-runner.ts`: the vendor billed this attempt.
       billedOnFailure ? billedOnFailure.inputTokens + billedOnFailure.outputTokens : 0,
       billedOnFailure
-        ? calculateCost(model, billedOnFailure.inputTokens, billedOnFailure.outputTokens)
-            .totalCostUsd
+        ? calculateCost(
+            model,
+            billedOnFailure.inputTokens,
+            billedOnFailure.outputTokens,
+            billedOnFailure
+          ).totalCostUsd
         : 0
     );
   }
@@ -270,7 +274,8 @@ export async function executeChatTurn(
   const computedCost = calculateCost(
     model,
     response.usage?.inputTokens ?? 0,
-    response.usage?.outputTokens ?? 0
+    response.usage?.outputTokens ?? 0,
+    response.usage
   );
   const totalCostUsd = computedCost.inputCostUsd + computedCost.outputCostUsd;
 
@@ -285,6 +290,8 @@ export async function executeChatTurn(
     model,
     inputTokens: response.usage?.inputTokens ?? 0,
     outputTokens: response.usage?.outputTokens ?? 0,
+    cacheReadTokens: response.usage?.cacheReadTokens,
+    cacheWriteTokens: response.usage?.cacheWriteTokens,
     metadata: {
       ...(ctx.costLogMetadata ?? {}),
       stepId: step.id,

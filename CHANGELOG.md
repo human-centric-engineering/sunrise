@@ -18,11 +18,26 @@ release process.
 
 ### Added
 
+- **Prompt caching on Claude, and cache-priced cost rows (t-909).** Every
+  Anthropic request now carries two `cache_control` breakpoints: the agent's
+  composed system prompt (with the tools ahead of it) and the last turn. No
+  configuration and no top-level automatic caching, which some gateways
+  refuse. New `LlmUsage` (`lib/orchestration/llm/types.ts`), now the type of
+  `LlmResponse.usage`, the stream's `done` chunk and `ProviderError.usage`,
+  adds `cacheReadTokens` / `cacheWriteTokens`; OpenAI's
+  `prompt_tokens_details.cached_tokens` is read too. `calculateCost` takes an
+  optional fourth argument with those counts and prices them from the new
+  `ModelInfo.cacheReadCostPerMillion` / `cacheWriteCostPerMillion` (read from
+  OpenRouter), else Anthropic's 0.1× / 1.25×, else the full input rate.
+  `LogCostParams` takes the same counts, and `AiCostLog` gains nullable
+  `cacheReadTokens` / `cacheWriteTokens` columns (migration
+  `20261026120000_cost_log_cache_tokens`). The structured-completion
+  helper's `tokenUsage` gains optional `cacheRead` / `cacheWrite`.
 - **`xhigh` and `max` reasoning effort (t-906).** `ReasoningEffort`
   (`lib/orchestration/llm/types.ts`) gains `'xhigh' | 'max'`, accepted on
   agents, every LLM step's `reasoningEffort`, the agent export bundle and the
   backup format, and offered as Extra high / Max in the admin select. The full
-  list is the new exported `REASONING_EFFORTS` (`model-heuristics.ts`).
+  list is the new exported `REASONING_EFFORTS` (`types.ts`).
   Adaptive-thinking Claude models get them as `output_config.effort`;
   budget-taking Claude models get a 32768 / 65536 thinking budget, clamped as
   before; OpenAI-compatible reasoning models get `high`
@@ -115,6 +130,14 @@ release process.
 
 ### Changed
 
+- **Claude `inputTokens` now counts cached input (t-909).** Anthropic reports
+  cache reads and writes apart from `input_tokens`; the provider now adds
+  them back in, so `LlmUsage.inputTokens` (and `AiCostLog.inputTokens`) is the
+  whole input on every provider, as it already was for OpenAI. A fork
+  computing cost from `inputTokens` itself should pass the usage as
+  `calculateCost`'s fourth argument, or it prices cache hits at the full
+  rate. Anthropic's `system` is now sent as one text block per system
+  message, which a fork's test asserting the old joined string will notice.
 - **Erasure reaches the rest of what a run keeps (t-882).** Besides a run's
   input, trace, output and error, erasure now redacts its `supervisorReport`,
   its running-step `turns`, its cached step-dispatch `result` and its

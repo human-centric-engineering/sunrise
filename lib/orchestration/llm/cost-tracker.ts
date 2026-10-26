@@ -162,8 +162,13 @@ export interface LogCostParams {
   workflowExecutionId?: string;
   model: string;
   provider: string;
+  /** Every input token, cached or not (`LlmUsage.inputTokens`). */
   inputTokens: number;
   outputTokens: number;
+  /** The subset of `inputTokens` read from the prompt cache. */
+  cacheReadTokens?: number;
+  /** The subset of `inputTokens` written to the prompt cache. */
+  cacheWriteTokens?: number;
   operation: CostOperation;
   /**
    * Audio duration in milliseconds — required when `operation` is
@@ -289,7 +294,8 @@ export {
 export function calculateCost(
   modelId: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cached: CachedInputTokens = {}
 ): ComputedCost {
   if (
     !Number.isFinite(inputTokens) ||
@@ -330,7 +336,18 @@ export function calculateCost(
     return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false, unpriced: true };
   }
 
-  const inputCostUsd = (inputTokens / 1_000_000) * model.inputCostPerMillion;
+  // The cache counts are subsets of `inputTokens`, each billed at its own
+  // rate. Clamped so a provider over-reporting one can't price more input
+  // than there was.
+  const readTokens = clampTokens(cached.cacheReadTokens, inputTokens);
+  const writeTokens = clampTokens(cached.cacheWriteTokens, inputTokens - readTokens);
+  const uncachedTokens = inputTokens - readTokens - writeTokens;
+  const rates = cacheRates(model);
+  const inputCostUsd =
+    (uncachedTokens * model.inputCostPerMillion +
+      readTokens * rates.read +
+      writeTokens * rates.write) /
+    1_000_000;
   const outputCostUsd = (outputTokens / 1_000_000) * model.outputCostPerMillion;
   return {
     inputCostUsd,
@@ -338,6 +355,46 @@ export function calculateCost(
     totalCostUsd: inputCostUsd + outputCostUsd,
     isLocal: false,
   };
+}
+
+/** The parts of a call's input billed at prompt-cache rates (`LlmUsage`). */
+export interface CachedInputTokens {
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+/**
+ * Anthropic's published cache multipliers, for a model whose pricing source
+ * gave no cache rates: reads at 0.1× input, five-minute writes at 1.25×. A few
+ * models read cheaper still (Opus 5.5 at 0.05×, Fable 5.1 at 0.025×), so for
+ * them this overstates — the safe direction for a budget cap.
+ */
+const ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1;
+const ANTHROPIC_CACHE_WRITE_MULTIPLIER = 1.25;
+
+/**
+ * Per-million rates for cache reads and writes: the model's own when its
+ * pricing source published them; Anthropic's multipliers for a Claude model
+ * without; otherwise the full input rate. OpenAI's discount varies by model
+ * (half to a tenth), so without a published rate a hit is priced as uncached
+ * input: never under the real cost.
+ */
+function cacheRates(model: ModelInfo): { read: number; write: number } {
+  const input = model.inputCostPerMillion;
+  const anthropic = model.provider === 'anthropic';
+  return {
+    read:
+      model.cacheReadCostPerMillion ??
+      (anthropic ? input * ANTHROPIC_CACHE_READ_MULTIPLIER : input),
+    write:
+      model.cacheWriteCostPerMillion ??
+      (anthropic ? input * ANTHROPIC_CACHE_WRITE_MULTIPLIER : input),
+  };
+}
+
+function clampTokens(count: number | undefined, ceiling: number): number {
+  if (count === undefined || !Number.isFinite(count) || count <= 0) return 0;
+  return Math.min(count, Math.max(ceiling, 0));
 }
 
 /**
@@ -368,7 +425,7 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
   } else if (isEmbedding) {
     cost = calculateEmbeddingCost(params.model, params.inputTokens);
   } else {
-    cost = calculateCost(params.model, params.inputTokens, params.outputTokens);
+    cost = calculateCost(params.model, params.inputTokens, params.outputTokens, params);
   }
   const isLocal = params.isLocal ?? cost.isLocal;
 
@@ -396,6 +453,8 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
     provider: params.provider,
     inputTokens: params.inputTokens,
     outputTokens: params.outputTokens,
+    ...(params.cacheReadTokens ? { cacheReadTokens: params.cacheReadTokens } : {}),
+    ...(params.cacheWriteTokens ? { cacheWriteTokens: params.cacheWriteTokens } : {}),
     inputCostUsd: cost.inputCostUsd,
     outputCostUsd: cost.outputCostUsd,
     totalCostUsd: cost.totalCostUsd,

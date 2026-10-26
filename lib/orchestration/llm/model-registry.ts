@@ -316,11 +316,24 @@ export function registerModels(infos: ModelInfo[]): void {
     const context = pickNumber('context', existing.maxContext, info.maxContext, sourced);
     // Unpriced only when the row is and it owns both rates; a registry entry
     // at 0/0 is a free model, never an unpriced one.
+    // A matrix row carries no cache rates. The registry's stay only while its
+    // input rate does: they were published against that rate, not the row's.
+    const cacheRates = input.fromDb
+      ? {}
+      : {
+          ...(existing.cacheReadCostPerMillion !== undefined
+            ? { cacheReadCostPerMillion: existing.cacheReadCostPerMillion }
+            : {}),
+          ...(existing.cacheWriteCostPerMillion !== undefined
+            ? { cacheWriteCostPerMillion: existing.cacheWriteCostPerMillion }
+            : {}),
+        };
     merged.set(
       info.id,
       settlePricingFlag(
         {
           ...info,
+          ...cacheRates,
           inputCostPerMillion: input.value,
           outputCostPerMillion: output.value,
           maxContext: context.value,
@@ -515,6 +528,8 @@ const openRouterModelSchema = z
       .object({
         prompt: z.string().optional(),
         completion: z.string().optional(),
+        input_cache_read: z.string().optional(),
+        input_cache_write: z.string().optional(),
       })
       .partial()
       .optional(),
@@ -545,6 +560,8 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
   const supportsTools = Array.isArray(entry.supported_parameters)
     ? entry.supported_parameters.includes('tools')
     : false;
+  const cacheReadCostPerMillion = perMillion(entry.pricing?.input_cache_read);
+  const cacheWriteCostPerMillion = perMillion(entry.pricing?.input_cache_write);
 
   return {
     id: canonicalId,
@@ -553,9 +570,23 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
     tier: classifyTier(inputCostPerMillion),
     inputCostPerMillion,
     outputCostPerMillion,
+    ...(cacheReadCostPerMillion !== undefined ? { cacheReadCostPerMillion } : {}),
+    ...(cacheWriteCostPerMillion !== undefined ? { cacheWriteCostPerMillion } : {}),
     maxContext: entry.context_length ?? 0,
     supportsTools,
   };
+}
+
+/**
+ * An OpenRouter per-token price string as USD per million, or `undefined`
+ * when absent or not a non-negative number. Unlike the prompt / completion
+ * rates, a missing cache rate is not read as 0: 0 would price every cache
+ * hit as free.
+ */
+function perMillion(perToken: string | undefined): number | undefined {
+  if (perToken === undefined) return undefined;
+  const value = parseFloat(perToken);
+  return Number.isFinite(value) && value >= 0 ? value * 1_000_000 : undefined;
 }
 
 /**

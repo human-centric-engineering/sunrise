@@ -19,6 +19,7 @@ import type {
   LlmMessage,
   LlmOptions,
   LlmResponse,
+  LlmUsage,
   ModelInfo,
   StreamChunk,
   TranscribeAudio,
@@ -222,7 +223,7 @@ export class ProviderError extends Error {
    * Absent for errors raised before the model produced anything (bad schema,
    * auth, connection), and absent when the provider reported no usage.
    */
-  public readonly usage?: { inputTokens: number; outputTokens: number };
+  public readonly usage?: LlmUsage;
 
   constructor(
     message: string,
@@ -231,7 +232,7 @@ export class ProviderError extends Error {
       status?: number;
       retriable?: boolean;
       cause?: unknown;
-      usage?: { inputTokens: number; outputTokens: number };
+      usage?: LlmUsage;
     } = {}
   ) {
     super(message);
@@ -373,7 +374,7 @@ export function toProviderError(err: unknown, fallbackMessage: string): Provider
 export function toProviderErrorWithUsage(
   err: unknown,
   fallbackMessage: string,
-  usage: { inputTokens: number; outputTokens: number }
+  usage: LlmUsage
 ): ProviderError {
   const base = toProviderError(err, fallbackMessage);
   if (base.usage || (usage.inputTokens <= 0 && usage.outputTokens <= 0)) return base;

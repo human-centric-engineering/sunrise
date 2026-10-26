@@ -224,7 +224,9 @@ export async function runLlmCall(
           err,
           !isRequestFault(err),
           billed ? billed.inputTokens + billed.outputTokens : 0,
-          billed ? calculateCost(modelId, billed.inputTokens, billed.outputTokens).totalCostUsd : 0
+          billed
+            ? calculateCost(modelId, billed.inputTokens, billed.outputTokens, billed).totalCostUsd
+            : 0
         );
       }
       const callDurationMs = Date.now() - callStarted;
@@ -249,7 +251,12 @@ export async function runLlmCall(
         ...(params.source ? { source: params.source } : {}),
       });
 
-      const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
+      const cost = calculateCost(
+        modelId,
+        response.usage.inputTokens,
+        response.usage.outputTokens,
+        response.usage
+      );
 
       const totalTokens = response.usage.inputTokens + response.usage.outputTokens;
       setSpanAttributes(span, {
@@ -269,6 +276,8 @@ export async function runLlmCall(
         provider: modelInfo.provider,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheWriteTokens: response.usage.cacheWriteTokens,
         operation: CostOperation.CHAT,
         isLocal: cost.isLocal,
         traceId: span.traceId(),

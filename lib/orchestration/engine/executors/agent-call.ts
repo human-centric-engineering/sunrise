@@ -212,8 +212,12 @@ async function runSingleTurn(
               (billedOnFailure ? billedOnFailure.inputTokens + billedOnFailure.outputTokens : 0),
             totalCostUsd +
               (billedOnFailure
-                ? calculateCost(model, billedOnFailure.inputTokens, billedOnFailure.outputTokens)
-                    .totalCostUsd
+                ? calculateCost(
+                    model,
+                    billedOnFailure.inputTokens,
+                    billedOnFailure.outputTokens,
+                    billedOnFailure
+                  ).totalCostUsd
                 : 0)
           );
         }
@@ -239,7 +243,8 @@ async function runSingleTurn(
         const turnCost = calculateCost(
           model,
           response.usage.inputTokens,
-          response.usage.outputTokens
+          response.usage.outputTokens,
+          response.usage
         );
 
         totalTokensUsed += turnTokens;
@@ -261,6 +266,8 @@ async function runSingleTurn(
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
           operation: CostOperation.CHAT,
           isLocal: turnCost.isLocal,
           traceId: span.traceId(),

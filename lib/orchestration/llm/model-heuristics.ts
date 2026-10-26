@@ -27,6 +27,7 @@ import type {
 } from '@/types/orchestration';
 
 import type { Capability } from '@/lib/orchestration/llm/capability-inference';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import type { ParamProfile, ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 /**
@@ -580,19 +581,6 @@ export function openAiReasoningEffort(
 export function narrowReasoningEffort(raw: string | null | undefined): ReasoningEffort | undefined {
   return REASONING_EFFORTS.find((effort) => effort === raw);
 }
-
-/**
- * Every {@link ReasoningEffort} value, lowest first. The validation schemas,
- * backup format and admin select are built from this list.
- */
-export const REASONING_EFFORTS = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-] as const satisfies readonly ReasoningEffort[];
 
 /**
  * Map a {@link ReasoningEffort} value to Anthropic's `thinking.budget_tokens`.

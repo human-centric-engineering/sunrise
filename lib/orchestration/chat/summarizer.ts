@@ -301,6 +301,8 @@ export async function summarizeMessages(
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
           operation: CostOperation.CHAT,
           // Caller keys first, this module's own facts last — the precedence
           // rule every cost sink in the engine follows (#600). A caller must
@@ -328,7 +330,12 @@ export async function summarizeMessages(
         // messages it does not describe.
         const generated = response.content.trim();
         const summary = generated || options.previousSummary || FALLBACK_MESSAGE;
-        const cost = calculateCost(model, response.usage.inputTokens, response.usage.outputTokens);
+        const cost = calculateCost(
+          model,
+          response.usage.inputTokens,
+          response.usage.outputTokens,
+          response.usage
+        );
         return {
           summary,
           fellBack: generated.length === 0,

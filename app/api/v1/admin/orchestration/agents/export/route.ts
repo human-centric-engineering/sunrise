@@ -31,7 +31,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
-import { REASONING_EFFORTS } from '@/lib/orchestration/llm/model-heuristics';
+import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
   exportAgentsSchema,
   systemInstructionsHistorySchema,
