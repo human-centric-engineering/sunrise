@@ -124,10 +124,15 @@ export default defineConfig({
     // it, which is what made the noise so hard to attribute (#597).
     //
     // Nothing in the suite asserts on a fetched script, so turning it off
-    // removes the network entirely. Stylesheets, iframes and images are off
-    // by default since happy-dom 21 (`enableCSSFileLoading`,
-    // `enableIframePageLoading`, `enableImageFileLoading`), so they need no
-    // flag here.
+    // removes the network entirely. Stylesheets and iframes have been off by
+    // default since happy-dom 21 (`enableCSSFileLoading`,
+    // `enableIframePageLoading`), and images were already
+    // (`enableImageFileLoading`), so none of them needs a flag here.
+    //
+    // `handleDisabledFileLoadingAsSuccess` makes a blocked `<script>` or
+    // `<link rel=stylesheet>` fire `load` instead of `error`. It does not
+    // cover iframes: a happy-dom test rendering `<iframe src>` gets an
+    // `error` event and a logged NotSupportedError.
     environmentOptions: {
       happyDOM: {
         settings: {
