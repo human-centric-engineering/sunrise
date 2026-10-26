@@ -31,7 +31,7 @@
  */
 
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
+import { Prisma, type AiWorkflowExecution } from '@prisma/client';
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -127,6 +127,43 @@ function summaryOf(report: SupervisorReport | Prisma.JsonValue): string {
     typeof report.summary === 'string'
     ? report.summary
     : '[erased]';
+}
+
+/**
+ * The new report with the run's stored verdict archived into
+ * `previousVerdicts[]` — operators rerun for a reason; overwriting silently
+ * would discard the history they want to compare against. The prior column
+ * shape is validated so a corrupted Json row can't break the archive lift; on
+ * parse failure the archive is logged and skipped rather than failing the
+ * rerun (the new verdict still writes through cleanly).
+ */
+function withPriorArchived(
+  report: SupervisorReport,
+  stored: Pick<
+    AiWorkflowExecution,
+    'supervisorVerdict' | 'supervisorReport' | 'supervisorReviewedAt'
+  > | null,
+  executionId: string
+): SupervisorReport {
+  const finalReport: SupervisorReport = { ...report };
+  if (!stored?.supervisorVerdict || !stored.supervisorReport) return finalReport;
+  const priorParsed = priorSupervisorReportSchema.safeParse(stored.supervisorReport);
+  if (!priorParsed.success) {
+    logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
+      executionId,
+      issues: priorParsed.error.issues.map((i) => i.message),
+    });
+    return finalReport;
+  }
+  const prior = priorParsed.data;
+  const priorEntry: SupervisorPreviousVerdict = {
+    verdict: prior.verdict,
+    score: typeof prior.score === 'number' ? prior.score : null,
+    reviewedAt: stored.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
+    triggeredBy: prior.triggeredBy ?? 'in_workflow',
+  };
+  finalReport.previousVerdicts = [...(prior.previousVerdicts ?? []), priorEntry];
+  return finalReport;
 }
 
 export const POST = withAdminAuth<{ id: string }>(
@@ -308,33 +345,6 @@ export const POST = withAdminAuth<{ id: string }>(
       throw err;
     }
 
-    // Archive any prior verdict into supervisorReport.previousVerdicts[] —
-    // operators rerun for a reason; overwriting silently would discard the
-    // history they want to compare against. Validate the prior column
-    // shape so a corrupted Json row can't break the archive lift; on
-    // parse failure we log and skip the archive rather than fail the
-    // rerun (the new verdict still writes through cleanly).
-    const finalReport: SupervisorReport = { ...assessment.report };
-    if (execution.supervisorVerdict && execution.supervisorReport) {
-      const priorParsed = priorSupervisorReportSchema.safeParse(execution.supervisorReport);
-      if (priorParsed.success) {
-        const prior = priorParsed.data;
-        const priorEntry: SupervisorPreviousVerdict = {
-          verdict: prior.verdict,
-          score: typeof prior.score === 'number' ? prior.score : null,
-          reviewedAt: execution.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
-          triggeredBy: prior.triggeredBy ?? 'in_workflow',
-        };
-        const existing = prior.previousVerdicts ?? [];
-        finalReport.previousVerdicts = [...existing, priorEntry];
-      } else {
-        logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
-          executionId: id,
-          issues: priorParsed.error.issues.map((i) => i.message),
-        });
-      }
-    }
-
     // Written under the run's row lock (§122 t-901), with anyone erased since
     // the read above taken out of the report: the model call between the two
     // can take long enough for an erasure to land, and the report quotes the
@@ -346,6 +356,15 @@ export const POST = withAdminAuth<{ id: string }>(
     // Confined as the read above was, so the owner layer sees a write it can
     // check: the row it returns is one this caller may read.
     const report = await withRunRowLocked(id, async (tx) => {
+      // The prior verdict is read here, under the lock, not taken from the
+      // read above: a second review of the run that overlapped this one may
+      // have written since, and archiving the older copy would drop its
+      // verdict from the history (t-925).
+      const prior = await tx.aiWorkflowExecution.findUnique({
+        where: { id },
+        select: { supervisorVerdict: true, supervisorReport: true, supervisorReviewedAt: true },
+      });
+      const finalReport = withPriorArchived(assessment.report, prior, id);
       const erased = await findErasedSinceCopy(tx, takenAt, [finalReport]);
       const stored = erased ? redactErased(toReportJson(finalReport), erased) : finalReport;
       await tx.aiWorkflowExecution.update({
@@ -364,15 +383,15 @@ export const POST = withAdminAuth<{ id: string }>(
 
     log.info('Retroactive supervisor review completed', {
       executionId: id,
-      verdict: finalReport.verdict,
-      score: finalReport.score,
+      verdict: assessment.report.verdict,
+      score: assessment.report.score,
       tokensUsed: assessment.tokensUsed,
       costUsd: assessment.costUsd,
     });
 
     return successResponse({
-      verdict: finalReport.verdict,
-      score: finalReport.score,
+      verdict: assessment.report.verdict,
+      score: assessment.report.score,
       summary,
       report,
       tokensUsed: assessment.tokensUsed,

@@ -337,6 +337,77 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     });
   });
 
+  it('archives the verdict stored at write time, not the one it read, when a review overlapped (t-925)', async () => {
+    // Two admins review at once. Both read V0; the other review writes VA
+    // (archiving V0) during this one's model call. This write must archive
+    // VA as well, or VA is lost from the history.
+    const v0 = {
+      verdict: 'concerns',
+      score: 0.4,
+      summary: 'original',
+      strengths: [],
+      weaknesses: [],
+      anomalies: [],
+      unverifiedAreas: [],
+      confidence: 'medium',
+      triggeredBy: 'in_workflow',
+    };
+    const v0Archived = {
+      verdict: 'concerns',
+      score: 0.4,
+      reviewedAt: '2026-05-16T10:00:00.000Z',
+      triggeredBy: 'in_workflow',
+    };
+    const readAtStart = {
+      ...happyExecution(),
+      supervisorVerdict: 'concerns',
+      supervisorScore: 0.4,
+      supervisorReviewedAt: new Date(v0Archived.reviewedAt),
+      supervisorReport: v0,
+    };
+    const storedAtWrite = {
+      supervisorVerdict: 'fail',
+      supervisorScore: 0.2,
+      supervisorReviewedAt: new Date('2026-05-17T12:00:00.000Z'),
+      supervisorReport: {
+        ...v0,
+        verdict: 'fail',
+        score: 0.2,
+        summary: 'the other review',
+        triggeredBy: 'retroactive',
+        previousVerdicts: [v0Archived],
+      },
+    };
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(readAtStart as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    // Inside the lock the run reads as the other review left it.
+    const lockedRead = vi.fn().mockResolvedValue(storedAtWrite);
+    vi.mocked(withRunRowLocked).mockImplementationOnce((_id, fn) =>
+      fn({
+        aiWorkflowExecution: {
+          findUnique: lockedRead,
+          update: prisma.aiWorkflowExecution.update,
+        },
+      } as never)
+    );
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(lockedRead).toHaveBeenCalledWith(expect.objectContaining({ where: { id: EXEC_ID } }));
+    const written = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0].data
+      .supervisorReport as { previousVerdicts: unknown[] };
+    expect(written.previousVerdicts).toEqual([
+      v0Archived,
+      {
+        verdict: 'fail',
+        score: 0.2,
+        reviewedAt: '2026-05-17T12:00:00.000Z',
+        triggeredBy: 'retroactive',
+      },
+    ]);
+  });
+
   it('returns 400 on an invalid CUID id', async () => {
     const req = new NextRequest(
       'http://localhost:3000/api/v1/admin/orchestration/executions/not-a-cuid/review',
