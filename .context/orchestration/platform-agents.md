@@ -126,8 +126,10 @@ accepted and then quietly undone
   A change to provider or model sets `bindingOwner: 'org'`. On an agent whose
   definition picks its binding, the body's `bindingOwner` hands the binding
   back (`'platform'`) or takes it as it stands (`'org'`). A hand-back that
-  also changes provider or model is refused with 400. The agent form has no
-  control for this yet, so a hand-back goes through the API.
+  also changes provider or model is refused with 400. The agent form shows
+  who decides on such an agent and offers the hand-back ("Let the platform
+  choose", t-818). `GET /agents/:id` says which agents those are, in
+  `platformAgent.picksOwnBinding`.
 - **The binding routes** refuse attach, detach, and switching a binding on
   or off (`isEnabled`): the reconcile writes both the set and the state back.
   A binding's `customConfig` and `customRateLimit` stay writable, because
@@ -138,8 +140,15 @@ accepted and then quietly undone
   agent's widget config is the platform's.
 - **Version restore** brings back only the org's fields and leaves the
   grants as they are. The Versions tab's confirm dialog says so and names
-  the fields. A restore that brings back a different provider or model sets
-  `bindingOwner: 'org'`, as a PATCH does.
+  the fields. While the platform owns the binding (`bindingOwner:
+'platform'`), a restore leaves provider and model as they are too (owner
+  ruling 2026-10-26, t-821). They move on their own, so almost every older
+  version holds another pair, and restoring one would freeze the agent on an
+  old pick, or be refused outright if that pick's provider has since been
+  revoked. The provider the restore leaves alone is not one it asks approval
+  for. An admin who wants an old pair sets it on the form. Once the org owns
+  the binding, a restore brings provider and model back, and keeps the
+  binding the org's.
 - **Delete, bulk actions and the instructions revert** refuse system agents,
   as they always have. **Clone** is allowed: the copy is the org's own agent.
 

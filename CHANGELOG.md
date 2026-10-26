@@ -155,6 +155,16 @@ release process.
   records its answer rather than acting on it. The defaults are unchanged:
   every call-time path still fails closed.
 
+- **The agent form shows who picks a platform agent's provider and model,
+  and can hand them back (t-818).** `GET /agents/:id`'s `platformAgent` gains
+  `picksOwnBinding`, which is true on an agent whose definition picks its own
+  binding (the clean-up assistant in core). On such an agent, the Model tab
+  says whether the platform or the org decides its provider and model. Once
+  the org owns them, "Let the platform choose" sends
+  `PATCH { bindingOwner: 'platform' }` and reloads the agent onto the
+  platform's pick. The control is disabled while the form has unsaved
+  changes.
+
 ### Changed
 
 - **Claude `inputTokens` now counts cached input (t-909).** Anthropic reports
@@ -302,6 +312,17 @@ release process.
   one-argument `defaultBinding` still type-checks and works.
   **Forks:** if you implement one, read rows from `catalogue`, and use the
   seams' "could not ask" forms (see Added).
+
+- **Version restore leaves a platform-owned provider and model alone
+  (t-821).** While the platform owns a platform agent's binding
+  (`bindingOwner: 'platform'`), `POST /agents/:id/versions/:versionId/restore`
+  no longer brings back the snapshot's provider and model, and doesn't check
+  them against the org's approved providers. Before, restoring any org
+  setting, such as the budget, also froze the agent on an older pick and made
+  the binding the org's. If that pick's provider had since been revoked, the
+  whole restore was refused. Once the org owns the binding, a restore brings
+  provider and model back as before. The Versions tab's confirm dialog says
+  which fields come back in each case.
 
 ### Fixed
 
