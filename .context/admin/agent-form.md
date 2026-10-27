@@ -134,8 +134,8 @@ When set on a thinking-capable Anthropic model, the provider class also strips t
 
 `<WebSearchFields>` (`components/admin/orchestration/web-search-fields.tsx`), under the model parameters and not shared with the `llm_call` editor: a step has no web search setting. It writes `AiAgent.providerTools` (null = off).
 
-- **Web search** — switch; on stores `{ webSearch: {} }`. Claude 3.5 and later, and OpenAI models from gpt-4o on (not gpt-4.1-nano) when the provider is OpenAI itself ([Responses API path](../orchestration/llm-providers.md#responses-api-path-openai-web-search)). The ⓘ says each search costs $0.01, and that on Anthropic an organisation admin has to turn it on in the Console.
-- **Most searches per reply** — number 1–20, empty = the provider's own limit (`maxUses`). The ⓘ says that on OpenAI it caps each step of a reply instead, so a reply that calls tools can run past it.
+- **Web search** — switch; on stores `{ webSearch: {} }`. Claude 3.5 and later, and OpenAI models from gpt-4o on (not gpt-4.1-nano, o1 or o3-mini) when the provider is OpenAI itself ([Responses API path](../orchestration/llm-providers.md#responses-api-path-openai-web-search)). The ⓘ says each search costs $0.01, that on Anthropic an organisation admin has to turn it on in the Console, and that OpenAI doesn't search at Minimal reasoning effort or when the agent asks for structured output.
+- **Most searches per reply** — number 1–20, empty = the provider's own limit (`maxUses`). The ⓘ says that on OpenAI it caps each step of a reply instead, so a reply that calls tools can run past it, and that opening a page found counts toward it there.
 - **Sites** — _Any site_ / _Only these sites_ (`allowedDomains`) / _Any site except these_ (`blockedDomains`), with a one-domain-per-line box for the last two. The mode and the box keep what was picked and typed; a value replaced from outside (a reset or restore) resets both. The ⓘ says OpenAI covers a path entry's whole host, and that gpt-4o-mini and gpt-4.1-mini don't search with a list set.
 
 ### Max history tokens

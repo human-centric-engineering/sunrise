@@ -104,9 +104,13 @@ export function WebSearchFields({
             </p>
             <p className="mt-2">
               Works on Claude models (3.5 and later), and on OpenAI models from gpt-4o on (not
-              gpt-4.1-nano) when the provider is OpenAI itself. Other providers and models ignore
-              it. On Anthropic, an admin of your Anthropic organisation has to turn web search on in
-              the Anthropic Console first, or requests from this agent will fail.
+              gpt-4.1-nano, o1 or o3-mini) when the provider is OpenAI itself. Other providers and
+              models ignore it. On Anthropic, an admin of your Anthropic organisation has to turn
+              web search on in the Anthropic Console first, or requests from this agent will fail.
+            </p>
+            <p className="mt-2">
+              OpenAI doesn&rsquo;t search at Minimal reasoning effort, or when the agent asks for
+              structured output.
             </p>
           </FieldHelp>
         </Label>
@@ -140,7 +144,8 @@ export function WebSearchFields({
                 <p className="mt-2">
                   On OpenAI, the limit applies to each step instead. The step after a tool call
                   usually searches again to cite its sources, and stopping it loses what the earlier
-                  searches found. So a reply that calls tools can run past the limit.
+                  searches found. So a reply that calls tools can run past the limit. Opening a page
+                  it found, or searching within one, counts toward the limit too.
                 </p>
               </FieldHelp>
             </Label>
