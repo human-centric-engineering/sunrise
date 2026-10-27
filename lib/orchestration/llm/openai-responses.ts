@@ -430,7 +430,7 @@ function usageOf(response: Response, webSearchRequests: number): LlmUsage {
   return {
     inputTokens: usage?.input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
-    ...(reasoningTokens ? { reasoningTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cacheReadTokens ? { cacheReadTokens } : {}),
     ...(response.service_tier === 'flex' || response.service_tier === 'priority'
       ? { serviceTier: response.service_tier }

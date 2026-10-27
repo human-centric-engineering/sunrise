@@ -18,6 +18,27 @@ release process.
 
 ### Added
 
+- **OpenAI's web search on agents, through the Responses API (t-955).** An
+  agent with `providerTools.webSearch` on OpenAI itself (`api.openai.com`)
+  now searches. The request goes through the Responses API
+  (`lib/orchestration/llm/openai-responses.ts`) when the model offers web
+  search (new `acceptsOpenAiWebSearch()`, plus `acceptsOpenAiWebSearchFilters()`
+  when a site list is set) and isn't structured output or at `minimal`
+  effort. Every other OpenAI-compatible request stays on Chat Completions
+  unchanged. The path is stateless (`store: false`). `LlmReasoningBlock`
+  gains `openai_reasoning` and `openai_web_search_call` variants, which a
+  tool loop replays and the `agent_call` checkpoint keeps; the Anthropic
+  adapter leaves them out. Reasoning summaries stream as `reasoning` chunks,
+  and an unverified OpenAI organisation's refusal is retried without them.
+  On OpenAI a site with a path is sent as its host. The search limit caps
+  each call, not the reply: `spendWebSearches()` now keeps the agent's whole
+  limit on the new `WebSearchOptions.replyLimit`. Searches cost $0.01 each and
+  show in the trace, as on Anthropic. `stopSequences` is dropped on this
+  path. **Forks:** a fork `LlmProvider` or consumer that switches on
+  `LlmReasoningBlock.type` meets two more variants. A fork that persists a
+  continuing `agent_call` turn must keep them, or a resumed OpenAI step
+  starts again.
+
 - **Anthropic's web search on agents (t-912).** New `LlmOptions.providerTools`
   (`ProviderTools`, `WebSearchOptions` in `lib/orchestration/llm/types.ts`)
   sends Anthropic's `web_search` server tool, with a search limit and allowed
@@ -54,8 +75,8 @@ release process.
   models now send `thinking.display: 'summarized'`, since they default to
   `'omitted'`), and the `reasoning_content` / `reasoning` deltas some
   OpenAI-compatible providers (DeepSeek, OpenRouter, vLLM) put on Chat
-  Completions. OpenAI's own summaries need the Responses API and are not
-  included. `ChatEvent` gains `{ type: 'reasoning'; delta }`, sent only when
+  Completions. OpenAI's own summaries need the Responses API, so they come
+  only on its web search path (t-955). `ChatEvent` gains `{ type: 'reasoning'; delta }`, sent only when
   the request sets `includeTrace`, so consumer and embed streams don't carry
   it. `MessageMetadata.reasoningSummary` stores the text on every assistant
   message that had some. The admin chat and the conversation trace viewer
