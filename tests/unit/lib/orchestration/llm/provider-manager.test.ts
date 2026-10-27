@@ -525,6 +525,27 @@ describe('getProviderWithFallbacks', () => {
     );
   });
 
+  it('asks for each slug once, the primary first, however often the list repeats it (t-954)', async () => {
+    // Nothing resolves, so every distinct candidate is looked up exactly once.
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    await expect(
+      getProviderWithFallbacks('dup-primary', ['dup-primary', 'dup-b', 'dup-b'])
+    ).rejects.toMatchObject({ code: 'all_providers_exhausted' });
+
+    // One lookup per distinct slug (by slug, then by name), the primary first.
+    const looked = vi
+      .mocked(prisma.aiProviderConfig.findFirst)
+      .mock.calls.map(([args]) => JSON.stringify(args))
+      .filter((args) => args.includes('dup-'));
+    expect(looked).toEqual([
+      '{"where":{"slug":"dup-primary"}}',
+      '{"where":{"name":"dup-primary"}}',
+      '{"where":{"slug":"dup-b"}}',
+      '{"where":{"name":"dup-b"}}',
+    ]);
+  });
+
   it('skips a provider whose circuit breaker is open and throws all_providers_exhausted when no candidates remain', async () => {
     // Arrange: trip the circuit breaker on primary by recording enough failures
     const breaker = getBreaker('cb-primary', {

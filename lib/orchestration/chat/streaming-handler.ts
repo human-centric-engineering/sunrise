@@ -1441,7 +1441,8 @@ export class StreamingChatHandler {
       // Remaining fallback providers for mid-stream retry
       const remainingFallbacks = [...resolvedFallbackProviders];
       // Slugs this turn has already streamed through, so failover never
-      // retries one (the first may also be in the fallback list).
+      // retries one (the first is in the fallback list whenever
+      // getProviderWithFallbacks had to choose a fallback).
       const triedSlugs = new Set<string>([usedSlug]);
       let currentProvider = provider;
       // A provider slug is the stable identifier of a configured LLM provider

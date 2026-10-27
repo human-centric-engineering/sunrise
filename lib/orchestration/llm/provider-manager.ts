@@ -715,7 +715,10 @@ export async function getProviderWithFallbacks(
    */
   breakerKey?: string;
 }> {
-  const candidates = [primarySlug, ...fallbackSlugs];
+  // Each slug once, the primary first (t-954): a repeat would only be
+  // skipped again for the reason it was skipped the first time. The resolver
+  // already drops them; this covers a binding built anywhere else.
+  const candidates = [...new Set([primarySlug, ...fallbackSlugs])];
   let capRefusal: SpendCapExceededError | null = null;
 
   for (const [index, slug] of candidates.entries()) {

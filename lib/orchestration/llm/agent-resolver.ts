@@ -91,18 +91,20 @@ export class NoEligibleProviderError extends ProviderError {
 }
 
 /**
- * An agent's explicit fallbacks without its primary (t-954). The list can name
- * the primary: the reconcile moves a platform-picked primary without touching
- * the org's fallbacks (t-798), and an agent on inherit has its primary chosen
- * per turn, possibly from that list. Left in, a failing primary would be
- * "fallen back" to itself, since the call tries `[primary, ...fallbacks]` in
- * order. Order is otherwise kept.
+ * An agent's explicit fallbacks without its primary's slug or any repeat
+ * (t-954), first occurrence kept. The list can name the primary: the reconcile
+ * moves a platform-picked primary without touching the org's fallbacks
+ * (t-798), and an agent on inherit has its primary chosen per turn, possibly
+ * from that list. Left in, the binding lists a provider as its own fallback,
+ * a fork's eligibility rule is asked about it as one, and the call probes it
+ * twice. An entry naming the primary by its display name rather than its slug
+ * is not recognised here; `getProviderWithFallbacks` skips only exact repeats.
  */
 function withoutPrimary(
   fallbacks: readonly string[] | null | undefined,
   primary: string
 ): string[] {
-  return (fallbacks ?? []).filter((slug) => slug !== primary);
+  return [...new Set(fallbacks ?? [])].filter((slug) => slug !== primary);
 }
 
 /**

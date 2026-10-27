@@ -260,6 +260,50 @@ describe('resolveAgentProviderAndModel', () => {
       expect(result.fallbacks).toEqual(['custom-fallback']);
     });
 
+    it('drops a repeat among the fallbacks, keeping the first (t-954)', async () => {
+      const result = await resolveAgentProviderAndModel(
+        makeAgent({
+          provider: 'openai',
+          model: 'gpt-4.1',
+          fallbackProviders: ['mistral', 'anthropic', 'mistral'],
+        }),
+        'chat'
+      );
+
+      expect(result.fallbacks).toEqual(['mistral', 'anthropic']);
+    });
+
+    it('never asks an eligibility rule about the primary as one of its own fallbacks (t-954)', async () => {
+      // The rule's input, not just the binding's output: a rule that counts,
+      // flags or appends the primary must not find it in an explicit list.
+      const asked: Array<{ candidates: readonly string[]; source: string }> = [];
+      registerProviderEligibility((candidates, context) => {
+        asked.push({ candidates: [...candidates], source: context.source });
+        return candidates;
+      });
+      setProviders([makeProviderRow({ slug: 'anthropic' })]);
+
+      // Fully bound (the early return), then on inherit (the fill path).
+      await resolveAgentProviderAndModel(
+        makeAgent({
+          provider: 'openai',
+          model: 'gpt-4.1',
+          fallbackProviders: ['openai', 'mistral'],
+        }),
+        'chat'
+      );
+      await resolveAgentProviderAndModel(
+        makeAgent({ fallbackProviders: ['anthropic', 'mistral'] }),
+        'chat'
+      );
+
+      const explicitAsks = asked.filter((a) => a.source === 'explicit');
+      expect(explicitAsks).toEqual([
+        { candidates: ['mistral'], source: 'explicit' },
+        { candidates: ['mistral'], source: 'explicit' },
+      ]);
+    });
+
     it('keeps a list that named only the primary explicit and empty, not the system fill (t-954)', async () => {
       setProviders([
         makeProviderRow({ slug: 'anthropic' }),

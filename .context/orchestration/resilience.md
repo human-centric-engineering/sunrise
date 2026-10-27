@@ -69,7 +69,7 @@ Public getters on `CircuitBreaker`: `failureCount` (prunes window first), `curre
 
 A call the provider eligibility rule refuses (`ProviderCallRefusedError`, code `provider_not_permitted`) is a request fault, not a provider failure: chat does not fail over from it and no breaker records it. See [`llm-providers.md` → The call-time gate](./llm-providers.md#the-call-time-gate).
 
-Configure via `AiAgent.fallbackProviders` (Prisma `String[]`, max 5 entries, Zod-validated). `resolveAgentProviderAndModel` drops the agent's own primary from that list, wherever the primary came from (t-954): the reconcile can move a platform-picked primary onto a listed fallback, and an inherited primary can be one, and a failing primary would otherwise be retried as its own fallback. A list that named only the primary stays an empty explicit list; it does not become the system fill.
+Configure via `AiAgent.fallbackProviders` (Prisma `String[]`, max 5 entries, Zod-validated). `resolveAgentProviderAndModel` drops the agent's own primary's slug, and any repeat, from that list, wherever the primary came from (t-954): the reconcile can move a platform-picked primary onto a listed fallback, and an inherited primary can be one. A list that named only the primary stays an empty explicit list; it does not become the system fill. `getProviderWithFallbacks` also tries each slug once, for a binding built elsewhere. An entry naming the primary by display name rather than slug is not recognised.
 
 ## Budget Enforcement
 
