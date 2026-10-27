@@ -845,6 +845,54 @@ describe('a streamed code execution response', () => {
     expect(filesDeleteMock).toHaveBeenCalledTimes(1);
   });
 
+  it('times a run the previous call left waiting from the start of this one', async () => {
+    // Asked for beside a client tool, the run's call came last time; only its
+    // result arrives here.
+    const chunks = await run(
+      [
+        {
+          event: {
+            type: 'message_start',
+            message: { usage: { input_tokens: 10, output_tokens: 0 } },
+          },
+        },
+        {
+          advance: 2_500,
+          event: { type: 'content_block_start', index: 0, content_block: bashResult },
+        },
+        { event: { type: 'content_block_stop', index: 0 } },
+        {
+          event: {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn', container },
+            usage: { output_tokens: 3 },
+          },
+        },
+      ],
+      [
+        ...ask,
+        {
+          role: 'assistant',
+          content: '',
+          reasoning: [
+            {
+              type: 'server_tool_use',
+              id: 'srvtoolu_1',
+              name: 'bash_code_execution',
+              input: { command: 'python chart.py' },
+            },
+          ],
+          toolCalls: [{ id: 'toolu_1', name: 'lookup', arguments: {} }],
+        },
+        { role: 'tool', toolCallId: 'toolu_1', content: 'ok' },
+      ]
+    );
+
+    const done = chunks.at(-1);
+    if (done?.type !== 'done') throw new Error('no done chunk');
+    expect(done.reasoning?.[0]).toEqual(expect.objectContaining({ durationMs: 2500 }));
+  });
+
   it('carries a paused stream on in the container it started in', async () => {
     const sent: Record<string, any>[] = [];
     const segments = [

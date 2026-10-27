@@ -406,6 +406,9 @@ export class AnthropicProvider implements LlmProvider {
 
     for (let pauses = 0; ; pauses++) {
       let stream: Stream<RawMessageStreamEvent>;
+      // A run the previous call asked for beside a client tool waits for this
+      // request, and starts when it does.
+      const segmentStarted = Date.now();
       try {
         stream = await this.client.messages.create(params, buildRequestOptions(options));
       } catch (err) {
@@ -485,12 +488,12 @@ export class AnthropicProvider implements LlmProvider {
               ) {
                 // The container comes on the message, after the results:
                 // filled in once the segment ends.
-                const started = runStarts.get(block.tool_use_id);
+                const started = runStarts.get(block.tool_use_id) ?? segmentStarted;
                 reasoningBlocks.set(
                   event.index,
                   toCodeExecutionResultBlock(block, {
                     containerId: '',
-                    durationMs: started === undefined ? 0 : Date.now() - started,
+                    durationMs: Date.now() - started,
                   })
                 );
               } else if (block.type === 'text') {
