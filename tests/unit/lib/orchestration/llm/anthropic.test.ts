@@ -4296,6 +4296,34 @@ describe('AnthropicProvider — web search (t-912)', () => {
       expect(response.finishReason).toBe('stop');
     });
 
+    it('bills a failed continuation for the segment before it', async () => {
+      const sent = respondInTurn(
+        () => ({
+          content: [searchUse, searchResult],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 4,
+            server_tool_use: { web_search_requests: 1 },
+          },
+          model: 'claude-sonnet-4-6',
+          stop_reason: 'pause_turn',
+        }),
+        () => {
+          throw Object.assign(new Error('bad request'), { status: 400 });
+        }
+      );
+
+      await expect(
+        makeProvider().chat([{ role: 'user', content: 'x' }], {
+          model: 'claude-sonnet-4-6',
+          providerTools: { webSearch: {} },
+        })
+      ).rejects.toMatchObject({
+        usage: { inputTokens: 10, outputTokens: 4, webSearchRequests: 1 },
+      });
+      expect(sent).toHaveLength(2);
+    });
+
     it('extends the one continuation message on a second pause, and stops after three', async () => {
       const sent = respondInTurn(() => ({
         content: [{ type: 'text', text: 'more ' }],

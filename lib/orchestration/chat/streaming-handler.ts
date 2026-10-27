@@ -88,6 +88,7 @@ import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import type { CapabilityResult } from '@/lib/orchestration/capabilities/types';
 import { extractCitations } from '@/lib/orchestration/chat/citations';
+import { providerToolTraces } from '@/lib/orchestration/chat/provider-tool-traces';
 import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 import {
@@ -1702,6 +1703,7 @@ export class StreamingChatHandler {
                     cacheReadTokens: errUsage.cacheReadTokens,
                     cacheWriteTokens: errUsage.cacheWriteTokens,
                     serviceTier: errUsage.serviceTier,
+                    webSearchRequests: errUsage.webSearchRequests,
                     operation: CostOperation.CHAT,
                     // Read off the span directly: `llmTraceId`/`llmSpanId` are
                     // only assigned on the success path below, so they are
@@ -1920,6 +1922,20 @@ export class StreamingChatHandler {
             },
             { manualStatus: true }
           );
+        }
+
+        // The web searches the provider ran itself this iteration go in the
+        // turn's trace beside the capabilities it dispatched.
+        for (const trace of providerToolTraces(reasoning)) {
+          turnToolCalls.push(trace);
+          if (request.includeTrace) {
+            yield {
+              type: 'capability_result',
+              capabilitySlug: trace.slug,
+              result: { success: trace.success, preview: trace.resultPreview ?? null },
+              trace,
+            };
+          }
         }
 
         if (toolCalls.size === 0) {
@@ -2209,6 +2225,7 @@ export class StreamingChatHandler {
               cacheReadTokens: u.cacheReadTokens,
               cacheWriteTokens: u.cacheWriteTokens,
               serviceTier: u.serviceTier,
+              webSearchRequests: u.webSearchRequests,
               operation: CostOperation.CHAT,
               traceId: llmTraceId,
               spanId: llmSpanId,
@@ -2309,6 +2326,7 @@ export class StreamingChatHandler {
             cacheReadTokens: turnUsage.cacheReadTokens,
             cacheWriteTokens: turnUsage.cacheWriteTokens,
             serviceTier: turnUsage.serviceTier,
+            webSearchRequests: turnUsage.webSearchRequests,
             operation: CostOperation.CHAT,
             traceId: llmTraceId,
             spanId: llmSpanId,

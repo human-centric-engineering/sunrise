@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   modelParamOptions,
+  narrowProviderTools,
   narrowServiceTier,
   narrowVerbosity,
+  providerToolsSchema,
 } from '@/lib/orchestration/llm/model-params';
 
 describe('modelParamOptions', () => {
@@ -33,6 +35,7 @@ describe('modelParamOptions', () => {
         verbosity: null,
         parallelToolCalls: null,
         serviceTier: null,
+        providerTools: null,
       })
     ).toEqual({});
     expect(modelParamOptions({})).toEqual({});
@@ -70,5 +73,61 @@ describe('narrowVerbosity / narrowServiceTier', () => {
     expect(narrowServiceTier('flex')).toBe('flex');
     expect(narrowServiceTier('scale')).toBeUndefined();
     expect(narrowServiceTier(null)).toBeUndefined();
+  });
+});
+
+describe('provider tools (t-912)', () => {
+  it('passes web search through, with its options', () => {
+    expect(
+      modelParamOptions({
+        providerTools: { webSearch: { maxUses: 2, allowedDomains: ['example.com'] } },
+      })
+    ).toEqual({ providerTools: { webSearch: { maxUses: 2, allowedDomains: ['example.com'] } } });
+  });
+
+  it.each([
+    ['null', null],
+    ['an empty object', {}],
+    ['an unknown tool', { codeExecution: {} }],
+    ['a malformed search', { webSearch: { maxUses: 'lots' } }],
+    ['both domain lists', { webSearch: { allowedDomains: ['a.com'], blockedDomains: ['b.com'] } }],
+  ])('turns nothing on for %s', (_label, providerTools) => {
+    expect(narrowProviderTools(providerTools)).toBeUndefined();
+    expect(modelParamOptions({ providerTools })).toEqual({});
+  });
+
+  it('refuses both an allow and a block list, naming the block list', () => {
+    const result = providerToolsSchema.safeParse({
+      webSearch: { allowedDomains: ['a.com'], blockedDomains: ['b.com'] },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['webSearch', 'blockedDomains']);
+  });
+
+  it('takes an empty list beside a full one, as the form sends while one is being typed', () => {
+    expect(
+      providerToolsSchema.safeParse({
+        webSearch: { allowedDomains: ['a.com'], blockedDomains: [] },
+      }).success
+    ).toBe(true);
+  });
+
+  it.each(['example.com', 'docs.example.com/guides', 'EXAMPLE.co.uk'])('accepts %s', (domain) => {
+    expect(providerToolsSchema.safeParse({ webSearch: { allowedDomains: [domain] } }).success).toBe(
+      true
+    );
+  });
+
+  it.each(['https://example.com', 'example', 'exa mple.com', '-example.com', ''])(
+    'refuses %j as a domain',
+    (domain) => {
+      expect(
+        providerToolsSchema.safeParse({ webSearch: { blockedDomains: [domain] } }).success
+      ).toBe(false);
+    }
+  );
+
+  it.each([0, 21, 1.5])('refuses %s as a search limit', (maxUses) => {
+    expect(providerToolsSchema.safeParse({ webSearch: { maxUses } }).success).toBe(false);
   });
 });

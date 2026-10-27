@@ -65,7 +65,13 @@ import {
   type ModelParamsValue,
 } from '@/components/admin/orchestration/model-params-fields';
 import { MAX_STOP_SEQUENCES, SERVICE_TIERS, VERBOSITIES } from '@/lib/orchestration/llm/types';
-import { narrowServiceTier, narrowVerbosity } from '@/lib/orchestration/llm/model-params';
+import {
+  narrowProviderTools,
+  narrowServiceTier,
+  narrowVerbosity,
+  providerToolsSchema,
+} from '@/lib/orchestration/llm/model-params';
+import { WebSearchFields } from '@/components/admin/orchestration/web-search-fields';
 import {
   REASONING_EFFORT_FORM_VALUES,
   ReasoningEffortSelect,
@@ -128,6 +134,7 @@ const agentFormSchema = z
     verbosity: z.enum(VERBOSITIES).nullable(),
     parallelToolCalls: z.boolean().nullable(),
     serviceTier: z.enum(SERVICE_TIERS).nullable(),
+    providerTools: providerToolsSchema.nullable(),
     monthlyBudgetUsd: z.number().positive().max(10000).optional(),
     // Per-turn cap (improvement #39 runaway-loop guard). Optional /
     // nullable; null means "use the org default" or "no cap" if that
@@ -270,6 +277,24 @@ function toSlug(value: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 100);
+}
+
+/**
+ * The first message in a nested react-hook-form error (an object field's, or
+ * one of its list's), for a field that shows one line under it.
+ */
+function firstErrorMessage(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  if ('message' in error && typeof error.message === 'string' && error.message) {
+    return error.message;
+  }
+  for (const [key, child] of Object.entries(error)) {
+    // `ref` is the input's DOM element, not a nested error.
+    if (key === 'ref') continue;
+    const message = firstErrorMessage(child);
+    if (message) return message;
+  }
+  return undefined;
 }
 
 /** An agent row's model parameters as the form holds them. */
@@ -415,6 +440,7 @@ export function AgentForm({
       maxTokens: agent?.maxTokens ?? 4096,
       reasoningEffort: toReasoningEffortFormValue(agent?.reasoningEffort),
       ...toModelParamsValue(agent),
+      providerTools: narrowProviderTools(agent?.providerTools) ?? null,
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
       maxCostPerTurnUsd: agent?.maxCostPerTurnUsd ?? null,
       isActive: agent?.isActive ?? true,
@@ -1443,6 +1469,16 @@ export function AgentForm({
             isLocked={locked}
           />
 
+          <WebSearchFields
+            idPrefix="agent"
+            value={watch('providerTools')}
+            onChange={(next) =>
+              setValue('providerTools', next, { shouldDirty: true, shouldValidate: true })
+            }
+            disabled={locked('providerTools')}
+            error={firstErrorMessage(errors.providerTools)}
+          />
+
           <div className="grid gap-2">
             <Label htmlFor="monthlyBudgetUsd">
               Monthly budget (USD){' '}
@@ -2304,6 +2340,7 @@ export function AgentForm({
                       verbosity: modelParams.verbosity,
                       parallelToolCalls: modelParams.parallelToolCalls,
                       serviceTier: modelParams.serviceTier,
+                      providerTools: narrowProviderTools(fresh.providerTools) ?? null,
                       monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
                       maxCostPerTurnUsd: fresh.maxCostPerTurnUsd ?? null,
                       isActive: fresh.isActive,

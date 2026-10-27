@@ -401,6 +401,7 @@ async function importParsed(
               verbosity: agent.verbosity ?? null,
               parallelToolCalls: agent.parallelToolCalls ?? null,
               serviceTier: agent.serviceTier ?? null,
+              providerTools: agent.providerTools ?? Prisma.JsonNull,
               monthlyBudgetUsd: agent.monthlyBudgetUsd,
               // Older backup bundles omit this field — treat absent as
               // null (no per-turn cap). The schema validator allows the
@@ -461,6 +462,7 @@ async function importParsed(
               providerConfig:
                 (createAgent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
               widgetConfig: (createAgent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              providerTools: createAgent.providerTools ?? Prisma.JsonNull,
               createdBy: userId,
             },
           });

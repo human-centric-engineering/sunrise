@@ -130,6 +130,14 @@ When set on a thinking-capable Anthropic model, the provider class also strips t
 - **Parallel tool calls** — _Model default_ (null) / _Allowed_ (true) / _One at a time_ (false).
 - **Service tier** — _Provider default_ (null) / auto / default / flex / priority. OpenAI only. On a platform agent this one is the org's, the other four the platform's.
 
+### Web search
+
+`<WebSearchFields>` (`components/admin/orchestration/web-search-fields.tsx`), under the model parameters and not shared with the `llm_call` editor: a step has no web search setting. It writes `AiAgent.providerTools` (null = off).
+
+- **Web search** — switch; on stores `{ webSearch: {} }`. Anthropic only, Claude 3.5 and later; the ⓘ says each search costs $0.01 and that an Anthropic organisation admin has to turn it on in the Console.
+- **Most searches per reply** — number 1–20, empty = Anthropic's own limit (`maxUses`).
+- **Sites** — _Any site_ / _Only these sites_ (`allowedDomains`) / _Any site except these_ (`blockedDomains`), with a one-domain-per-line box for the last two. The mode and the box keep what was picked and typed; a value replaced from outside (a reset or restore) resets both.
+
 ### Max history tokens
 
 Optional number input (`AiAgent.maxHistoryTokens`). Overrides the context-window budget when building the prompt. Leave blank to use the model's full context window. Validation min 1 000, max 2 000 000. **This is the token knob** — it protects the model's context window from overflow.

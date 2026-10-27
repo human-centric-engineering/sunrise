@@ -32,7 +32,11 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
-import { narrowServiceTier, narrowVerbosity } from '@/lib/orchestration/llm/model-params';
+import {
+  narrowProviderTools,
+  narrowServiceTier,
+  narrowVerbosity,
+} from '@/lib/orchestration/llm/model-params';
 import {
   exportAgentsSchema,
   systemInstructionsHistorySchema,
@@ -122,6 +126,7 @@ export const POST = withAdminAuth(
           verbosity: narrowVerbosity(agent.verbosity) ?? null,
           parallelToolCalls: agent.parallelToolCalls,
           serviceTier: narrowServiceTier(agent.serviceTier) ?? null,
+          providerTools: narrowProviderTools(agent.providerTools) ?? null,
           monthlyBudgetUsd: agent.monthlyBudgetUsd,
           maxCostPerTurnUsd: agent.maxCostPerTurnUsd,
           metadata: jsonRecord.parse(agent.metadata),

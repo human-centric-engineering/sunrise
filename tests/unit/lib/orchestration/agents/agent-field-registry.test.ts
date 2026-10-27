@@ -225,12 +225,14 @@ describe('agent-field-registry — divergence ledger vs current hand-lists', () 
     expect(diff(CURRENT_VERSIONED_FIELDS, registry)).toEqual([]);
     // ...plus reasoningEffort (user config, never versioned), the two grant
     // relations (snapshotted but absent from VERSIONED_FIELDS), and the model
-    // parameters added after the ledger was taken (t-911, t-913).
+    // parameters and provider tools added after the ledger was taken (t-911,
+    // t-913, t-912).
     expect(diff(registry, CURRENT_VERSIONED_FIELDS)).toEqual(
       [
         'grantedDocumentIds',
         'grantedTagIds',
         'parallelToolCalls',
+        'providerTools',
         'reasoningEffort',
         'serviceTier',
         'stopSequences',

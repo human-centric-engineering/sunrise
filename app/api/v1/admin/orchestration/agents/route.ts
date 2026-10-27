@@ -231,6 +231,7 @@ export const POST = withAdminAuth(
             verbosity: body.verbosity ?? null,
             parallelToolCalls: body.parallelToolCalls ?? null,
             serviceTier: body.serviceTier ?? null,
+            providerTools: body.providerTools ?? Prisma.JsonNull,
             monthlyBudgetUsd: body.monthlyBudgetUsd ?? null,
             maxCostPerTurnUsd: body.maxCostPerTurnUsd ?? null,
             metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,

@@ -253,6 +253,7 @@ export const PLATFORM_AGENT_BASELINE = {
   topP: null,
   verbosity: null,
   parallelToolCalls: null,
+  providerTools: null,
   maxHistoryTokens: null,
   maxHistoryMessages: null,
   inputGuardMode: null,

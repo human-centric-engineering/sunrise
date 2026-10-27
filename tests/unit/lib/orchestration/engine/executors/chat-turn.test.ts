@@ -63,7 +63,7 @@ vi.mock('@/lib/orchestration/llm/agent-resolver', async (importOriginal) => {
 });
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
-  calculateCost: vi.fn(() => ({ inputCostUsd: 0.001, outputCostUsd: 0.002 })),
+  calculateCost: vi.fn(() => ({ inputCostUsd: 0.001, outputCostUsd: 0.002, totalCostUsd: 0.003 })),
   logCost: vi.fn(async () => null),
 }));
 

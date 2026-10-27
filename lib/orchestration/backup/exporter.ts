@@ -22,7 +22,11 @@ import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
-import { narrowServiceTier, narrowVerbosity } from '@/lib/orchestration/llm/model-params';
+import {
+  narrowProviderTools,
+  narrowServiceTier,
+  narrowVerbosity,
+} from '@/lib/orchestration/llm/model-params';
 import {
   BUILTIN_TEMPLATE_SLUGS,
   SYSTEM_WORKFLOW_SLUGS,
@@ -96,6 +100,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         verbosity: true,
         parallelToolCalls: true,
         serviceTier: true,
+        providerTools: true,
         persona: true,
         guardrails: true,
         personaMode: true,
@@ -243,6 +248,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
       reasoningEffort,
       verbosity,
       serviceTier,
+      providerTools,
       ...rest
     } = a;
     return {
@@ -262,6 +268,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         : null,
       verbosity: narrowVerbosity(verbosity) ?? null,
       serviceTier: narrowServiceTier(serviceTier) ?? null,
+      providerTools: narrowProviderTools(providerTools) ?? null,
       // `knowledgeCategories` was dropped from the DB in Phase 6 but the
       // backup schema keeps the field on the wire for older importers
       // that still read it. Always emit empty.

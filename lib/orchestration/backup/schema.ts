@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
-import { modelParamFields } from '@/lib/validations/orchestration';
+import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
 
 export const agentBackupSchema = z.object({
   name: z.string(),
@@ -28,6 +28,7 @@ export const agentBackupSchema = z.object({
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   // Optional — backups written before these existed restore with none set.
   ...modelParamFields,
+  ...agentProviderToolsField,
   monthlyBudgetUsd: z.number().nullable(),
   // Per-turn cost cap added with improvement #39. Optional so older
   // backup bundles round-trip; null preserves "no cap" semantics on

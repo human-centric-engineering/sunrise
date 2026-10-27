@@ -31,7 +31,11 @@ import {
   utcMonthStart,
 } from '@/lib/orchestration/llm/spend-caps';
 import type { AgentCostSummary, CostOperation, LocalSavingsResult } from '@/types/orchestration';
-import type { LlmUsage, ModelInfo } from '@/lib/orchestration/llm/types';
+import {
+  WEB_SEARCH_USD_PER_REQUEST,
+  type LlmUsage,
+  type ModelInfo,
+} from '@/lib/orchestration/llm/types';
 
 /** Computed cost breakdown for a single operation. */
 export interface ComputedCost {
@@ -54,13 +58,6 @@ export interface ComputedCost {
    */
   webSearchCostUsd?: number;
 }
-
-/**
- * Anthropic's web search — USD per search ($10 per 1,000), on top of the
- * tokens the results add to the input. Only Anthropic runs a search for
- * Sunrise today; OpenAI's per-call rate comes with its Responses path.
- */
-export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
 
 /**
  * Whisper pricing — USD per minute of input audio.

@@ -8633,3 +8633,104 @@ describe('app message metadata (#475)', () => {
     expect(userRow?.[0].data.metadata).toBeUndefined();
   });
 });
+
+describe('provider web search (t-912)', () => {
+  const searchBlocks = [
+    { type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: 'sunrise' } },
+    {
+      type: 'web_search_tool_result',
+      toolUseId: 's1',
+      results: [{ url: 'https://a.example', title: 'A', encryptedContent: 'x' }],
+    },
+  ];
+
+  function setupSearchTurn() {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ providerTools: { webSearch: { maxUses: 2 } } })
+    );
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'It rises at 6.' },
+        {
+          type: 'done',
+          usage: { inputTokens: 10, outputTokens: 5, webSearchRequests: 1 },
+          finishReason: 'stop',
+          reasoning: searchBlocks,
+        },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    return provider;
+  }
+
+  type Provenance = { capabilityCalls?: Array<Record<string, unknown>> };
+
+  function terminalProvenance(): Provenance | undefined {
+    const assistant = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls
+      .map(([args]) => (args as { data: { role: string; provenance?: Provenance } }).data)
+      .filter((data) => data.role === 'assistant');
+    return assistant[assistant.length - 1]?.provenance;
+  }
+
+  it('asks the provider for web search with the agent’s options', async () => {
+    const provider = setupSearchTurn();
+    await collect(streamChat(baseRequest));
+    expect((provider.chatStream.mock.calls[0] as unknown[])[1]).toMatchObject({
+      providerTools: { webSearch: { maxUses: 2 } },
+    });
+  });
+
+  it('records each search in the turn’s trace, with or without includeTrace', async () => {
+    setupSearchTurn();
+    await collect(streamChat(baseRequest));
+    expect(terminalProvenance()?.capabilityCalls).toEqual([
+      expect.objectContaining({
+        slug: 'provider:web_search',
+        arguments: { query: 'sunrise' },
+        success: true,
+        resultPreview: 'A — https://a.example',
+      }),
+    ]);
+  });
+
+  it('streams the search as a traced capability_result only on includeTrace', async () => {
+    setupSearchTurn();
+    const traced = await collect(streamChat({ ...baseRequest, includeTrace: true }));
+    expect(traced.filter((e) => (e as { type: string }).type === 'capability_result')).toEqual([
+      expect.objectContaining({
+        capabilitySlug: 'provider:web_search',
+        trace: expect.objectContaining({ slug: 'provider:web_search' }),
+      }),
+    ]);
+
+    vi.mocked(prisma.aiMessage.create).mockClear();
+    setupSearchTurn();
+    const plain = await collect(streamChat(baseRequest));
+    expect(plain.some((e) => (e as { type: string }).type === 'capability_result')).toBe(false);
+  });
+
+  it('logs the searches on the turn’s cost row', async () => {
+    setupSearchTurn();
+    await collect(streamChat(baseRequest));
+    await Promise.resolve();
+    expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ webSearchRequests: 1 }));
+  });
+
+  it('sends no provider tool for an agent without one', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ providerTools: null })
+    );
+    const provider = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    await collect(streamChat(baseRequest));
+    expect((provider.chatStream.mock.calls[0] as unknown[])[1]).not.toHaveProperty('providerTools');
+  });
+});

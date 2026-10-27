@@ -184,7 +184,12 @@ export class AnthropicProvider implements LlmProvider {
       pauses++
     ) {
       appendPausedTurn(params, message.content.flatMap(toPausedPart), pauses > 0);
-      message = await this.createMessage(params, options);
+      try {
+        message = await this.createMessage(params, options);
+      } catch (err) {
+        // The segments before this one were billed; carry them (#592).
+        throw toProviderErrorWithUsage(err, 'Anthropic chat request failed', usage);
+      }
       blocks.push(...message.content);
       usage = addUsage(usage, toLlmUsage(message.usage));
     }

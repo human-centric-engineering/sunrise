@@ -530,6 +530,7 @@ export function ExecutionTraceEntryRow({
                   ? `parallel tools: ${requestParams.parallelToolCalls ? 'on' : 'off'}`
                   : null,
                 requestParams.serviceTier ? `tier: ${requestParams.serviceTier}` : null,
+                requestParams.providerTools?.webSearch ? 'web search: on' : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}

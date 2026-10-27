@@ -117,6 +117,7 @@ function makeSystemSeededAgent(): AiAgent {
     verbosity: null,
     parallelToolCalls: null,
     serviceTier: null,
+    providerTools: null,
     monthlyBudgetUsd: null,
     maxCostPerTurnUsd: null,
     isActive: true,

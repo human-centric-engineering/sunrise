@@ -18,6 +18,27 @@ release process.
 
 ### Added
 
+- **Anthropic's web search on agents (t-912).** New `LlmOptions.providerTools`
+  (`ProviderTools`, `WebSearchOptions` in `lib/orchestration/llm/types.ts`)
+  sends Anthropic's `web_search` server tool, with a search limit and allowed
+  or blocked domains, on Claude models that offer it (`acceptsWebSearch()`).
+  `AiAgent` gains a nullable `providerTools` JSON column (migration
+  `20261027100000_agent_provider_tools`), platform-owned on a platform agent,
+  in the agent registry, the create / update / export / backup schemas
+  (`agentProviderToolsField`, `providerToolsSchema`) and a Web search control
+  on the agent form. `LlmReasoningBlock` gains `server_tool_use` and
+  `web_search_tool_result` variants, returned in order with thinking blocks so
+  a tool loop replays the searches. A `pause_turn` stop is now sent back to
+  carry on (up to three times) instead of read as a finished answer.
+  `LlmUsage.webSearchRequests` counts the searches; `calculateCost` adds
+  `WEB_SEARCH_USD_PER_REQUEST` ($0.01) a search to the total and reports it as
+  `webSearchCostUsd`, and `logCost` (new `LogCostParams.webSearchRequests`)
+  records both in the row's metadata. Each search is a `provider:web_search`
+  entry in the chat trace. **Forks:** an `AiAgent` fixture typed against
+  Prisma needs `providerTools`; a fork `LlmProvider` or consumer that switches
+  on `LlmReasoningBlock.type` meets two new variants; a consumer that summed
+  `inputCostUsd + outputCostUsd` for a total should read `totalCostUsd`.
+
 - **The model's reasoning in the admin chat and trace (t-953).** `StreamChunk`
   (`lib/orchestration/llm/types.ts`) gains a `{ type: 'reasoning'; text }`
   variant, yielded as the model reasons: Claude's thinking deltas (adaptive

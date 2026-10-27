@@ -261,6 +261,14 @@ export interface WebSearchOptions {
 }
 
 /**
+ * Anthropic's web search — USD per search ($10 per 1,000), on top of the
+ * tokens the results add to the input. Only Anthropic runs a search for
+ * Sunrise today; OpenAI's per-call rate comes with its Responses path.
+ * Here rather than in `cost-tracker`, which tests often mock whole.
+ */
+export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
+
+/**
  * Built-in tools a provider runs itself, keyed by tool. A key that is absent
  * leaves that tool off. Stored as one JSON value on an agent
  * (`AiAgent.providerTools`).

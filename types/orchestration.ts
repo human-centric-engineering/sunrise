@@ -27,6 +27,7 @@ import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
 import type {
   LlmFinishReason,
   LlmReasoningBlock,
+  ProviderTools,
   ReasoningEffort,
   ServiceTier,
   Verbosity,
@@ -675,6 +676,8 @@ export interface LlmRequestParamsSnapshot {
   verbosity?: Verbosity;
   parallelToolCalls?: boolean;
   serviceTier?: ServiceTier;
+  /** The tools the provider was asked to run itself (Anthropic web search). */
+  providerTools?: ProviderTools;
 }
 
 /**

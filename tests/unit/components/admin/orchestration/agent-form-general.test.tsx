@@ -201,6 +201,7 @@ describe('AgentForm — General tab', () => {
         verbosity: null,
         parallelToolCalls: null,
         serviceTier: null,
+        providerTools: null,
         monthlyBudgetUsd: null,
         maxCostPerTurnUsd: null,
         isActive: true,

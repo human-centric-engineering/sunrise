@@ -42,11 +42,16 @@ model AiAgent {
   //   verbosity         — 'low' | 'medium' | 'high'; GPT-5 only.
   //   parallelToolCalls — false = at most one tool call per turn.
   //   serviceTier       — 'auto' | 'default' | 'flex' | 'priority'; OpenAI only.
+  //   providerTools     — tools the provider runs itself, keyed by tool:
+  //                       { webSearch?: { maxUses?, allowedDomains?,
+  //                       blockedDomains? } } (ProviderTools). Anthropic only;
+  //                       null = none.
   stopSequences             String[]  @default([])
   topP                      Float?
   verbosity                 String?
   parallelToolCalls         Boolean?
   serviceTier               String?
+  providerTools             Json?
   monthlyBudgetUsd          Float?
   // Per-turn hard cost cap (USD) for chat. Caps total LLM + tool spend for a
   // single assistant turn — defends against a reflect/orchestrator/tool loop

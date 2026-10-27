@@ -279,7 +279,8 @@ export async function executeChatTurn(
     response.usage?.outputTokens ?? 0,
     response.usage
   );
-  const totalCostUsd = computedCost.inputCostUsd + computedCost.outputCostUsd;
+  // The total, not input + output: a web search is billed outside both.
+  const totalCostUsd = computedCost.totalCostUsd;
 
   // logCost is async but explicitly fire-and-forget per its contract.
   void logCost({
@@ -295,6 +296,7 @@ export async function executeChatTurn(
     cacheReadTokens: response.usage?.cacheReadTokens,
     cacheWriteTokens: response.usage?.cacheWriteTokens,
     serviceTier: response.usage?.serviceTier,
+    webSearchRequests: response.usage?.webSearchRequests,
     metadata: {
       ...(ctx.costLogMetadata ?? {}),
       stepId: step.id,

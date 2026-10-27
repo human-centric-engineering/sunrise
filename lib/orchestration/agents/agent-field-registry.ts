@@ -264,6 +264,13 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'Service tier', tab: 'Model', order: 139.5 },
   },
+  // What the agent can do, like its capabilities, though it bills per use.
+  providerTools: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Provider tools', tab: 'Model', order: 139.7 },
+    json: true,
+  },
   maxHistoryTokens: {
     platformAgent: 'code',
     versioned: true,

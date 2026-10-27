@@ -6,14 +6,81 @@
  * so a test that mocks that module whole still gets these.
  */
 
+import { z } from 'zod';
+
 import {
   MAX_STOP_SEQUENCES,
   SERVICE_TIERS,
   VERBOSITIES,
   type LlmOptions,
+  type ProviderTools,
   type ServiceTier,
   type Verbosity,
 } from '@/lib/orchestration/llm/types';
+
+/** Most searches an agent may allow in one response. */
+export const MAX_WEB_SEARCH_USES = 20;
+
+/** Most domains in a web search allow or block list. */
+export const MAX_WEB_SEARCH_DOMAINS = 50;
+
+/**
+ * A domain as Anthropic's web search takes it: a host, optionally with a
+ * path (`example.com`, `docs.example.com/api`), no scheme.
+ */
+const webSearchDomainSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .regex(
+    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\/\S*)?$/i,
+    'Enter a domain like example.com, without http://'
+  );
+
+const webSearchDomainsSchema = z
+  .array(webSearchDomainSchema)
+  .max(MAX_WEB_SEARCH_DOMAINS, `At most ${MAX_WEB_SEARCH_DOMAINS} domains`)
+  .optional();
+
+/**
+ * `AiAgent.providerTools` — the tools the provider runs itself
+ * ({@link ProviderTools}). The validation schemas and the runtime read below
+ * share it, so a stored value the API would refuse is never sent.
+ */
+export const providerToolsSchema = z
+  .object({
+    webSearch: z
+      .object({
+        maxUses: z
+          .number()
+          .int()
+          .min(1, 'At least 1 search')
+          .max(MAX_WEB_SEARCH_USES, `At most ${MAX_WEB_SEARCH_USES} searches`)
+          .optional(),
+        allowedDomains: webSearchDomainsSchema,
+        blockedDomains: webSearchDomainsSchema,
+      })
+      .strict()
+      // Anthropic takes one list or the other, never both (a 400).
+      .refine((search) => !(search.allowedDomains?.length && search.blockedDomains?.length), {
+        message: 'Use either allowed domains or blocked domains, not both',
+        path: ['blockedDomains'],
+      })
+      .optional(),
+  })
+  .strict();
+
+/**
+ * Narrow a stored `providerTools` value (a JSON column, or a fork's bundle)
+ * to {@link ProviderTools}, or `undefined` when it turns nothing on or does
+ * not parse.
+ */
+export function narrowProviderTools(raw: unknown): ProviderTools | undefined {
+  const parsed = providerToolsSchema.safeParse(raw);
+  if (!parsed.success || parsed.data.webSearch === undefined) return undefined;
+  return parsed.data;
+}
 
 /**
  * Narrow a stored value (plain `TEXT` column, or a bundle from a fork) to a
@@ -35,6 +102,8 @@ export interface StoredModelParams {
   verbosity?: string | null;
   parallelToolCalls?: boolean | null;
   serviceTier?: string | null;
+  /** A JSON column on an agent; an `llm_call` step has none. */
+  providerTools?: unknown;
 }
 
 /**
@@ -45,9 +114,13 @@ export interface StoredModelParams {
  */
 export function modelParamOptions(
   stored: StoredModelParams
-): Pick<LlmOptions, 'stopSequences' | 'topP' | 'verbosity' | 'parallelToolCalls' | 'serviceTier'> {
+): Pick<
+  LlmOptions,
+  'stopSequences' | 'topP' | 'verbosity' | 'parallelToolCalls' | 'serviceTier' | 'providerTools'
+> {
   const verbosity = narrowVerbosity(stored.verbosity);
   const serviceTier = narrowServiceTier(stored.serviceTier);
+  const providerTools = narrowProviderTools(stored.providerTools);
   const stopSequences = (stored.stopSequences ?? [])
     // Blank or whitespace-only sequences are refused by Anthropic.
     .filter((stop) => stop.trim().length > 0)
@@ -60,5 +133,6 @@ export function modelParamOptions(
       ? { parallelToolCalls: stored.parallelToolCalls }
       : {}),
     ...(serviceTier !== undefined ? { serviceTier } : {}),
+    ...(providerTools !== undefined ? { providerTools } : {}),
   };
 }

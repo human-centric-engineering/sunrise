@@ -149,6 +149,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     verbosity: null,
     parallelToolCalls: null,
     serviceTier: null,
+    providerTools: null,
     monthlyBudgetUsd: null,
     maxCostPerTurnUsd: null,
     metadata: null,
