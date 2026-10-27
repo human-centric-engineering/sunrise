@@ -229,6 +229,54 @@ describe('resolveAgentProviderAndModel', () => {
       expect(result.fallbacks).toEqual(['custom-fallback']);
     });
 
+    it('never lists an explicit primary among its own fallbacks, keeping the rest in order (t-954)', async () => {
+      // The reconcile moved a platform-picked primary onto a provider the org
+      // had listed as a fallback. The call tries [primary, ...fallbacks], so a
+      // failing primary would be retried as its own fallback.
+      const result = await resolveAgentProviderAndModel(
+        makeAgent({
+          provider: 'openai',
+          model: 'gpt-4.1',
+          fallbackProviders: ['mistral', 'openai', 'anthropic'],
+        }),
+        'chat'
+      );
+
+      expect(result.providerSlug).toBe('openai');
+      expect(result.fallbacks).toEqual(['mistral', 'anthropic']);
+    });
+
+    it('never lists an inherited primary among its own fallbacks (t-954)', async () => {
+      // On inherit the primary is chosen per turn, here anthropic, which the
+      // agent also lists as a fallback.
+      setProviders([makeProviderRow({ slug: 'anthropic' })]);
+
+      const result = await resolveAgentProviderAndModel(
+        makeAgent({ fallbackProviders: ['anthropic', 'custom-fallback'] }),
+        'chat'
+      );
+
+      expect(result.providerSlug).toBe('anthropic');
+      expect(result.fallbacks).toEqual(['custom-fallback']);
+    });
+
+    it('keeps a list that named only the primary explicit and empty, not the system fill (t-954)', async () => {
+      setProviders([
+        makeProviderRow({ slug: 'anthropic' }),
+        makeProviderRow({ slug: 'openai', createdAt: new Date('2026-04-16T00:00:00Z') }),
+      ]);
+
+      const result = await resolveAgentProviderAndModel(
+        makeAgent({ fallbackProviders: ['anthropic'] }),
+        'chat'
+      );
+
+      expect(result.providerSlug).toBe('anthropic');
+      // Not ['openai']: the operator set a list, so the system does not fill it.
+      expect(result.fallbacks).toEqual([]);
+      expect(result.provenance.fallbacks).toBe('explicit');
+    });
+
     it('attaches up to 3 system fallbacks when the agent fallback list is empty', async () => {
       const rows = [
         makeProviderRow({ slug: 'anthropic', apiKeyEnvVar: 'PRESENT_KEY' }),
