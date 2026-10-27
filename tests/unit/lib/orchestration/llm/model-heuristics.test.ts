@@ -15,6 +15,8 @@ import {
   acceptsFlexTier,
   acceptsNativeStructuredOutput,
   refusesForcedToolChoice,
+  acceptsOpenAiWebSearch,
+  acceptsOpenAiWebSearchFilters,
   acceptsSamplingTemperature,
   acceptsThinkingBudget,
   acceptsWebSearch,
@@ -746,4 +748,46 @@ describe('acceptsWebSearch (t-912)', () => {
       expect(acceptsWebSearch(id)).toBe(false);
     }
   );
+});
+
+describe('acceptsOpenAiWebSearch / acceptsOpenAiWebSearchFilters (t-955)', () => {
+  // Measured against the live Responses API on 2026-10-27, except o3 and
+  // o4-mini, which OpenAI documents.
+  it.each([
+    ['gpt-5', true],
+    ['gpt-5-mini', true],
+    ['gpt-5-nano', true],
+    ['gpt-5.5', true],
+    ['openai/gpt-5-mini-2025-08-07', true],
+    ['gpt-4.1', true],
+    ['gpt-4.1-2025-04-14', true],
+    ['gpt-4o', true],
+    ['gpt-4o-2024-08-06', true],
+    ['o3', true],
+    ['o4-mini', true],
+  ])('offers web search with site filters on %s', (id) => {
+    expect(acceptsOpenAiWebSearch(id)).toBe(true);
+    expect(acceptsOpenAiWebSearchFilters(id)).toBe(true);
+  });
+
+  it.each(['gpt-4o-mini', 'gpt-4o-mini-2024-07-18', 'gpt-4.1-mini'])(
+    'offers web search on %s, but no site filters',
+    (id) => {
+      expect(acceptsOpenAiWebSearch(id)).toBe(true);
+      expect(acceptsOpenAiWebSearchFilters(id)).toBe(false);
+    }
+  );
+
+  it.each([
+    'gpt-4.1-nano',
+    'o3-mini',
+    'gpt-3.5-turbo',
+    'gpt-4',
+    'gpt-4o-audio-preview',
+    'my-gpt-5',
+    'claude-opus-5-5',
+  ])('offers none on %s', (id) => {
+    expect(acceptsOpenAiWebSearch(id)).toBe(false);
+    expect(acceptsOpenAiWebSearchFilters(id)).toBe(false);
+  });
 });

@@ -2758,6 +2758,45 @@ describe('AnthropicProvider — thinking blocks across a tool loop (t-897, t-908
     });
   });
 
+  it('leaves out blocks from OpenAI’s Responses path, which a fallback can carry here (t-955)', async () => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'done' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-opus-5-5',
+      stop_reason: 'end_turn',
+    });
+
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'x' },
+        {
+          role: 'assistant',
+          content: 'Looking it up.',
+          toolCalls: [{ id: 'call_1', name: 'lookup', arguments: { q: 'x' } }],
+          reasoning: [
+            { type: 'openai_reasoning', id: 'rs_1', encryptedContent: 'enc', summary: [] },
+            {
+              type: 'openai_web_search_call',
+              id: 'ws_1',
+              status: 'completed',
+              action: { type: 'search', queries: ['x'] },
+            },
+          ],
+        },
+        { role: 'tool', content: '{"hit":true}', toolCallId: 'call_1' },
+      ],
+      {
+        model: 'claude-opus-5-5',
+        tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+      }
+    );
+
+    expect(sentParams().messages[1].content).toEqual([
+      { type: 'text', text: 'Looking it up.' },
+      { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'x' } },
+    ]);
+  });
+
   it('assembles streamed thinking and signature deltas and returns them on done', async () => {
     createMock.mockResolvedValue(
       makeStream([

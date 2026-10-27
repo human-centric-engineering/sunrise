@@ -140,15 +140,25 @@ describe('provider tools (t-912)', () => {
 });
 
 describe('spendWebSearches', () => {
-  it('takes the searches already run off the limit', () => {
+  it('takes the searches already run off the limit, keeping the whole limit', () => {
     expect(
       spendWebSearches({ model: 'm', providerTools: { webSearch: { maxUses: 5 } } }, 2)
-    ).toEqual({ model: 'm', providerTools: { webSearch: { maxUses: 3 } } });
+    ).toEqual({ model: 'm', providerTools: { webSearch: { maxUses: 3, replyLimit: 5 } } });
   });
 
   it('stops at 0 rather than going below it', () => {
     expect(spendWebSearches({ providerTools: { webSearch: { maxUses: 2 } } }, 3)).toEqual({
-      providerTools: { webSearch: { maxUses: 0 } },
+      providerTools: { webSearch: { maxUses: 0, replyLimit: 2 } },
+    });
+  });
+
+  it('keeps the agent’s limit, not what was left, when it is applied again (t-955)', () => {
+    // Today's callers spend from the agent's own options each time. One that
+    // spent from already-spent options must still send OpenAI the agent's
+    // whole limit, not what was left.
+    const once = spendWebSearches({ providerTools: { webSearch: { maxUses: 5 } } }, 2);
+    expect(spendWebSearches(once, 2)).toEqual({
+      providerTools: { webSearch: { maxUses: 1, replyLimit: 5 } },
     });
   });
 

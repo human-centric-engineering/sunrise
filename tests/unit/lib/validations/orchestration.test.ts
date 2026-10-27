@@ -2916,6 +2916,48 @@ describe('turnEntrySchema', () => {
     }
   });
 
+  it('keeps OpenAI’s reasoning and web search items on a continuing turn, so a resume can replay them (t-955)', () => {
+    // The Responses path stores nothing on OpenAI's side: without these the
+    // resumed step would start again from turn 0, re-running its searches.
+    const reasoning = [
+      { type: 'openai_reasoning', id: 'rs_1', encryptedContent: 'enc', summary: ['Planning'] },
+      {
+        type: 'openai_web_search_call',
+        id: 'ws_1',
+        status: 'completed',
+        action: {
+          type: 'search',
+          queries: ['q'],
+          sources: [{ type: 'url', url: 'https://a.example' }],
+        },
+      },
+    ];
+    const turn = {
+      kind: 'agent_call',
+      phase: 'continuing',
+      index: 0,
+      assistantContent: '',
+      toolCall: { id: 'call_1', name: 'search', arguments: {} },
+      toolResult: { ok: true },
+      reasoning,
+      tokensUsed: 10,
+      costUsd: 0.01,
+      webSearchRequests: 1,
+    };
+
+    const ok = turnEntrySchema.safeParse(turn);
+    expect(ok.success).toBe(true);
+    if (ok.success && ok.data.kind === 'agent_call' && ok.data.phase === 'continuing') {
+      expect(ok.data.reasoning).toEqual(reasoning);
+    }
+
+    const unknownStatus = turnEntrySchema.safeParse({
+      ...turn,
+      reasoning: [{ ...reasoning[1], status: 'exploded' }],
+    });
+    expect(unknownStatus.success).toBe(false);
+  });
+
   it('rejects a continuing agent_call turn whose reasoning is malformed, rather than dropping it', () => {
     // Replaying the turn without its thinking blocks would make Anthropic
     // reject the resumed loop, so the parse fails and the resume logs it.
