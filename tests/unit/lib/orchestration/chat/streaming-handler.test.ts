@@ -8719,6 +8719,45 @@ describe('provider web search (t-912)', () => {
     expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ webSearchRequests: 1 }));
   });
 
+  it('sends the tool loop’s next call only the searches the reply has left', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ providerTools: { webSearch: { maxUses: 2 } } })
+    );
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'sun' } },
+        },
+        {
+          type: 'done',
+          usage: { inputTokens: 10, outputTokens: 5, webSearchRequests: 1 },
+          finishReason: 'tool_use',
+          reasoning: searchBlocks,
+        },
+      ],
+      [
+        { type: 'text', content: 'It rises at 6.' },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    await collect(streamChat(baseRequest));
+
+    expect(provider.chatStream).toHaveBeenCalledTimes(2);
+    expect((provider.chatStream.mock.calls[0] as unknown[])[1]).toMatchObject({
+      providerTools: { webSearch: { maxUses: 2 } },
+    });
+    expect((provider.chatStream.mock.calls[1] as unknown[])[1]).toMatchObject({
+      providerTools: { webSearch: { maxUses: 1 } },
+    });
+  });
+
   it('sends no provider tool for an agent without one', async () => {
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeAgent({ providerTools: null })

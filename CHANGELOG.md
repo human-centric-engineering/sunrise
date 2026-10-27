@@ -30,13 +30,21 @@ release process.
   `web_search_tool_result` variants (results as `WebSearchResult`), returned in
   order with thinking blocks so a tool loop replays the searches. A
   `pause_turn` stop is now sent back to carry on (up to three times) instead of
-  read as a finished answer.
+  read as a finished answer. `WebSearchOptions.maxUses` caps one reply, not
+  one request: the adapter sends each paused-turn continuation the searches
+  left, and `spendWebSearches()` (`lib/orchestration/llm/model-params.ts`)
+  does the same for a tool loop's next call; at 0 the tool comes off and a
+  search left waiting gets Anthropic's `max_uses_exceeded` result.
+  `AgentCallTurn` gains an optional `webSearchRequests`, so the cap holds
+  across an `agent_call` resume.
   `LlmUsage.webSearchRequests` counts the searches; `calculateCost` adds
   `WEB_SEARCH_USD_PER_REQUEST` ($0.01) a search to the total and reports it as
   `webSearchCostUsd`, and `logCost` (new `LogCostParams.webSearchRequests`)
   records both in the row's metadata. Each search is a `provider:web_search`
   entry in the chat trace. **Forks:** an `AiAgent` fixture typed against
-  Prisma needs `providerTools`; a fork `LlmProvider` or consumer that switches
+  Prisma needs `providerTools`; a fork tool loop that sends `providerTools`
+  should pass each call's options through `spendWebSearches()`, or the search
+  limit applies per call; a fork `LlmProvider` or consumer that switches
   on `LlmReasoningBlock.type` meets two new variants; a consumer that summed
   `inputCostUsd + outputCostUsd` for a total should read `totalCostUsd`.
 

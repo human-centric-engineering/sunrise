@@ -46,7 +46,7 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
-import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
+import { modelParamOptions, spendWebSearches } from '@/lib/orchestration/llm/model-params';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   assertModelSupportsAttachments,
@@ -1542,6 +1542,10 @@ export class StreamingChatHandler {
       // iteration's reasoning starts on a new paragraph in the live panel.
       let reasoningStreamed = false;
 
+      // Provider web searches this reply has run, across its tool-loop calls
+      // and failed attempts: the agent's search limit is per reply.
+      let searchesUsed = 0;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
@@ -1625,7 +1629,10 @@ export class StreamingChatHandler {
 
             async function* (llmSpan: Span): AsyncGenerator<ChatEvent, void, unknown> {
               try {
-                const stream = currentProvider.chatStream(messages, llmOptions);
+                const stream = currentProvider.chatStream(
+                  messages,
+                  spendWebSearches(llmOptions, searchesUsed)
+                );
 
                 let toolCallIndex = 0;
                 for await (const chunk of stream) {
@@ -1686,6 +1693,7 @@ export class StreamingChatHandler {
                 // that only one of three paths was listening.
                 if (streamErr instanceof ProviderError && streamErr.usage) {
                   const errUsage = streamErr.usage;
+                  searchesUsed += errUsage.webSearchRequests ?? 0;
                   turnCostUsd += calculateCost(
                     resolvedModel,
                     errUsage.inputTokens,
@@ -2306,6 +2314,7 @@ export class StreamingChatHandler {
         // trigger another LLM turn that costs more).
         const turnUsage = usage as LlmUsage | null;
         if (turnUsage) {
+          searchesUsed += turnUsage.webSearchRequests ?? 0;
           // Increment the in-process running total BEFORE the
           // fire-and-forget logCost — the per-turn check below must
           // never depend on a successful DB write.

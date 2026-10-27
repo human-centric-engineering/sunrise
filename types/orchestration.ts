@@ -383,6 +383,11 @@ interface AgentCallTurnBase {
   assistantContent: string;
   tokensUsed: number;
   costUsd: number;
+  /**
+   * Provider web searches this iteration ran. Summed on resume, so the
+   * agent's per-reply search limit holds across a crash. Absent means none.
+   */
+  webSearchRequests?: number;
 }
 
 /**

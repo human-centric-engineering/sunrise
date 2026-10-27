@@ -31,6 +31,7 @@ import type {
   StopReason,
   Tool,
   ToolChoice,
+  ToolUnion,
   ToolUseBlock,
   WebSearchTool20250305,
   WebSearchToolResultBlockContent,
@@ -184,6 +185,7 @@ export class AnthropicProvider implements LlmProvider {
       pauses++
     ) {
       appendPausedTurn(params, message.content.flatMap(toPausedPart), pauses > 0);
+      limitWebSearch(params, options.providerTools?.webSearch?.maxUses, usage.webSearchRequests);
       try {
         message = await this.createMessage(params, options);
       } catch (err) {
@@ -530,6 +532,11 @@ export class AnthropicProvider implements LlmProvider {
       if (!paused || pauses >= MAX_PAUSE_CONTINUATIONS) break;
       priorUsage = segmentUsage();
       appendPausedTurn(params, segmentParts, pauses > 0);
+      limitWebSearch(
+        params,
+        options.providerTools?.webSearch?.maxUses,
+        priorUsage.webSearchRequests
+      );
     }
     const usage = segmentUsage();
 
@@ -828,13 +835,17 @@ export class AnthropicProvider implements LlmProvider {
         model: options.model,
       });
     } else if (webSearch) {
-      if (acceptsWebSearch(options.model)) {
-        params.tools = [...(params.tools ?? []), toWebSearchTool(webSearch)];
-      } else {
+      if (!acceptsWebSearch(options.model)) {
         logger.info('Anthropic: web search dropped, model does not offer it', {
           provider: this.name,
           model: options.model,
         });
+      } else if (webSearch.maxUses !== undefined && webSearch.maxUses <= 0) {
+        // The reply has run every search it may (a tool loop's later call):
+        // no new one, and none left waiting.
+        closePendingSearches(params.messages);
+      } else {
+        params.tools = [...(params.tools ?? []), toWebSearchTool(webSearch)];
       }
     }
     if (systemParts.length > 0) {
@@ -988,6 +999,70 @@ function appendPausedTurn(
     last.content.push(...blocks);
   } else {
     params.messages.push({ role: 'assistant', content: blocks });
+  }
+}
+
+/**
+ * Hold the request that continues a paused turn to the searches its call has
+ * left. `maxUses` caps the whole call, but Anthropic counts `max_uses` per
+ * request, so the continuation is sent what remains. With none left the tool
+ * comes off, which Anthropic allows once no search is left waiting for it.
+ *
+ * A changed tool definition rebuilds Anthropic's prompt cache, so this costs
+ * a cache write on the continuation. Sending the cap unchanged would keep the
+ * cache and let one reply run several times the searches the operator set.
+ */
+function limitWebSearch(
+  params: { tools?: ToolUnion[]; messages: MessageParam[] },
+  maxUses: number | undefined,
+  used: number | undefined
+): void {
+  if (maxUses === undefined || !used || !params.tools) return;
+  const index = params.tools.findIndex(isWebSearchTool);
+  const tool = params.tools[index];
+  if (!tool || !isWebSearchTool(tool)) return;
+  const remaining = maxUses - used;
+  if (remaining > 0) {
+    params.tools[index] = { ...tool, max_uses: remaining };
+    return;
+  }
+  params.tools.splice(index, 1);
+  if (params.tools.length === 0) delete params.tools;
+  closePendingSearches(params.messages);
+}
+
+function isWebSearchTool(tool: ToolUnion): tool is WebSearchTool20250305 {
+  return 'type' in tool && tool.type === 'web_search_20250305';
+}
+
+/**
+ * Answer each web search the model called but Anthropic has not run yet (a
+ * paused turn can end on one, and one called beside a client tool waits for
+ * the next request) as Anthropic answers a search past `max_uses`, so the
+ * request can go without the tool. An error result carries nothing signed or
+ * encrypted, so this is the block Anthropic itself would have returned.
+ */
+function closePendingSearches(messages: MessageParam[]): void {
+  const answered = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type === 'web_search_tool_result') answered.add(block.tool_use_id);
+    }
+  }
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    const content = message.content;
+    for (let i = content.length - 1; i >= 0; i--) {
+      const block = content[i];
+      if (block.type !== 'server_tool_use' || block.name !== 'web_search') continue;
+      if (answered.has(block.id)) continue;
+      content.splice(i + 1, 0, {
+        type: 'web_search_tool_result',
+        tool_use_id: block.id,
+        content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+      });
+    }
   }
 }
 

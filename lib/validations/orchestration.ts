@@ -3264,6 +3264,7 @@ const agentCallTurnContinuingSchema = z.object({
     .optional(),
   tokensUsed: z.number().nonnegative(),
   costUsd: z.number().nonnegative(),
+  webSearchRequests: z.number().int().nonnegative().optional(),
 });
 
 const agentCallTurnTerminalSchema = z.object({
@@ -3274,6 +3275,7 @@ const agentCallTurnTerminalSchema = z.object({
   assistantContent: z.string(),
   tokensUsed: z.number().nonnegative(),
   costUsd: z.number().nonnegative(),
+  webSearchRequests: z.number().int().nonnegative().optional(),
 });
 
 // `phase` discriminates the two valid runtime states. One-sided entries

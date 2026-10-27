@@ -252,7 +252,13 @@ export interface LlmOptions {
  * an allow list or a block list, not both.
  */
 export interface WebSearchOptions {
-  /** Most searches in one response. Unset leaves the provider's limit. */
+  /**
+   * Most searches one call may run, across every request it makes (Anthropic
+   * counts its own limit per request, and a paused turn is sent again). A tool
+   * loop passes what is left of the reply's limit (`spendWebSearches`); 0
+   * means none is left, so the call runs no search. Unset leaves the
+   * provider's limit.
+   */
   maxUses?: number;
   /** Search only these domains. */
   allowedDomains?: string[];

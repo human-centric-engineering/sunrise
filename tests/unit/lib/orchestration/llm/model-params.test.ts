@@ -6,6 +6,7 @@ import {
   narrowServiceTier,
   narrowVerbosity,
   providerToolsSchema,
+  spendWebSearches,
 } from '@/lib/orchestration/llm/model-params';
 
 describe('modelParamOptions', () => {
@@ -135,5 +136,27 @@ describe('provider tools (t-912)', () => {
 
   it.each([0, 21, 1.5])('refuses %s as a search limit', (maxUses) => {
     expect(providerToolsSchema.safeParse({ webSearch: { maxUses } }).success).toBe(false);
+  });
+});
+
+describe('spendWebSearches', () => {
+  it('takes the searches already run off the limit', () => {
+    expect(
+      spendWebSearches({ model: 'm', providerTools: { webSearch: { maxUses: 5 } } }, 2)
+    ).toEqual({ model: 'm', providerTools: { webSearch: { maxUses: 3 } } });
+  });
+
+  it('stops at 0 rather than going below it', () => {
+    expect(spendWebSearches({ providerTools: { webSearch: { maxUses: 2 } } }, 3)).toEqual({
+      providerTools: { webSearch: { maxUses: 0 } },
+    });
+  });
+
+  it('returns the options unchanged with no limit, or no search yet', () => {
+    const unlimited = { providerTools: { webSearch: { allowedDomains: ['example.com'] } } };
+    const limited = { providerTools: { webSearch: { maxUses: 2 } } };
+    expect(spendWebSearches(unlimited, 4)).toBe(unlimited);
+    expect(spendWebSearches(limited, 0)).toBe(limited);
+    expect(spendWebSearches({}, 1)).toEqual({});
   });
 });

@@ -76,6 +76,27 @@ export const providerToolsSchema = z
   .strict();
 
 /**
+ * A tool loop's options for its next call, with the searches the reply has
+ * already run taken off the search limit. The agent's `maxUses` caps one
+ * reply, which can take several calls; each call runs at most what is left,
+ * down to 0. Options with no limit, or no search yet, come back unchanged.
+ */
+export function spendWebSearches<T extends { providerTools?: ProviderTools }>(
+  options: T,
+  used: number
+): T {
+  const search = options.providerTools?.webSearch;
+  if (search?.maxUses === undefined || used <= 0) return options;
+  return {
+    ...options,
+    providerTools: {
+      ...options.providerTools,
+      webSearch: { ...search, maxUses: Math.max(0, search.maxUses - used) },
+    },
+  };
+}
+
+/**
  * Narrow a stored `providerTools` value (a JSON column, or a fork's bundle)
  * to {@link ProviderTools}, or `undefined` when it turns nothing on or does
  * not parse.

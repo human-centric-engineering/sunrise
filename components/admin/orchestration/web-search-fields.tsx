@@ -127,8 +127,15 @@ export function WebSearchFields({
             <Label htmlFor={`${idPrefix}-web-search-max-uses`}>
               Most searches per reply{' '}
               <FieldHelp title="Search limit">
-                The most searches the model may run for one reply, from 1 to {MAX_WEB_SEARCH_USES}.
-                It caps what one reply can cost. Leave empty for Anthropic&rsquo;s own limit.
+                <p>
+                  The most searches the model may run for one reply, from 1 to {MAX_WEB_SEARCH_USES}
+                  , counted across every step of the reply. Leave it empty for no limit.
+                </p>
+                <p className="mt-2">
+                  With a limit set, each later step of a reply that has already searched, such as
+                  the step after a tool call, is sent the searches it has left. That step
+                  can&rsquo;t use the prompt cache, so its input costs more.
+                </p>
               </FieldHelp>
             </Label>
             <Input

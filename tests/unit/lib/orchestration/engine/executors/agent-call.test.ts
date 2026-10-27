@@ -1618,6 +1618,42 @@ describe('executeAgentCall', () => {
       expect(continued?.reasoning).toEqual(reasoning);
     });
 
+    it('holds the agent’s search limit across the tool loop and a resume', async () => {
+      // The limit caps the step's reply; Anthropic counts its own per request.
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        providerTools: { webSearch: { maxUses: 3 } },
+      } as never);
+      mockChat.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'tc_1', name: 'cap', arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5, webSearchRequests: 2 },
+        finishReason: 'tool_use',
+        model: 'claude-sonnet-4-6',
+      });
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      await executeAgentCall(makeStep({ mode: 'single-turn' }), makeCtx({ recordTurn }));
+
+      expect(mockChat).toHaveBeenCalledTimes(2);
+      expect(mockChat.mock.calls[0][1].providerTools).toEqual({ webSearch: { maxUses: 3 } });
+      expect(mockChat.mock.calls[1][1].providerTools).toEqual({ webSearch: { maxUses: 1 } });
+
+      const recorded: unknown[] = recordTurn.mock.calls.map((c) => c[0]);
+      const checkpoint = turnEntriesSchema.parse(
+        JSON.parse(
+          JSON.stringify(recorded.filter((t) => (t as { phase?: string }).phase === 'continuing'))
+        )
+      );
+      expect(checkpoint).toEqual([expect.objectContaining({ webSearchRequests: 2 })]);
+
+      mockChat.mockClear();
+      await executeAgentCall(
+        makeStep({ mode: 'single-turn' }),
+        makeCtx({ resumeTurns: checkpoint })
+      );
+      expect(mockChat.mock.calls[0][1].providerTools).toEqual({ webSearch: { maxUses: 1 } });
+    });
+
     // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────
 
     it('single-turn resume short-circuit: lastPrior has no toolCall → returns cached result, no LLM call', async () => {

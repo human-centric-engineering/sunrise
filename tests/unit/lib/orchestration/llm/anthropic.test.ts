@@ -4082,6 +4082,38 @@ describe('AnthropicProvider — web search (t-912)', () => {
       expect(sentParams()).not.toHaveProperty('tools');
     });
 
+    it('runs no search once the reply has none left, closing one left waiting', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
+
+      await makeProvider().chat(
+        [
+          { role: 'user', content: 'x' },
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'toolu_1', name: 'lookup', arguments: {} }],
+            reasoning: [replayedUse],
+          },
+          { role: 'tool', content: '{}', toolCallId: 'toolu_1' },
+        ],
+        {
+          model: 'claude-sonnet-4-6',
+          tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+          providerTools: { webSearch: { maxUses: 0 } },
+        }
+      );
+
+      const params = sentParams();
+      expect(params.tools.map((tool: { name: string }) => tool.name)).toEqual(['lookup']);
+      const assistant = params.messages[1].content.map((block: { type: string }) => block.type);
+      expect(assistant).toEqual(['server_tool_use', 'web_search_tool_result', 'tool_use']);
+      expect(params.messages[1].content[1]).toEqual({
+        type: 'web_search_tool_result',
+        tool_use_id: 'srvtoolu_1',
+        content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+      });
+    });
+
     it('sends no tool when web search is off', async () => {
       createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
 
@@ -4354,6 +4386,68 @@ describe('AnthropicProvider — web search (t-912)', () => {
       expect(sent).toHaveLength(2);
     });
 
+    it('sends each continuation only the searches its call has left', async () => {
+      const paused = (searches: number, content: object[]) => () => ({
+        content,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          server_tool_use: { web_search_requests: searches },
+        },
+        model: 'claude-sonnet-4-6',
+        stop_reason: 'pause_turn',
+      });
+      const pendingUse = { ...searchUse, id: 'srvtoolu_2' };
+      const sent = respondInTurn(
+        paused(2, [searchUse, searchResult]),
+        paused(1, [pendingUse]),
+        () => endTurn([{ type: 'text', text: 'Done.' }])
+      );
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: { maxUses: 3 } },
+      });
+
+      expect(sent).toHaveLength(3);
+      expect(sent[0].tools).toEqual([
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
+      ]);
+      expect(sent[1].tools).toEqual([
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 1 },
+      ]);
+      // All three spent: the tool comes off, and the search left waiting gets
+      // the result Anthropic gives past its limit.
+      expect(sent[2]).not.toHaveProperty('tools');
+      expect(sent[2].messages[1].content.slice(-2)).toEqual([
+        { type: 'server_tool_use', id: 'srvtoolu_2', name: 'web_search', input: searchUse.input },
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'srvtoolu_2',
+          content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+        },
+      ]);
+    });
+
+    it('leaves the tool unchanged across a pause when no limit is set', async () => {
+      const sent = respondInTurn(
+        () => ({
+          content: [searchUse, searchResult],
+          usage: { input_tokens: 1, output_tokens: 1, server_tool_use: { web_search_requests: 1 } },
+          model: 'claude-sonnet-4-6',
+          stop_reason: 'pause_turn',
+        }),
+        () => endTurn([{ type: 'text', text: 'Done.' }])
+      );
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sent[1].tools).toEqual(sent[0].tools);
+    });
+
     it('extends the one continuation message on a second pause, and stops after three', async () => {
       const sent = respondInTurn(() => ({
         content: [{ type: 'text', text: 'more ' }],
@@ -4490,6 +4584,40 @@ describe('AnthropicProvider — web search (t-912)', () => {
         finishReason: 'stop',
         reasoning: [replayedUse, replayedResult],
       });
+    });
+
+    it('sends a streamed continuation only the searches its call has left', async () => {
+      const sent = respondInTurn(
+        () =>
+          makeStream([
+            ...streamedSearch,
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'pause_turn' },
+              usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } },
+            },
+          ]),
+        () =>
+          makeStream([
+            { type: 'message_start', message: { usage: { input_tokens: 4, output_tokens: 0 } } },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn' },
+              usage: { output_tokens: 1 },
+            },
+          ])
+      );
+
+      for await (const _chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: { maxUses: 4 } },
+      })) {
+        // drain
+      }
+
+      expect(sent[1].tools).toEqual([
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
+      ]);
     });
 
     it('bills a failure in the second segment for both', async () => {
