@@ -193,15 +193,15 @@ describe('which API a request takes', () => {
     expect(responsesCreateMock).not.toHaveBeenCalled();
   });
 
-  it.each(['gpt-4.1-nano', 'gpt-3.5-turbo', 'o3-mini', 'my-gpt-5'])(
+  it.each(['gpt-4.1-nano', 'gpt-3.5-turbo', 'o3-mini', 'my-gpt-5', 'gpt-4o-mini-search-preview'])(
     'stays on Chat Completions on %s, which has no web search, and logs the drop',
     async (model) => {
       await makeProvider().chat(ask, { model, providerTools: SEARCH });
 
       expect(responsesCreateMock).not.toHaveBeenCalled();
       expect(loggerMock.info).toHaveBeenCalledWith(
-        'OpenAI: web search dropped, model or reasoning effort does not offer it',
-        expect.objectContaining({ model, modelOffersIt: false })
+        'OpenAI: web search dropped, the request cannot take it',
+        expect.objectContaining({ model, reason: 'model' })
       );
     }
   );
@@ -214,6 +214,10 @@ describe('which API a request takes', () => {
     });
 
     expect(responsesCreateMock).not.toHaveBeenCalled();
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      'OpenAI: web search dropped, the request cannot take it',
+      expect.objectContaining({ model: 'gpt-5-mini', reason: 'minimal_effort' })
+    );
   });
 
   it('takes the Responses API at minimal on an o-series model, which is sent no effort', async () => {
@@ -243,6 +247,10 @@ describe('which API a request takes', () => {
 
       expect(responsesCreateMock).not.toHaveBeenCalled();
       expect(JSON.stringify(chatCreateMock.mock.calls[0][0])).not.toContain('web_search');
+      expect(loggerMock.info).toHaveBeenCalledWith(
+        'OpenAI: web search dropped, the request cannot take it',
+        expect.objectContaining({ model, reason: 'site_filters' })
+      );
     }
   );
 
@@ -556,6 +564,50 @@ describe('the conversation as Responses input', () => {
     );
   });
 
+  it('replays a search with only its url sources, keeping one OpenAI sent from a feed', async () => {
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'Weather in London?' },
+        {
+          role: 'assistant',
+          content: 'Mild and dry.',
+          reasoning: [
+            {
+              type: 'openai_web_search_call',
+              id: 'ws_weather',
+              status: 'completed',
+              action: {
+                type: 'search',
+                queries: ['weather: London, UK'],
+                sources: [
+                  { type: 'api', name: 'oai-weather' },
+                  { type: 'url', url: 'https://weather.example/london' },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-5-mini', providerTools: SEARCH }
+    );
+
+    expect(sentParams().input).toEqual([
+      { role: 'user', content: 'Weather in London?' },
+      {
+        type: 'web_search_call',
+        id: 'ws_weather',
+        status: 'completed',
+        action: {
+          type: 'search',
+          queries: ['weather: London, UK'],
+          sources: [{ type: 'url', url: 'https://weather.example/london' }],
+        },
+      },
+      { role: 'assistant', content: 'Mild and dry.' },
+    ]);
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
+
   it('leaves out another provider’s blocks, such as Claude thinking after a fallback', async () => {
     await makeProvider().chat(
       [
@@ -616,6 +668,28 @@ describe('a Responses result', () => {
         },
       ],
     });
+  });
+
+  it('keeps each message of a response as its own paragraph', async () => {
+    responsesCreateMock.mockResolvedValue(
+      makeResponse({
+        output: [
+          {
+            type: 'message',
+            id: 'msg_a',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'Let me look that up.', annotations: [] }],
+          },
+          searchItem,
+          messageItem,
+        ],
+      })
+    );
+
+    const res = await makeProvider().chat(ask, { model: 'gpt-5-mini', providerTools: SEARCH });
+
+    expect(res.content).toBe('Let me look that up.\n\nStrikes are on Thursday.');
   });
 
   it('maps function calls, and reads the turn as tool use', async () => {
@@ -811,6 +885,25 @@ describe('a Responses stream', () => {
           },
         ],
       },
+    ]);
+  });
+
+  it('starts a later message’s text as a new paragraph, as the result joins them', async () => {
+    streamOf([
+      { type: 'response.output_text.delta', item_id: 'msg_a', delta: 'Let me ' },
+      { type: 'response.output_text.delta', item_id: 'msg_a', delta: 'look that up.' },
+      { type: 'response.output_text.delta', item_id: 'msg_b', delta: 'Strikes are on Thursday.' },
+      { type: 'response.completed', response: makeResponse() },
+    ]);
+
+    const chunks = await collect(
+      makeProvider().chatStream(ask, { model: 'gpt-5-mini', providerTools: SEARCH })
+    );
+
+    expect(chunks.filter((c) => c.type === 'text')).toEqual([
+      { type: 'text', content: 'Let me ' },
+      { type: 'text', content: 'look that up.' },
+      { type: 'text', content: '\n\nStrikes are on Thursday.' },
     ]);
   });
 

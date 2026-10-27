@@ -107,19 +107,31 @@ export function usesResponsesApi(
   options: LlmOptions,
   context: { isOpenAiHost: boolean; isReasoning: boolean; providerName: string }
 ): boolean {
-  const search = options.providerTools?.webSearch;
-  if (!context.isOpenAiHost || search === undefined) return false;
+  if (!context.isOpenAiHost || options.providerTools?.webSearch === undefined) return false;
   if (options.responseFormat) return false;
-  if (!acceptsOpenAiWebSearch(options.model)) return false;
-  // A site list the model can't take: searching every site instead would
-  // widen what the admin restricted.
+  return webSearchRefusal(options, context) === undefined;
+}
+
+/**
+ * Why OpenAI would refuse this request's web search, or `undefined` when it
+ * takes it: the model doesn't offer search, it can't take the site list set
+ * (searching every site instead would widen what the admin restricted), or
+ * the request would send `minimal` effort, which GPT-5 refuses search at.
+ */
+export function webSearchRefusal(
+  options: LlmOptions,
+  context: { isReasoning: boolean; providerName: string }
+): 'model' | 'site_filters' | 'minimal_effort' | undefined {
+  const search = options.providerTools?.webSearch;
+  if (!acceptsOpenAiWebSearch(options.model)) return 'model';
   if (
-    (search.allowedDomains?.length || search.blockedDomains?.length) &&
+    (search?.allowedDomains?.length || search?.blockedDomains?.length) &&
     !acceptsOpenAiWebSearchFilters(options.model)
   ) {
-    return false;
+    return 'site_filters';
   }
-  return sentReasoningEffort(options, context) !== 'minimal';
+  if (sentReasoningEffort(options, context) === 'minimal') return 'minimal_effort';
+  return undefined;
 }
 
 /** The `reasoning.effort` the request would send, or `undefined`. */
@@ -318,6 +330,8 @@ function toReplayItem(block: LlmReasoningBlock): ResponseInputItem | undefined {
   }
 }
 
+const urlSourceSchema = z.object({ type: z.literal('url'), url: z.string() });
+
 /** A `web_search_call` item's action, as the Responses API takes it back. */
 const webSearchActionSchema: z.ZodType<ResponseFunctionWebSearch['action']> = z.discriminatedUnion(
   'type',
@@ -326,7 +340,19 @@ const webSearchActionSchema: z.ZodType<ResponseFunctionWebSearch['action']> = z.
       type: z.literal('search'),
       queries: z.array(z.string()).optional(),
       query: z.string().optional(),
-      sources: z.array(z.object({ type: z.literal('url'), url: z.string() })).optional(),
+      // OpenAI also returns sources the SDK doesn't type, such as
+      // `{ type: 'api', name: 'oai-weather' }`. Only the `url` ones go back:
+      // the item is accepted with them alone, and dropping the item would
+      // lose the search (both measured).
+      sources: z
+        .array(z.unknown())
+        .transform((sources) =>
+          sources.flatMap((source) => {
+            const parsed = urlSourceSchema.safeParse(source);
+            return parsed.success ? [parsed.data] : [];
+          })
+        )
+        .optional(),
     }),
     z.object({ type: z.literal('open_page'), url: z.string().nullable().optional() }),
     z.object({ type: z.literal('find_in_page'), pattern: z.string(), url: z.string() }),
@@ -378,11 +404,16 @@ function mapOutput(response: Response): MappedOutput {
   let webSearchRequests = 0;
   for (const item of response.output) {
     switch (item.type) {
-      case 'message':
+      case 'message': {
+        // A response can hold more than one message (text before a search,
+        // then the answer); each is its own paragraph, as the stream yields it.
+        let text = '';
         for (const part of item.content) {
-          if (part.type === 'output_text') content += part.text;
+          if (part.type === 'output_text') text += part.text;
         }
+        if (text) content += content ? `\n\n${text}` : text;
         break;
+      }
       case 'function_call':
         toolCalls.push({
           id: item.call_id,
@@ -451,9 +482,7 @@ function usageOf(response: Response, webSearchRequests: number): LlmUsage {
     outputTokens: usage?.output_tokens ?? 0,
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cacheReadTokens ? { cacheReadTokens } : {}),
-    ...(response.service_tier === 'flex' || response.service_tier === 'priority'
-      ? { serviceTier: response.service_tier }
-      : {}),
+    ...pricedTier(response.service_tier),
     ...(webSearchRequests > 0 ? { webSearchRequests } : {}),
   };
 }
@@ -522,6 +551,9 @@ export async function* fromResponsesStream(
   // A later summary part starts a new paragraph in the live panel.
   let reasoningStreamed = false;
   let paragraphPending = false;
+  // The message the last text came from; a later message starts a paragraph,
+  // as `mapOutput` joins them.
+  let textItemId: string | undefined;
   try {
     for await (const event of stream) {
       if (signal?.aborted) {
@@ -529,7 +561,11 @@ export async function* fromResponsesStream(
       }
       switch (event.type) {
         case 'response.output_text.delta':
-          if (event.delta) yield { type: 'text', content: event.delta };
+          if (event.delta) {
+            const startsMessage = textItemId !== undefined && event.item_id !== textItemId;
+            textItemId = event.item_id;
+            yield { type: 'text', content: startsMessage ? `\n\n${event.delta}` : event.delta };
+          }
           break;
         case 'response.reasoning_summary_part.added':
           if (reasoningStreamed) paragraphPending = true;
@@ -600,14 +636,27 @@ export function isSummaryVerificationError(err: unknown): boolean {
   return false;
 }
 
-function safeParseJson(raw: string): Record<string, unknown> {
+/**
+ * A tool call's arguments as an object, from either OpenAI API. Anything
+ * other than a JSON object is wrapped as `{ value }`; text that isn't JSON
+ * becomes `{}`.
+ */
+export function safeParseJson(raw: string): Record<string, unknown> {
   if (!raw) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isRecord(parsed)) return parsed;
     return { value: parsed };
   } catch {
-    logger.warn('Failed to parse OpenAI function_call arguments', { length: raw.length });
+    logger.warn('Failed to parse OpenAI tool call arguments', { length: raw.length });
     return {};
   }
+}
+
+/**
+ * The served tier as `LlmUsage.serviceTier`, when it is one priced apart from
+ * the standard rate. `default`, `auto` and `scale` add nothing.
+ */
+export function pricedTier(tier: string | null | undefined): Pick<LlmUsage, 'serviceTier'> {
+  return tier === 'flex' || tier === 'priority' ? { serviceTier: tier } : {};
 }

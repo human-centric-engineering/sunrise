@@ -784,6 +784,13 @@ describe('acceptsOpenAiWebSearch / acceptsOpenAiWebSearchFilters (t-955)', () =>
     'gpt-3.5-turbo',
     'gpt-4',
     'gpt-4o-audio-preview',
+    // Search and media variants of families that do search: the Responses
+    // API refuses the first two (measured), and the rest aren't chat models.
+    'gpt-4o-mini-search-preview',
+    'gpt-5-search-api',
+    'gpt-4o-mini-realtime-preview',
+    'gpt-4o-mini-tts',
+    'gpt-4o-mini-transcribe',
     'my-gpt-5',
     'claude-opus-5-5',
   ])('offers none on %s', (id) => {

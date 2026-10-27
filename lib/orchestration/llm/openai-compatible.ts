@@ -44,7 +44,6 @@ import { isRecord } from '@/lib/utils';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   acceptsFlexTier,
-  acceptsOpenAiWebSearch,
   acceptsVerbosity,
   deriveParamProfile,
   openAiReasoningEffort,
@@ -73,7 +72,6 @@ import type {
   LlmMessage,
   LlmOptions,
   LlmResponse,
-  LlmUsage,
   LlmToolCall,
   LlmToolChoice,
   ModelInfo,
@@ -89,7 +87,10 @@ import {
   fromResponsesResult,
   fromResponsesStream,
   isSummaryVerificationError,
+  pricedTier,
+  safeParseJson,
   usesResponsesApi,
+  webSearchRefusal,
 } from '@/lib/orchestration/llm/openai-responses';
 
 /**
@@ -710,8 +711,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   /**
    * Does this request take the Responses API path (`openai-responses.ts`)?
    * Only OpenAI itself, with web search on, on a model that offers it. On
-   * OpenAI with a model that doesn't, the search is dropped and logged, as
-   * Anthropic drops it on Claude 3.0; other hosts ignore it.
+   * OpenAI when the request can't take it, the search is dropped and logged
+   * with the reason, as Anthropic drops it on Claude 3.0; other hosts ignore it.
    */
   private routesToResponses(options: LlmOptions, isReasoning: boolean): boolean {
     const routes = usesResponsesApi(options, {
@@ -725,10 +726,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       options.providerTools?.webSearch !== undefined &&
       !options.responseFormat
     ) {
-      logger.info('OpenAI: web search dropped, model or reasoning effort does not offer it', {
+      logger.info('OpenAI: web search dropped, the request cannot take it', {
         provider: this.name,
         model: options.model,
-        modelOffersIt: acceptsOpenAiWebSearch(options.model),
+        reason: webSearchRefusal(options, { isReasoning, providerName: this.name }),
       });
     }
     return routes;
@@ -951,14 +952,6 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-/**
- * The served tier as `LlmUsage.serviceTier`, when it is one priced apart from
- * the standard rate. `default`, `auto` and `scale` add nothing.
- */
-function pricedTier(tier: string | null | undefined): Pick<LlmUsage, 'serviceTier'> {
-  return tier === 'flex' || tier === 'priority' ? { serviceTier: tier } : {};
-}
-
 function toSdkMessage(msg: LlmMessage): ChatCompletionMessageParam {
   switch (msg.role) {
     case 'system':
@@ -1085,20 +1078,6 @@ function mapFinishReason(reason: string | null | undefined): LlmFinishReason {
       return 'error';
     default:
       return 'stop';
-  }
-}
-
-function safeParseJson(raw: string): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return { value: parsed };
-  } catch {
-    logger.warn('Failed to parse OpenAI tool_call arguments', { length: raw.length });
-    return {};
   }
 }
 

@@ -657,7 +657,10 @@ export function anthropicAdaptiveEffort(
  * Measured against the live API (2026-10-27): GPT-5 and its numbered releases
  * (nano included), gpt-4.1 and gpt-4.1-mini, gpt-4o and gpt-4o-mini, and per
  * OpenAI's docs o3 and o4-mini. gpt-4.1-nano is a 400, as are o3-mini and the
- * older chat models. A model it doesn't recognise returns false, so the
+ * older chat models. The search, audio, realtime, speech and transcription
+ * variants of these families are not chat models on the Responses API
+ * (gpt-4o-mini-search-preview and gpt-5-search-api are a 400, measured), so
+ * they return false. A model it doesn't recognise returns false, so the
  * request stays on Chat Completions without search rather than 400ing.
  *
  * GPT-5 also refuses the tool at `minimal` reasoning effort; the routing in
@@ -666,6 +669,7 @@ export function anthropicAdaptiveEffort(
 export function acceptsOpenAiWebSearch(modelId: string): boolean {
   const id = bareOpenAiId(modelId);
   if (/^gpt-4\.1-nano(?:$|-)/.test(id)) return false;
+  if (/-(?:search|audio|realtime|tts|transcribe)(?:$|-)/.test(id)) return false;
   return /^(?:gpt-5(?:$|[-.])|gpt-4\.1(?:$|-)|gpt-4o(?:$|-(?:mini(?:$|-)|\d{4}-))|o3(?:$|-\d{4}-)|o4-mini(?:$|-))/.test(
     id
   );
