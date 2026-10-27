@@ -25,16 +25,35 @@ export interface LlmToolCall {
 }
 
 /**
- * A reasoning block a provider returned alongside an assistant turn —
- * today Anthropic's `thinking` / `redacted_thinking` blocks. Opaque to
- * everything but the provider that produced it: a tool loop carries it on
- * the assistant message and the provider sends it back unchanged on the
- * request that continues the turn, which Anthropic requires when thinking
- * is on. Other providers ignore it.
+ * A block a provider returned alongside an assistant turn that has to go
+ * back with it — today Anthropic's `thinking` / `redacted_thinking` blocks,
+ * and the `server_tool_use` / `web_search_tool_result` blocks of a web search
+ * it ran itself ({@link ProviderTools}). Opaque to everything but the
+ * provider that produced it: a tool loop carries it on the assistant message
+ * and the provider sends it back unchanged on the request that continues the
+ * turn, which Anthropic requires when thinking is on and needs for the model
+ * to keep what a search found. Other providers ignore it.
  */
 export type LlmReasoningBlock =
   | { type: 'thinking'; thinking: string; signature: string }
-  | { type: 'redacted_thinking'; data: string };
+  | { type: 'redacted_thinking'; data: string }
+  | { type: 'server_tool_use'; id: string; name: 'web_search'; input: Record<string, unknown> }
+  | {
+      type: 'web_search_tool_result';
+      toolUseId: string;
+      /** Empty when the search failed — `errorCode` then says why. */
+      results: WebSearchResult[];
+      errorCode?: string;
+    };
+
+/** One page a provider's web search returned. */
+export interface WebSearchResult {
+  url: string;
+  title: string;
+  /** Opaque page content the provider needs back to cite the page later. */
+  encryptedContent: string;
+  pageAge?: string | null;
+}
 
 /**
  * A single content part in a multimodal message. When `LlmMessage.content`
@@ -215,10 +234,39 @@ export interface LlmOptions {
   parallelToolCalls?: boolean;
   /** OpenAI processing tier — see {@link ServiceTier}. */
   serviceTier?: ServiceTier;
+  /**
+   * Tools the provider runs on its own side rather than through the
+   * capability dispatcher (Anthropic web search). Sent only to providers and
+   * models that offer them; dropped elsewhere.
+   */
+  providerTools?: ProviderTools;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */
   signal?: AbortSignal;
+}
+
+/**
+ * The provider's own web search: the model searches as it answers, the
+ * provider runs the search and bills it per search. Anthropic takes either
+ * an allow list or a block list, not both.
+ */
+export interface WebSearchOptions {
+  /** Most searches in one response. Unset leaves the provider's limit. */
+  maxUses?: number;
+  /** Search only these domains. */
+  allowedDomains?: string[];
+  /** Never search these domains. */
+  blockedDomains?: string[];
+}
+
+/**
+ * Built-in tools a provider runs itself, keyed by tool. A key that is absent
+ * leaves that tool off. Stored as one JSON value on an agent
+ * (`AiAgent.providerTools`).
+ */
+export interface ProviderTools {
+  webSearch?: WebSearchOptions;
 }
 
 /** Why the model stopped generating. */
@@ -256,6 +304,11 @@ export interface LlmUsage {
    * by `calculateCost`.
    */
   serviceTier?: 'flex' | 'priority';
+  /**
+   * Web searches the provider ran for this call ({@link ProviderTools}),
+   * billed per search on top of the tokens. Absent when it ran none.
+   */
+  webSearchRequests?: number;
 }
 
 /** A complete, non-streaming response from a provider. */
@@ -381,6 +434,12 @@ export interface TranscribeOptions {
   language?: string;
   /** Free-text prompt to bias spelling / vocabulary. */
   prompt?: string;
+  /**
+   * Tools the provider runs on its own side rather than through the
+   * capability dispatcher (Anthropic web search). Sent only to providers and
+   * models that offer them; dropped elsewhere.
+   */
+  providerTools?: ProviderTools;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */

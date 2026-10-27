@@ -46,7 +46,21 @@ export interface ComputedCost {
    * "not priced", not "free"; `logCost` records that on the row.
    */
   unpriced?: true;
+  /**
+   * The part of `totalCostUsd` that paid for the provider's own web searches
+   * (`LlmUsage.webSearchRequests`), billed per search rather than per token.
+   * Neither input nor output, so it is in the total only. Absent when the
+   * call ran none.
+   */
+  webSearchCostUsd?: number;
 }
+
+/**
+ * Anthropic's web search — USD per search ($10 per 1,000), on top of the
+ * tokens the results add to the input. Only Anthropic runs a search for
+ * Sunrise today; OpenAI's per-call rate comes with its Responses path.
+ */
+export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
 
 /**
  * Whisper pricing — USD per minute of input audio.
@@ -171,6 +185,8 @@ export interface LogCostParams {
   cacheWriteTokens?: number;
   /** The tier that served the call, when priced apart (`LlmUsage.serviceTier`). */
   serviceTier?: LlmUsage['serviceTier'];
+  /** The provider's own web searches the call ran (`LlmUsage.webSearchRequests`). */
+  webSearchRequests?: number;
   operation: CostOperation;
   /**
    * Audio duration in milliseconds — required when `operation` is
@@ -299,6 +315,21 @@ export function calculateCost(
   outputTokens: number,
   usage: PricedUsage = {}
 ): ComputedCost {
+  const cost = calculateTokenCost(modelId, inputTokens, outputTokens, usage);
+  // Billed whatever the model's token pricing: an unknown or unpriced model
+  // still paid for its searches.
+  const searches = usage.webSearchRequests;
+  if (searches === undefined || !Number.isFinite(searches) || searches <= 0) return cost;
+  const webSearchCostUsd = searches * WEB_SEARCH_USD_PER_REQUEST;
+  return { ...cost, totalCostUsd: cost.totalCostUsd + webSearchCostUsd, webSearchCostUsd };
+}
+
+function calculateTokenCost(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  usage: PricedUsage
+): ComputedCost {
   if (
     !Number.isFinite(inputTokens) ||
     inputTokens < 0 ||
@@ -363,10 +394,13 @@ export function calculateCost(
 
 /**
  * What, beyond the token totals, changes a call's price: the parts of its
- * input billed at prompt-cache rates, and the tier that served it. An
- * `LlmUsage` fits.
+ * input billed at prompt-cache rates, the tier that served it, and the web
+ * searches it ran. An `LlmUsage` fits.
  */
-export type PricedUsage = Pick<LlmUsage, 'cacheReadTokens' | 'cacheWriteTokens' | 'serviceTier'>;
+export type PricedUsage = Pick<
+  LlmUsage,
+  'cacheReadTokens' | 'cacheWriteTokens' | 'serviceTier' | 'webSearchRequests'
+>;
 
 /**
  * OpenAI's processing tiers against the standard rate. Flex is half price
@@ -467,6 +501,15 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
   // from the model's list rate.
   if (params.serviceTier) {
     metadata = { ...(metadata ?? {}), serviceTier: params.serviceTier };
+  }
+  // The row's total includes what the searches cost; this says how many and
+  // how much, since neither cost column holds it.
+  if (cost.webSearchCostUsd !== undefined) {
+    metadata = {
+      ...(metadata ?? {}),
+      webSearchRequests: params.webSearchRequests,
+      webSearchCostUsd: cost.webSearchCostUsd,
+    };
   }
 
   const data: Prisma.AiCostLogUncheckedCreateInput = {

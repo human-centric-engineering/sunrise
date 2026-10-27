@@ -419,6 +419,20 @@ export function acceptsNativeStructuredOutput(modelId: string): boolean {
 }
 
 /**
+ * Does this Claude model take Anthropic's server-side web search tool?
+ *
+ * Anthropic offers it on Claude 3.5 Haiku, 3.5 Sonnet and 3.7 Sonnet, and on
+ * every family-first model since (Opus / Sonnet / Haiku 4+, Fable, Mythos).
+ * The Claude 3.0 models and ids the parser doesn't recognise return false,
+ * so the provider drops the tool rather than sending one that 400s.
+ */
+export function acceptsWebSearch(modelId: string): boolean {
+  const id = normalizeClaudeId(modelId);
+  if (/^claude-3-[57]-(?:sonnet|haiku)(?:\b|[-.@:]|$)/.test(id)) return true;
+  return claudeVersion(id) !== undefined;
+}
+
+/**
  * Does this Claude model refuse a forced `tool_choice` (`any` or a named
  * tool) outright, with a 400?
  *

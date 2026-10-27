@@ -1204,3 +1204,58 @@ describe('service-tier pricing (t-911)', () => {
     expect(call.data.inputCostUsd).toBeCloseTo(0.625);
   });
 });
+
+describe('web search pricing (t-912)', () => {
+  const sonnet: ModelInfo = {
+    id: 'search-model',
+    name: 'Search model',
+    provider: 'anthropic',
+    tier: 'mid',
+    inputCostPerMillion: 3,
+    outputCostPerMillion: 15,
+    maxContext: 200_000,
+    supportsTools: true,
+  };
+
+  it('adds $0.01 a search to the total, outside the input and output costs', () => {
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+    const cost = calculateCost('search-model', 1_000_000, 0, { webSearchRequests: 3 });
+    expect(cost.inputCostUsd).toBeCloseTo(3);
+    expect(cost.outputCostUsd).toBe(0);
+    expect(cost.webSearchCostUsd).toBeCloseTo(0.03);
+    expect(cost.totalCostUsd).toBeCloseTo(3.03);
+  });
+
+  it('still charges the searches when the model has no token price', () => {
+    vi.mocked(getModel).mockReturnValueOnce(undefined);
+    const cost = calculateCost('unknown-model', 1000, 1000, { webSearchRequests: 2 });
+    expect(cost.unpriced).toBe(true);
+    expect(cost.totalCostUsd).toBeCloseTo(0.02);
+  });
+
+  it('leaves a call without searches as it was', () => {
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+    const cost = calculateCost('search-model', 1_000_000, 0, { webSearchRequests: 0 });
+    expect(cost).not.toHaveProperty('webSearchCostUsd');
+    expect(cost.totalCostUsd).toBeCloseTo(3);
+  });
+
+  it('records the searches and their cost on the row, whose total includes them', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+
+    await logCost({
+      model: 'search-model',
+      provider: 'anthropic',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      webSearchRequests: 4,
+      operation: 'chat',
+    });
+
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.metadata).toEqual({ webSearchRequests: 4, webSearchCostUsd: 0.04 });
+    expect(call.data.inputCostUsd).toBeCloseTo(3);
+    expect(call.data.totalCostUsd).toBeCloseTo(3.04);
+  });
+});

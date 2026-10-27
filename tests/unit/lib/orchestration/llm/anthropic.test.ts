@@ -28,7 +28,7 @@ vi.mock('@/lib/logging', () => ({
 
 const { AnthropicProvider } = await import('@/lib/orchestration/llm/anthropic');
 const { ProviderError } = await import('@/lib/orchestration/llm/provider');
-import type { StreamChunk } from '@/lib/orchestration/llm/types';
+import type { LlmReasoningBlock, StreamChunk } from '@/lib/orchestration/llm/types';
 
 beforeEach(() => {
   createMock.mockReset();
@@ -3970,6 +3970,504 @@ describe('AnthropicProvider — prompt caching after review (t-909)', () => {
       outputTokens: 0,
       cacheReadTokens: 5000,
       cacheWriteTokens: 200,
+    });
+  });
+});
+
+describe('AnthropicProvider — web search (t-912)', () => {
+  const searchUse = {
+    type: 'server_tool_use',
+    id: 'srvtoolu_1',
+    name: 'web_search',
+    input: { query: 'sunrise times' },
+    caller: { type: 'direct' },
+  };
+  const searchResult = {
+    type: 'web_search_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    caller: { type: 'direct' },
+    content: [
+      {
+        type: 'web_search_result',
+        url: 'https://example.com/sun',
+        title: 'Sun',
+        encrypted_content: 'enc-1',
+        page_age: '2 days ago',
+      },
+    ],
+  };
+  const replayedUse: LlmReasoningBlock = {
+    type: 'server_tool_use',
+    id: 'srvtoolu_1',
+    name: 'web_search',
+    input: { query: 'sunrise times' },
+  };
+  const replayedResult: LlmReasoningBlock = {
+    type: 'web_search_tool_result',
+    toolUseId: 'srvtoolu_1',
+    results: [
+      {
+        url: 'https://example.com/sun',
+        title: 'Sun',
+        encryptedContent: 'enc-1',
+        pageAge: '2 days ago',
+      },
+    ],
+  };
+
+  function endTurn(content: object[], usage: object = { input_tokens: 1, output_tokens: 1 }) {
+    return { content, usage, model: 'claude-sonnet-4-6', stop_reason: 'end_turn' };
+  }
+
+  /**
+   * Answer each request with the next response (the last one repeating), and
+   * return every request's params as sent — cloned at the call, since the
+   * provider extends one params object across a paused turn.
+   */
+  function respondInTurn(...responses: (() => unknown)[]): Record<string, any>[] {
+    const sent: Record<string, any>[] = [];
+    createMock.mockImplementation((params: unknown) => {
+      sent.push(structuredClone(params) as Record<string, any>);
+      return Promise.resolve(responses[Math.min(sent.length, responses.length) - 1]());
+    });
+    return sent;
+  }
+
+  describe('request', () => {
+    it('sends the web_search tool after the agent’s tools, with its options', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+        providerTools: {
+          webSearch: { maxUses: 3, allowedDomains: ['example.com'], blockedDomains: [] },
+        },
+      });
+
+      expect(sentParams().tools).toEqual([
+        { name: 'lookup', description: 'Look up', input_schema: { type: 'object' } },
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          max_uses: 3,
+          allowed_domains: ['example.com'],
+        },
+      ]);
+    });
+
+    it('sends it as the only tool, leaving tool_choice to the provider default', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: { blockedDomains: ['spam.example'] } },
+      });
+
+      const params = sentParams();
+      expect(params.tools).toEqual([
+        { type: 'web_search_20250305', name: 'web_search', blocked_domains: ['spam.example'] },
+      ]);
+      expect(params).not.toHaveProperty('tool_choice');
+    });
+
+    it('drops it on a model that does not offer it', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-3-haiku-20240307',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sentParams()).not.toHaveProperty('tools');
+    });
+
+    it('sends no tool when web search is off', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'ok' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: {},
+      });
+
+      expect(sentParams()).not.toHaveProperty('tools');
+    });
+
+    it('leaves the structured-output extraction tool alone', async () => {
+      createMock.mockResolvedValue(
+        endTurn([{ type: 'tool_use', id: 't1', name: '__structured_out', input: { a: 1 } }])
+      );
+
+      const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        responseFormat: {
+          type: 'json_schema',
+          name: 'out',
+          schema: { type: 'object', properties: { a: { type: 'number' } } },
+        },
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sentParams().tools.map((tool: { name: string }) => tool.name)).toEqual([
+        '__structured_out',
+      ]);
+      expect(response.content).toBe('{"a":1}');
+    });
+  });
+
+  describe('response', () => {
+    it('returns the search blocks as replayable blocks, in order, and counts the searches', async () => {
+      createMock.mockResolvedValue(
+        endTurn(
+          [
+            { type: 'thinking', thinking: 'plan', signature: 'sig-1' },
+            searchUse,
+            searchResult,
+            { type: 'text', text: 'The sun rises at 6.', citations: null },
+          ],
+          { input_tokens: 10, output_tokens: 5, server_tool_use: { web_search_requests: 1 } }
+        )
+      );
+
+      const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(response.content).toBe('The sun rises at 6.');
+      expect(response.reasoning).toEqual([
+        { type: 'thinking', thinking: 'plan', signature: 'sig-1' },
+        replayedUse,
+        replayedResult,
+      ]);
+      expect(response.usage).toEqual({ inputTokens: 10, outputTokens: 5, webSearchRequests: 1 });
+      expect(response.finishReason).toBe('stop');
+    });
+
+    it('keeps a failed search as its error code', async () => {
+      createMock.mockResolvedValue(
+        endTurn([
+          searchUse,
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+          },
+          { type: 'text', text: 'No luck.' },
+        ])
+      );
+
+      const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(response.reasoning?.[1]).toEqual({
+        type: 'web_search_tool_result',
+        toolUseId: 'srvtoolu_1',
+        results: [],
+        errorCode: 'max_uses_exceeded',
+      });
+    });
+  });
+
+  describe('replay', () => {
+    it('sends the search blocks back ahead of the text and tool_use of the turn it continues', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: 'done' }]));
+
+      await makeProvider().chat(
+        [
+          { role: 'user', content: 'x' },
+          {
+            role: 'assistant',
+            content: 'Found it.',
+            toolCalls: [{ id: 'call_1', name: 'lookup', arguments: { q: 'x' } }],
+            reasoning: [
+              replayedUse,
+              replayedResult,
+              {
+                type: 'web_search_tool_result',
+                toolUseId: 'srvtoolu_2',
+                results: [],
+                errorCode: 'code-from-a-later-api',
+              },
+            ],
+          },
+          { role: 'tool', content: '{"hit":true}', toolCallId: 'call_1' },
+        ],
+        {
+          model: 'claude-sonnet-4-6',
+          tools: [{ name: 'lookup', description: 'Look up', parameters: { type: 'object' } }],
+          providerTools: { webSearch: {} },
+        }
+      );
+
+      expect(sentParams().messages[1]).toEqual({
+        role: 'assistant',
+        content: [
+          {
+            type: 'server_tool_use',
+            id: 'srvtoolu_1',
+            name: 'web_search',
+            input: { query: 'sunrise times' },
+          },
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: [
+              {
+                type: 'web_search_result',
+                url: 'https://example.com/sun',
+                title: 'Sun',
+                encrypted_content: 'enc-1',
+                page_age: '2 days ago',
+              },
+            ],
+          },
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_2',
+            // A code this SDK doesn't know goes back as one it does.
+            content: { type: 'web_search_tool_result_error', error_code: 'unavailable' },
+          },
+          { type: 'text', text: 'Found it.' },
+          { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'x' } },
+        ],
+      });
+    });
+  });
+
+  describe('a paused turn (pause_turn)', () => {
+    it('sends the paused turn back and joins both segments into one response', async () => {
+      const sent = respondInTurn(
+        () => ({
+          content: [{ type: 'text', text: 'Searching. ' }, searchUse, searchResult],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 4,
+            server_tool_use: { web_search_requests: 1 },
+          },
+          model: 'claude-sonnet-4-6',
+          stop_reason: 'pause_turn',
+        }),
+        () =>
+          endTurn([{ type: 'text', text: 'Done.' }], {
+            input_tokens: 30,
+            output_tokens: 6,
+            server_tool_use: { web_search_requests: 2 },
+          })
+      );
+
+      const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sent).toHaveLength(2);
+      expect(sent[0].messages).toHaveLength(1);
+      expect(sent[1].messages[1]).toEqual({
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Searching. ' },
+          {
+            type: 'server_tool_use',
+            id: 'srvtoolu_1',
+            name: 'web_search',
+            input: { query: 'sunrise times' },
+          },
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: [
+              {
+                type: 'web_search_result',
+                url: 'https://example.com/sun',
+                title: 'Sun',
+                encrypted_content: 'enc-1',
+                page_age: '2 days ago',
+              },
+            ],
+          },
+        ],
+      });
+      expect(response.content).toBe('Searching. Done.');
+      expect(response.reasoning).toEqual([replayedUse, replayedResult]);
+      expect(response.usage).toEqual({ inputTokens: 40, outputTokens: 10, webSearchRequests: 3 });
+      expect(response.finishReason).toBe('stop');
+    });
+
+    it('extends the one continuation message on a second pause, and stops after three', async () => {
+      const sent = respondInTurn(() => ({
+        content: [{ type: 'text', text: 'more ' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        model: 'claude-sonnet-4-6',
+        stop_reason: 'pause_turn',
+      }));
+
+      const response = await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sent).toHaveLength(4);
+      expect(sent[2].messages).toHaveLength(2);
+      expect(sent[2].messages[1].content).toEqual([
+        { type: 'text', text: 'more ' },
+        { type: 'text', text: 'more ' },
+      ]);
+      expect(response.content).toBe('more more more more ');
+      expect(response.usage).toEqual({ inputTokens: 4, outputTokens: 4 });
+    });
+  });
+
+  describe('chatStream', () => {
+    const streamedSearch = [
+      { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 0 } } },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: {} },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"query":"sunrise' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: ' times"}' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: searchResult },
+      { type: 'content_block_stop', index: 1 },
+      { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'At 6.' } },
+      { type: 'content_block_stop', index: 2 },
+    ];
+
+    it('hands the search blocks back on done and counts the searches', async () => {
+      createMock.mockResolvedValue(
+        makeStream([
+          ...streamedSearch,
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn' },
+            usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } },
+          },
+        ])
+      );
+
+      const chunks: StreamChunk[] = [];
+      for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      })) {
+        chunks.push(chunk);
+      }
+
+      // The search input never surfaces as a tool call the dispatcher would run.
+      expect(chunks.filter((chunk) => chunk.type === 'tool_call')).toEqual([]);
+      expect(chunks.filter((chunk) => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'At 6.' },
+      ]);
+      expect(chunks[chunks.length - 1]).toEqual({
+        type: 'done',
+        usage: { inputTokens: 10, outputTokens: 7, webSearchRequests: 1 },
+        finishReason: 'stop',
+        reasoning: [replayedUse, replayedResult],
+      });
+    });
+
+    it('carries a paused turn on in a second stream, summing both segments', async () => {
+      const sent = respondInTurn(
+        () =>
+          makeStream([
+            ...streamedSearch,
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'pause_turn' },
+              usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } },
+            },
+          ]),
+        () =>
+          makeStream([
+            { type: 'message_start', message: { usage: { input_tokens: 40, output_tokens: 0 } } },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: ' More.' },
+            },
+            { type: 'content_block_stop', index: 0 },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn' },
+              usage: { output_tokens: 3 },
+            },
+          ])
+      );
+
+      const chunks: StreamChunk[] = [];
+      for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        providerTools: { webSearch: {} },
+      })) {
+        chunks.push(chunk);
+      }
+
+      expect(sent).toHaveLength(2);
+      expect(sent[1].messages[1].content.map((block: { type: string }) => block.type)).toEqual([
+        'server_tool_use',
+        'web_search_tool_result',
+        'text',
+      ]);
+      expect(sent[1].messages[1].content[2]).toEqual({ type: 'text', text: 'At 6.' });
+      expect(
+        chunks.flatMap((chunk) => (chunk.type === 'text' ? [chunk.content] : [])).join('')
+      ).toBe('At 6. More.');
+      expect(chunks[chunks.length - 1]).toEqual({
+        type: 'done',
+        usage: { inputTokens: 50, outputTokens: 10, webSearchRequests: 1 },
+        finishReason: 'stop',
+        reasoning: [replayedUse, replayedResult],
+      });
+    });
+
+    it('bills a failure in the second segment for both', async () => {
+      createMock
+        .mockResolvedValueOnce(
+          makeStream([
+            ...streamedSearch,
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'pause_turn' },
+              usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } },
+            },
+          ])
+        )
+        .mockResolvedValueOnce(
+          (async function* () {
+            yield {
+              type: 'message_start',
+              message: { usage: { input_tokens: 40, output_tokens: 0 } },
+            };
+            throw new Error('socket closed');
+          })()
+        );
+
+      const run = async () => {
+        for await (const _chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+          model: 'claude-sonnet-4-6',
+          providerTools: { webSearch: {} },
+        })) {
+          // drain
+        }
+      };
+
+      await expect(run()).rejects.toMatchObject({
+        usage: { inputTokens: 50, outputTokens: 7, webSearchRequests: 1 },
+      });
     });
   });
 });

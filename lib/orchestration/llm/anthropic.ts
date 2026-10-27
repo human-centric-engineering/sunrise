@@ -21,6 +21,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import type {
+  ContentBlock,
   ContentBlockParam,
   Message,
   MessageCreateParamsNonStreaming,
@@ -31,6 +32,9 @@ import type {
   Tool,
   ToolChoice,
   ToolUseBlock,
+  WebSearchTool20250305,
+  WebSearchToolResultBlockContent,
+  WebSearchToolResultErrorCode,
 } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { Stream } from '@anthropic-ai/sdk/core/streaming';
 
@@ -39,6 +43,7 @@ import {
   acceptsNativeStructuredOutput,
   acceptsSamplingTemperature,
   acceptsThinkingBudget,
+  acceptsWebSearch,
   anthropicAdaptiveEffort,
   anthropicThinkingBudget,
   refusesForcedToolChoice,
@@ -68,6 +73,7 @@ import type {
   ModelInfo,
   ProviderConfig,
   StreamChunk,
+  WebSearchOptions,
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
 import { isCompleteJson } from '@/lib/orchestration/llm/json-completeness';
@@ -77,6 +83,14 @@ const PING_MODEL = 'claude-haiku-4-5';
 
 /** Default max_tokens when the caller doesn't supply one. */
 const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * How many times one call re-sends a turn Anthropic paused (`pause_turn`).
+ * It pauses a long server-tool loop — many web searches in one answer — and
+ * expects the paused turn back to carry on. Past this the call returns what
+ * it has, so a search loop can't run up cost without bound.
+ */
+const MAX_PAUSE_CONTINUATIONS = 3;
 
 /** Hard-coded Claude family list. Pricing is also carried by model-registry. */
 const CLAUDE_MODELS: ModelInfo[] = [
@@ -159,21 +173,20 @@ export class AnthropicProvider implements LlmProvider {
       hasTools: Boolean(options.tools?.length),
     });
 
-    const requestOptions = buildRequestOptions(options);
-
-    let message: Message;
-    try {
-      message = await withRetry<Message>(
-        () => this.client.messages.create(params, requestOptions),
-        {
-          maxRetries: this.maxRetries,
-          isLocal: this.isLocal,
-          ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          operation: 'anthropic.messages.create',
-        }
-      );
-    } catch (err) {
-      throw toProviderError(err, 'Anthropic chat request failed');
+    let message = await this.createMessage(params, options);
+    // A paused turn is sent back to carry on; the blocks and usage of every
+    // segment make up the one response.
+    const blocks: ContentBlock[] = [...message.content];
+    let usage = toLlmUsage(message.usage);
+    for (
+      let pauses = 0;
+      message.stop_reason === 'pause_turn' && pauses < MAX_PAUSE_CONTINUATIONS;
+      pauses++
+    ) {
+      appendPausedTurn(params, message.content.flatMap(toPausedPart), pauses > 0);
+      message = await this.createMessage(params, options);
+      blocks.push(...message.content);
+      usage = addUsage(usage, toLlmUsage(message.usage));
     }
 
     const content: string[] = [];
@@ -200,13 +213,16 @@ export class AnthropicProvider implements LlmProvider {
         options.responseFormat?.type === 'json_schema') &&
       !options.tools?.length;
 
-    for (const block of message.content) {
+    for (const block of blocks) {
       if (block.type === 'text') {
         content.push(block.text);
       } else if (block.type === 'thinking') {
         reasoning.push({ type: 'thinking', thinking: block.thinking, signature: block.signature });
       } else if (block.type === 'redacted_thinking') {
         reasoning.push({ type: 'redacted_thinking', data: block.data });
+      } else if (block.type === 'server_tool_use' || block.type === 'web_search_tool_result') {
+        const serverBlock = toServerToolBlock(block);
+        if (serverBlock) reasoning.push(serverBlock);
       } else if (block.type === 'tool_use') {
         if (isStructuredExtraction && block.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
           // Structured output extraction — convert tool arguments to JSON text
@@ -260,14 +276,14 @@ export class AnthropicProvider implements LlmProvider {
           retriable: false,
           // Billed in full despite producing nothing usable — carry it so the
           // caller's error path can still cost it.
-          usage: toLlmUsage(message.usage),
+          usage,
         }
       );
     }
 
     const response: LlmResponse = {
       content: joinedContent,
-      usage: toLlmUsage(message.usage),
+      usage,
       model: message.model,
       finishReason: isStructuredExtraction ? 'stop' : mapStopReason(message.stop_reason),
     };
@@ -284,13 +300,6 @@ export class AnthropicProvider implements LlmProvider {
       messageCount: messages.length,
       hasTools: Boolean(options.tools?.length),
     });
-
-    let stream: Stream<RawMessageStreamEvent>;
-    try {
-      stream = await this.client.messages.create(params, buildRequestOptions(options));
-    } catch (err) {
-      throw toProviderError(err, 'Anthropic chat stream failed');
-    }
 
     // Gates the extraction-tool -> text conversion below; true only when
     // buildBaseParams installed the extraction tool.
@@ -313,131 +322,208 @@ export class AnthropicProvider implements LlmProvider {
     let heldText = '';
     let extractedViaTool = false;
 
+    // Usage of the segments before the current one: a turn Anthropic pauses
+    // (`pause_turn`) is re-sent to carry on, and each segment is billed.
+    let priorUsage: LlmUsage | undefined;
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
+    let webSearchRequests = 0;
     let finishReason: LlmFinishReason = 'stop';
-
-    // Buffered tool-use blocks by `content_block` index — Anthropic streams
-    // `input_json_delta` fragments that we assemble into a single tool call.
-    const toolBuffers = new Map<number, { id: string; name: string; partial: string }>();
-    // Thinking blocks by `content_block` index, assembled from
-    // `thinking_delta` / `signature_delta` events and handed back on `done`
-    // in index order, so a tool loop can replay them unchanged.
-    const reasoningBlocks = new Map<number, LlmReasoningBlock>();
-
-    try {
-      for await (const event of stream) {
-        if (options.signal?.aborted) {
-          throw new ProviderError('request aborted', { code: 'aborted', retriable: false });
-        }
-
-        switch (event.type) {
-          case 'message_start': {
-            const usage = toLlmUsage(event.message.usage);
-            inputTokens = usage.inputTokens;
-            cacheReadTokens = usage.cacheReadTokens;
-            cacheWriteTokens = usage.cacheWriteTokens;
-            break;
-          }
-
-          case 'content_block_start': {
-            const block = event.content_block;
-            if (block.type === 'tool_use') {
-              toolBuffers.set(event.index, { id: block.id, name: block.name, partial: '' });
-            } else if (block.type === 'thinking') {
-              reasoningBlocks.set(event.index, {
-                type: 'thinking',
-                thinking: block.thinking,
-                signature: block.signature,
-              });
-              if (block.thinking) yield { type: 'reasoning', text: block.thinking };
-            } else if (block.type === 'redacted_thinking') {
-              reasoningBlocks.set(event.index, { type: 'redacted_thinking', data: block.data });
-            }
-            break;
-          }
-
-          case 'content_block_delta': {
-            if (event.delta.type === 'text_delta') {
-              if (wantsParseableJson) streamedText += event.delta.text;
-              if (isStructuredExtraction) heldText += event.delta.text;
-              else yield { type: 'text', content: event.delta.text };
-            } else if (event.delta.type === 'input_json_delta') {
-              const buf = toolBuffers.get(event.index);
-              if (buf) buf.partial += event.delta.partial_json;
-            } else if (event.delta.type === 'thinking_delta') {
-              const block = reasoningBlocks.get(event.index);
-              if (block?.type === 'thinking') block.thinking += event.delta.thinking;
-              if (event.delta.thinking) yield { type: 'reasoning', text: event.delta.thinking };
-            } else if (event.delta.type === 'signature_delta') {
-              const block = reasoningBlocks.get(event.index);
-              if (block?.type === 'thinking') block.signature = event.delta.signature;
-            }
-            break;
-          }
-
-          case 'content_block_stop': {
-            const buf = toolBuffers.get(event.index);
-            if (buf) {
-              if (isStructuredExtraction && buf.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
-                // Structured output — emit the JSON as text content
-                const parsed = safeParseJson(buf.partial);
-                extractedViaTool = true;
-                yield { type: 'text', content: JSON.stringify(parsed) };
-              } else {
-                yield {
-                  type: 'tool_call',
-                  toolCall: {
-                    id: buf.id,
-                    name: buf.name,
-                    arguments: safeParseJson(buf.partial),
-                  },
-                };
-              }
-              toolBuffers.delete(event.index);
-            }
-            break;
-          }
-
-          case 'message_delta':
-            if (event.delta.stop_reason) finishReason = mapStopReason(event.delta.stop_reason);
-            if (event.usage?.output_tokens !== null && event.usage?.output_tokens !== undefined) {
-              outputTokens = event.usage.output_tokens;
-            }
-            // The final delta can carry the input counts too, cumulative, so
-            // they replace what `message_start` reported.
-            if (typeof event.usage?.input_tokens === 'number') {
-              const usage = toLlmUsage({
-                input_tokens: event.usage.input_tokens,
-                output_tokens: outputTokens,
-                cache_read_input_tokens: event.usage.cache_read_input_tokens ?? cacheReadTokens,
-                cache_creation_input_tokens:
-                  event.usage.cache_creation_input_tokens ?? cacheWriteTokens,
-              });
-              inputTokens = usage.inputTokens;
-              cacheReadTokens = usage.cacheReadTokens;
-              cacheWriteTokens = usage.cacheWriteTokens;
-            }
-            break;
-
-          default:
-            // message_stop, ping, etc. — no-op.
-            break;
-        }
-      }
-    } catch (err) {
-      // Carry what the stream has already been billed for — `inputTokens`
-      // lands at `message_start` and `outputTokens` updates on every
-      // `message_delta`, so a mid-stream failure knows its own cost (#592).
-      throw toProviderErrorWithUsage(err, 'Anthropic stream iteration failed', {
+    // Thinking and server-tool blocks of every segment, in order, handed back
+    // on `done` so a tool loop can replay them unchanged.
+    const reasoning: LlmReasoningBlock[] = [];
+    const segmentUsage = (): LlmUsage =>
+      addUsage(priorUsage, {
         inputTokens,
         outputTokens,
         ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
         ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+        ...(webSearchRequests > 0 ? { webSearchRequests } : {}),
       });
+
+    for (let pauses = 0; ; pauses++) {
+      let stream: Stream<RawMessageStreamEvent>;
+      try {
+        stream = await this.client.messages.create(params, buildRequestOptions(options));
+      } catch (err) {
+        throw toProviderError(err, 'Anthropic chat stream failed');
+      }
+
+      inputTokens = 0;
+      outputTokens = 0;
+      cacheReadTokens = undefined;
+      cacheWriteTokens = undefined;
+      webSearchRequests = 0;
+      let paused = false;
+      // Buffered tool-use blocks by `content_block` index — Anthropic streams
+      // `input_json_delta` fragments that we assemble into a single tool call.
+      // A web search's `server_tool_use` input streams the same way.
+      const toolBuffers = new Map<
+        number,
+        { id: string; name: string; partial: string; server: boolean }
+      >();
+      // Thinking and server-tool blocks by `content_block` index, assembled
+      // from their deltas.
+      const reasoningBlocks = new Map<number, LlmReasoningBlock>();
+      // Text by index, kept only to send a paused turn back.
+      const textBlocks = new Map<number, string>();
+
+      try {
+        for await (const event of stream) {
+          if (options.signal?.aborted) {
+            throw new ProviderError('request aborted', { code: 'aborted', retriable: false });
+          }
+
+          switch (event.type) {
+            case 'message_start': {
+              const usage = toLlmUsage(event.message.usage);
+              inputTokens = usage.inputTokens;
+              cacheReadTokens = usage.cacheReadTokens;
+              cacheWriteTokens = usage.cacheWriteTokens;
+              break;
+            }
+
+            case 'content_block_start': {
+              const block = event.content_block;
+              if (block.type === 'tool_use') {
+                toolBuffers.set(event.index, {
+                  id: block.id,
+                  name: block.name,
+                  partial: '',
+                  server: false,
+                });
+              } else if (block.type === 'server_tool_use') {
+                if (block.name === 'web_search') {
+                  toolBuffers.set(event.index, {
+                    id: block.id,
+                    name: block.name,
+                    partial: '',
+                    server: true,
+                  });
+                }
+              } else if (block.type === 'web_search_tool_result') {
+                reasoningBlocks.set(
+                  event.index,
+                  toWebSearchResultBlock(block.tool_use_id, block.content)
+                );
+              } else if (block.type === 'text') {
+                textBlocks.set(event.index, block.text);
+              } else if (block.type === 'thinking') {
+                reasoningBlocks.set(event.index, {
+                  type: 'thinking',
+                  thinking: block.thinking,
+                  signature: block.signature,
+                });
+                if (block.thinking) yield { type: 'reasoning', text: block.thinking };
+              } else if (block.type === 'redacted_thinking') {
+                reasoningBlocks.set(event.index, { type: 'redacted_thinking', data: block.data });
+              }
+              break;
+            }
+
+            case 'content_block_delta': {
+              if (event.delta.type === 'text_delta') {
+                textBlocks.set(event.index, (textBlocks.get(event.index) ?? '') + event.delta.text);
+                if (wantsParseableJson) streamedText += event.delta.text;
+                if (isStructuredExtraction) heldText += event.delta.text;
+                else yield { type: 'text', content: event.delta.text };
+              } else if (event.delta.type === 'input_json_delta') {
+                const buf = toolBuffers.get(event.index);
+                if (buf) buf.partial += event.delta.partial_json;
+              } else if (event.delta.type === 'thinking_delta') {
+                const block = reasoningBlocks.get(event.index);
+                if (block?.type === 'thinking') block.thinking += event.delta.thinking;
+                if (event.delta.thinking) yield { type: 'reasoning', text: event.delta.thinking };
+              } else if (event.delta.type === 'signature_delta') {
+                const block = reasoningBlocks.get(event.index);
+                if (block?.type === 'thinking') block.signature = event.delta.signature;
+              }
+              break;
+            }
+
+            case 'content_block_stop': {
+              const buf = toolBuffers.get(event.index);
+              if (buf) {
+                if (buf.server) {
+                  reasoningBlocks.set(event.index, {
+                    type: 'server_tool_use',
+                    id: buf.id,
+                    name: 'web_search',
+                    input: safeParseJson(buf.partial),
+                  });
+                } else if (isStructuredExtraction && buf.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
+                  // Structured output — emit the JSON as text content
+                  const parsed = safeParseJson(buf.partial);
+                  extractedViaTool = true;
+                  yield { type: 'text', content: JSON.stringify(parsed) };
+                } else {
+                  yield {
+                    type: 'tool_call',
+                    toolCall: {
+                      id: buf.id,
+                      name: buf.name,
+                      arguments: safeParseJson(buf.partial),
+                    },
+                  };
+                }
+                toolBuffers.delete(event.index);
+              }
+              break;
+            }
+
+            case 'message_delta':
+              if (event.delta.stop_reason) {
+                finishReason = mapStopReason(event.delta.stop_reason);
+                paused = event.delta.stop_reason === 'pause_turn';
+              }
+              if (event.usage?.output_tokens !== null && event.usage?.output_tokens !== undefined) {
+                outputTokens = event.usage.output_tokens;
+              }
+              if (typeof event.usage?.server_tool_use?.web_search_requests === 'number') {
+                webSearchRequests = event.usage.server_tool_use.web_search_requests;
+              }
+              // The final delta can carry the input counts too, cumulative, so
+              // they replace what `message_start` reported.
+              if (typeof event.usage?.input_tokens === 'number') {
+                const usage = toLlmUsage({
+                  input_tokens: event.usage.input_tokens,
+                  output_tokens: outputTokens,
+                  cache_read_input_tokens: event.usage.cache_read_input_tokens ?? cacheReadTokens,
+                  cache_creation_input_tokens:
+                    event.usage.cache_creation_input_tokens ?? cacheWriteTokens,
+                });
+                inputTokens = usage.inputTokens;
+                cacheReadTokens = usage.cacheReadTokens;
+                cacheWriteTokens = usage.cacheWriteTokens;
+              }
+              break;
+
+            default:
+              // message_stop, ping, etc. — no-op.
+              break;
+          }
+        }
+      } catch (err) {
+        // Carry what the stream has already been billed for — `inputTokens`
+        // lands at `message_start` and `outputTokens` updates on every
+        // `message_delta`, so a mid-stream failure knows its own cost (#592).
+        throw toProviderErrorWithUsage(err, 'Anthropic stream iteration failed', segmentUsage());
+      }
+
+      const segmentParts = [...new Set([...reasoningBlocks.keys(), ...textBlocks.keys()])]
+        .sort((a, b) => a - b)
+        .map((index): PausedPart => {
+          const block = reasoningBlocks.get(index);
+          return block ?? { type: 'text', text: textBlocks.get(index) ?? '' };
+        });
+      reasoning.push(...segmentParts.flatMap((part) => (part.type === 'text' ? [] : [part])));
+      if (!paused || pauses >= MAX_PAUSE_CONTINUATIONS) break;
+      priorUsage = segmentUsage();
+      appendPausedTurn(params, segmentParts, pauses > 0);
     }
+    const usage = segmentUsage();
 
     // Mirror the non-streaming truncation guard: a max_tokens stop on a
     // JSON-shaped request means the output is incomplete — either a forced
@@ -461,16 +547,7 @@ export class AnthropicProvider implements LlmProvider {
           retriable: false,
           // Only when the stream actually reported usage — a zeroed cost row
           // would tell the dashboard this turn was free.
-          ...(inputTokens > 0 || outputTokens > 0
-            ? {
-                usage: {
-                  inputTokens,
-                  outputTokens,
-                  ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-                  ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
-                },
-              }
-            : {}),
+          ...(usage.inputTokens > 0 || usage.outputTokens > 0 ? { usage } : {}),
         }
       );
     }
@@ -479,17 +556,9 @@ export class AnthropicProvider implements LlmProvider {
       yield { type: 'text', content: heldText };
     }
 
-    const reasoning = [...reasoningBlocks.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([, block]) => block);
     yield {
       type: 'done',
-      usage: {
-        inputTokens,
-        outputTokens,
-        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
-      },
+      usage,
       finishReason: isStructuredExtraction ? 'stop' : finishReason,
       ...(reasoning.length > 0 ? { reasoning } : {}),
     };
@@ -526,6 +595,25 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   // --- internal helpers ---
+
+  private async createMessage(
+    params: MessageCreateParamsNonStreaming,
+    options: LlmOptions
+  ): Promise<Message> {
+    try {
+      return await withRetry<Message>(
+        () => this.client.messages.create(params, buildRequestOptions(options)),
+        {
+          maxRetries: this.maxRetries,
+          isLocal: this.isLocal,
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+          operation: 'anthropic.messages.create',
+        }
+      );
+    } catch (err) {
+      throw toProviderError(err, 'Anthropic chat request failed');
+    }
+  }
 
   private buildBaseParams(
     messages: LlmMessage[],
@@ -719,6 +807,21 @@ export class AnthropicProvider implements LlmProvider {
         // instructions should already request JSON output.
       }
     }
+    // Anthropic's own web search, beside the agent's tools. Not on a
+    // structured-output request answered through the extraction tool: that
+    // tool's arguments are the whole result, and the response handlers key on
+    // it being the only tool.
+    const webSearch = options.providerTools?.webSearch;
+    if (webSearch && !installsExtractionTool(params)) {
+      if (acceptsWebSearch(options.model)) {
+        params.tools = [...(params.tools ?? []), toWebSearchTool(webSearch)];
+      } else {
+        logger.info('Anthropic: web search dropped, model does not offer it', {
+          provider: this.name,
+          model: options.model,
+        });
+      }
+    }
     if (systemParts.length > 0) {
       params.system = systemParts.map((text) => ({ type: 'text', text }));
     }
@@ -802,15 +905,146 @@ function toLlmUsage(usage: {
   output_tokens: number;
   cache_read_input_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
+  server_tool_use?: { web_search_requests: number } | null;
 }): LlmUsage {
   const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
   const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
+  const webSearchRequests = usage.server_tool_use?.web_search_requests ?? 0;
   return {
     inputTokens: usage.input_tokens + cacheReadTokens + cacheWriteTokens,
     outputTokens: usage.output_tokens,
     ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
     ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
+    ...(webSearchRequests > 0 ? { webSearchRequests } : {}),
   };
+}
+
+/** The usage of two segments of one paused turn, as one call's. */
+function addUsage(a: LlmUsage | undefined, b: LlmUsage): LlmUsage {
+  if (!a) return b;
+  const sum = (x: number | undefined, y: number | undefined): number | undefined =>
+    x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+  const cacheReadTokens = sum(a.cacheReadTokens, b.cacheReadTokens);
+  const cacheWriteTokens = sum(a.cacheWriteTokens, b.cacheWriteTokens);
+  const webSearchRequests = sum(a.webSearchRequests, b.webSearchRequests);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    ...(webSearchRequests !== undefined ? { webSearchRequests } : {}),
+  };
+}
+
+/** One block of a paused turn, as it goes back: its text, or a replayable block. */
+type PausedPart = { type: 'text'; text: string } | LlmReasoningBlock;
+
+/** A response block as part of a paused turn to send back. */
+function toPausedPart(block: ContentBlock): PausedPart[] {
+  switch (block.type) {
+    case 'text':
+      return [{ type: 'text', text: block.text }];
+    case 'thinking':
+      return [{ type: 'thinking', thinking: block.thinking, signature: block.signature }];
+    case 'redacted_thinking':
+      return [{ type: 'redacted_thinking', data: block.data }];
+    default: {
+      const serverBlock = toServerToolBlock(block);
+      return serverBlock ? [serverBlock] : [];
+    }
+  }
+}
+
+/**
+ * Put a paused turn (`pause_turn`) on the end of the request so Anthropic
+ * carries on from it. A later pause of the same turn extends that assistant
+ * message rather than adding another: the continuation is one turn.
+ */
+function appendPausedTurn(
+  params: { messages: MessageParam[] },
+  parts: PausedPart[],
+  extend: boolean
+): void {
+  const blocks = parts.map((part): ContentBlockParam =>
+    part.type === 'text' ? { type: 'text', text: part.text } : toReasoningBlockParam(part)
+  );
+  const last = params.messages[params.messages.length - 1];
+  if (extend && last?.role === 'assistant' && Array.isArray(last.content)) {
+    last.content.push(...blocks);
+  } else {
+    params.messages.push({ role: 'assistant', content: blocks });
+  }
+}
+
+/** The request's `web_search` server tool. */
+function toWebSearchTool(options: WebSearchOptions): WebSearchTool20250305 {
+  return {
+    type: 'web_search_20250305',
+    name: 'web_search',
+    ...(options.maxUses !== undefined ? { max_uses: options.maxUses } : {}),
+    ...(options.allowedDomains?.length ? { allowed_domains: options.allowedDomains } : {}),
+    ...(options.blockedDomains?.length ? { blocked_domains: options.blockedDomains } : {}),
+  };
+}
+
+/** A web search's `server_tool_use` or result block, in replayable form. */
+function toServerToolBlock(block: ContentBlock): LlmReasoningBlock | undefined {
+  if (block.type === 'server_tool_use' && block.name === 'web_search') {
+    return {
+      type: 'server_tool_use',
+      id: block.id,
+      name: 'web_search',
+      input: toRecord(block.input),
+    };
+  }
+  if (block.type === 'web_search_tool_result') {
+    return toWebSearchResultBlock(block.tool_use_id, block.content);
+  }
+  return undefined;
+}
+
+function toWebSearchResultBlock(
+  toolUseId: string,
+  content: WebSearchToolResultBlockContent
+): LlmReasoningBlock {
+  if (!Array.isArray(content)) {
+    return {
+      type: 'web_search_tool_result',
+      toolUseId,
+      results: [],
+      errorCode: content.error_code,
+    };
+  }
+  return {
+    type: 'web_search_tool_result',
+    toolUseId,
+    results: content.map((result) => ({
+      url: result.url,
+      title: result.title,
+      encryptedContent: result.encrypted_content,
+      pageAge: result.page_age,
+    })),
+  };
+}
+
+const WEB_SEARCH_ERROR_CODES: readonly WebSearchToolResultErrorCode[] = [
+  'invalid_tool_input',
+  'unavailable',
+  'max_uses_exceeded',
+  'too_many_requests',
+  'query_too_long',
+  'request_too_large',
+];
+
+/** A stored error code as Anthropic's type; one it no longer sends reads as `unavailable`. */
+function narrowWebSearchErrorCode(code: string): WebSearchToolResultErrorCode {
+  return WEB_SEARCH_ERROR_CODES.find((known) => known === code) ?? 'unavailable';
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : {};
 }
 
 function splitSystemMessages(
@@ -1091,9 +1325,32 @@ function toAnthropicBlocks(parts: ContentPart[]): ContentBlockParam[] {
 }
 
 function toReasoningBlockParam(block: LlmReasoningBlock): ContentBlockParam {
-  return block.type === 'thinking'
-    ? { type: 'thinking', thinking: block.thinking, signature: block.signature }
-    : { type: 'redacted_thinking', data: block.data };
+  switch (block.type) {
+    case 'thinking':
+      return { type: 'thinking', thinking: block.thinking, signature: block.signature };
+    case 'redacted_thinking':
+      return { type: 'redacted_thinking', data: block.data };
+    case 'server_tool_use':
+      return { type: 'server_tool_use', id: block.id, name: block.name, input: block.input };
+    case 'web_search_tool_result':
+      return {
+        type: 'web_search_tool_result',
+        tool_use_id: block.toolUseId,
+        content:
+          block.errorCode !== undefined
+            ? {
+                type: 'web_search_tool_result_error',
+                error_code: narrowWebSearchErrorCode(block.errorCode),
+              }
+            : block.results.map((result) => ({
+                type: 'web_search_result' as const,
+                url: result.url,
+                title: result.title,
+                encrypted_content: result.encryptedContent,
+                ...(result.pageAge !== undefined ? { page_age: result.pageAge } : {}),
+              })),
+      };
+  }
 }
 
 /** Did buildBaseParams install the structured-output extraction tool? */

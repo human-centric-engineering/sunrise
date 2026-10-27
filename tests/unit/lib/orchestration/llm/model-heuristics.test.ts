@@ -17,6 +17,7 @@ import {
   refusesForcedToolChoice,
   acceptsSamplingTemperature,
   acceptsThinkingBudget,
+  acceptsWebSearch,
   anthropicAdaptiveEffort,
   anthropicThinkingBudget,
   deriveBestRole,
@@ -723,4 +724,26 @@ describe('acceptsFlexTier', () => {
     'gpt-5-pro',
     'gpt-5-codex',
   ])('does not on %s', (id) => expect(acceptsFlexTier(id)).toBe(false));
+});
+
+describe('acceptsWebSearch (t-912)', () => {
+  it.each([
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'claude-3-7-sonnet-20250219',
+    'claude-sonnet-4-6',
+    'claude-opus-4-20250514',
+    'claude-haiku-4-5',
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+  ])('takes it on %s', (id) => {
+    expect(acceptsWebSearch(id)).toBe(true);
+  });
+
+  it.each(['claude-3-haiku-20240307', 'claude-3-opus-20240229', 'claude-2.1', 'gpt-5'])(
+    'drops it on %s',
+    (id) => {
+      expect(acceptsWebSearch(id)).toBe(false);
+    }
+  );
 });
