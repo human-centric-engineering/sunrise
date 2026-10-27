@@ -1655,7 +1655,10 @@ describe('executeAgentCall', () => {
 
       expect(mockChat).toHaveBeenCalledTimes(2);
       expect(mockChat.mock.calls[0][1].providerTools).toEqual({ webSearch: { maxUses: 3 } });
-      expect(mockChat.mock.calls[1][1].providerTools).toEqual({ webSearch: { maxUses: 1 } });
+      // The whole limit rides along for OpenAI, which caps each call with it (t-955).
+      expect(mockChat.mock.calls[1][1].providerTools).toEqual({
+        webSearch: { maxUses: 1, replyLimit: 3 },
+      });
 
       const recorded: unknown[] = recordTurn.mock.calls.map((c) => c[0]);
       const checkpoint = turnEntriesSchema.parse(
@@ -1670,7 +1673,9 @@ describe('executeAgentCall', () => {
         makeStep({ mode: 'single-turn' }),
         makeCtx({ resumeTurns: checkpoint })
       );
-      expect(mockChat.mock.calls[0][1].providerTools).toEqual({ webSearch: { maxUses: 1 } });
+      expect(mockChat.mock.calls[0][1].providerTools).toEqual({
+        webSearch: { maxUses: 1, replyLimit: 3 },
+      });
     });
 
     // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────
