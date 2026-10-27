@@ -22,6 +22,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type {
+  AppExcludedSubjectSource,
+  AppSubjectSourceContribution,
+} from '@/lib/privacy/subject-source-registry';
 
 const mockLogger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
@@ -341,6 +345,98 @@ describe('registerAppSubjectSources', () => {
       expect(getAppSubjectSources()).toEqual([]);
       expect(getAppExcludedSubjectSources()).toEqual([]);
       expect(getAccountedAppModels().size).toBe(0);
+    });
+
+    it.each([
+      [
+        'a non-string model',
+        { sources: [{ ...VALID, model: 42 }, VALID] },
+        'number',
+        'model is empty',
+      ],
+      ['a null source', { sources: [null, VALID] }, 'null', 'source is not an object'],
+      [
+        'a null exclusion',
+        { sources: [VALID], excluded: [null] },
+        'null',
+        'exclusion is not an object',
+      ],
+    ])(
+      'drops %s with a log instead of throwing, keeping the valid rows (t-787)',
+      (_label, rows, model, reason) => {
+        // These used to throw (`(42).trim()`, `null.model`). The gate then rolled
+        // the whole tier back and latched failure, so Art. 15 refused for the
+        // life of the process over one bad row.
+        seam(() =>
+          registerAppSubjectSources({
+            tier: 'app',
+            ...(rows as unknown as Omit<AppSubjectSourceContribution, 'tier'>),
+          })
+        );
+
+        expect(getAppSubjectSources()).toEqual([VALID]);
+        expect(appSubjectDeclarationsFailed()).toBe(false);
+        expect(mockLogger.error).toHaveBeenCalledWith('subject-sources: declaration rejected', {
+          tier: 'app',
+          model,
+          reason,
+        });
+        expect(mockLogger.error).not.toHaveBeenCalledWith(
+          expect.stringContaining('rolled back'),
+          expect.anything()
+        );
+      }
+    );
+
+    it('drops a description that is not a string', () => {
+      seam(() =>
+        registerAppSubjectSources({
+          tier: 'app',
+          sources: [{ ...VALID, description: 42 as unknown as string }],
+        })
+      );
+
+      expect(getAppSubjectSources()).toEqual([]);
+      expect(appSubjectDeclarationsFailed()).toBe(false);
+    });
+  });
+
+  describe('what an exclusion carries into the bundle', () => {
+    it('keeps exactly model and a trimmed reason, whatever else the fork passed', () => {
+      // This object is what the subject reads in `meta.excluded`; a field the
+      // fork meant for itself must not ride along into the bundle.
+      seam(() =>
+        registerAppSubjectSources({
+          tier: 'app',
+          excluded: [
+            {
+              model: 'AppCountry',
+              reason: '  Reference list of countries — no personal data.  ',
+              internalNote: 'not for the subject',
+            } as unknown as AppExcludedSubjectSource,
+          ],
+        })
+      );
+
+      expect(getAppExcludedSubjectSources()).toEqual([
+        { model: 'AppCountry', reason: 'Reference list of countries — no personal data.' },
+      ]);
+    });
+
+    it('hands out copies, so a reader mutating one cannot change the registry', () => {
+      seam(() =>
+        registerAppSubjectSources({
+          tier: 'app',
+          excluded: [
+            { model: 'AppCountry', reason: 'Reference list of countries — no personal data.' },
+          ],
+        })
+      );
+
+      getAppExcludedSubjectSources()[0].reason = 'tampered';
+      expect(getAppExcludedSubjectSources()[0].reason).toBe(
+        'Reference list of countries — no personal data.'
+      );
     });
   });
 

@@ -320,6 +320,19 @@ release process.
 
 ### Fixed
 
+- **A wrongly typed subject-source declaration is dropped, not thrown
+  (t-787).** `registerAppSubjectSources()` called `.trim()` on whatever it
+  was given, so a non-string `model` or `description`, or a `null` source or
+  exclusion, threw out of `initAppSubjectSources()`. The tier was rolled back
+  and `exportUserData()` refused every request for the life of the process.
+  Such a row is now dropped with a `subject-sources: declaration rejected`
+  log, like any other malformed row, and the coverage guard names the model.
+  An exclusion is now stored as exactly `{ model, reason }` with the reason
+  trimmed, so extra fields a fork passed no longer reach the bundle's
+  `meta.excluded`, and `getAppExcludedSubjectSources()` returns copies. Both
+  registries are now built on `createDeclarationRegistry()`
+  (`lib/privacy/declaration-registry.ts`); their exports are unchanged.
+
 - **The clean-up agent stays put while a fork resolver is down (t-819).**
   Since t-798, a fork's eligibility or credential resolver that threw during
   a maintenance pass moved the clean-up agent to inherit and wrote a version

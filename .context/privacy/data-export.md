@@ -467,10 +467,12 @@ second — it is never silently overwritten.
 
 ### What a malformed declaration does
 
-A row is dropped, with `logger.error`, if it has an empty model or section, a
-disposition that is neither `export` nor `attribution`, a description under 10
-characters, an exclusion reason under 20, a section already in use, a model
-claimed by another tier, or the same model as both a source and an exclusion.
+A row is dropped, with `logger.error`, if it is not an object (`null`, say), has
+an empty or non-string model or section, a disposition that is neither `export`
+nor `attribution`, a description under 10 characters, an exclusion reason under
+20, a section already in use, a model claimed by another tier, or the same model
+as both a source and an exclusion. An accepted exclusion keeps only `model` and
+the trimmed `reason`, since that is what `meta.excluded` shows the subject.
 
 Dropped is not silently accepted: the model stays unaccounted for, so the
 coverage guard fails naming it. Throwing instead would abort the rest of your
