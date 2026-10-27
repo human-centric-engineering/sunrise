@@ -132,11 +132,17 @@ When set on a thinking-capable Anthropic model, the provider class also strips t
 
 ### Web search
 
-`<WebSearchFields>` (`components/admin/orchestration/web-search-fields.tsx`), under the model parameters and not shared with the `llm_call` editor: a step has no web search setting. It writes `AiAgent.providerTools` (null = off).
+`<WebSearchFields>` (`components/admin/orchestration/web-search-fields.tsx`), under the model parameters and not shared with the `llm_call` editor: a step has no web search setting. It writes `AiAgent.providerTools.webSearch` (`providerTools` is null when no provider tool is on).
 
 - **Web search** — switch; on stores `{ webSearch: {} }`. Claude 3.5 and later, and OpenAI models from gpt-4o on (not gpt-4.1-nano, o1 or o3-mini) when the provider is OpenAI itself ([Responses API path](../orchestration/llm-providers.md#responses-api-path-openai-web-search)). The ⓘ says each search costs $0.01, that on Anthropic an organisation admin has to turn it on in the Console, and that OpenAI doesn't search at Minimal reasoning effort or when the agent asks for structured output.
 - **Most searches per reply** — number 1–20, empty = the provider's own limit (`maxUses`). The ⓘ says that on OpenAI it caps each step of a reply instead, so a reply that calls tools can run past it, and that opening a page found counts toward it there.
 - **Sites** — _Any site_ / _Only these sites_ (`allowedDomains`) / _Any site except these_ (`blockedDomains`), with a one-domain-per-line box for the last two. The mode and the box keep what was picked and typed; a value replaced from outside (a reset or restore) resets both. The ⓘ says OpenAI covers a path entry's whole host, and that gpt-4o-mini and gpt-4.1-mini don't search with a list set.
+
+### Code execution
+
+`<CodeExecutionField>` (`components/admin/orchestration/code-execution-field.tsx`), under the web search setting and, like it, not on the `llm_call` editor. It writes `AiAgent.providerTools.codeExecution` and leaves the other provider tools as they are (`withProviderTool()`, which `<WebSearchFields>` uses too, so turning one off no longer clears the other).
+
+- **Code execution** — switch; on stores `{ codeExecution: {} }`. Claude Opus, Sonnet and Haiku 4.5 and later, and OpenAI models from gpt-4o on when the provider is OpenAI itself ([provider docs](../orchestration/llm-providers.md#provider-tools-code-execution)). The ⓘ says the sandbox has no internet; that files the code makes aren't passed on to users, and that Sunrise deletes Anthropic's copies when the reply ends; how each provider bills the sandbox and how Sunrise estimates it (measured run time, at least 5 minutes a sandbox, Anthropic's free hours not taken off); that OpenAI doesn't run code at Minimal effort and neither provider does for structured output; and that on Anthropic it isn't covered by zero data retention.
 
 ### Max history tokens
 
