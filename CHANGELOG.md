@@ -29,8 +29,8 @@ release process.
 > versioned saves that require `If-Match`, backups this install sealed,
 > actions on a run under its row lock, and deliveries checked for erasures
 > since their copy was taken. Measured against `v0.15.0`: 36 PRs merged, no
-> direct commits, 16 issues closed; the suite is 1,400 files and
-> 30,364 tests.
+> direct commits, 16 issues closed (15 fixed, 1 declined); the suite is 1,400
+> files and 30,364 tests.
 >
 > ## What a fork has to do
 >
@@ -57,22 +57,37 @@ release process.
 >
 > **Your type-check will flag:** a hand-built `ErasureExternalContext` or
 > `ErasureTxContext` (new required `email` and `emailVerified`), and the
-> removed `refuseErasedSubjects`, `PendingStaleWriter` and
-> `StaleWriterTask`.
+> removed `refuseErasedSubjects` (see Removed).
 >
-> **Your tests will flag:** a fork file that writes `AiWorkflowRunningStep`,
-> `AiWorkflowStepDispatch`, `AiWorkflowExecutionLeaseEvent` or a run's
-> `supervisorReport` fails `stale-writers.test.ts` until it declares itself
-> with `registerStaleWriter()`.
+> **Your tests will flag:**
+>
+> - **`stale-writers.test.ts`, new in this release**, fails for any fork file
+>   that writes a column erasure scrubs in place (`SCRUBBED_COLUMNS`, on
+>   `AiWorkflowExecution`, `AiWorkflowRunningStep`, `AiWorkflowStepDispatch`,
+>   `AiWorkflowExecutionLeaseEvent`, `AiWebhookDelivery`,
+>   `AiEventHookDelivery`, `AiWorkflow`, `AiWorkflowVersion`,
+>   `AiOrchestrationSettings`, `AiWebhookSubscription` and
+>   `AiWorkflowSchedule`), until it declares how it knows its copy is stale
+>   with `registerStaleWriter()`.
+> - **The owner-classification test** now counts a `String` column named
+>   `…UserId` as a user link, so an unclassified one fails until it is
+>   classified in `lib/app/owner-classification.ts`.
+> - **A test asserting Anthropic's joined `system` string**: it is now sent as
+>   one text block per system message.
 >
 > **Changes a build will not catch:**
 >
 > - **Claude's `inputTokens` now counts cached input**, as OpenAI's already
 >   did. A fork that prices `inputTokens` itself should pass the usage to
 >   `calculateCost`, or it prices cache hits at the full rate.
-> - **Backups.** Bundles sealed before this release no longer verify, so a
->   restore of one strips anyone ever erased, as an unsealed bundle does.
->   Rotating `BETTER_AUTH_SECRET` unseals earlier bundles.
+> - **Backups are now sealed.** A backup this install sealed keeps contacts
+>   re-added after an erasure when restored into the same org. Every bundle
+>   exported before 0.16.0 is unsealed, so restoring one strips anyone ever
+>   erased, as before. Rotating `BETTER_AUTH_SECRET` unseals the bundles
+>   sealed before it.
+> - **The app export collector is also passed `emailVerified`.** A
+>   collector that spreads its argument into a Prisma query passes the extra
+>   field, which Prisma refuses on a model without that column.
 > - **Erasure checks count only erasures since a copy was taken.** A
 >   `send_notification` step emails an address re-entered after an older
 >   erasure again; deliveries naming someone hold a database connection while
@@ -98,11 +113,14 @@ release process.
 >   metadata-only spans. Sunrise registers none; a fork that does can opt out
 >   with `ANTHROPIC_OPEN_TELEMETRY=false`.
 >
-> **Dependencies.** Late October's minor and patch bumps, including
-> `@anthropic-ai/sdk` 0.137, `@hookform/resolvers` 6, better-auth 1.7.13,
-> dompurify 3.4.17 and fast-uri 3.1.9 (see Security). Held back in
-> `.github/dependabot.yml`: undici 8, `@anthropic-ai/sdk` 1.x and
-> OpenTelemetry 3.x.
+> **Dependencies.** Late October's bumps, including two majors:
+> `@hookform/resolvers` 6, whose only break is the effect-ts resolver (Sunrise
+> uses `/zod`), and happy-dom 21, test-only, which makes CSS and iframe loading
+> opt-in, so a fork's component tests that rely on either must switch it on.
+> Also `@anthropic-ai/sdk` 0.137, better-auth 1.7.13, dompurify 3.4.17 and
+> fast-uri 3.1.9 (see Security). Held back in `.github/dependabot.yml`: undici
+> 8, `@anthropic-ai/sdk` 1.x, OpenTelemetry 3.x, and `@opentelemetry/api`
+> 1.10, which every OpenTelemetry 2.x package caps its peer below.
 >
 > **Dependency alerts accepted for this release:**
 >
@@ -383,8 +401,8 @@ release process.
   only in those rows is found too. The engine's writes of the report and the
   turns, and `recordDispatch`, now leave out anyone erased since the run
   started.
-  `SCRUBBED_COLUMNS` (`lib/privacy/stale-writers.ts`) gains the four, so **a
-  fork file that writes `AiWorkflowRunningStep`, `AiWorkflowStepDispatch`,
+  `SCRUBBED_COLUMNS` (`lib/privacy/stale-writers.ts`, new in this release:
+  see Added) lists the four too, so **a fork file that writes `AiWorkflowRunningStep`, `AiWorkflowStepDispatch`,
   `AiWorkflowExecutionLeaseEvent` or `supervisorReport` fails
   `stale-writers.test.ts` until it declares itself** with
   `registerStaleWriter()`. See `.context/privacy/data-erasure.md`.
@@ -430,10 +448,11 @@ release process.
   `lib/orchestration/config-versions.ts` gains the workflow's version and
   lock. Backup seals now cover workflow definitions' addresses too, so a
   sealed import strips only people erased since its `exportedAt` from them,
-  and bundles sealed before this no longer verify (every erasure counts, as
-  for an unsealed bundle). The stale-writer manifest's `pending` anchor,
-  `PendingStaleWriter` and `StaleWriterTask` are removed: §122 has converted
-  every writer. See `.context/privacy/data-erasure.md` ("The workflow
+  and a bundle sealed by an earlier build of this release no longer
+  verifies (every erasure counts, as for an unsealed bundle); no released
+  bundle was ever sealed. The stale-writer manifest's `pending` anchor,
+  `PendingStaleWriter` and `StaleWriterTask`, added earlier in this release,
+  are gone again: §122 has converted every writer. See `.context/privacy/data-erasure.md` ("The workflow
   builder").
 
 - **Saves of the escalation list, a webhook subscription and a schedule are
@@ -537,6 +556,14 @@ release process.
   state arose when the reconcile moved a platform-picked primary onto a listed
   fallback (t-798), or when an inherited primary was a listed one. A list that
   named only the primary is now an empty explicit list, not the system fill.
+
+### Removed
+
+- **`refuseErasedSubjects`** (`lib/privacy/erased-subjects.ts`, added in
+  0.15.0). A save that must not write an erased person back now uses a
+  versioned save (`lib/api/record-version.ts`); a fork's own check uses
+  `findErasedSubjects`, which takes a `since` option. See the §122 entries
+  under Changed.
 
 ### Fixed
 
