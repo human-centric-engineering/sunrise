@@ -180,12 +180,13 @@ export interface ProviderEligibilityContext {
    * unrecorded primary-position call asked as `'explicit'`) carries its own
    * slug here; an unrecorded fallback carries the real primary's.
    *
-   * NOT guaranteed absent from `candidates`. The system fill excludes it, but
-   * an agent's own `fallbackProviders` list is passed through as the operator
-   * wrote it — so on `source: 'explicit'` a caller may legitimately see its own
-   * primary in the list. A rule that appends `primarySlug` on the assumption it
-   * is missing would produce a duplicate, and a failover straight back to the
-   * provider that just failed.
+   * NOT guaranteed absent from `candidates`. The fallback lists the resolver
+   * builds exclude it — the system fill always has, and an agent's own
+   * `fallbackProviders` loses it there since t-954 — but the call-time gate
+   * asks about the primary itself under `'explicit'`, with this set to its own
+   * slug. A rule that appends `primarySlug` on the assumption it is missing
+   * would produce a duplicate, and a failover straight back to the provider
+   * that just failed.
    */
   primarySlug: string | null;
 }
