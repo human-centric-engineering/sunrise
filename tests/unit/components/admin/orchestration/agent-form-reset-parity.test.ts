@@ -41,7 +41,10 @@ function schemaFields(): Set<string> {
 }
 
 function restoreResetFields(): Set<string> {
-  const match = /reset\(\{(.*?)\n {20}\}\);/s.exec(SOURCE);
+  // Anchored on the Versions tab's `onRestored` handler: it is not the form's
+  // only `reset({`. The binding hand-back (t-818) re-seeds two fields with one
+  // too, and an unanchored match started there and ran on to this block.
+  const match = /onRestored=\{.*?reset\(\{(.*?)\n {20}\}\);/s.exec(SOURCE);
   if (!match) {
     throw new Error(
       'Could not locate the version-restore `reset({...})` — update this test`s anchor.'
