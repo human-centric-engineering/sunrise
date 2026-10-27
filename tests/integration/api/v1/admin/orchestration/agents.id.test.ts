@@ -28,6 +28,7 @@ function refuse(...barred: string[]) {
     slugs.filter((slug) => barred.includes(slug))
   );
 }
+import { Prisma } from '@prisma/client';
 import { NextRequest } from 'next/server';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/agents/[id]/route';
 import {
@@ -598,6 +599,28 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(response.status).toBe(200);
       expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+    });
+
+    it('writes a null JSON field as Prisma.JsonNull and versions nothing for it', async () => {
+      // The agent form sends `providerTools: null` on every save of an agent
+      // without web search; Prisma refuses a raw null for a Json? column.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ providerTools: null }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ providerTools: null }) as never
+      );
+
+      const response = await PATCH(
+        makeRequest('PATCH', { providerTools: null }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      const updateCall = vi.mocked(prisma.aiAgent.update).mock.calls[0][0];
+      expect(updateCall.data.providerTools).toBe(Prisma.JsonNull);
+      expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
     });
 
     it('captures expanded fields in the snapshot object', async () => {

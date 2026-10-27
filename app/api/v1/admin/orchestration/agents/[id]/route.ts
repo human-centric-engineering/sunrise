@@ -32,6 +32,7 @@ import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
 import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import {
+  getAgentField,
   patchAssignableScalarFields,
   versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
@@ -194,7 +195,11 @@ export const PATCH = withAdminAuth<{ id: string }>(
     const bodyRecord = body as Record<string, unknown>;
     const dataRecord = data as Record<string, unknown>;
     for (const field of patchAssignableScalarFields()) {
-      if (bodyRecord[field] !== undefined) dataRecord[field] = bodyRecord[field];
+      const value = bodyRecord[field];
+      if (value === undefined) continue;
+      // A JSON column takes `Prisma.JsonNull`, not `null`, as the create,
+      // clone and restore paths write it.
+      dataRecord[field] = value === null && getAgentField(field)?.json ? Prisma.JsonNull : value;
     }
     if (body.profileId !== undefined) {
       // Use the relation form so null cleanly detaches the agent. Setting
@@ -277,7 +282,9 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
     const currentRecord = current as unknown as Record<string, unknown>;
     const changedVersionedFields = VERSIONED_FIELDS.filter(
-      (f) => dataRecord[f] !== undefined && isFieldChanged(dataRecord[f], currentRecord[f])
+      (f) =>
+        dataRecord[f] !== undefined &&
+        isFieldChanged(dataRecord[f] === Prisma.JsonNull ? null : dataRecord[f], currentRecord[f])
     );
 
     // Grant changes don't go through the `data` object (they're join-row writes),
