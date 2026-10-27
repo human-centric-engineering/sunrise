@@ -1570,7 +1570,7 @@ describe('executeAgentCall', () => {
 
     // ── Test 3b: thinking blocks survive the checkpoint into the resume ─────
 
-    it('single-turn resume: replays the continuing turn’s thinking blocks from the checkpoint', async () => {
+    it('single-turn resume: replays the continuing turn’s thinking and web search blocks from the checkpoint', async () => {
       // Anthropic rejects a continued tool loop whose assistant turn lacks its
       // thinking blocks. Run 1 checkpoints a continuing turn; the checkpoint is
       // JSON-round-tripped and parsed as the resume path parses the running-step
@@ -1581,6 +1581,25 @@ describe('executeAgentCall', () => {
       const reasoning = [
         { type: 'thinking' as const, thinking: 'look it up', signature: 'sig-1' },
         { type: 'redacted_thinking' as const, data: 'opaque' },
+        {
+          type: 'server_tool_use' as const,
+          id: 'srvtoolu_1',
+          name: 'web_search' as const,
+          input: { query: 'sunrise' },
+        },
+        {
+          type: 'web_search_tool_result' as const,
+          toolUseId: 'srvtoolu_1',
+          results: [
+            { url: 'https://a.example', title: 'A', encryptedContent: 'enc', pageAge: null },
+          ],
+        },
+        {
+          type: 'web_search_tool_result' as const,
+          toolUseId: 'srvtoolu_2',
+          results: [],
+          errorCode: 'unavailable',
+        },
       ];
       mockChat.mockResolvedValueOnce({
         content: '',

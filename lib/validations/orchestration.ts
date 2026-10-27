@@ -3251,14 +3251,34 @@ const agentCallTurnContinuingSchema = z.object({
   }),
   toolResult: z.unknown(),
   // `LlmReasoningBlock[]` — replayed on resume so a thinking Claude model's
-  // continuing turn keeps its signed thinking blocks. No `.catch`: replaying
-  // the turn without them makes Anthropic reject every retry, so a malformed
-  // value fails the parse, which the resume logs before starting the step fresh.
+  // continuing turn keeps its signed thinking blocks, and a web search turn
+  // keeps what it found. No `.catch`: replaying the turn without them makes
+  // Anthropic reject every retry, so a malformed value fails the parse, which
+  // the resume logs before starting the step fresh.
   reasoning: z
     .array(
       z.discriminatedUnion('type', [
         z.object({ type: z.literal('thinking'), thinking: z.string(), signature: z.string() }),
         z.object({ type: z.literal('redacted_thinking'), data: z.string() }),
+        z.object({
+          type: z.literal('server_tool_use'),
+          id: z.string(),
+          name: z.literal('web_search'),
+          input: z.record(z.string(), z.unknown()),
+        }),
+        z.object({
+          type: z.literal('web_search_tool_result'),
+          toolUseId: z.string(),
+          results: z.array(
+            z.object({
+              url: z.string(),
+              title: z.string(),
+              encryptedContent: z.string(),
+              pageAge: z.string().nullable().optional(),
+            })
+          ),
+          errorCode: z.string().optional(),
+        }),
       ])
     )
     .optional(),
