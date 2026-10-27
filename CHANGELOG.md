@@ -344,6 +344,16 @@ release process.
   each case. On such an agent a restore that races a reconcile or a hand-back
   now returns 409 rather than undoing it.
 
+- **An agent's fallbacks never include its own primary (t-954).**
+  `resolveAgentProviderAndModel` drops the resolved primary's slug, and any
+  repeat, from an agent's explicit `fallbackProviders`, keeping the rest in
+  order. So a fork's eligibility rule (`registerProviderEligibility`) is no
+  longer asked about the primary as one of its own fallbacks under `source:
+  'explicit'`. `getProviderWithFallbacks` also tries each slug once. The
+  state arose when the reconcile moved a platform-picked primary onto a listed
+  fallback (t-798), or when an inherited primary was a listed one. A list that
+  named only the primary is now an empty explicit list, not the system fill.
+
 ### Fixed
 
 - **The clean-up agent stays put while a fork resolver is down (t-819).**
