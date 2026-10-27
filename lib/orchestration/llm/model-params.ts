@@ -58,7 +58,11 @@ export const providerToolsSchema = z
           .min(1, 'At least 1 search')
           .max(MAX_WEB_SEARCH_USES, `At most ${MAX_WEB_SEARCH_USES} searches`)
           .optional(),
-        allowedDomains: webSearchDomainsSchema,
+        // An empty allow list would be sent as none, so search every site.
+        allowedDomains: webSearchDomainsSchema.refine(
+          (domains) => domains === undefined || domains.length > 0,
+          'List at least one site, or choose Any site'
+        ),
         blockedDomains: webSearchDomainsSchema,
       })
       .strict()

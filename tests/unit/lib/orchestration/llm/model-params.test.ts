@@ -104,6 +104,12 @@ describe('provider tools (t-912)', () => {
     expect(result.error?.issues[0].path).toEqual(['webSearch', 'blockedDomains']);
   });
 
+  it('refuses an empty allow list, which would search every site', () => {
+    const result = providerToolsSchema.safeParse({ webSearch: { allowedDomains: [] } });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['webSearch', 'allowedDomains']);
+  });
+
   it('takes an empty list beside a full one, as the form sends while one is being typed', () => {
     expect(
       providerToolsSchema.safeParse({
