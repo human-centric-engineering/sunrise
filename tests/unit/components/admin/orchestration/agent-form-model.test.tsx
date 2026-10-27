@@ -514,4 +514,73 @@ describe('AgentForm — Model tab', () => {
       expect(screen.getByRole('textbox', { name: /^model/i })).toBeInTheDocument();
     });
   });
+  // ── Provider tools ─────────────────────────────────────────────────────────
+
+  describe('provider code execution', () => {
+    it('submits providerTools: { codeExecution: {} } when code execution is turned on', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent-id', slug: 'coder' });
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="create"
+          providers={PROVIDERS}
+          models={MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Coder');
+      await user.type(screen.getByRole('textbox', { name: /^description/i }), 'Runs code.');
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+      await user.type(
+        screen.getByRole('textbox', { name: /system instructions/i }),
+        'You run code to answer.'
+      );
+
+      // Act: turn code execution on in the Model tab, then submit
+      await user.click(screen.getByRole('tab', { name: /model/i }));
+      const toggle = screen.getByRole('switch', { name: /code execution/i });
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await user.click(screen.getByRole('button', { name: /create agent/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/agents'),
+          expect.objectContaining({
+            body: expect.objectContaining({ providerTools: { codeExecution: {} } }),
+          })
+        );
+      });
+    });
+
+    it('submits providerTools: null when code execution is left off', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent-id', slug: 'plain' });
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="create"
+          providers={PROVIDERS}
+          models={MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Plain');
+      await user.type(screen.getByRole('textbox', { name: /^description/i }), 'No tools.');
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+      await user.type(screen.getByRole('textbox', { name: /system instructions/i }), 'Be brief.');
+      await user.click(screen.getByRole('button', { name: /create agent/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/agents'),
+          expect.objectContaining({ body: expect.objectContaining({ providerTools: null }) })
+        );
+      });
+    });
+  });
 });

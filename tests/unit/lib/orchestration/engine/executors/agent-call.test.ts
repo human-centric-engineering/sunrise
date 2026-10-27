@@ -1152,6 +1152,34 @@ describe('executeAgentCall', () => {
     );
   });
 
+  it('prices the turn with its code execution runs and logs them on the cost row', async () => {
+    const codeExecution = { runs: 2, billedSeconds: 300, usdPerHour: 0.05 };
+    mockChat.mockResolvedValueOnce({
+      content: 'Computed.',
+      usage: { inputTokens: 100, outputTokens: 50, codeExecution },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    expect(calculateCost).toHaveBeenCalledWith(
+      'claude-sonnet-4-20250514',
+      100,
+      50,
+      expect.objectContaining({ codeExecution })
+    );
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 100, outputTokens: 50, codeExecution })
+    );
+  });
+
+  it('logs no code execution on a turn that ran none', async () => {
+    await executeAgentCall(makeStep(), makeCtx());
+
+    expect(vi.mocked(logCost).mock.calls[0][0].codeExecution).toBeUndefined();
+  });
+
   // ── agent_call_depth_exceeded ─────────────────────────────────────────────
 
   it('throws agent_call_depth_exceeded when depth >= MAX_AGENT_CALL_DEPTH (3)', async () => {

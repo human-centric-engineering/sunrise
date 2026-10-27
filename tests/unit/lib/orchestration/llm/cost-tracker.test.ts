@@ -1259,3 +1259,74 @@ describe('web search pricing (t-912)', () => {
     expect(call.data.totalCostUsd).toBeCloseTo(3.04);
   });
 });
+
+describe('code execution pricing (t-956)', () => {
+  const sonnet: ModelInfo = {
+    id: 'code-model',
+    name: 'Code model',
+    provider: 'anthropic',
+    tier: 'mid',
+    inputCostPerMillion: 3,
+    outputCostPerMillion: 15,
+    maxContext: 200_000,
+    supportsTools: true,
+  };
+  // 1800 s at $0.10/h = $0.05
+  const codeExecution = { runs: 2, billedSeconds: 1800, usdPerHour: 0.1 };
+
+  it('adds billedSeconds/3600 x usdPerHour to the total, outside the token costs', () => {
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+    const cost = calculateCost('code-model', 1_000_000, 0, { codeExecution });
+    expect(cost.inputCostUsd).toBeCloseTo(3);
+    expect(cost.codeExecutionCostUsd).toBeCloseTo(0.05);
+    expect(cost.totalCostUsd).toBeCloseTo(3.05);
+    expect(cost).not.toHaveProperty('webSearchCostUsd');
+  });
+
+  it('adds it beside web search, each reported on its own', () => {
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+    const cost = calculateCost('code-model', 1_000_000, 0, { codeExecution, webSearchRequests: 3 });
+    expect(cost.webSearchCostUsd).toBeCloseTo(0.03);
+    expect(cost.codeExecutionCostUsd).toBeCloseTo(0.05);
+    expect(cost.totalCostUsd).toBeCloseTo(3.08);
+  });
+
+  it('still charges the runs when the model has no token price', () => {
+    vi.mocked(getModel).mockReturnValueOnce(undefined);
+    const cost = calculateCost('unknown-model', 1000, 1000, { codeExecution });
+    expect(cost.unpriced).toBe(true);
+    expect(cost.codeExecutionCostUsd).toBeCloseTo(0.05);
+    expect(cost.totalCostUsd).toBeCloseTo(0.05);
+  });
+
+  it('leaves a call with no billed seconds as it was', () => {
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+    const cost = calculateCost('code-model', 1_000_000, 0, {
+      codeExecution: { runs: 1, billedSeconds: 0, usdPerHour: 0.1 },
+    });
+    expect(cost).not.toHaveProperty('codeExecutionCostUsd');
+    expect(cost.totalCostUsd).toBeCloseTo(3);
+  });
+
+  it('records runs, billed seconds and cost on the row, whose total includes them', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    vi.mocked(getModel).mockReturnValueOnce(sonnet);
+
+    await logCost({
+      model: 'code-model',
+      provider: 'anthropic',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      codeExecution,
+      operation: 'chat',
+    });
+
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.metadata).toEqual({
+      codeExecutionRuns: 2,
+      codeExecutionBilledSeconds: 1800,
+      codeExecutionCostUsd: expect.closeTo(0.05, 10),
+    });
+    expect(call.data.totalCostUsd).toBeCloseTo(3.05);
+  });
+});

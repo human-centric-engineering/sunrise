@@ -7,6 +7,7 @@ import {
   narrowVerbosity,
   providerToolsSchema,
   spendWebSearches,
+  withProviderTool,
 } from '@/lib/orchestration/llm/model-params';
 
 describe('modelParamOptions', () => {
@@ -89,7 +90,7 @@ describe('provider tools (t-912)', () => {
   it.each([
     ['null', null],
     ['an empty object', {}],
-    ['an unknown tool', { codeExecution: {} }],
+    ['an unknown tool', { fileSearch: {} }],
     ['a malformed search', { webSearch: { maxUses: 'lots' } }],
     ['both domain lists', { webSearch: { allowedDomains: ['a.com'], blockedDomains: ['b.com'] } }],
   ])('turns nothing on for %s', (_label, providerTools) => {
@@ -136,6 +137,66 @@ describe('provider tools (t-912)', () => {
 
   it.each([0, 21, 1.5])('refuses %s as a search limit', (maxUses) => {
     expect(providerToolsSchema.safeParse({ webSearch: { maxUses } }).success).toBe(false);
+  });
+});
+
+describe('code execution tool (t-956)', () => {
+  it('accepts it alone', () => {
+    expect(providerToolsSchema.safeParse({ codeExecution: {} }).success).toBe(true);
+    expect(narrowProviderTools({ codeExecution: {} })).toEqual({ codeExecution: {} });
+    expect(modelParamOptions({ providerTools: { codeExecution: {} } })).toEqual({
+      providerTools: { codeExecution: {} },
+    });
+  });
+
+  it('accepts it beside web search, keeping both', () => {
+    const both = { webSearch: { maxUses: 3 }, codeExecution: {} };
+    expect(providerToolsSchema.safeParse(both).success).toBe(true);
+    expect(narrowProviderTools(both)).toEqual(both);
+  });
+
+  it('refuses options on it, since it takes none', () => {
+    expect(providerToolsSchema.safeParse({ codeExecution: { anything: 1 } }).success).toBe(false);
+    expect(narrowProviderTools({ codeExecution: { anything: 1 } })).toBeUndefined();
+    expect(
+      narrowProviderTools({ webSearch: { maxUses: 2 }, codeExecution: { anything: 1 } })
+    ).toBeUndefined();
+  });
+});
+
+describe('withProviderTool', () => {
+  it('sets a key and keeps the others', () => {
+    expect(withProviderTool({ webSearch: { maxUses: 2 } }, 'codeExecution', {})).toEqual({
+      webSearch: { maxUses: 2 },
+      codeExecution: {},
+    });
+  });
+
+  it('replaces a key that is already set', () => {
+    expect(withProviderTool({ webSearch: { maxUses: 2 } }, 'webSearch', { maxUses: 7 })).toEqual({
+      webSearch: { maxUses: 7 },
+    });
+  });
+
+  it('turning one off keeps the others', () => {
+    expect(
+      withProviderTool({ webSearch: { maxUses: 2 }, codeExecution: {} }, 'codeExecution', null)
+    ).toEqual({ webSearch: { maxUses: 2 } });
+  });
+
+  it('returns null when turning off the last one', () => {
+    expect(withProviderTool({ codeExecution: {} }, 'codeExecution', null)).toBeNull();
+  });
+
+  it('starts from a null value', () => {
+    expect(withProviderTool(null, 'codeExecution', {})).toEqual({ codeExecution: {} });
+    expect(withProviderTool(null, 'codeExecution', null)).toBeNull();
+  });
+
+  it('does not mutate the value it was given', () => {
+    const value = { webSearch: { maxUses: 2 }, codeExecution: {} };
+    withProviderTool(value, 'codeExecution', null);
+    expect(value).toEqual({ webSearch: { maxUses: 2 }, codeExecution: {} });
   });
 });
 

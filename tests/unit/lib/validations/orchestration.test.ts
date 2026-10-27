@@ -2958,6 +2958,176 @@ describe('turnEntrySchema', () => {
     expect(unknownStatus.success).toBe(false);
   });
 
+  describe('code execution blocks on a continuing turn (t-956)', () => {
+    const turnWith = (reasoning: unknown[]) => ({
+      kind: 'agent_call',
+      phase: 'continuing',
+      index: 0,
+      assistantContent: '',
+      toolCall: { id: 'call_1', name: 'search', arguments: {} },
+      toolResult: { ok: true },
+      reasoning,
+      tokensUsed: 10,
+      costUsd: 0.01,
+    });
+    const parse = (reasoning: unknown[]) => turnEntrySchema.safeParse(turnWith(reasoning));
+
+    const result = (content: unknown, over: Record<string, unknown> = {}) => ({
+      type: 'code_execution_tool_result',
+      tool: 'bash',
+      toolUseId: 'srvtoolu_1',
+      content,
+      containerId: 'container_1',
+      durationMs: 1200,
+      ...over,
+    });
+
+    const contents: Array<[string, unknown]> = [
+      [
+        'bash_code_execution_result',
+        {
+          type: 'bash_code_execution_result',
+          stdout: 'hi',
+          stderr: '',
+          return_code: 0,
+          content: [{ type: 'bash_code_execution_output', file_id: 'file_1' }],
+        },
+      ],
+      [
+        'bash_code_execution_tool_result_error',
+        { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+      ],
+      [
+        'text_editor_code_execution_view_result',
+        {
+          type: 'text_editor_code_execution_view_result',
+          content: 'text',
+          file_type: 'text',
+          num_lines: 1,
+          start_line: 1,
+          total_lines: null,
+        },
+      ],
+      [
+        'text_editor_code_execution_create_result',
+        { type: 'text_editor_code_execution_create_result', is_file_update: true },
+      ],
+      [
+        'text_editor_code_execution_str_replace_result',
+        {
+          type: 'text_editor_code_execution_str_replace_result',
+          lines: ['-a', '+b'],
+          new_lines: 1,
+          new_start: 1,
+          old_lines: 1,
+          old_start: 1,
+        },
+      ],
+      [
+        'text_editor_code_execution_tool_result_error',
+        {
+          type: 'text_editor_code_execution_tool_result_error',
+          error_code: 'file_not_found',
+          error_message: null,
+        },
+      ],
+    ];
+
+    it.each(['bash_code_execution', 'text_editor_code_execution', 'web_search'])(
+      'accepts a server_tool_use named %s',
+      (name) => {
+        const block = { type: 'server_tool_use', id: 'srvtoolu_1', name, input: { command: 'ls' } };
+        const parsed = parse([block]);
+        expect(parsed.success).toBe(true);
+        if (
+          parsed.success &&
+          parsed.data.kind === 'agent_call' &&
+          parsed.data.phase === 'continuing'
+        ) {
+          expect(parsed.data.reasoning).toEqual([block]);
+        }
+      }
+    );
+
+    it('rejects an unknown server tool name', () => {
+      expect(
+        parse([{ type: 'server_tool_use', id: 'x', name: 'computer_use', input: {} }]).success
+      ).toBe(false);
+    });
+
+    it.each(contents)('accepts a code_execution_tool_result carrying %s', (_label, content) => {
+      const block = result(content, { fileNames: ['a.csv'] });
+      const parsed = parse([block]);
+      expect(parsed.success).toBe(true);
+      if (
+        parsed.success &&
+        parsed.data.kind === 'agent_call' &&
+        parsed.data.phase === 'continuing'
+      ) {
+        expect(parsed.data.reasoning).toEqual([block]);
+      }
+    });
+
+    it('accepts the text editor tool, and a result without fileNames', () => {
+      expect(parse([result(contents[3][1], { tool: 'text_editor' })]).success).toBe(true);
+    });
+
+    it('rejects a bad content type, a bad tool, and a malformed content shape', () => {
+      expect(parse([result({ type: 'something_else' })]).success).toBe(false);
+      expect(parse([result(contents[1][1], { tool: 'python' })]).success).toBe(false);
+      expect(
+        parse([result({ type: 'bash_code_execution_result', stdout: 'x', stderr: '' })]).success
+      ).toBe(false);
+      expect(
+        parse([
+          result({
+            ...(contents[2][1] as Record<string, unknown>),
+            file_type: 'video',
+          }),
+        ]).success
+      ).toBe(false);
+    });
+
+    it('rejects a result with a negative duration or no container', () => {
+      expect(parse([result(contents[1][1], { durationMs: -1 })]).success).toBe(false);
+      expect(parse([result(contents[1][1], { containerId: undefined })]).success).toBe(false);
+    });
+
+    const interpreter = {
+      type: 'openai_code_interpreter_call',
+      id: 'ci_1',
+      status: 'completed',
+      containerId: 'cntr_1',
+      code: 'print(1)',
+      outputs: [
+        { type: 'logs', logs: '1' },
+        { type: 'image', url: 'https://x.example/i.png' },
+      ],
+      durationMs: 700,
+      fileNames: ['out.csv'],
+    };
+
+    it('accepts an openai_code_interpreter_call, with null code', () => {
+      expect(parse([interpreter]).success).toBe(true);
+      expect(parse([{ ...interpreter, code: null, fileNames: undefined }]).success).toBe(true);
+    });
+
+    it.each(['in_progress', 'interpreting', 'completed', 'incomplete', 'failed'])(
+      'accepts interpreter status %s',
+      (status) => {
+        expect(parse([{ ...interpreter, status }]).success).toBe(true);
+      }
+    );
+
+    it('rejects a bad interpreter status, output type, or duration', () => {
+      expect(parse([{ ...interpreter, status: 'exploded' }]).success).toBe(false);
+      expect(parse([{ ...interpreter, outputs: [{ type: 'video', url: 'x' }] }]).success).toBe(
+        false
+      );
+      expect(parse([{ ...interpreter, durationMs: -5 }]).success).toBe(false);
+    });
+  });
+
   it('rejects a continuing agent_call turn whose reasoning is malformed, rather than dropping it', () => {
     // Replaying the turn without its thinking blocks would make Anthropic
     // reject the resumed loop, so the parse fails and the resume logs it.

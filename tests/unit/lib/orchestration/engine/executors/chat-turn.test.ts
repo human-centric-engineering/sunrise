@@ -97,7 +97,7 @@ import {
   NoEligibleProviderError,
   NoProviderConfiguredError,
 } from '@/lib/orchestration/llm/agent-resolver';
-import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { executeChatTurn } from '@/lib/orchestration/engine/executors/chat-turn';
 import {
   LATEST_AGENT_VERSION_ID_INCLUDE,
@@ -767,6 +767,46 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
         include: expect.objectContaining({ versions: LATEST_AGENT_VERSION_ID_INCLUDE }),
       })
     );
+  });
+});
+
+// ─── Provider code execution (t-956) ─────────────────────────────────────────
+
+describe('chat_turn — provider code execution cost', () => {
+  const codeExecution = { runs: 2, billedSeconds: 300, usdPerHour: 0.05 };
+
+  async function runWith(usage: Record<string, unknown>) {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      messages: [],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat: vi.fn(async () => ({ content: 'Computed.', usage })) } as never,
+      usedSlug: 'openai',
+    });
+    return executeChatTurn(makeStep(), makeCtx());
+  }
+
+  it('prices the call with the runs, and logs them on the cost row', async () => {
+    await runWith({ inputTokens: 30, outputTokens: 10, codeExecution });
+
+    expect(calculateCost).toHaveBeenCalledWith(
+      'gpt-4o-mini',
+      30,
+      10,
+      expect.objectContaining({ codeExecution })
+    );
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 30, outputTokens: 10, codeExecution })
+    );
+  });
+
+  it('logs no code execution when the call ran none', async () => {
+    await runWith({ inputTokens: 30, outputTokens: 10 });
+
+    expect(vi.mocked(logCost).mock.calls[0][0].codeExecution).toBeUndefined();
   });
 });
 

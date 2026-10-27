@@ -15,6 +15,8 @@ import {
   acceptsFlexTier,
   acceptsNativeStructuredOutput,
   refusesForcedToolChoice,
+  acceptsCodeExecution,
+  acceptsOpenAiCodeInterpreter,
   acceptsOpenAiWebSearch,
   acceptsOpenAiWebSearchFilters,
   acceptsSamplingTemperature,
@@ -796,5 +798,79 @@ describe('acceptsOpenAiWebSearch / acceptsOpenAiWebSearchFilters (t-955)', () =>
   ])('offers none on %s', (id) => {
     expect(acceptsOpenAiWebSearch(id)).toBe(false);
     expect(acceptsOpenAiWebSearchFilters(id)).toBe(false);
+  });
+});
+
+describe('acceptsCodeExecution (t-956)', () => {
+  it.each([
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4.6',
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-5-5',
+    'claude-sonnet-5',
+    'claude-haiku-5-1',
+    'claude-fable-5-1',
+    'claude-fable-1',
+    'claude-mythos-1',
+    'anthropic/claude-sonnet-4-5',
+    'us.anthropic.claude-opus-4-5-v1:0',
+  ])('takes it on %s', (id) => {
+    expect(acceptsCodeExecution(id)).toBe(true);
+  });
+
+  it.each([
+    'claude-3-5-sonnet-20241022',
+    'claude-3-7-sonnet-20250219',
+    'claude-3-haiku-20240307',
+    'claude-opus-4-0',
+    'claude-opus-4-1',
+    'claude-opus-4-1-20250805',
+    'claude-opus-4-20250514',
+    'claude-sonnet-4-0',
+    'claude-sonnet-4-20250514',
+    'claude-haiku-4-4',
+    'claude-2.1',
+    'claude-unknown-9',
+    'gpt-5',
+    '',
+  ])('drops it on %s', (id) => {
+    expect(acceptsCodeExecution(id)).toBe(false);
+  });
+});
+
+describe('acceptsOpenAiCodeInterpreter (t-956)', () => {
+  it.each([
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5.5',
+    'openai/gpt-5-mini-2025-08-07',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4o-mini-2024-07-18',
+    'o3',
+    'o4-mini',
+  ])('takes it on %s', (id) => {
+    expect(acceptsOpenAiCodeInterpreter(id)).toBe(true);
+  });
+
+  it.each([
+    'gpt-4o-mini-search-preview',
+    'gpt-5-search-api',
+    'gpt-4.1-nano',
+    'o3-mini',
+    'gpt-3.5-turbo',
+    'gpt-4',
+    'gpt-4o-audio-preview',
+    'my-gpt-5',
+    'claude-opus-5-5',
+  ])('drops it on %s', (id) => {
+    expect(acceptsOpenAiCodeInterpreter(id)).toBe(false);
   });
 });

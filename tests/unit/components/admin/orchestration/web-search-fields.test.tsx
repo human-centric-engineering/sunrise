@@ -43,6 +43,50 @@ describe('WebSearchFields', () => {
     expect(onChange).toHaveBeenLastCalledWith(null);
   });
 
+  it('keeps code execution when web search is turned off', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <Harness initial={{ webSearch: { maxUses: 2 }, codeExecution: {} }} onChange={onChange} />
+    );
+
+    await user.click(screen.getByRole('switch', { name: /web search/i }));
+
+    expect(onChange).toHaveBeenLastCalledWith({ codeExecution: {} });
+  });
+
+  it('sends null when web search is turned off and nothing else is left', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={{ webSearch: { maxUses: 2 } }} onChange={onChange} />);
+
+    await user.click(screen.getByRole('switch', { name: /web search/i }));
+
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('keeps code execution when web search is turned on', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={{ codeExecution: {} }} onChange={onChange} />);
+
+    await user.click(screen.getByRole('switch', { name: /web search/i }));
+
+    expect(onChange).toHaveBeenLastCalledWith({ codeExecution: {}, webSearch: {} });
+  });
+
+  it('keeps code execution when the search limit is edited and cleared', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={{ webSearch: {}, codeExecution: {} }} onChange={onChange} />);
+
+    const input = screen.getByRole('spinbutton', { name: /most searches/i });
+    await user.type(input, '4');
+    expect(onChange).toHaveBeenLastCalledWith({ webSearch: { maxUses: 4 }, codeExecution: {} });
+    await user.clear(input);
+    expect(onChange).toHaveBeenLastCalledWith({ webSearch: {}, codeExecution: {} });
+  });
+
   it('sends the search limit, and drops it when the box is cleared', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
