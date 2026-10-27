@@ -72,6 +72,8 @@ export const providerToolsSchema = z
         path: ['blockedDomains'],
       })
       .optional(),
+    // No options yet: present means on.
+    codeExecution: z.object({}).strict().optional(),
   })
   .strict();
 
@@ -103,14 +105,35 @@ export function spendWebSearches<T extends { providerTools?: ProviderTools }>(
 }
 
 /**
+ * `value` with one provider tool set, or with `null` turned off, and the
+ * others left as they are. Null when that leaves none on, which is how an
+ * agent stores "no provider tools".
+ */
+export function withProviderTool<K extends keyof ProviderTools>(
+  value: ProviderTools | null,
+  key: K,
+  next: ProviderTools[K] | null
+): ProviderTools | null {
+  const others: ProviderTools = { ...value };
+  delete others[key];
+  if (next !== null && next !== undefined) return { ...others, [key]: next };
+  return Object.keys(others).length > 0 ? others : null;
+}
+
+/**
  * Narrow a stored `providerTools` value (a JSON column, or a fork's bundle)
  * to {@link ProviderTools}, or `undefined` when it turns nothing on or does
  * not parse.
  */
 export function narrowProviderTools(raw: unknown): ProviderTools | undefined {
   const parsed = providerToolsSchema.safeParse(raw);
-  if (!parsed.success || parsed.data.webSearch === undefined) return undefined;
-  return parsed.data;
+  if (!parsed.success) return undefined;
+  const { webSearch, codeExecution } = parsed.data;
+  if (webSearch === undefined && codeExecution === undefined) return undefined;
+  return {
+    ...(webSearch !== undefined ? { webSearch } : {}),
+    ...(codeExecution !== undefined ? { codeExecution: {} } : {}),
+  };
 }
 
 /**

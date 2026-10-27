@@ -2,11 +2,12 @@
  * OpenAI Responses API path
  *
  * The opt-in path `OpenAiCompatibleProvider` takes for an agent that has
- * OpenAI's own web search turned on (`LlmOptions.providerTools.webSearch`).
- * OpenAI offers web search on the Responses API; Chat Completions has it only
- * on its search models. So when the provider is OpenAI itself and the model
- * offers the tool, the request goes here, and every other request stays on
- * Chat Completions (see `usesResponsesApi`). Making Responses the OpenAI
+ * OpenAI's own web search or code interpreter turned on
+ * (`LlmOptions.providerTools`). OpenAI offers both on the Responses API;
+ * Chat Completions has web search only on its search models, and no code
+ * interpreter. So when the provider is OpenAI itself and the model takes one
+ * of the tools, the request goes here, and every other request stays on Chat
+ * Completions (see `usesResponsesApi`). Making Responses the OpenAI
  * default was rejected at planning (`f-orch-llm-providers`): it would move
  * every OpenAI agent's request and stream mapping at once.
  *
@@ -16,11 +17,18 @@
  * - **Stateless.** Every request sends `store: false`, as Chat Completions
  *   stores nothing either, so the conversation is not kept on OpenAI's side.
  *   A tool loop therefore sends the earlier items back itself: the reasoning
- *   items (with their `encrypted_content`) and the `web_search_call` items
- *   travel on `LlmMessage.reasoning` as `openai_reasoning` /
- *   `openai_web_search_call` blocks and are replayed unchanged. Measured
- *   against the live API: leaving the search items out makes the model write
- *   raw citation markup into its answer.
+ *   items (with their `encrypted_content`), the `web_search_call` items and
+ *   the `code_interpreter_call` items travel on `LlmMessage.reasoning` as
+ *   `openai_reasoning` / `openai_web_search_call` /
+ *   `openai_code_interpreter_call` blocks and are replayed unchanged.
+ *   Measured against the live API: leaving the search items out makes the
+ *   model write raw citation markup into its answer, and a replayed code
+ *   item keeps the next call in the same container.
+ * - **Code interpreter** runs in an `auto` container with no network, which
+ *   OpenAI reuses while a replayed item names it. Its runs are timed (from
+ *   the stream's `interpreting` and `completed` events, or the request's
+ *   time) and costed per container (`code-execution.ts`). Files it makes
+ *   aren't delivered (owner ruling, t-956).
  * - **Sites are hosts.** OpenAI refuses a filter domain with a path (`400
  *   Invalid domain`), which Anthropic accepts. An entry's path is dropped, so
  *   a block list blocks the whole host and an allow list allows it (owner
@@ -40,6 +48,7 @@
 import type {
   FunctionTool,
   Response,
+  ResponseCodeInterpreterToolCall,
   ResponseCreateParamsNonStreaming,
   ResponseFunctionWebSearch,
   ResponseIncludable,
@@ -55,8 +64,10 @@ import { z } from 'zod';
 
 import { logger } from '@/lib/logging';
 import { isRecord } from '@/lib/utils';
+import { billCodeExecution, codeRunOf, type CodeRun } from '@/lib/orchestration/llm/code-execution';
 import {
   acceptsFlexTier,
+  acceptsOpenAiCodeInterpreter,
   acceptsOpenAiWebSearch,
   acceptsOpenAiWebSearchFilters,
   acceptsVerbosity,
@@ -65,20 +76,21 @@ import {
   supportedReasoningEfforts,
 } from '@/lib/orchestration/llm/model-heuristics';
 import { ProviderError, toProviderErrorWithUsage } from '@/lib/orchestration/llm/provider';
-import type {
-  ContentPart,
-  LlmFinishReason,
-  LlmMessage,
-  LlmOptions,
-  LlmReasoningBlock,
-  LlmResponse,
-  LlmToolCall,
-  LlmToolChoice,
-  LlmUsage,
-  StreamChunk,
-  WebSearchOptions,
+import {
+  CODE_EXECUTION_USD_PER_HOUR,
+  getTextContent,
+  type ContentPart,
+  type LlmFinishReason,
+  type LlmMessage,
+  type LlmOptions,
+  type LlmReasoningBlock,
+  type LlmResponse,
+  type LlmToolCall,
+  type LlmToolChoice,
+  type LlmUsage,
+  type StreamChunk,
+  type WebSearchOptions,
 } from '@/lib/orchestration/llm/types';
-import { getTextContent } from '@/lib/orchestration/llm/types';
 
 /** What the request builder needs to know about the provider and model. */
 export interface ResponsesRequestContext {
@@ -92,24 +104,38 @@ export interface ResponsesRequestContext {
   tokenCap: number;
 }
 
+/** The provider, as the routing needs it. */
+interface RouteContext {
+  isOpenAiHost: boolean;
+  isReasoning: boolean;
+  providerName: string;
+}
+
 /**
  * Does this request take the Responses path? Only when the provider is OpenAI
- * itself, the agent has web search on, the model offers it (and its site
- * filters, when a site list is set), and the request isn't structured output
- * (text written around a search would be joined into the JSON, as on
- * Anthropic). The answer doesn't depend on how much of the search limit is
- * left, so a reply's tool loop stays on one API.
- *
- * GPT-5 refuses web search at `minimal` reasoning effort (a 400), so a request
- * that would send `minimal` stays on Chat Completions without it.
+ * itself, the request isn't structured output (text written around a tool
+ * call would be joined into the JSON, as on Anthropic), and OpenAI would take
+ * at least one of the provider tools it turns on ({@link takenProviderTools}).
+ * The answer doesn't depend on how much of the search limit is left, so a
+ * reply's tool loop stays on one API.
  */
-export function usesResponsesApi(
+export function usesResponsesApi(options: LlmOptions, context: RouteContext): boolean {
+  if (!context.isOpenAiHost || options.responseFormat) return false;
+  const taken = takenProviderTools(options, context);
+  return taken.webSearch || taken.codeExecution;
+}
+
+/** Which of the request's provider tools OpenAI would take. */
+export function takenProviderTools(
   options: LlmOptions,
-  context: { isOpenAiHost: boolean; isReasoning: boolean; providerName: string }
-): boolean {
-  if (!context.isOpenAiHost || options.providerTools?.webSearch === undefined) return false;
-  if (options.responseFormat) return false;
-  return webSearchRefusal(options, context) === undefined;
+  context: Omit<RouteContext, 'isOpenAiHost'>
+): { webSearch: boolean; codeExecution: boolean } {
+  const tools = options.providerTools;
+  return {
+    webSearch: tools?.webSearch !== undefined && webSearchRefusal(options, context) === undefined,
+    codeExecution:
+      tools?.codeExecution !== undefined && codeInterpreterRefusal(options, context) === undefined,
+  };
 }
 
 /**
@@ -120,7 +146,7 @@ export function usesResponsesApi(
  */
 export function webSearchRefusal(
   options: LlmOptions,
-  context: { isReasoning: boolean; providerName: string }
+  context: Omit<RouteContext, 'isOpenAiHost'>
 ): 'model' | 'site_filters' | 'minimal_effort' | undefined {
   const search = options.providerTools?.webSearch;
   if (!acceptsOpenAiWebSearch(options.model)) return 'model';
@@ -130,6 +156,20 @@ export function webSearchRefusal(
   ) {
     return 'site_filters';
   }
+  if (sentReasoningEffort(options, context) === 'minimal') return 'minimal_effort';
+  return undefined;
+}
+
+/**
+ * Why OpenAI would refuse this request's code interpreter, or `undefined`
+ * when it takes it: the model doesn't offer it, or the request would send
+ * `minimal` effort, which GPT-5 refuses it at (a 400, measured).
+ */
+export function codeInterpreterRefusal(
+  options: LlmOptions,
+  context: Omit<RouteContext, 'isOpenAiHost'>
+): 'model' | 'minimal_effort' | undefined {
+  if (!acceptsOpenAiCodeInterpreter(options.model)) return 'model';
   if (sentReasoningEffort(options, context) === 'minimal') return 'minimal_effort';
   return undefined;
 }
@@ -181,7 +221,10 @@ export function buildResponsesParams(
   options: LlmOptions,
   context: ResponsesRequestContext
 ): ResponseCreateParamsNonStreaming {
-  const include: ResponseIncludable[] = ['web_search_call.action.sources'];
+  const taken = takenProviderTools(options, context);
+  const include: ResponseIncludable[] = [];
+  if (taken.webSearch) include.push('web_search_call.action.sources');
+  if (taken.codeExecution) include.push('code_interpreter_call.outputs');
   if (context.isReasoning) include.push('reasoning.encrypted_content');
   const params: ResponseCreateParamsNonStreaming = {
     model: options.model,
@@ -224,7 +267,7 @@ export function buildResponsesParams(
     strict: false,
   }));
   const search = options.providerTools?.webSearch;
-  if (search) {
+  if (search && taken.webSearch) {
     // The tool stays on even once a reply has spent its limit: without it,
     // OpenAI drops what the earlier searches found, and barring it with
     // `allowed_tools` measurably spoiled the answers. So each call gets the
@@ -233,6 +276,17 @@ export function buildResponsesParams(
     tools.push(webSearchTool(search, options.model));
     const limit = search.replyLimit ?? search.maxUses;
     if (limit !== undefined && limit >= 1) params.max_tool_calls = limit;
+  }
+  if (taken.codeExecution) {
+    // `auto` reuses the container a replayed `code_interpreter_call` item
+    // names (measured), and makes a new one when that has expired, where
+    // naming it would fail. No network, as on Anthropic.
+    tools.push({
+      type: 'code_interpreter',
+      container: { type: 'auto', network_policy: { type: 'disabled' } },
+    });
+    // With web search on too, `max_tool_calls` (the search limit) counts
+    // code runs as well: OpenAI caps built-in calls together.
   }
   if (tools.length > 0) {
     params.tools = tools;
@@ -325,6 +379,15 @@ function toReplayItem(block: LlmReasoningBlock): ResponseInputItem | undefined {
       }
       return { type: 'web_search_call', id: block.id, status: block.status, action: action.data };
     }
+    case 'openai_code_interpreter_call':
+      return {
+        type: 'code_interpreter_call',
+        id: block.id,
+        status: block.status,
+        container_id: block.containerId,
+        code: block.code,
+        outputs: block.outputs,
+      };
     default:
       return undefined;
   }
@@ -393,15 +456,34 @@ interface MappedOutput {
 }
 
 /**
+ * How long a response's code runs took, and what ran before it. A stream
+ * times each run (`itemMs`, by item id); a call that wasn't streamed shares
+ * its request time (`requestMs`) among them.
+ */
+export interface CodeRunTiming {
+  /** The runs the reply made before this call (`earlierCodeRuns`). */
+  earlier: readonly CodeRun[];
+  itemMs?: ReadonlyMap<string, number>;
+  requestMs?: number;
+}
+
+/**
  * Read a finished (or incomplete) response's output items. Reasoning items
  * without `encrypted_content` are dropped: with `store: false` there is
  * nothing to replay them by.
  */
-function mapOutput(response: Response): MappedOutput {
+function mapOutput(response: Response, timing: CodeRunTiming): MappedOutput {
   let content = '';
   const toolCalls: LlmToolCall[] = [];
   const reasoning: LlmReasoningBlock[] = [];
   let webSearchRequests = 0;
+  const codeCalls = response.output.filter(
+    (item): item is ResponseCodeInterpreterToolCall => item.type === 'code_interpreter_call'
+  );
+  const sharedMs = codeCalls.length > 0 ? (timing.requestMs ?? 0) / codeCalls.length : 0;
+  // Files the reply's text cites, by container: OpenAI names them there,
+  // not on the code item.
+  const citedFiles = new Map<string, string[]>();
   for (const item of response.output) {
     switch (item.type) {
       case 'message': {
@@ -409,7 +491,14 @@ function mapOutput(response: Response): MappedOutput {
         // then the answer); each is its own paragraph, as the stream yields it.
         let text = '';
         for (const part of item.content) {
-          if (part.type === 'output_text') text += part.text;
+          if (part.type !== 'output_text') continue;
+          text += part.text;
+          for (const annotation of part.annotations) {
+            if (annotation.type !== 'container_file_citation') continue;
+            const names = citedFiles.get(annotation.container_id) ?? [];
+            if (!names.includes(annotation.filename)) names.push(annotation.filename);
+            citedFiles.set(annotation.container_id, names);
+          }
         }
         if (text) content += content ? `\n\n${text}` : text;
         break;
@@ -437,16 +526,57 @@ function mapOutput(response: Response): MappedOutput {
         if (isBilledSearch(block)) webSearchRequests++;
         break;
       }
+      case 'code_interpreter_call':
+        reasoning.push(codeInterpreterBlock(item, timing.itemMs?.get(item.id) ?? sharedMs));
+        break;
       default:
         break;
     }
   }
+  attachCitedFiles(reasoning, citedFiles);
+  const runs = reasoning.flatMap((block) => {
+    const run = codeRunOf(block);
+    return run ? [run] : [];
+  });
+  const codeExecution = billCodeExecution(timing.earlier, runs, CODE_EXECUTION_USD_PER_HOUR.openai);
   return {
     content,
     toolCalls,
     reasoning,
-    usage: usageOf(response, webSearchRequests),
+    usage: { ...usageOf(response, webSearchRequests), ...(codeExecution ? { codeExecution } : {}) },
     finishReason: finishReasonOf(response, toolCalls.length > 0),
+  };
+}
+
+/** Put each container's cited files on this response's last run in it. */
+function attachCitedFiles(
+  blocks: LlmReasoningBlock[],
+  citedFiles: ReadonlyMap<string, string[]>
+): void {
+  for (const [containerId, names] of citedFiles) {
+    const run = blocks.findLast(
+      (block) => block.type === 'openai_code_interpreter_call' && block.containerId === containerId
+    );
+    if (run?.type === 'openai_code_interpreter_call') run.fileNames = names;
+  }
+}
+
+function codeInterpreterBlock(
+  item: ResponseCodeInterpreterToolCall,
+  durationMs: number
+): LlmReasoningBlock {
+  return {
+    type: 'openai_code_interpreter_call',
+    id: item.id,
+    status: item.status,
+    containerId: item.container_id,
+    code: item.code,
+    outputs: (item.outputs ?? []).map((output) =>
+      output.type === 'logs'
+        ? { type: 'logs' as const, logs: output.logs }
+        : { type: 'image' as const, url: output.url }
+    ),
+    durationMs: Math.round(durationMs),
   };
 }
 
@@ -509,8 +639,12 @@ function failedResponseError(response: Response, usage: LlmUsage): ProviderError
  * stop with nothing to show is raised, as on Chat Completions: reasoning can
  * spend the whole cap and leave an empty answer.
  */
-export function fromResponsesResult(response: Response, options: LlmOptions): LlmResponse {
-  const mapped = mapOutput(response);
+export function fromResponsesResult(
+  response: Response,
+  options: LlmOptions,
+  timing: CodeRunTiming
+): LlmResponse {
+  const mapped = mapOutput(response, timing);
   if (response.status === 'failed') throw failedResponseError(response, mapped.usage);
   if (
     mapped.finishReason === 'length' &&
@@ -545,9 +679,15 @@ export function fromResponsesResult(response: Response, options: LlmOptions): Ll
  */
 export async function* fromResponsesStream(
   stream: AsyncIterable<ResponseStreamEvent>,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  earlier: readonly CodeRun[]
 ): AsyncIterable<StreamChunk> {
   let final: Response | undefined;
+  // Each code run, timed from when its code starts running (`interpreting`,
+  // or `in_progress` if that never came) to `completed`: the container's
+  // time, not the model's writing of the code.
+  const runStarts = new Map<string, number>();
+  const itemMs = new Map<string, number>();
   // A later summary part starts a new paragraph in the live panel.
   let reasoningStreamed = false;
   let paragraphPending = false;
@@ -580,12 +720,26 @@ export async function* fromResponsesStream(
             paragraphPending = false;
           }
           break;
+        case 'response.code_interpreter_call.in_progress':
+          if (!runStarts.has(event.item_id)) runStarts.set(event.item_id, Date.now());
+          break;
+        case 'response.code_interpreter_call.interpreting':
+          runStarts.set(event.item_id, Date.now());
+          break;
+        case 'response.code_interpreter_call.completed': {
+          const started = runStarts.get(event.item_id);
+          if (started !== undefined) itemMs.set(event.item_id, Date.now() - started);
+          break;
+        }
         case 'response.completed':
         case 'response.incomplete':
           final = event.response;
           break;
         case 'response.failed':
-          throw failedResponseError(event.response, mapOutput(event.response).usage);
+          throw failedResponseError(
+            event.response,
+            mapOutput(event.response, { earlier, itemMs }).usage
+          );
         case 'error':
           throw new ProviderError(event.message || 'OpenAI stream error', {
             code: event.code ? `openai_${event.code}` : 'provider_error',
@@ -611,7 +765,7 @@ export async function* fromResponsesStream(
     });
   }
 
-  const mapped = mapOutput(final);
+  const mapped = mapOutput(final, { earlier, itemMs });
   for (const toolCall of mapped.toolCalls) yield { type: 'tool_call', toolCall };
   yield {
     type: 'done',

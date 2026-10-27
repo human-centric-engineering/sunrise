@@ -433,6 +433,21 @@ export function acceptsWebSearch(modelId: string): boolean {
 }
 
 /**
+ * Does this Claude model take Anthropic's code execution tool?
+ *
+ * Anthropic lists Opus, Sonnet and Haiku from 4.5 on, and Fable and Mythos
+ * (its code execution doc, 2026-10-27). The Claude 3 models, Opus 4.0 / 4.1,
+ * Sonnet 4.0 and ids the parser doesn't recognise return false, so the
+ * provider drops the tool rather than sending one that 400s.
+ */
+export function acceptsCodeExecution(modelId: string): boolean {
+  const version = claudeVersion(normalizeClaudeId(modelId));
+  if (!version) return false;
+  if (version.family === 'fable' || version.family === 'mythos') return true;
+  return atLeast(version, 4, 5);
+}
+
+/**
  * Does this Claude model refuse a forced `tool_choice` (`any` or a named
  * tool) outright, with a 400?
  *
@@ -673,6 +688,18 @@ export function acceptsOpenAiWebSearch(modelId: string): boolean {
   return /^(?:gpt-5(?:$|[-.])|gpt-4\.1(?:$|-)|gpt-4o(?:$|-(?:mini(?:$|-)|\d{4}-))|o3(?:$|-\d{4}-)|o4-mini(?:$|-))/.test(
     id
   );
+}
+
+/**
+ * Does this OpenAI model take the Responses API's `code_interpreter` tool?
+ *
+ * The models that take web search ({@link acceptsOpenAiWebSearch}) do:
+ * measured on gpt-5-mini, gpt-4.1, gpt-4.1-mini, gpt-4o and gpt-4o-mini
+ * (2026-10-27), and OpenAI documents it on o3 and o4-mini. Like web search,
+ * it is a 400 at `minimal` reasoning effort, which the routing checks.
+ */
+export function acceptsOpenAiCodeInterpreter(modelId: string): boolean {
+  return acceptsOpenAiWebSearch(modelId);
 }
 
 /**

@@ -531,6 +531,7 @@ export function ExecutionTraceEntryRow({
                   : null,
                 requestParams.serviceTier ? `tier: ${requestParams.serviceTier}` : null,
                 requestParams.providerTools?.webSearch ? 'web search: on' : null,
+                requestParams.providerTools?.codeExecution ? 'code execution: on' : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}

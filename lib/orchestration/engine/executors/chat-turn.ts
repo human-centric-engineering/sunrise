@@ -297,6 +297,7 @@ export async function executeChatTurn(
     cacheWriteTokens: response.usage?.cacheWriteTokens,
     serviceTier: response.usage?.serviceTier,
     webSearchRequests: response.usage?.webSearchRequests,
+    codeExecution: response.usage?.codeExecution,
     metadata: {
       ...(ctx.costLogMetadata ?? {}),
       stepId: step.id,

@@ -86,12 +86,15 @@ import {
   buildResponsesParams,
   fromResponsesResult,
   fromResponsesStream,
+  codeInterpreterRefusal,
   isSummaryVerificationError,
   pricedTier,
   safeParseJson,
+  takenProviderTools,
   usesResponsesApi,
   webSearchRefusal,
 } from '@/lib/orchestration/llm/openai-responses';
+import { earlierCodeRuns } from '@/lib/orchestration/llm/code-execution';
 
 /**
  * The embeddings response, as far as `embedMany` reads it. Validated rather
@@ -710,9 +713,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   /**
    * Does this request take the Responses API path (`openai-responses.ts`)?
-   * Only OpenAI itself, with web search on, on a model that offers it. On
-   * OpenAI when the request can't take it, the search is dropped and logged
-   * with the reason, as Anthropic drops it on Claude 3.0; other hosts ignore it.
+   * Only OpenAI itself, with web search or code interpreter on, on a model
+   * that offers one. On OpenAI, a tool the request can't take is dropped and
+   * logged with the reason, as Anthropic drops web search on Claude 3.0;
+   * other hosts ignore both.
    */
   private routesToResponses(options: LlmOptions, isReasoning: boolean): boolean {
     const routes = usesResponsesApi(options, {
@@ -720,16 +724,21 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       isReasoning,
       providerName: this.name,
     });
-    if (
-      !routes &&
-      this.isOpenAiHost &&
-      options.providerTools?.webSearch !== undefined &&
-      !options.responseFormat
-    ) {
+    if (!this.isOpenAiHost || options.responseFormat) return routes;
+    const context = { isReasoning, providerName: this.name };
+    const taken = takenProviderTools(options, context);
+    if (options.providerTools?.webSearch !== undefined && !taken.webSearch) {
       logger.info('OpenAI: web search dropped, the request cannot take it', {
         provider: this.name,
         model: options.model,
-        reason: webSearchRefusal(options, { isReasoning, providerName: this.name }),
+        reason: webSearchRefusal(options, context),
+      });
+    }
+    if (options.providerTools?.codeExecution !== undefined && !taken.codeExecution) {
+      logger.info('OpenAI: code interpreter dropped, the request cannot take it', {
+        provider: this.name,
+        model: options.model,
+        reason: codeInterpreterRefusal(options, context),
       });
     }
     return routes;
@@ -748,6 +757,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     });
     const requestOptions = buildRequestOptions(options);
     let response: OpenAiResponse;
+    // The attempt that answered, timed: a call that wasn't streamed costs its
+    // code runs by it (`CodeRunTiming.requestMs`).
+    let requestMs = 0;
     try {
       response = await this.withSummaryFallback(isReasoning, (summaries) => {
         const params = buildResponsesParams(messages, options, {
@@ -757,7 +769,12 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           tokenCap: options.maxTokens ?? DEFAULT_MAX_TOKENS,
         });
         return withRetry<OpenAiResponse>(
-          () => this.client.responses.create(params, requestOptions),
+          async () => {
+            const started = Date.now();
+            const result = await this.client.responses.create(params, requestOptions);
+            requestMs = Date.now() - started;
+            return result;
+          },
           {
             maxRetries: this.maxRetries,
             isLocal: this.isLocal,
@@ -769,7 +786,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     } catch (err) {
       throw toProviderError(err, 'OpenAI Responses chat request failed');
     }
-    return fromResponsesResult(response, options);
+    return fromResponsesResult(response, options, {
+      earlier: earlierCodeRuns(messages),
+      requestMs,
+    });
   }
 
   private async *chatStreamResponses(
@@ -800,7 +820,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     } catch (err) {
       throw toProviderError(err, 'OpenAI Responses chat stream failed');
     }
-    yield* fromResponsesStream(stream, options.signal);
+    yield* fromResponsesStream(stream, options.signal, earlierCodeRuns(messages));
   }
 
   private openResponsesStream(

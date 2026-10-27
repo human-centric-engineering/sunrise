@@ -44,7 +44,8 @@ model AiAgent {
   //   serviceTier       — 'auto' | 'default' | 'flex' | 'priority'; OpenAI only.
   //   providerTools     — tools the provider runs itself, keyed by tool:
   //                       { webSearch?: { maxUses?, allowedDomains?,
-  //                       blockedDomains? } } (ProviderTools). Anthropic only;
+  //                       blockedDomains? }, codeExecution?: {} }
+  //                       (ProviderTools). Anthropic, and OpenAI itself;
   //                       null = none.
   stopSequences             String[]  @default([])
   topP                      Float?

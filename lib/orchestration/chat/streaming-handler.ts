@@ -1712,6 +1712,7 @@ export class StreamingChatHandler {
                     cacheWriteTokens: errUsage.cacheWriteTokens,
                     serviceTier: errUsage.serviceTier,
                     webSearchRequests: errUsage.webSearchRequests,
+                    codeExecution: errUsage.codeExecution,
                     operation: CostOperation.CHAT,
                     // Read off the span directly: `llmTraceId`/`llmSpanId` are
                     // only assigned on the success path below, so they are
@@ -2234,6 +2235,7 @@ export class StreamingChatHandler {
               cacheWriteTokens: u.cacheWriteTokens,
               serviceTier: u.serviceTier,
               webSearchRequests: u.webSearchRequests,
+              codeExecution: u.codeExecution,
               operation: CostOperation.CHAT,
               traceId: llmTraceId,
               spanId: llmSpanId,
@@ -2336,6 +2338,7 @@ export class StreamingChatHandler {
             cacheWriteTokens: turnUsage.cacheWriteTokens,
             serviceTier: turnUsage.serviceTier,
             webSearchRequests: turnUsage.webSearchRequests,
+            codeExecution: turnUsage.codeExecution,
             operation: CostOperation.CHAT,
             traceId: llmTraceId,
             spanId: llmSpanId,

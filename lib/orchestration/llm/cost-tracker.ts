@@ -23,6 +23,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { getAvailableModels, getModel } from '@/lib/orchestration/llm/model-registry';
+import { codeExecutionCostUsd as codeExecutionCostUsdOf } from '@/lib/orchestration/llm/code-execution';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
 import {
   globalCapStateOrSkip,
@@ -57,6 +58,12 @@ export interface ComputedCost {
    * call ran none.
    */
   webSearchCostUsd?: number;
+  /**
+   * The part of `totalCostUsd` that paid for the provider's own code runs
+   * (`LlmUsage.codeExecution`), billed by container time. An estimate (see
+   * `code-execution.ts`). In the total only; absent when the call ran none.
+   */
+  codeExecutionCostUsd?: number;
 }
 
 /**
@@ -184,6 +191,8 @@ export interface LogCostParams {
   serviceTier?: LlmUsage['serviceTier'];
   /** The provider's own web searches the call ran (`LlmUsage.webSearchRequests`). */
   webSearchRequests?: number;
+  /** The provider's own code runs the call made (`LlmUsage.codeExecution`). */
+  codeExecution?: LlmUsage['codeExecution'];
   operation: CostOperation;
   /**
    * Audio duration in milliseconds — required when `operation` is
@@ -312,13 +321,25 @@ export function calculateCost(
   outputTokens: number,
   usage: PricedUsage = {}
 ): ComputedCost {
-  const cost = calculateTokenCost(modelId, inputTokens, outputTokens, usage);
+  let cost = calculateTokenCost(modelId, inputTokens, outputTokens, usage);
   // Billed whatever the model's token pricing: an unknown or unpriced model
-  // still paid for its searches.
+  // still paid for its searches and its code runs.
   const searches = usage.webSearchRequests;
-  if (searches === undefined || !Number.isFinite(searches) || searches <= 0) return cost;
-  const webSearchCostUsd = searches * WEB_SEARCH_USD_PER_REQUEST;
-  return { ...cost, totalCostUsd: cost.totalCostUsd + webSearchCostUsd, webSearchCostUsd };
+  if (searches !== undefined && Number.isFinite(searches) && searches > 0) {
+    const webSearchCostUsd = searches * WEB_SEARCH_USD_PER_REQUEST;
+    cost = { ...cost, totalCostUsd: cost.totalCostUsd + webSearchCostUsd, webSearchCostUsd };
+  }
+  const codeExecutionCostUsd = usage.codeExecution
+    ? codeExecutionCostUsdOf(usage.codeExecution)
+    : 0;
+  if (Number.isFinite(codeExecutionCostUsd) && codeExecutionCostUsd > 0) {
+    cost = {
+      ...cost,
+      totalCostUsd: cost.totalCostUsd + codeExecutionCostUsd,
+      codeExecutionCostUsd,
+    };
+  }
+  return cost;
 }
 
 function calculateTokenCost(
@@ -396,7 +417,7 @@ function calculateTokenCost(
  */
 export type PricedUsage = Pick<
   LlmUsage,
-  'cacheReadTokens' | 'cacheWriteTokens' | 'serviceTier' | 'webSearchRequests'
+  'cacheReadTokens' | 'cacheWriteTokens' | 'serviceTier' | 'webSearchRequests' | 'codeExecution'
 >;
 
 /**
@@ -506,6 +527,16 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
       ...(metadata ?? {}),
       webSearchRequests: params.webSearchRequests,
       webSearchCostUsd: cost.webSearchCostUsd,
+    };
+  }
+  // Likewise the code runs: how many, the container seconds billed (the
+  // measured runs, at least 5 minutes a container), and what they cost.
+  if (cost.codeExecutionCostUsd !== undefined && params.codeExecution) {
+    metadata = {
+      ...(metadata ?? {}),
+      codeExecutionRuns: params.codeExecution.runs,
+      codeExecutionBilledSeconds: params.codeExecution.billedSeconds,
+      codeExecutionCostUsd: cost.codeExecutionCostUsd,
     };
   }
 

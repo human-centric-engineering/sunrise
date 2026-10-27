@@ -282,6 +282,7 @@ async function runSingleTurn(
           cacheWriteTokens: response.usage.cacheWriteTokens,
           serviceTier: response.usage.serviceTier,
           webSearchRequests: response.usage.webSearchRequests,
+          codeExecution: response.usage.codeExecution,
           operation: CostOperation.CHAT,
           isLocal: turnCost.isLocal,
           traceId: span.traceId(),

@@ -29,12 +29,17 @@ export interface LlmToolCall {
  * back with it:
  *
  * - Anthropic's `thinking` / `redacted_thinking` blocks, and the
- *   `server_tool_use` / `web_search_tool_result` blocks of a web search it
- *   ran itself ({@link ProviderTools}).
+ *   `server_tool_use` / `web_search_tool_result` / `code_execution_tool_result`
+ *   blocks of a web search or code run it ran itself ({@link ProviderTools}).
  * - On OpenAI's Responses path (`openai-responses.ts`), its `reasoning`
- *   items (`openai_reasoning`) and `web_search_call` items
- *   (`openai_web_search_call`). That path stores nothing on OpenAI's side,
- *   so these are what lets the next request carry on the turn.
+ *   items (`openai_reasoning`), `web_search_call` items
+ *   (`openai_web_search_call`) and `code_interpreter_call` items
+ *   (`openai_code_interpreter_call`). That path stores nothing on OpenAI's
+ *   side, so these are what lets the next request carry on the turn.
+ *
+ * A code run's block also carries the container it ran in and how long it
+ * ran (`containerId`, `durationMs`): the next call of a tool loop reuses that
+ * container, and bills only what its runs add to it (`billCodeExecution`).
  *
  * Opaque to everything but the provider that produced it: a tool loop
  * carries it on the assistant message and the provider sends it back
@@ -45,13 +50,30 @@ export interface LlmToolCall {
 export type LlmReasoningBlock =
   | { type: 'thinking'; thinking: string; signature: string }
   | { type: 'redacted_thinking'; data: string }
-  | { type: 'server_tool_use'; id: string; name: 'web_search'; input: Record<string, unknown> }
+  | {
+      type: 'server_tool_use';
+      id: string;
+      name: AnthropicServerToolName;
+      input: Record<string, unknown>;
+    }
   | {
       type: 'web_search_tool_result';
       toolUseId: string;
       /** Empty when the search failed — `errorCode` then says why. */
       results: WebSearchResult[];
       errorCode?: string;
+    }
+  | {
+      type: 'code_execution_tool_result';
+      /** Which sub-tool ran: a shell command, or a file view / create / edit. */
+      tool: 'bash' | 'text_editor';
+      toolUseId: string;
+      /** Anthropic's result, in its wire shape. */
+      content: AnthropicCodeExecutionContent;
+      containerId: string;
+      durationMs: number;
+      /** Names of the files the run made, for the trace. Not sent back. */
+      fileNames?: string[];
     }
   | {
       type: 'openai_reasoning';
@@ -71,6 +93,62 @@ export type LlmReasoningBlock =
        * `open_page` or `find_in_page`. Sent back as it came.
        */
       action: Record<string, unknown>;
+    }
+  | {
+      type: 'openai_code_interpreter_call';
+      id: string;
+      status: 'in_progress' | 'interpreting' | 'completed' | 'incomplete' | 'failed';
+      containerId: string;
+      code: string | null;
+      /** What the code printed, and the images it drew (as URLs). */
+      outputs: Array<{ type: 'logs'; logs: string } | { type: 'image'; url: string }>;
+      durationMs: number;
+      /**
+       * Names of the files the reply cites from this run's container, for
+       * the trace. Not sent back.
+       */
+      fileNames?: string[];
+    };
+
+/** The server tools whose `server_tool_use` blocks Anthropic returns here. */
+export type AnthropicServerToolName =
+  'web_search' | 'bash_code_execution' | 'text_editor_code_execution';
+
+/**
+ * A code execution result as Anthropic returns it: a shell command's output
+ * (with the ids of the files it left in `$OUTPUT_DIR`), a file view, create
+ * or edit, or an error. Error codes are kept as strings, as on web search.
+ */
+export type AnthropicCodeExecutionContent =
+  | {
+      type: 'bash_code_execution_result';
+      stdout: string;
+      stderr: string;
+      return_code: number;
+      content: Array<{ type: 'bash_code_execution_output'; file_id: string }>;
+    }
+  | { type: 'bash_code_execution_tool_result_error'; error_code: string }
+  | {
+      type: 'text_editor_code_execution_view_result';
+      content: string;
+      file_type: 'text' | 'image' | 'pdf';
+      num_lines: number | null;
+      start_line: number | null;
+      total_lines: number | null;
+    }
+  | { type: 'text_editor_code_execution_create_result'; is_file_update: boolean }
+  | {
+      type: 'text_editor_code_execution_str_replace_result';
+      lines: string[] | null;
+      new_lines: number | null;
+      new_start: number | null;
+      old_lines: number | null;
+      old_start: number | null;
+    }
+  | {
+      type: 'text_editor_code_execution_tool_result_error';
+      error_code: string;
+      error_message: string | null;
     };
 
 /** One page a provider's web search returned. */
@@ -263,9 +341,9 @@ export interface LlmOptions {
   serviceTier?: ServiceTier;
   /**
    * Tools the provider runs on its own side rather than through the
-   * capability dispatcher (web search, on Anthropic and on OpenAI's
-   * Responses path). Sent only to providers and models that offer them;
-   * dropped elsewhere.
+   * capability dispatcher (web search and code execution, on Anthropic and
+   * on OpenAI's Responses path). Sent only to providers and models that
+   * offer them; dropped elsewhere.
    */
   providerTools?: ProviderTools;
   /** Override the provider's default request timeout. */
@@ -309,12 +387,47 @@ export interface WebSearchOptions {
 export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
 
 /**
+ * The provider's own code execution: the model runs code in a sandbox the
+ * provider hosts (Anthropic's `code_execution`, OpenAI's `code_interpreter`).
+ * No options yet; present means on. What the code prints reaches the model
+ * and the trace. Files it makes are not delivered (owner ruling, t-956).
+ */
+export type CodeExecutionOptions = Record<string, never>;
+
+/**
+ * The least a code execution container is billed for, on both providers.
+ * Neither reports billed time, so a container is costed at the larger of
+ * this and its measured run time (owner ruling, t-956).
+ */
+export const CODE_EXECUTION_MIN_BILLED_SECONDS = 300;
+
+/**
+ * USD per container-hour. Anthropic charges $0.05 an hour after 1,550 free
+ * hours a month per organisation, which Sunrise can't see, so they aren't
+ * deducted. OpenAI charges $0.03 per 20 minutes for its default 1 GB
+ * container, by the minute.
+ */
+export const CODE_EXECUTION_USD_PER_HOUR = { anthropic: 0.05, openai: 0.09 } as const;
+
+/**
  * Built-in tools a provider runs itself, keyed by tool. A key that is absent
  * leaves that tool off. Stored as one JSON value on an agent
  * (`AiAgent.providerTools`).
  */
 export interface ProviderTools {
   webSearch?: WebSearchOptions;
+  codeExecution?: CodeExecutionOptions;
+}
+
+/**
+ * The provider's code runs for one call, and what they are billed as: the
+ * seconds this call adds to each container it used, at least
+ * {@link CODE_EXECUTION_MIN_BILLED_SECONDS} for a container new to the reply.
+ */
+export interface CodeExecutionUsage {
+  runs: number;
+  billedSeconds: number;
+  usdPerHour: number;
 }
 
 /** Why the model stopped generating. */
@@ -357,6 +470,11 @@ export interface LlmUsage {
    * billed per search on top of the tokens. Absent when it ran none.
    */
   webSearchRequests?: number;
+  /**
+   * Code the provider ran for this call ({@link ProviderTools}), billed by
+   * container time on top of the tokens. Absent when it ran none.
+   */
+  codeExecution?: CodeExecutionUsage;
 }
 
 /** A complete, non-streaming response from a provider. */

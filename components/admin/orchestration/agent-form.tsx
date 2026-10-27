@@ -71,6 +71,7 @@ import {
   narrowVerbosity,
   providerToolsSchema,
 } from '@/lib/orchestration/llm/model-params';
+import { CodeExecutionField } from '@/components/admin/orchestration/code-execution-field';
 import { WebSearchFields } from '@/components/admin/orchestration/web-search-fields';
 import {
   REASONING_EFFORT_FORM_VALUES,
@@ -1477,6 +1478,15 @@ export function AgentForm({
             }
             disabled={locked('providerTools')}
             error={firstErrorMessage(errors.providerTools)}
+          />
+
+          <CodeExecutionField
+            idPrefix="agent"
+            value={watch('providerTools')}
+            onChange={(next) =>
+              setValue('providerTools', next, { shouldDirty: true, shouldValidate: true })
+            }
+            disabled={locked('providerTools')}
           />
 
           <div className="grid gap-2">

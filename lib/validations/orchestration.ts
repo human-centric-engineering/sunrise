@@ -3238,6 +3238,49 @@ export const updateOrchestrationSettingsSchema = z
 // column (mid-flight) and the trace entry's `turns` field (post-termination).
 // The shapes mirror the discriminated union in `types/orchestration.ts`.
 
+/**
+ * An Anthropic code execution result (`AnthropicCodeExecutionContent`) as a
+ * checkpoint stores it. Checked here because the provider sends it back to
+ * Anthropic as it is.
+ */
+const anthropicCodeExecutionContentSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('bash_code_execution_result'),
+    stdout: z.string(),
+    stderr: z.string(),
+    return_code: z.number().int(),
+    content: z.array(
+      z.object({ type: z.literal('bash_code_execution_output'), file_id: z.string() })
+    ),
+  }),
+  z.object({ type: z.literal('bash_code_execution_tool_result_error'), error_code: z.string() }),
+  z.object({
+    type: z.literal('text_editor_code_execution_view_result'),
+    content: z.string(),
+    file_type: z.enum(['text', 'image', 'pdf']),
+    num_lines: z.number().int().nullable(),
+    start_line: z.number().int().nullable(),
+    total_lines: z.number().int().nullable(),
+  }),
+  z.object({
+    type: z.literal('text_editor_code_execution_create_result'),
+    is_file_update: z.boolean(),
+  }),
+  z.object({
+    type: z.literal('text_editor_code_execution_str_replace_result'),
+    lines: z.array(z.string()).nullable(),
+    new_lines: z.number().int().nullable(),
+    new_start: z.number().int().nullable(),
+    old_lines: z.number().int().nullable(),
+    old_start: z.number().int().nullable(),
+  }),
+  z.object({
+    type: z.literal('text_editor_code_execution_tool_result_error'),
+    error_code: z.string(),
+    error_message: z.string().nullable(),
+  }),
+]);
+
 const agentCallTurnContinuingSchema = z.object({
   kind: z.literal('agent_call'),
   phase: z.literal('continuing'),
@@ -3251,8 +3294,8 @@ const agentCallTurnContinuingSchema = z.object({
   }),
   toolResult: z.unknown(),
   // `LlmReasoningBlock[]` — replayed on resume so a thinking Claude model's
-  // continuing turn keeps its signed thinking blocks, and a web search turn
-  // keeps what it found, on either provider. No `.catch`: replaying the turn
+  // continuing turn keeps its signed thinking blocks, and a web search or code
+  // execution turn keeps what it found or ran, on either provider. No `.catch`: replaying the turn
   // without them makes Anthropic reject every retry, so a malformed value
   // fails the parse, which the resume logs before starting the step fresh.
   reasoning: z
@@ -3263,8 +3306,17 @@ const agentCallTurnContinuingSchema = z.object({
         z.object({
           type: z.literal('server_tool_use'),
           id: z.string(),
-          name: z.literal('web_search'),
+          name: z.enum(['web_search', 'bash_code_execution', 'text_editor_code_execution']),
           input: z.record(z.string(), z.unknown()),
+        }),
+        z.object({
+          type: z.literal('code_execution_tool_result'),
+          tool: z.enum(['bash', 'text_editor']),
+          toolUseId: z.string(),
+          content: anthropicCodeExecutionContentSchema,
+          containerId: z.string(),
+          durationMs: z.number().nonnegative(),
+          fileNames: z.array(z.string()).optional(),
         }),
         z.object({
           type: z.literal('web_search_tool_result'),
@@ -3292,6 +3344,21 @@ const agentCallTurnContinuingSchema = z.object({
           id: z.string(),
           status: z.enum(['in_progress', 'searching', 'completed', 'failed', 'incomplete']),
           action: z.record(z.string(), z.unknown()),
+        }),
+        z.object({
+          type: z.literal('openai_code_interpreter_call'),
+          id: z.string(),
+          status: z.enum(['in_progress', 'interpreting', 'completed', 'incomplete', 'failed']),
+          containerId: z.string(),
+          code: z.string().nullable(),
+          outputs: z.array(
+            z.discriminatedUnion('type', [
+              z.object({ type: z.literal('logs'), logs: z.string() }),
+              z.object({ type: z.literal('image'), url: z.string() }),
+            ])
+          ),
+          durationMs: z.number().nonnegative(),
+          fileNames: z.array(z.string()).optional(),
         }),
       ])
     )

@@ -1,7 +1,7 @@
 /**
- * Trace entries for the tools a provider ran itself (web search, on Anthropic
- * and on OpenAI's Responses path), read from the replayable blocks a turn
- * returned (`LlmReasoningBlock`).
+ * Trace entries for the tools a provider ran itself (web search and code
+ * execution, on Anthropic and on OpenAI's Responses path), read from the
+ * replayable blocks a turn returned (`LlmReasoningBlock`).
  *
  * They go in the same `capabilityCalls` list as the capabilities the chat
  * handler dispatched, so the live strip and the conversation trace show a
@@ -19,18 +19,27 @@ import type { ToolCallTrace } from '@/types/orchestration';
 /** The trace slug of a provider's own web search. */
 export const PROVIDER_WEB_SEARCH_SLUG = 'provider:web_search';
 
+/** The trace slug of a provider's own code run. */
+export const PROVIDER_CODE_EXECUTION_SLUG = 'provider:code_execution';
+
 /** Matches `toolCallTraceSchema.resultPreview`. */
 const RESULT_PREVIEW_MAX = 2000;
 
 /**
- * One trace entry per web search in `blocks`, in the order the model ran
- * them. Latency is 0: neither provider reports one per search.
+ * One trace entry per web search and code run in `blocks`, in the order the
+ * model ran them.
  *
- * - Anthropic: one per `server_tool_use`. A search with no result block (the
- *   turn ended first) reads as failed.
+ * - Anthropic: one per `server_tool_use`. A search or run with no result
+ *   block (the turn ended first) reads as failed.
  * - OpenAI: one per `web_search_call` item, including the `open_page` and
- *   `find_in_page` steps a reasoning model takes, which aren't billed. One
- *   cut short by the search limit reads as failed, though OpenAI bills it.
+ *   `find_in_page` steps a reasoning model takes, which aren't billed, and
+ *   one per `code_interpreter_call` item. A search cut short by the search
+ *   limit reads as failed, though OpenAI bills it.
+ *
+ * A search's latency is 0, since neither provider reports one; a code run's
+ * is its measured run time. A run has no cost of its own: its container is
+ * billed per reply, with a minimum (`code-execution.ts`), so its cost is on
+ * the call's cost row.
  */
 export function providerToolTraces(
   blocks: readonly LlmReasoningBlock[] | undefined
@@ -42,7 +51,15 @@ export function providerToolTraces(
       traces.push(openAiSearchTrace(block));
       continue;
     }
+    if (block.type === 'openai_code_interpreter_call') {
+      traces.push(openAiCodeTrace(block));
+      continue;
+    }
     if (block.type !== 'server_tool_use') continue;
+    if (block.name !== 'web_search') {
+      traces.push(anthropicCodeTrace(block, blocks));
+      continue;
+    }
     const result = blocks.find(
       (candidate) => candidate.type === 'web_search_tool_result' && candidate.toolUseId === block.id
     );
@@ -89,4 +106,76 @@ function openAiSearchTrace(
     : [];
   if (urls.length > 0) trace.resultPreview = urls.join('\n').slice(0, RESULT_PREVIEW_MAX);
   return trace;
+}
+
+function anthropicCodeTrace(
+  call: Extract<LlmReasoningBlock, { type: 'server_tool_use' }>,
+  blocks: readonly LlmReasoningBlock[]
+): ToolCallTrace {
+  const found = blocks.find(
+    (candidate) =>
+      candidate.type === 'code_execution_tool_result' && candidate.toolUseId === call.id
+  );
+  const result = found?.type === 'code_execution_tool_result' ? found : undefined;
+  const trace: ToolCallTrace = {
+    slug: PROVIDER_CODE_EXECUTION_SLUG,
+    arguments: call.input,
+    latencyMs: result?.durationMs ?? 0,
+    success: false,
+  };
+  if (!result) {
+    trace.errorCode = 'no_result';
+    return trace;
+  }
+  const content = result.content;
+  switch (content.type) {
+    case 'bash_code_execution_result':
+      trace.success = content.return_code === 0;
+      if (!trace.success) trace.errorCode = `exit_${content.return_code}`;
+      setPreview(trace, [content.stdout, content.stderr], result.fileNames);
+      break;
+    case 'bash_code_execution_tool_result_error':
+    case 'text_editor_code_execution_tool_result_error':
+      trace.errorCode = content.error_code;
+      break;
+    case 'text_editor_code_execution_view_result':
+      trace.success = true;
+      setPreview(trace, [
+        content.file_type === 'text' ? content.content : `[${content.file_type}]`,
+      ]);
+      break;
+    case 'text_editor_code_execution_create_result':
+    case 'text_editor_code_execution_str_replace_result':
+      trace.success = true;
+      break;
+  }
+  return trace;
+}
+
+function openAiCodeTrace(
+  block: Extract<LlmReasoningBlock, { type: 'openai_code_interpreter_call' }>
+): ToolCallTrace {
+  const trace: ToolCallTrace = {
+    slug: PROVIDER_CODE_EXECUTION_SLUG,
+    arguments: block.code === null ? {} : { code: block.code },
+    latencyMs: block.durationMs,
+    success: block.status === 'completed',
+  };
+  if (block.status !== 'completed') trace.errorCode = block.status;
+  setPreview(
+    trace,
+    block.outputs.map((output) => (output.type === 'logs' ? output.logs : '[image]')),
+    block.fileNames
+  );
+  return trace;
+}
+
+/**
+ * What a run printed, then the files it made, which aren't delivered (owner
+ * ruling, t-956). Nothing is set when there is nothing to show.
+ */
+function setPreview(trace: ToolCallTrace, parts: string[], fileNames?: string[]): void {
+  const lines = parts.filter((part) => part.length > 0);
+  if (fileNames?.length) lines.push(`Files made (not delivered): ${fileNames.join(', ')}`);
+  if (lines.length > 0) trace.resultPreview = lines.join('\n').slice(0, RESULT_PREVIEW_MAX);
 }
