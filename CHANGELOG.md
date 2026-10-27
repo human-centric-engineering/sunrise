@@ -35,9 +35,9 @@ release process.
   limit on the new `WebSearchOptions.replyLimit`. Searches cost $0.01 each and
   show in the trace, as on Anthropic. `stopSequences` is dropped on this
   path. **Forks:** a fork `LlmProvider` or consumer that switches on
-  `LlmReasoningBlock.type` meets two more variants. A fork that persists a
-  continuing `agent_call` turn must keep them, or a resumed OpenAI step
-  starts again.
+  `LlmReasoningBlock.type` meets two more variants. A fork that checks
+  `agent_call` turns against its own schema must accept them, or a resumed
+  OpenAI step starts again.
 
 - **Anthropic's web search on agents (t-912).** New `LlmOptions.providerTools`
   (`ProviderTools`, `WebSearchOptions` in `lib/orchestration/llm/types.ts`)
