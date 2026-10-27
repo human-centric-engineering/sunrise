@@ -27,9 +27,10 @@ release process.
   in the agent registry, the create / update / export / backup schemas
   (`agentProviderToolsField`, `providerToolsSchema`) and a Web search control
   on the agent form. `LlmReasoningBlock` gains `server_tool_use` and
-  `web_search_tool_result` variants, returned in order with thinking blocks so
-  a tool loop replays the searches. A `pause_turn` stop is now sent back to
-  carry on (up to three times) instead of read as a finished answer.
+  `web_search_tool_result` variants (results as `WebSearchResult`), returned in
+  order with thinking blocks so a tool loop replays the searches. A
+  `pause_turn` stop is now sent back to carry on (up to three times) instead of
+  read as a finished answer.
   `LlmUsage.webSearchRequests` counts the searches; `calculateCost` adds
   `WEB_SEARCH_USD_PER_REQUEST` ($0.01) a search to the total and reports it as
   `webSearchCostUsd`, and `logCost` (new `LogCostParams.webSearchRequests`)
