@@ -69,7 +69,11 @@
 
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppSubjectSources } from '@/lib/app/data-export';
-import { createDeclarationRegistry } from '@/lib/privacy/declaration-registry';
+import {
+  createDeclarationRegistry,
+  type DeclarationContribution,
+  type DeclaredExclusion,
+} from '@/lib/privacy/declaration-registry';
 import type { SourceDisposition } from '@/lib/privacy/export-sources';
 
 /**
@@ -102,22 +106,10 @@ export interface AppSubjectDataSource {
 }
 
 /** A fork-owned model deliberately left out of the export, with the reason. */
-export interface AppExcludedSubjectSource {
-  model: string;
-  reason: string;
-}
+export type AppExcludedSubjectSource = DeclaredExclusion;
 
 /** One tier's contribution. */
-export interface AppSubjectSourceContribution {
-  /**
-   * Which tier is declaring — `'app'` for a leaf fork, `'framework'` for a
-   * framework tier, or whatever names yours. Used only in diagnostics, so that
-   * a rejected row says who tried to register it.
-   */
-  tier: string;
-  sources?: readonly AppSubjectDataSource[];
-  excluded?: readonly AppExcludedSubjectSource[];
-}
+export type AppSubjectSourceContribution = DeclarationContribution<AppSubjectDataSource>;
 
 /** Shared rules; see `declaration-registry.ts` for which differ per seam and why. */
 const registry = createDeclarationRegistry<AppSubjectDataSource>({

@@ -57,6 +57,11 @@ export interface DeclaredExclusion {
 
 /** One tier's contribution. */
 export interface DeclarationContribution<S extends DeclaredSource> {
+  /**
+   * Which tier is declaring — `'app'` for a leaf fork, `'framework'` for a
+   * framework tier, or whatever names yours. Used only in diagnostics, so that
+   * a rejected row says who tried to register it.
+   */
   tier: string;
   sources?: readonly S[];
   excluded?: readonly DeclaredExclusion[];
@@ -156,6 +161,11 @@ function isEntry(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/** `Array.isArray` without its `any[]` narrowing, which would erase the row type. */
+function isList<T>(value: readonly T[]): value is readonly T[] {
+  return Array.isArray(value);
+}
+
 type RowKind = 'source' | 'exclusion';
 
 /** Build one seam's registry. Call once at module scope. */
@@ -210,10 +220,35 @@ export function createDeclarationRegistry<S extends DeclaredSource>(
     return false;
   }
 
-  function register(contribution: DeclarationContribution<S>): void {
-    const { tier } = contribution;
+  /**
+   * A contribution's row list, or `[]` with a rejection when it is not an
+   * array. `?? []` alone would let an object through to `for...of`, and that
+   * throw escapes the init and rolls the whole tier back.
+   */
+  function rowsOf<T>(tier: string, kind: RowKind, value: readonly T[] | undefined): readonly T[] {
+    if (value === undefined || value === null) return [];
+    if (!isList(value)) {
+      reject(tier, kind, null, describeNonEntry(value), `${kind} list is not an array`);
+      return [];
+    }
+    return value;
+  }
 
-    for (const source of contribution.sources ?? []) {
+  function register(contribution: DeclarationContribution<S>): void {
+    // The container is checked like its rows: it comes from the same fork JS.
+    if (!isEntry(contribution)) {
+      reject('', 'source', null, describeNonEntry(contribution), 'contribution is not an object');
+      return;
+    }
+    // `tier` keys `owners`. A non-string one stored as `undefined` reads back
+    // as "no owner", and a second tier's duplicate of the model would pass.
+    const { tier } = contribution;
+    if (typeof tier !== 'string') {
+      reject(labelOf(tier), 'source', null, labelOf(tier), 'tier is not a string');
+      return;
+    }
+
+    for (const source of rowsOf(tier, 'source', contribution.sources)) {
       if (!isEntry(source)) {
         reject(tier, 'source', null, describeNonEntry(source), 'source is not an object');
         continue;
@@ -234,7 +269,8 @@ export function createDeclarationRegistry<S extends DeclaredSource>(
         reject(tier, 'source', model, model, `disposition must be 'export' or 'attribution'`);
         continue;
       }
-      if (text(source.description).length < minDescription) {
+      const description = text(source.description);
+      if (description.length < minDescription) {
         reject(
           tier,
           'source',
@@ -297,11 +333,12 @@ export function createDeclarationRegistry<S extends DeclaredSource>(
         });
       }
 
-      sources.set(model, { ...source, model, section });
+      // Stored trimmed, as checked: the description is shown in `meta.app`.
+      sources.set(model, { ...source, model, section, description });
       owners.set(model, tier);
     }
 
-    for (const entry of contribution.excluded ?? []) {
+    for (const entry of rowsOf(tier, 'exclusion', contribution.excluded)) {
       if (!isEntry(entry)) {
         reject(tier, 'exclusion', null, describeNonEntry(entry), 'exclusion is not an object');
         continue;

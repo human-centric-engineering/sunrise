@@ -48,7 +48,11 @@
 
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppOrgSources } from '@/lib/app/org-export';
-import { createDeclarationRegistry } from '@/lib/privacy/declaration-registry';
+import {
+  createDeclarationRegistry,
+  type DeclarationContribution,
+  type DeclaredExclusion,
+} from '@/lib/privacy/declaration-registry';
 import type { SourceDisposition } from '@/lib/privacy/export-sources';
 import type { OrgQuery } from '@/lib/privacy/org-sources';
 
@@ -70,18 +74,10 @@ export interface AppOrgDataSource {
 }
 
 /** A fork-owned `orgId` model deliberately left out, with the reason shown in `meta.excluded`. */
-export interface AppExcludedOrgSource {
-  model: string;
-  reason: string;
-}
+export type AppExcludedOrgSource = DeclaredExclusion;
 
 /** One tier's contribution. */
-export interface AppOrgSourceContribution {
-  /** `'app'`, `'framework'`, or whatever names yours. Diagnostics only. */
-  tier: string;
-  sources?: readonly AppOrgDataSource[];
-  excluded?: readonly AppExcludedOrgSource[];
-}
+export type AppOrgSourceContribution = DeclarationContribution<AppOrgDataSource>;
 
 /** Core's section shape, so a fork section reads like one. */
 const SECTION_SHAPE = /^[a-z][A-Za-z0-9]*$/;

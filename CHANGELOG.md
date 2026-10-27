@@ -331,7 +331,14 @@ release process.
   trimmed, so extra fields a fork passed no longer reach the bundle's
   `meta.excluded`, and `getAppExcludedSubjectSources()` returns copies. Both
   registries are now built on `createDeclarationRegistry()`
-  (`lib/privacy/declaration-registry.ts`); their exports are unchanged.
+  (`lib/privacy/declaration-registry.ts`); their exports are unchanged. In
+  both, a contribution that is not an object, has a non-string `tier`, or has
+  a `sources` / `excluded` that is not an array is now rejected with a log
+  rather than throwing; a non-string `tier` had also let a second tier claim a
+  model another tier already owned. A source's `description` is stored
+  trimmed, so `meta.app` shows what was checked. The `App*SourceContribution`
+  and `AppExcluded*Source` types are now aliases of the shared
+  `DeclarationContribution` and `DeclaredExclusion`, with the same shape.
 
 - **The clean-up agent stays put while a fork resolver is down (t-819).**
   Since t-798, a fork's eligibility or credential resolver that threw during

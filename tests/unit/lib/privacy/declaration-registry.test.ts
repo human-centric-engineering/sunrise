@@ -137,3 +137,96 @@ describe('reset', () => {
     expect(registry.failed()).toBe(false);
   });
 });
+
+describe('a malformed contribution', () => {
+  type Contribution = Parameters<ReturnType<typeof build>['register']>[0];
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'app'],
+  ])('rejects %s without throwing, and latches when latching', (_label, value) => {
+    const registry = build({ rejectionsLatch: true });
+
+    expect(() => registry.register(value as unknown as Contribution)).not.toThrow();
+    expect(registry.failed()).toBe(true);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'test-sources: declaration rejected',
+      expect.objectContaining({ reason: 'contribution is not an object' })
+    );
+  });
+
+  it('rejects a non-array sources list without throwing, and keeps the valid exclusions', () => {
+    const registry = build({ rejectionsLatch: true });
+
+    expect(() =>
+      registry.register({
+        tier: 'app',
+        sources: VALID as unknown as DeclaredSource[],
+        excluded: [{ model: 'AppAudit', reason: 'Operator audit trail, not subject data.' }],
+      })
+    ).not.toThrow();
+
+    expect(registry.sources()).toEqual([]);
+    expect(registry.excluded()).toEqual([
+      { model: 'AppAudit', reason: 'Operator audit trail, not subject data.' },
+    ]);
+    expect(registry.failed()).toBe(true);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'test-sources: declaration rejected',
+      expect.objectContaining({ reason: 'source list is not an array' })
+    );
+  });
+
+  it('rejects a non-array exclusion list without throwing', () => {
+    const registry = build({ rejectionsLatch: true });
+
+    registry.register({
+      tier: 'app',
+      sources: [VALID],
+      excluded: { model: 'AppAudit' } as unknown as [],
+    });
+
+    expect(registry.sources().map((s) => s.model)).toEqual(['AppInvoice']);
+    expect(registry.failed()).toBe(true);
+  });
+
+  it('rejects a non-string tier, so it cannot claim a model another tier owns', () => {
+    const registry = build();
+    registry.register({ tier: 'framework', sources: [VALID] });
+
+    registry.register({
+      tier: undefined as unknown as string,
+      sources: [{ ...VALID, section: 'invoicesAgain' }],
+    });
+    // Before the check, an `undefined` owner read back as "no owner", so this
+    // second tier's duplicate was accepted and took the model over.
+    registry.register({
+      tier: 'leaf',
+      sources: [{ ...VALID, section: 'invoicesLeaf' }],
+    });
+
+    expect(registry.sources()).toEqual([VALID]);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'test-sources: declaration rejected',
+      expect.objectContaining({ reason: 'tier is not a string' })
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'test-sources: declaration rejected',
+      expect.objectContaining({ tier: 'leaf', reason: "already declared by tier 'framework'" })
+    );
+  });
+});
+
+describe('stored values', () => {
+  it('stores the description trimmed, as it was checked', () => {
+    const registry = build();
+
+    registry.register({
+      tier: 'app',
+      sources: [{ ...VALID, description: `  ${VALID.description}\n` }],
+    });
+
+    expect(registry.sources()).toEqual([VALID]);
+  });
+});
