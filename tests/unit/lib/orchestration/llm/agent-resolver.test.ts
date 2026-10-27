@@ -274,7 +274,7 @@ describe('resolveAgentProviderAndModel', () => {
       expect(result.providerSlug).toBe('anthropic');
       // Not ['openai']: the operator set a list, so the system does not fill it.
       expect(result.fallbacks).toEqual([]);
-      expect(result.provenance.fallbacks).toBe('explicit');
+      expect(result.provenance?.fallbacks).toBe('explicit');
     });
 
     it('attaches up to 3 system fallbacks when the agent fallback list is empty', async () => {
