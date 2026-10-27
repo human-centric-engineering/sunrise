@@ -308,7 +308,7 @@ describe('the files a run makes', () => {
     const res = await makeProvider().chat(ask, { model: MODEL, providerTools: CODE });
     await settle();
 
-    expect(filesMetadataMock).toHaveBeenCalledWith('file_1');
+    expect(filesMetadataMock).toHaveBeenCalledWith('file_1', null, expect.anything());
     expect(res.reasoning?.[1]).toEqual(expect.objectContaining({ fileNames: ['chart.png'] }));
     expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
     expect(loggerMock.info).toHaveBeenCalledWith(
@@ -376,6 +376,131 @@ describe('the files a run makes', () => {
     expect(loggerMock.warn).toHaveBeenCalledWith(
       'Anthropic: generated files not deleted',
       expect.objectContaining({ failed: 1, total: 1 })
+    );
+  });
+});
+
+describe('review fixes (t-956)', () => {
+  it('reads file names within a short timeout and the caller’s signal', async () => {
+    respondInTurn(() => message([bashUse, bashResult]));
+    const controller = new AbortController();
+
+    await makeProvider().chat(ask, {
+      model: MODEL,
+      providerTools: CODE,
+      signal: controller.signal,
+    });
+
+    expect(filesMetadataMock).toHaveBeenCalledWith('file_1', null, {
+      timeout: 5000,
+      maxRetries: 0,
+      signal: controller.signal,
+    });
+  });
+
+  it('deletes the files of a paused turn’s first segment, and bills its runs, when the continuation fails', async () => {
+    let call = 0;
+    createMock.mockImplementation(() => {
+      call++;
+      now += 3_000;
+      if (call === 1) return Promise.resolve(message([bashUse, bashResult], 'pause_turn'));
+      return Promise.reject(new Error('overloaded'));
+    });
+
+    const err = await makeProvider()
+      .chat(ask, { model: MODEL, providerTools: CODE })
+      .catch((caught: unknown) => caught);
+    await settle();
+
+    expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
+    expect((err as { usage?: { codeExecution?: unknown } }).usage?.codeExecution).toEqual({
+      runs: 1,
+      billedSeconds: 300,
+      usdPerHour: 0.05,
+    });
+  });
+
+  it('sends no OpenAI container id after a fallback from OpenAI', async () => {
+    const sent = respondInTurn(() => message([{ type: 'text', text: 'Done' }]));
+
+    await makeProvider().chat(
+      [
+        ...ask,
+        {
+          role: 'assistant',
+          content: '',
+          reasoning: [
+            {
+              type: 'openai_code_interpreter_call',
+              id: 'ci_1',
+              status: 'completed',
+              containerId: 'cntr_openai',
+              code: 'x = 1',
+              outputs: [],
+              durationMs: 100,
+            },
+          ],
+        },
+      ],
+      { model: MODEL, providerTools: CODE }
+    );
+
+    expect(sent[0]).not.toHaveProperty('container');
+  });
+
+  it('leaves code runs out of the replay to a model without the tool, keeping the turn’s text', async () => {
+    const sent = respondInTurn(() => message([{ type: 'text', text: 'Done' }]));
+
+    await makeProvider().chat(
+      [
+        ...ask,
+        {
+          role: 'assistant',
+          content: 'Charted.',
+          reasoning: [
+            {
+              type: 'server_tool_use',
+              id: 'srvtoolu_1',
+              name: 'bash_code_execution',
+              input: { command: 'ls' },
+            },
+            bashBlock,
+          ],
+        },
+        { role: 'user', content: 'Thanks' },
+      ],
+      { model: 'claude-sonnet-4-0', providerTools: CODE }
+    );
+
+    expect(sent[0].messages[1]).toEqual({ role: 'assistant', content: 'Charted.' });
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      'Anthropic: code runs left out of replay, request has no code execution tool',
+      expect.objectContaining({ model: 'claude-sonnet-4-0' })
+    );
+  });
+
+  it('reads a result shape the SDK doesn’t know as the sub-tool’s unavailable error', async () => {
+    respondInTurn(() =>
+      message([
+        bashUse,
+        {
+          type: 'bash_code_execution_tool_result',
+          tool_use_id: 'srvtoolu_1',
+          content: { type: 'bash_code_execution_future_result', detail: 'x' },
+        },
+      ])
+    );
+
+    const res = await makeProvider().chat(ask, { model: MODEL, providerTools: CODE });
+
+    expect(res.reasoning?.[1]).toEqual(
+      expect.objectContaining({
+        content: { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+      })
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'Anthropic: code execution result shape not recognised',
+      { resultType: 'bash_code_execution_tool_result' }
     );
   });
 });
@@ -678,5 +803,55 @@ describe('a streamed code execution response', () => {
 
     expect(sent).toHaveLength(2);
     expect(sent[1].container).toBe('container_1');
+  });
+});
+
+describe('a streamed code execution response that fails part-way (t-956)', () => {
+  it('deletes what the runs so far made, and bills them, on the error', async () => {
+    createMock.mockImplementation(() =>
+      Promise.resolve(
+        (async function* () {
+          yield {
+            type: 'message_start',
+            message: { usage: { input_tokens: 10, output_tokens: 0 } },
+          };
+          yield {
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+              type: 'server_tool_use',
+              id: 'srvtoolu_1',
+              name: 'bash_code_execution',
+              input: {},
+            },
+          };
+          yield { type: 'content_block_stop', index: 0 };
+          now += 2_000;
+          yield { type: 'content_block_start', index: 1, content_block: bashResult };
+          throw new Error('connection reset');
+        })()
+      )
+    );
+
+    const err = await (async () => {
+      try {
+        for await (const _chunk of makeProvider().chatStream(ask, {
+          model: MODEL,
+          providerTools: CODE,
+        })) {
+          // drain
+        }
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    await settle();
+
+    expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
+    expect((err as { usage?: { codeExecution?: unknown } }).usage?.codeExecution).toEqual({
+      runs: 1,
+      billedSeconds: 300,
+      usdPerHour: 0.05,
+    });
   });
 });

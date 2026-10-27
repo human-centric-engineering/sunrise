@@ -167,6 +167,16 @@ describe('earlierCodeRuns / latestContainerId', () => {
     expect(latestContainerId(messages)).toBe('c2');
   });
 
+  it('names only an Anthropic run’s container, never an OpenAI one after a fallback', () => {
+    expect(
+      latestContainerId([
+        assistant([anthropicRun('container_1', 10)]),
+        assistant([openAiRun('cntr_x', 10)]),
+      ])
+    ).toBe('container_1');
+    expect(latestContainerId([assistant([openAiRun('cntr_x', 10)])])).toBeUndefined();
+  });
+
   it('has none without code runs', () => {
     expect(earlierCodeRuns([{ role: 'user', content: 'x' }])).toEqual([]);
     expect(latestContainerId([{ role: 'user', content: 'x' }])).toBeUndefined();

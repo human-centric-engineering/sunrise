@@ -4288,6 +4288,13 @@ export const pendingApprovalSchema = z.object({
  * capability — no `includeTrace` gate; audit substrate is not an
  * admin-only debug toggle.
  */
+/**
+ * Most tool-call traces a message's provenance keeps. The writer fits a
+ * turn's list to it (`fitToolCallTraces`): a longer one fails this schema on
+ * read, and the message's whole provenance is lost.
+ */
+export const MAX_PROVENANCE_CAPABILITY_CALLS = 64;
+
 export const toolCallTraceSchema = z.object({
   slug: z.string().min(1).max(120),
   arguments: z.unknown(),
@@ -4330,7 +4337,7 @@ export const messageProvenanceSchema = z.object({
     )
     .max(64)
     .optional(),
-  capabilityCalls: z.array(toolCallTraceSchema).max(64).optional(),
+  capabilityCalls: z.array(toolCallTraceSchema).max(MAX_PROVENANCE_CAPABILITY_CALLS).optional(),
 });
 
 export const messageMetadataSchema = z.object({

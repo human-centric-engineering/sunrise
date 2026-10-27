@@ -7,8 +7,10 @@ import { describe, expect, it } from 'vitest';
 import {
   PROVIDER_CODE_EXECUTION_SLUG,
   PROVIDER_WEB_SEARCH_SLUG,
+  fitToolCallTraces,
   providerToolTraces,
 } from '@/lib/orchestration/chat/provider-tool-traces';
+import type { ToolCallTrace } from '@/types/orchestration';
 import {
   WEB_SEARCH_USD_PER_REQUEST,
   type AnthropicCodeExecutionContent,
@@ -372,6 +374,33 @@ describe('providerToolTraces — OpenAI code interpreter (t-956)', () => {
     ...over,
   });
 
+  it('reads a run whose code raised as failed, from the traceback Python printed', () => {
+    const [trace] = providerToolTraces([
+      interp({
+        outputs: [
+          {
+            type: 'logs',
+            logs: 'Traceback (most recent call last):\n  File "<stdin>", line 1\nZeroDivisionError: division by zero',
+          },
+        ],
+      }),
+    ]);
+
+    expect(trace).toEqual(expect.objectContaining({ success: false, errorCode: 'exception' }));
+    expect(trace.resultPreview).toContain('ZeroDivisionError');
+  });
+
+  it('keeps the item’s own status as the error over a traceback', () => {
+    const [trace] = providerToolTraces([
+      interp({
+        status: 'failed',
+        outputs: [{ type: 'logs', logs: 'Traceback (most recent call last):\nError' }],
+      }),
+    ]);
+
+    expect(trace).toEqual(expect.objectContaining({ success: false, errorCode: 'failed' }));
+  });
+
   it('makes an entry with the code as arguments, the run time as latency, and logs as preview', () => {
     expect(providerToolTraces([interp({ outputs: [{ type: 'logs', logs: '1' }] })])).toEqual([
       {
@@ -427,5 +456,43 @@ describe('providerToolTraces — OpenAI code interpreter (t-956)', () => {
     const [trace] = providerToolTraces([interp()]);
     expect(trace).not.toHaveProperty('resultPreview');
     expect(trace).not.toHaveProperty('costUsd');
+  });
+});
+
+describe('fitToolCallTraces (t-956)', () => {
+  const trace = (slug: string, n: number): ToolCallTrace => ({
+    slug,
+    arguments: { n },
+    latencyMs: 0,
+    success: true,
+  });
+
+  it('leaves a list within the limit as it is', () => {
+    const list = [trace('lookup', 1), trace(PROVIDER_CODE_EXECUTION_SLUG, 2)];
+
+    expect(fitToolCallTraces(list, 2)).toBe(list);
+  });
+
+  it('drops provider runs from the end first, keeping every dispatched capability in order', () => {
+    const list = [
+      trace(PROVIDER_CODE_EXECUTION_SLUG, 1),
+      trace('lookup', 2),
+      trace(PROVIDER_CODE_EXECUTION_SLUG, 3),
+      trace(PROVIDER_WEB_SEARCH_SLUG, 4),
+      trace('refund', 5),
+      trace(PROVIDER_CODE_EXECUTION_SLUG, 6),
+    ];
+
+    expect(fitToolCallTraces(list, 3).map((t) => t.arguments)).toEqual([
+      { n: 1 },
+      { n: 2 },
+      { n: 5 },
+    ]);
+  });
+
+  it('cuts to the first entries when the dispatched capabilities alone are too many', () => {
+    const list = [1, 2, 3, 4].map((n) => trace('lookup', n));
+
+    expect(fitToolCallTraces(list, 2).map((t) => t.arguments)).toEqual([{ n: 1 }, { n: 2 }]);
   });
 });

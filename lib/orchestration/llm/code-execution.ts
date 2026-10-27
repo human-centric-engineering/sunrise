@@ -51,9 +51,21 @@ export function earlierCodeRuns(messages: readonly LlmMessage[]): CodeRun[] {
   );
 }
 
-/** The container the reply's latest code run used, to run the next one in. */
+/**
+ * The container the reply's latest Anthropic code run used, to run the next
+ * one in. OpenAI's runs are left out: after a fallback their `cntr_…` id
+ * means nothing to Anthropic (OpenAI reuses its own from the replayed item).
+ */
 export function latestContainerId(messages: readonly LlmMessage[]): string | undefined {
-  return earlierCodeRuns(messages).at(-1)?.containerId;
+  for (let m = messages.length - 1; m >= 0; m--) {
+    const blocks = messages[m].reasoning ?? [];
+    for (let b = blocks.length - 1; b >= 0; b--) {
+      const block = blocks[b];
+      if (block.type === 'code_execution_tool_result' && block.containerId)
+        return block.containerId;
+    }
+  }
+  return undefined;
 }
 
 /**

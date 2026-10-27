@@ -52,10 +52,10 @@ export function CodeExecutionField({
           </p>
           <p className="mt-2">
             Works on Claude Opus, Sonnet and Haiku 4.5 and later, and on OpenAI models from gpt-4o
-            on (not o1 or o3-mini) when the provider is OpenAI itself. Other providers and models
-            ignore it. OpenAI doesn&rsquo;t run code at Minimal reasoning effort, and neither
-            provider does when the agent asks for structured output. On Anthropic, code execution
-            isn&rsquo;t covered by zero data retention.
+            on (not gpt-4.1-nano, o1 or o3-mini) when the provider is OpenAI itself. Other providers
+            and models ignore it. OpenAI doesn&rsquo;t run code at Minimal reasoning effort, and
+            neither provider does when the agent asks for structured output. On Anthropic, code
+            execution isn&rsquo;t covered by zero data retention.
           </p>
         </FieldHelp>
       </Label>

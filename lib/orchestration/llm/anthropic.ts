@@ -43,6 +43,7 @@ import type {
 import type { Stream } from '@anthropic-ai/sdk/core/streaming';
 
 import { logger } from '@/lib/logging';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import {
   acceptsCodeExecution,
   acceptsNativeStructuredOutput,
@@ -105,6 +106,12 @@ const DEFAULT_MAX_TOKENS = 4096;
  * it has, so a search loop can't run up cost without bound.
  */
 const MAX_PAUSE_CONTINUATIONS = 3;
+
+/**
+ * How long reading a generated file's name may take. The reply waits on it,
+ * and it only labels the trace.
+ */
+const FILE_NAME_TIMEOUT_MS = 5_000;
 
 /** Hard-coded Claude family list. Pricing is also carried by model-registry. */
 const CLAUDE_MODELS: ModelInfo[] = [
@@ -215,8 +222,15 @@ export class AnthropicProvider implements LlmProvider {
         started = Date.now();
         message = await this.createMessage(params, options);
       } catch (err) {
-        // The segments before this one were billed; carry them (#592).
-        throw toProviderErrorWithUsage(err, 'Anthropic chat request failed', usage);
+        // The segments before this one were billed, code runs included; carry
+        // them (#592), and delete what those runs made.
+        const ran = blocks.flatMap((block) => toServerToolBlock(block, runs) ?? []);
+        this.deleteGeneratedFiles(ran);
+        throw toProviderErrorWithUsage(
+          err,
+          'Anthropic chat request failed',
+          withCodeExecution(usage, earlierCodeRuns(messages), ran)
+        );
       }
       recordCodeRuns(runs, message, Date.now() - started, params.container);
       blocks.push(...message.content);
@@ -278,7 +292,7 @@ export class AnthropicProvider implements LlmProvider {
     const joinedContent = extracted ?? content.join('');
     usage = withCodeExecution(usage, earlierCodeRuns(messages), reasoning);
     // Before anything below can throw, so a truncated call's files go too.
-    await this.nameGeneratedFiles(reasoning);
+    await this.nameGeneratedFiles(reasoning, options.signal);
     this.deleteGeneratedFiles(reasoning);
 
     // Truncation guard. Anthropic returns `stop_reason: 'max_tokens'`
@@ -577,7 +591,14 @@ export class AnthropicProvider implements LlmProvider {
         // Carry what the stream has already been billed for — `inputTokens`
         // lands at `message_start` and `outputTokens` updates on every
         // `message_delta`, so a mid-stream failure knows its own cost (#592).
-        throw toProviderErrorWithUsage(err, 'Anthropic stream iteration failed', segmentUsage());
+        // The runs so far were billed too, and what they made is deleted.
+        const ran = [...reasoning, ...reasoningBlocks.values()];
+        this.deleteGeneratedFiles(ran);
+        throw toProviderErrorWithUsage(
+          err,
+          'Anthropic stream iteration failed',
+          withCodeExecution(segmentUsage(), earlierCodeRuns(messages), ran)
+        );
       }
 
       const segmentContainer =
@@ -607,7 +628,7 @@ export class AnthropicProvider implements LlmProvider {
     }
     const usage = withCodeExecution(segmentUsage(), earlierCodeRuns(messages), reasoning);
     // Before anything below can throw, so a truncated stream's files go too.
-    await this.nameGeneratedFiles(reasoning);
+    await this.nameGeneratedFiles(reasoning, options.signal);
     this.deleteGeneratedFiles(reasoning);
 
     // Mirror the non-streaming truncation guard: a max_tokens stop on a
@@ -684,9 +705,14 @@ export class AnthropicProvider implements LlmProvider {
   /**
    * Put the names of the files this call's code runs made on their result
    * blocks, for the trace: Anthropic returns only their ids. One metadata
-   * read per file, before the files are deleted; a failed read leaves the id.
+   * read per file, before the files are deleted, held to a short timeout and
+   * the caller's signal since the reply waits on it; a failed read leaves
+   * the id.
    */
-  private async nameGeneratedFiles(blocks: LlmReasoningBlock[]): Promise<void> {
+  private async nameGeneratedFiles(
+    blocks: LlmReasoningBlock[],
+    signal: AbortSignal | undefined
+  ): Promise<void> {
     await Promise.all(
       blocks.map(async (block) => {
         if (block.type !== 'code_execution_tool_result') return;
@@ -695,7 +721,12 @@ export class AnthropicProvider implements LlmProvider {
         block.fileNames = await Promise.all(
           fileIds.map(async (fileId) => {
             try {
-              return (await this.client.files.retrieveMetadata(fileId)).filename;
+              const metadata = await this.client.files.retrieveMetadata(fileId, null, {
+                timeout: FILE_NAME_TIMEOUT_MS,
+                maxRetries: 0,
+                ...(signal ? { signal } : {}),
+              });
+              return metadata.filename;
             } catch (err) {
               logger.warn('Anthropic: generated file name not read', {
                 provider: this.name,
@@ -716,29 +747,32 @@ export class AnthropicProvider implements LlmProvider {
    * t-956: files aren't delivered, and nothing is left at the provider). Done
    * straight after the call, so a reply cut short leaves none behind: a later
    * call that replays a block naming a deleted file still succeeds (measured,
-   * claude-haiku-5-5, 2026-10-27). Not awaited: a failure is logged, never
-   * raised.
+   * claude-haiku-5-5, 2026-10-27). Not awaited, but kept running after the
+   * response is sent; a failure is logged, never raised.
    */
   private deleteGeneratedFiles(blocks: LlmReasoningBlock[]): void {
     const fileIds = [...new Set(generatedFileIds(blocks))];
     if (fileIds.length === 0) return;
-    void Promise.allSettled(fileIds.map((fileId) => this.client.files.delete(fileId))).then(
-      (results) => {
-        const failed = results.filter((result) => result.status === 'rejected').length;
-        if (failed > 0) {
-          logger.warn('Anthropic: generated files not deleted', {
-            provider: this.name,
-            failed,
-            total: fileIds.length,
-          });
-        } else {
-          logger.info('Anthropic: generated files deleted', {
-            provider: this.name,
-            count: fileIds.length,
-          });
-        }
+    // Kept running after the response is sent: on a serverless host a bare
+    // promise can be frozen part-way, leaving the files behind.
+    const deleting = Promise.allSettled(
+      fileIds.map((fileId) => this.client.files.delete(fileId))
+    ).then((results) => {
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed > 0) {
+        logger.warn('Anthropic: generated files not deleted', {
+          provider: this.name,
+          failed,
+          total: fileIds.length,
+        });
+      } else {
+        logger.info('Anthropic: generated files deleted', {
+          provider: this.name,
+          count: fileIds.length,
+        });
       }
-    );
+    });
+    keepRunningAfterResponse(deleting, 'Anthropic generated file delete', { provider: this.name });
   }
 
   private async createMessage(
@@ -844,7 +878,21 @@ export class AnthropicProvider implements LlmProvider {
     }
     // Split after thinking is settled: a dangling tool call before an
     // opener only has to go when this request thinks.
-    const { systemParts, conversation } = splitSystemMessages(messages, thinkingEnabled);
+    // Code runs replayed to a request that won't carry the tool (a fallback to
+    // a model without it, or the setting off) would be a 400; they go, and
+    // the text of the turn stays.
+    const sendsCode =
+      options.providerTools?.codeExecution !== undefined &&
+      !(options.responseFormat !== undefined && !options.tools?.length) &&
+      acceptsCodeExecution(options.model);
+    const replayed = sendsCode ? messages : withoutCodeRuns(messages);
+    if (replayed !== messages) {
+      logger.info('Anthropic: code runs left out of replay, request has no code execution tool', {
+        provider: this.name,
+        model: options.model,
+      });
+    }
+    const { systemParts, conversation } = splitSystemMessages(replayed, thinkingEnabled);
     params.messages = conversation;
     // Claude models from Opus 4.7 / Sonnet 5 / Haiku 5 on refuse any
     // temperature or top_p (400), so they are sent only to the older families
@@ -1284,7 +1332,7 @@ function toCodeExecutionResultBlock(
     type: 'code_execution_tool_result',
     tool: block.type === 'bash_code_execution_tool_result' ? 'bash' : 'text_editor',
     toolUseId: block.tool_use_id,
-    content: toCodeExecutionContent(block.content),
+    content: toCodeExecutionContent(block.content, block.type),
     containerId: run?.containerId ?? '',
     durationMs: run?.durationMs ?? 0,
   };
@@ -1294,7 +1342,8 @@ function toCodeExecutionContent(
   content: Extract<
     ContentBlock,
     { type: 'bash_code_execution_tool_result' | 'text_editor_code_execution_tool_result' }
-  >['content']
+  >['content'],
+  resultType: 'bash_code_execution_tool_result' | 'text_editor_code_execution_tool_result'
 ): AnthropicCodeExecutionContent {
   switch (content.type) {
     case 'bash_code_execution_result':
@@ -1337,6 +1386,17 @@ function toCodeExecutionContent(
         error_message: content.error_message,
       };
   }
+  // A result shape newer than the SDK. Read as the tool's own error, so the
+  // turn still replays and the trace shows the run as failed, rather than a
+  // block with no content breaking the call.
+  logger.warn('Anthropic: code execution result shape not recognised', { resultType });
+  return resultType === 'bash_code_execution_tool_result'
+    ? { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' }
+    : {
+        type: 'text_editor_code_execution_tool_result_error',
+        error_code: 'unavailable',
+        error_message: null,
+      };
 }
 
 /** A code run's result as Anthropic takes it back. */
@@ -1436,6 +1496,22 @@ function recordCodeRuns(
       durationMs: Math.round(requestMs / results.length),
     });
   }
+}
+
+/**
+ * `messages` with every code run's blocks left out of their replay, or
+ * `messages` itself when none carries any.
+ */
+function withoutCodeRuns(messages: LlmMessage[]): LlmMessage[] {
+  const isCodeRun = (block: LlmReasoningBlock): boolean =>
+    block.type === 'code_execution_tool_result' ||
+    (block.type === 'server_tool_use' && block.name !== 'web_search');
+  if (!messages.some((message) => message.reasoning?.some(isCodeRun))) return messages;
+  return messages.map((message) =>
+    message.reasoning?.some(isCodeRun)
+      ? { ...message, reasoning: message.reasoning.filter((block) => !isCodeRun(block)) }
+      : message
+  );
 }
 
 /** The ids of the files code runs left in `$OUTPUT_DIR`, from their result blocks. */

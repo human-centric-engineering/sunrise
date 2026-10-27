@@ -22,6 +22,9 @@ export const PROVIDER_WEB_SEARCH_SLUG = 'provider:web_search';
 /** The trace slug of a provider's own code run. */
 export const PROVIDER_CODE_EXECUTION_SLUG = 'provider:code_execution';
 
+/** What Python prints first when the code raised an exception it didn't catch. */
+const PYTHON_TRACEBACK = 'Traceback (most recent call last):';
+
 /** Matches `toolCallTraceSchema.resultPreview`. */
 const RESULT_PREVIEW_MAX = 2000;
 
@@ -155,13 +158,20 @@ function anthropicCodeTrace(
 function openAiCodeTrace(
   block: Extract<LlmReasoningBlock, { type: 'openai_code_interpreter_call' }>
 ): ToolCallTrace {
+  // A run whose code raised still completes: OpenAI reports no exit status,
+  // so the traceback Python prints is what marks it failed, as a non-zero
+  // exit does on Anthropic.
+  const raised = block.outputs.some(
+    (output) => output.type === 'logs' && output.logs.includes(PYTHON_TRACEBACK)
+  );
   const trace: ToolCallTrace = {
     slug: PROVIDER_CODE_EXECUTION_SLUG,
     arguments: block.code === null ? {} : { code: block.code },
     latencyMs: block.durationMs,
-    success: block.status === 'completed',
+    success: block.status === 'completed' && !raised,
   };
   if (block.status !== 'completed') trace.errorCode = block.status;
+  else if (raised) trace.errorCode = 'exception';
   setPreview(
     trace,
     block.outputs.map((output) => (output.type === 'logs' ? output.logs : '[image]')),
@@ -178,4 +188,24 @@ function setPreview(trace: ToolCallTrace, parts: string[], fileNames?: string[])
   const lines = parts.filter((part) => part.length > 0);
   if (fileNames?.length) lines.push(`Files made (not delivered): ${fileNames.join(', ')}`);
   if (lines.length > 0) trace.resultPreview = lines.join('\n').slice(0, RESULT_PREVIEW_MAX);
+}
+
+/**
+ * A turn's traces fitted to `max`, in order. Provider tool runs go first,
+ * from the end: a reply can run code dozens of times, and the dispatched
+ * capabilities, which can change things, are the record that matters most.
+ * Only when those alone are too many is the list cut, keeping the first.
+ */
+export function fitToolCallTraces(traces: ToolCallTrace[], max: number): ToolCallTrace[] {
+  if (traces.length <= max) return traces;
+  let surplus = traces.length - max;
+  const kept: ToolCallTrace[] = [];
+  for (let i = traces.length - 1; i >= 0; i--) {
+    if (surplus > 0 && traces[i].slug.startsWith('provider:')) {
+      surplus--;
+      continue;
+    }
+    kept.unshift(traces[i]);
+  }
+  return kept.slice(0, max);
 }

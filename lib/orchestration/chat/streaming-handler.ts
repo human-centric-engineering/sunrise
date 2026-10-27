@@ -88,9 +88,15 @@ import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import type { CapabilityResult } from '@/lib/orchestration/capabilities/types';
 import { extractCitations } from '@/lib/orchestration/chat/citations';
-import { providerToolTraces } from '@/lib/orchestration/chat/provider-tool-traces';
+import {
+  fitToolCallTraces,
+  providerToolTraces,
+} from '@/lib/orchestration/chat/provider-tool-traces';
 import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
-import { executionTraceSchema } from '@/lib/validations/orchestration';
+import {
+  executionTraceSchema,
+  MAX_PROVENANCE_CAPABILITY_CALLS,
+} from '@/lib/validations/orchestration';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
@@ -2106,7 +2112,12 @@ export class StreamingChatHandler {
           // event surface streams the trace live, but the persisted
           // record is unconditional.
           if (isTerminalTurn && turnToolCalls.length > 0) {
-            assistantProvenance.capabilityCalls = turnToolCalls;
+            // Fitted to what the schema reads back, or the whole provenance
+            // is lost on read.
+            assistantProvenance.capabilityCalls = fitToolCallTraces(
+              turnToolCalls,
+              MAX_PROVENANCE_CAPABILITY_CALLS
+            );
           }
           // Snapshot workflow provenance from the LAST synchronously-
           // completed `run_workflow` capability call in this turn. The
