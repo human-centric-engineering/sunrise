@@ -29,8 +29,8 @@ release process.
 > versioned saves that require `If-Match`, backups this install sealed,
 > actions on a run under its row lock, and deliveries checked for erasures
 > since their copy was taken. Measured against `v0.15.0`: 36 PRs merged, no
-> direct commits, 16 issues closed; the suite is SUITE_FILES files and
-> SUITE_TESTS tests.
+> direct commits, 16 issues closed; the suite is 1,400 files and
+> 30,364 tests.
 >
 > ## What a fork has to do
 >
