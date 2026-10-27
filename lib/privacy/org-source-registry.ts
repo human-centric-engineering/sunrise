@@ -46,9 +46,9 @@
  * @see .context/privacy/org-export.md — the guide
  */
 
-import { logger } from '@/lib/logging';
-import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { createAppInitGate } from '@/lib/fork-init';
 import { initAppOrgSources } from '@/lib/app/org-export';
+import { createDeclarationRegistry } from '@/lib/privacy/declaration-registry';
 import type { SourceDisposition } from '@/lib/privacy/export-sources';
 import type { OrgQuery } from '@/lib/privacy/org-sources';
 
@@ -83,97 +83,28 @@ export interface AppOrgSourceContribution {
   excluded?: readonly AppExcludedOrgSource[];
 }
 
-/** Registered sources, keyed by model so a repeat registration is idempotent. */
-const sources = new Map<string, AppOrgDataSource>();
-/** Registered exclusions, keyed by model. */
-const excluded = new Map<string, AppExcludedOrgSource>();
-/** Which tier registered each model, for the duplicate-across-tiers message. */
-const owners = new Map<string, string>();
-
-/** Whether the app init threw, leaving this tier's declarations unknown. */
-let appInitFailed = false;
-/**
- * Rejected rows, kept so a read can tell whether one left a table uncovered.
- * A rejected source is not in the bundle, and the coverage guard catches that
- * only for a model carrying an `orgId` column — a hand-listed child table
- * (core's `Verification` precedent) would vanish with nothing but a log line.
- * A rejection that loses nothing (another tier already exports the model)
- * does not count; see {@link declarationsIncomplete}.
- */
-const rejectedSources = new Set<string>();
-const rejectedExclusions = new Set<string>();
-/** A row rejected before it named a model, so what it covered is unknowable. */
-let unidentifiedRejection = false;
-
-/** The core manifest's own floor on a source description: longer than 20 (`org-sources.test.ts`). */
-const MIN_DESCRIPTION = 21;
-/** Matches the subject registry: the reason is what the org reads in place of the table. */
-const MIN_REASON = 20;
 /** Core's section shape, so a fork section reads like one. */
 const SECTION_SHAPE = /^[a-z][A-Za-z0-9]*$/;
 
-/**
- * Whether a section name is a built-in member of every object (`toString`,
- * `constructor`, `hasOwnProperty`…). It passes the shape, and as a key of the
- * bundle's `app` object it would replace that member with an array, so an
- * in-process reader calling `bundle.app.hasOwnProperty(…)` would throw.
- */
-function isObjectBuiltin(section: string): boolean {
-  return section in Object.prototype;
-}
-
-/** A field's trimmed text, or `''` when it is not a string — a fork's JS can pass anything. */
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-type RowKind = 'source' | 'exclusion';
-
-/**
- * Drop a row with a log, and remember it. `model` is `null` when the row named
- * none. The export refuses if the rejection left a table uncovered, because
- * the coverage guard cannot see a table without an `orgId` column.
- */
-function reject(
-  tier: string,
-  kind: RowKind,
-  model: string | null,
-  label: string,
-  why: string
-): void {
-  if (model === null) unidentifiedRejection = true;
-  else (kind === 'source' ? rejectedSources : rejectedExclusions).add(model);
-  logger.error('org-sources: declaration rejected', { tier, model: label, reason: why });
-}
-
-/**
- * Whether a rejected row left something the fork declared out of the export:
- * a rejected source whose model no tier exports, a rejected exclusion whose
- * model nobody accounted for, or a row that named no model at all.
- */
-function declarationsIncomplete(): boolean {
-  if (unidentifiedRejection) return true;
-  for (const model of rejectedSources) if (!sources.has(model)) return true;
-  for (const model of rejectedExclusions) {
-    if (!sources.has(model) && !excluded.has(model)) return true;
-  }
-  return false;
-}
-
-/** A loggable label for any field value — never throws, whatever a fork's JS passed. */
-function labelOf(value: unknown): string {
-  return typeof value === 'string' ? value : describeNonEntry(value);
-}
-
-/** A loggable label for a non-object entry: `null`, or its type. */
-function describeNonEntry(value: unknown): string {
-  return value === null ? 'null' : typeof value;
-}
-
-/** Whether an entry is an object at all — `null` or a stray value from a fork's JS is not. */
-function isEntry(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+/** Shared rules; see `declaration-registry.ts` for which differ per seam and why. */
+const registry = createDeclarationRegistry<AppOrgDataSource>({
+  logPrefix: 'org-sources',
+  // The core manifest's own floor on a source description: longer than 20 (`org-sources.test.ts`).
+  minDescription: 21,
+  checkSection: (section) => {
+    if (!SECTION_SHAPE.test(section)) return `section must match ${String(SECTION_SHAPE)}`;
+    // A built-in member of every object (`toString`, `constructor`…) passes the
+    // shape, and as a key of the bundle's `app` object it would replace that
+    // member with an array, so an in-process reader calling
+    // `bundle.app.hasOwnProperty(…)` would throw.
+    if (section in Object.prototype) return `section '${section}' is a built-in object member`;
+    return null;
+  },
+  checkSource: (source) => (typeof source.fetch !== 'function' ? 'fetch must be a function' : null),
+  // A rejected source is a table missing from the bundle, and the coverage
+  // guard sees only models with an `orgId` column — so the export refuses.
+  rejectionsLatch: true,
+});
 
 /**
  * Declare the `orgId` models your tier holds, and how the org export reads
@@ -186,127 +117,7 @@ function isEntry(value: unknown): value is Record<string, unknown> {
  * until the row is fixed: a bundle short by a declared table is not shipped.
  */
 export function registerAppOrgSources(contribution: AppOrgSourceContribution): void {
-  const { tier } = contribution;
-
-  for (const source of contribution.sources ?? []) {
-    if (!isEntry(source)) {
-      reject(tier, 'source', null, describeNonEntry(source), 'source is not an object');
-      continue;
-    }
-    const model = text(source.model);
-    const section = text(source.section);
-
-    if (model === '') {
-      reject(tier, 'source', null, labelOf(source.model), 'model is empty');
-      continue;
-    }
-    if (!SECTION_SHAPE.test(section)) {
-      reject(tier, 'source', model, model, `section must match ${String(SECTION_SHAPE)}`);
-      continue;
-    }
-    if (isObjectBuiltin(section)) {
-      reject(tier, 'source', model, model, `section '${section}' is a built-in object member`);
-      continue;
-    }
-    if (source.disposition !== 'export' && source.disposition !== 'attribution') {
-      reject(tier, 'source', model, model, `disposition must be 'export' or 'attribution'`);
-      continue;
-    }
-    if (text(source.description).length < MIN_DESCRIPTION) {
-      reject(
-        tier,
-        'source',
-        model,
-        model,
-        `description must be at least ${MIN_DESCRIPTION} characters`
-      );
-      continue;
-    }
-    if (typeof source.fetch !== 'function') {
-      reject(tier, 'source', model, model, 'fetch must be a function');
-      continue;
-    }
-
-    // A source beats an existing exclusion — between two tiers disagreeing about
-    // whether a table is the org's, the one saying it IS keeps `meta` matching
-    // the payload. The subject registry's rule, for its reason.
-    const supersededExclusion = excluded.get(model);
-
-    const owner = owners.get(model);
-    if (owner !== undefined && owner !== tier && supersededExclusion === undefined) {
-      reject(tier, 'source', model, model, `already declared by tier '${owner}'`);
-      continue;
-    }
-
-    // Two models on one section would have one overwrite the other inside the
-    // bundle's `app` key — silent loss, with both still counted as declared.
-    const collision = [...sources.values()].find(
-      (existing) => existing.section === section && existing.model !== model
-    );
-    if (collision) {
-      reject(
-        tier,
-        'source',
-        model,
-        model,
-        `section '${section}' is already used by ${collision.model}`
-      );
-      continue;
-    }
-
-    // Supersede only once the row is certain to be accepted, so a rejected
-    // source cannot destroy a valid exclusion on its way past.
-    if (supersededExclusion) {
-      excluded.delete(model);
-      logger.warn('org-sources: a source declaration replaced an exclusion', {
-        tier,
-        model,
-        previousOwner: owner,
-        previousReason: supersededExclusion.reason,
-      });
-    }
-
-    sources.set(model, { ...source, model, section });
-    owners.set(model, tier);
-  }
-
-  for (const entry of contribution.excluded ?? []) {
-    if (!isEntry(entry)) {
-      reject(tier, 'exclusion', null, describeNonEntry(entry), 'exclusion is not an object');
-      continue;
-    }
-    const model = text(entry.model);
-
-    if (model === '') {
-      reject(tier, 'exclusion', null, labelOf(entry.model), 'model is empty');
-      continue;
-    }
-    if (text(entry.reason).length < MIN_REASON) {
-      reject(tier, 'exclusion', model, model, `reason must be at least ${MIN_REASON} characters`);
-      continue;
-    }
-    if (sources.has(model)) {
-      reject(
-        tier,
-        'exclusion',
-        model,
-        model,
-        'already declared as a source — a model is one or the other'
-      );
-      continue;
-    }
-
-    const owner = owners.get(model);
-    if (owner !== undefined && owner !== tier) {
-      reject(tier, 'exclusion', model, model, `already declared by tier '${owner}'`);
-      continue;
-    }
-
-    // Exactly the two fields, trimmed: this object is what the org's bundle
-    // shows in `meta.excluded`, so nothing else a fork passed may ride along.
-    excluded.set(model, { model, reason: text(entry.reason) });
-    owners.set(model, tier);
-  }
+  registry.register(contribution);
 }
 
 /** Run the fork's init once, lazily, all-or-nothing — see `lib/fork-init.ts`. */
@@ -314,22 +125,12 @@ const appInit = createAppInitGate({
   label: 'org-sources: initAppOrgSources',
   subject: 'app org-source declarations',
   init: initAppOrgSources,
-  snapshot: () => ({
-    sources: new Map(sources),
-    excluded: new Map(excluded),
-    owners: new Map(owners),
-  }),
-  restore: (before) => {
-    restoreMap(sources, before.sources);
-    restoreMap(excluded, before.excluded);
-    restoreMap(owners, before.owners);
-  },
+  snapshot: registry.snapshot,
+  restore: registry.restore,
   // From `onFailure`, not from `ensure()`'s verdict: a re-entrant read during a
   // successful init returns 'running', and reading that as failure would latch
   // a refusal for the life of the process (the subject registry's lesson).
-  onFailure: () => {
-    appInitFailed = true;
-  },
+  onFailure: registry.markInitFailed,
 });
 
 /**
@@ -338,35 +139,29 @@ const appInit = createAppInitGate({
  */
 export function appOrgDeclarationsFailed(): boolean {
   appInit.ensure();
-  return appInitFailed || declarationsIncomplete();
+  return registry.failed();
 }
 
 /** Every declared app-owned org source, in registration order. */
 export function getAppOrgSources(): AppOrgDataSource[] {
   appInit.ensure();
-  return [...sources.values()];
+  return registry.sources();
 }
 
 /** Every app-owned `orgId` model declared as deliberately excluded, with its reason. */
 export function getAppExcludedOrgSources(): AppExcludedOrgSource[] {
   appInit.ensure();
-  return [...excluded.values()].map((entry) => ({ ...entry }));
+  return registry.excluded();
 }
 
 /** Every app-owned model some tier accounted for — what the coverage guard unions in. */
 export function getAccountedAppOrgModels(): Set<string> {
   appInit.ensure();
-  return new Set([...sources.keys(), ...excluded.keys()]);
+  return registry.accounted();
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */
 export function __resetAppOrgSourceRegistryForTests(): void {
-  sources.clear();
-  excluded.clear();
-  owners.clear();
+  registry.reset();
   appInit.reset();
-  appInitFailed = false;
-  rejectedSources.clear();
-  rejectedExclusions.clear();
-  unidentifiedRejection = false;
 }

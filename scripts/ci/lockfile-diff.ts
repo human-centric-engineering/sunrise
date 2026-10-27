@@ -161,7 +161,7 @@ export interface OverrideChange {
 /**
  * The shortest `overrideReasons` text that counts as an answer.
  *
- * Matches `MIN_REASON` in `lib/privacy/subject-source-registry.ts` — long
+ * Matches `MIN_EXCLUSION_REASON` in `lib/privacy/declaration-registry.ts` — long
  * enough to force a sentence, short enough that a genuine one-liner fits. It
  * is not a quality bar and cannot be: nothing here can tell a real reason from
  * twenty characters of noise. What it buys is that the *diff* carries a

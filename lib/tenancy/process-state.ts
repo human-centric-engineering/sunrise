@@ -715,7 +715,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/subject-source-registry.ts',
-    holders: ['sources', 'excluded', 'owners', 'appInitFailed', 'appInit'],
+    holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',
     why: "A fork's subject-export dispositions, which say which MODELS a data subject's export reads; the rows themselves are read per request inside the caller's scope.",
   },
@@ -727,16 +727,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/org-source-registry.ts',
-    holders: [
-      'sources',
-      'excluded',
-      'owners',
-      'appInitFailed',
-      'rejectedSources',
-      'rejectedExclusions',
-      'unidentifiedRejection',
-      'appInit',
-    ],
+    holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',
     why: "A fork's org-export sources: which MODELS an org's export reads and the function that reads them, registered from code; the rows are read per export as the org being exported.",
   },

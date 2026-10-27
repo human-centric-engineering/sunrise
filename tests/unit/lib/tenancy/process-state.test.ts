@@ -106,6 +106,7 @@ const STATEFUL_FACTORIES = new Set([
   'createRateLimiter',
   'createDynamicLimiter',
   'createAppInitGate',
+  'createDeclarationRegistry',
   'createJobClock',
   'defineRequestState',
   'betterAuth',

@@ -67,9 +67,9 @@
  * @see .context/privacy/data-export.md — the guide
  */
 
-import { logger } from '@/lib/logging';
-import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { createAppInitGate } from '@/lib/fork-init';
 import { initAppSubjectSources } from '@/lib/app/data-export';
+import { createDeclarationRegistry } from '@/lib/privacy/declaration-registry';
 import type { SourceDisposition } from '@/lib/privacy/export-sources';
 
 /**
@@ -119,27 +119,16 @@ export interface AppSubjectSourceContribution {
   excluded?: readonly AppExcludedSubjectSource[];
 }
 
-/** Registered sources, keyed by model so a repeat registration is idempotent. */
-const sources = new Map<string, AppSubjectDataSource>();
-/** Registered exclusions, keyed by model. */
-const excluded = new Map<string, AppExcludedSubjectSource>();
-/** Which tier registered each model, for the duplicate-across-tiers message. */
-const owners = new Map<string, string>();
-
-/** Whether the app declaration init threw, leaving this tier's declarations unknown. */
-let appInitFailed = false;
-
-/** Mirrors the core manifest's own guard on `description`. */
-const MIN_DESCRIPTION = 10;
-/** Mirrors the core manifest's own guard on an exclusion `reason`. */
-const MIN_REASON = 20;
-
-function reject(tier: string, model: string, why: string): void {
-  // Rejected rows are not silently absorbed: the model stays undeclared, so the
-  // coverage guard fails naming it. This log says *why* it was dropped, which
-  // the guard cannot know.
-  logger.error('subject-sources: declaration rejected', { tier, model, reason: why });
-}
+/** Shared rules; see `declaration-registry.ts` for which differ per seam and why. */
+const registry = createDeclarationRegistry<AppSubjectDataSource>({
+  logPrefix: 'subject-sources',
+  // Mirrors the core manifest's own guard on `description`.
+  minDescription: 10,
+  checkSection: (section) => (section === '' ? 'section is empty' : null),
+  // A rejected declaration does not make the export refuse: the rows come from
+  // `collectAppSubjectData()` regardless, and the coverage guard names the model.
+  rejectionsLatch: false,
+});
 
 /**
  * Declare the models your tier holds about a data subject.
@@ -149,112 +138,14 @@ function reject(tier: string, model: string, why: string): void {
  * that the leaf's seam invokes. Idempotent by model, so a repeated import
  * re-registers rather than duplicating.
  *
- * A malformed row is dropped with a log rather than throwing: throwing would
- * abort the whole contribution and lose the tier's valid declarations too. The
- * dropped model is then unaccounted for, which fails the coverage guard by
- * name — loud, and at build time.
+ * A malformed row — a missing or non-string field, or a `null` entry — is
+ * dropped with a log rather than throwing: throwing would abort the whole
+ * contribution, roll the tier back, and leave the export refusing for the life
+ * of the process. The dropped model is then unaccounted for, which fails the
+ * coverage guard by name — loud, and at build time.
  */
 export function registerAppSubjectSources(contribution: AppSubjectSourceContribution): void {
-  const { tier } = contribution;
-
-  for (const source of contribution.sources ?? []) {
-    const model = source.model?.trim() ?? '';
-    const section = source.section?.trim() ?? '';
-
-    if (model === '') {
-      reject(tier, String(source.model), 'model is empty');
-      continue;
-    }
-    if (section === '') {
-      reject(tier, model, 'section is empty');
-      continue;
-    }
-    if (source.disposition !== 'export' && source.disposition !== 'attribution') {
-      reject(tier, model, `disposition must be 'export' or 'attribution'`);
-      continue;
-    }
-    if ((source.description ?? '').trim().length < MIN_DESCRIPTION) {
-      reject(tier, model, `description must be at least ${MIN_DESCRIPTION} characters`);
-      continue;
-    }
-    // A source BEATS an existing exclusion, rather than being refused.
-    //
-    // Refusing left a model that could never move from `excluded` to `sources`:
-    // a framework tier excluding `SharedTag` at boot, and a leaf later declaring
-    // it a source, produced a rejected source, a still-"accounted" model, a
-    // green coverage guard — and a bundle whose `meta.excluded` told the subject
-    // the table was withheld while `collectAppSubjectData()` may well have been
-    // returning it. Between two tiers disagreeing about whether a table holds
-    // personal data, the one saying it DOES is the safe answer, and it is the
-    // one that keeps `meta` matching the payload.
-    const supersededExclusion = excluded.get(model);
-
-    const owner = owners.get(model);
-    if (owner !== undefined && owner !== tier && supersededExclusion === undefined) {
-      reject(tier, model, `already declared by tier '${owner}'`);
-      continue;
-    }
-
-    // A section collision would have one source overwrite the other inside the
-    // bundle's `app` key — silent loss, with both models still accounted for.
-    const collision = [...sources.values()].find(
-      (existing) => existing.section === section && existing.model !== model
-    );
-    if (collision) {
-      reject(tier, model, `section '${section}' is already used by ${collision.model}`);
-      continue;
-    }
-
-    // Supersede only now that the row is certain to be accepted.
-    //
-    // Deleting it earlier meant a source that was then REJECTED — by the
-    // section-collision check above — still destroyed a valid exclusion on the
-    // way past. `meta.excluded` silently stopped telling the subject that table
-    // was withheld and why, which is the disclosure gap this file exists to
-    // close, opened by the fix for a different one.
-    if (supersededExclusion) {
-      excluded.delete(model);
-      logger.warn('subject-sources: a source declaration replaced an exclusion', {
-        tier,
-        model,
-        previousOwner: owners.get(model),
-        previousReason: supersededExclusion.reason,
-      });
-    }
-
-    sources.set(model, { ...source, model, section });
-    owners.set(model, tier);
-  }
-
-  for (const entry of contribution.excluded ?? []) {
-    const model = entry.model?.trim() ?? '';
-
-    if (model === '') {
-      reject(tier, String(entry.model), 'model is empty');
-      continue;
-    }
-    if ((entry.reason ?? '').trim().length < MIN_REASON) {
-      // The reason is the whole value of an exclusion, and it is not filing:
-      // `exportUserData()` puts it in the bundle's `meta.excluded`, so this
-      // string is what the data subject — and any regulator auditing the
-      // response — is shown in place of the table's contents.
-      reject(tier, model, `reason must be at least ${MIN_REASON} characters`);
-      continue;
-    }
-    if (sources.has(model)) {
-      reject(tier, model, 'already declared as a source — a model is one or the other');
-      continue;
-    }
-
-    const owner = owners.get(model);
-    if (owner !== undefined && owner !== tier) {
-      reject(tier, model, `already declared by tier '${owner}'`);
-      continue;
-    }
-
-    excluded.set(model, { ...entry, model });
-    owners.set(model, tier);
-  }
+  registry.register(contribution);
 }
 
 /**
@@ -270,16 +161,8 @@ const appInit = createAppInitGate({
   label: 'subject-sources: initAppSubjectSources',
   subject: 'app declarations',
   init: initAppSubjectSources,
-  snapshot: () => ({
-    sources: new Map(sources),
-    excluded: new Map(excluded),
-    owners: new Map(owners),
-  }),
-  restore: (before) => {
-    restoreMap(sources, before.sources);
-    restoreMap(excluded, before.excluded);
-    restoreMap(owners, before.owners);
-  },
+  snapshot: registry.snapshot,
+  restore: registry.restore,
   // Set from `onFailure` rather than derived from `ensure()`'s verdict. The
   // verdict has THREE values and a fork init is allowed to re-enter the
   // registry — the documented framework-tier bridge does, and so does any
@@ -288,9 +171,7 @@ const appInit = createAppInitGate({
   // Art. 15 subject access refused for the life of the process with nothing
   // logged. `onFailure` fires once, only on a real throw — the same place the
   // hand-written `catch` used to set it.
-  onFailure: () => {
-    appInitFailed = true;
-  },
+  onFailure: registry.markInitFailed,
 });
 
 /**
@@ -321,19 +202,19 @@ function ensureAppSubjectSourcesInited(): void {
  */
 export function appSubjectDeclarationsFailed(): boolean {
   ensureAppSubjectSourcesInited();
-  return appInitFailed;
+  return registry.failed();
 }
 
 /** Every declared app-owned source, in registration order. */
 export function getAppSubjectSources(): AppSubjectDataSource[] {
   ensureAppSubjectSourcesInited();
-  return [...sources.values()];
+  return registry.sources();
 }
 
 /** Every app-owned model declared as deliberately excluded, with its reason. */
 export function getAppExcludedSubjectSources(): AppExcludedSubjectSource[] {
   ensureAppSubjectSourcesInited();
-  return [...excluded.values()];
+  return registry.excluded();
 }
 
 /**
@@ -343,14 +224,11 @@ export function getAppExcludedSubjectSources(): AppExcludedSubjectSource[] {
  */
 export function getAccountedAppModels(): Set<string> {
   ensureAppSubjectSourcesInited();
-  return new Set([...sources.keys(), ...excluded.keys()]);
+  return registry.accounted();
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */
 export function __resetAppSubjectSourceRegistryForTests(): void {
-  sources.clear();
-  excluded.clear();
-  owners.clear();
+  registry.reset();
   appInit.reset();
-  appInitFailed = false;
 }
