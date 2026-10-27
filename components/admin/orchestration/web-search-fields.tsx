@@ -147,7 +147,9 @@ export function WebSearchFields({
                   On OpenAI, the limit applies to each step instead. The step after a tool call
                   usually searches again to cite its sources, and stopping it loses what the earlier
                   searches found. So a reply that calls tools can run past the limit. Opening a page
-                  it found, or searching within one, counts toward the limit too.
+                  it found, or searching within one, counts toward the limit too. With code
+                  execution also on, OpenAI would count code runs against the limit as well, so it
+                  isn&rsquo;t applied there and searches are uncapped.
                 </p>
               </FieldHelp>
             </Label>

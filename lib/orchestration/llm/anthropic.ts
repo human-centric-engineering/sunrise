@@ -277,7 +277,9 @@ export class AnthropicProvider implements LlmProvider {
     // text before calling it; joining that in would break the JSON.
     const joinedContent = extracted ?? content.join('');
     usage = withCodeExecution(usage, earlierCodeRuns(messages), reasoning);
+    // Before anything below can throw, so a truncated call's files go too.
     await this.nameGeneratedFiles(reasoning);
+    this.deleteGeneratedFiles(reasoning);
 
     // Truncation guard. Anthropic returns `stop_reason: 'max_tokens'`
     // when the model hits the cap; with extended thinking turned on
@@ -330,7 +332,6 @@ export class AnthropicProvider implements LlmProvider {
     };
     if (toolCalls.length > 0) response.toolCalls = toolCalls;
     if (reasoning.length > 0) response.reasoning = reasoning;
-    if (response.finishReason !== 'tool_use') this.deleteGeneratedFiles(messages, reasoning);
     return response;
   }
 
@@ -605,6 +606,9 @@ export class AnthropicProvider implements LlmProvider {
       );
     }
     const usage = withCodeExecution(segmentUsage(), earlierCodeRuns(messages), reasoning);
+    // Before anything below can throw, so a truncated stream's files go too.
+    await this.nameGeneratedFiles(reasoning);
+    this.deleteGeneratedFiles(reasoning);
 
     // Mirror the non-streaming truncation guard: a max_tokens stop on a
     // JSON-shaped request means the output is incomplete — either a forced
@@ -637,13 +641,10 @@ export class AnthropicProvider implements LlmProvider {
       yield { type: 'text', content: heldText };
     }
 
-    const doneReason = isStructuredExtraction ? 'stop' : finishReason;
-    await this.nameGeneratedFiles(reasoning);
-    if (doneReason !== 'tool_use') this.deleteGeneratedFiles(messages, reasoning);
     yield {
       type: 'done',
       usage,
-      finishReason: doneReason,
+      finishReason: isStructuredExtraction ? 'stop' : finishReason,
       ...(reasoning.length > 0 ? { reasoning } : {}),
     };
   }
@@ -710,18 +711,16 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   /**
-   * Delete the files the reply's code runs left in Anthropic's Files storage,
+   * Delete the files this call's code runs left in Anthropic's Files storage,
    * where they would otherwise stay until someone deletes them (owner ruling,
-   * t-956: files aren't delivered, and nothing is left at the provider). Run
-   * when a call ends the reply, so no later call replays a block naming a
-   * deleted file. Not awaited: a failure is logged, never raised.
+   * t-956: files aren't delivered, and nothing is left at the provider). Done
+   * straight after the call, so a reply cut short leaves none behind: a later
+   * call that replays a block naming a deleted file still succeeds (measured,
+   * claude-haiku-5-5, 2026-10-27). Not awaited: a failure is logged, never
+   * raised.
    */
-  private deleteGeneratedFiles(messages: LlmMessage[], blocks: LlmReasoningBlock[]): void {
-    const fileIds = [
-      ...new Set(
-        generatedFileIds([...messages.flatMap((message) => message.reasoning ?? []), ...blocks])
-      ),
-    ];
+  private deleteGeneratedFiles(blocks: LlmReasoningBlock[]): void {
+    const fileIds = [...new Set(generatedFileIds(blocks))];
     if (fileIds.length === 0) return;
     void Promise.allSettled(fileIds.map((fileId) => this.client.files.delete(fileId))).then(
       (results) => {

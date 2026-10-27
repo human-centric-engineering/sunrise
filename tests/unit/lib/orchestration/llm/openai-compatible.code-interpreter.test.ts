@@ -259,7 +259,7 @@ describe('the code interpreter request', () => {
     expect(params).not.toHaveProperty('max_tool_calls');
   });
 
-  it('sends both tools, with the search limit as the cap on built-in calls', async () => {
+  it('sends both tools, without the search limit, which would cap the code runs too', async () => {
     await makeProvider().chat(ask, {
       model: 'gpt-5-mini',
       providerTools: { codeExecution: {}, webSearch: { maxUses: 2 } },
@@ -275,7 +275,7 @@ describe('the code interpreter request', () => {
       'code_interpreter_call.outputs',
       'reasoning.encrypted_content',
     ]);
-    expect(params.max_tool_calls).toBe(2);
+    expect(params).not.toHaveProperty('max_tool_calls');
   });
 
   it('replays a code item on the call that continues the turn, so its container is reused', async () => {

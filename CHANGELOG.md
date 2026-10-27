@@ -32,11 +32,11 @@ release process.
   reuses the container, and the `agent_call` checkpoint keeps them. What the
   code prints reaches the model and the trace (`provider:code_execution`);
   files it makes are not delivered, and Anthropic's copies are deleted from
-  its Files storage when the reply ends. New `LlmUsage.codeExecution`
+  its Files storage straight after the call that made them. New `LlmUsage.codeExecution`
   (`{ runs, billedSeconds, usdPerHour }`) is priced by `calculateCost` and
   stamped on the cost row: each container a reply uses is billed the larger
   of its measured run time and 5 minutes (`lib/orchestration/llm/code-execution.ts`),
-  an estimate since neither provider reports the time. New
+  an estimate since neither provider reports the time. On OpenAI, with code execution on, the search limit isn't sent as `max_tool_calls`, which would cap code runs too. New
   `withProviderTool()` sets one provider tool and keeps the others: turning
   web search off on the form no longer clears the whole value. **Forks:** a
   consumer that switches on `LlmReasoningBlock.type`, or reads

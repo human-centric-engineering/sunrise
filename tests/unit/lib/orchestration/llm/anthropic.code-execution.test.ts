@@ -302,7 +302,7 @@ describe('a code execution response', () => {
 // ---------------------------------------------------------------------------
 
 describe('the files a run makes', () => {
-  it('names them for the trace, then deletes them when the call ends the reply', async () => {
+  it('names them for the trace, then deletes them straight after the call', async () => {
     respondInTurn(() => message([bashUse, bashResult, { type: 'text', text: 'Charted.' }]));
 
     const res = await makeProvider().chat(ask, { model: MODEL, providerTools: CODE });
@@ -317,7 +317,7 @@ describe('the files a run makes', () => {
     );
   });
 
-  it('keeps them while the reply goes on to a tool call, for the next call to replay', async () => {
+  it('deletes them even when the reply goes on to a tool call, so none outlive a reply cut short', async () => {
     respondInTurn(() =>
       message(
         [bashUse, bashResult, { type: 'tool_use', id: 'toolu_1', name: 'lookup', input: {} }],
@@ -329,10 +329,11 @@ describe('the files a run makes', () => {
     await settle();
 
     expect(res.finishReason).toBe('tool_use');
-    expect(filesDeleteMock).not.toHaveBeenCalled();
+    // A later call replaying the block still succeeds (measured).
+    expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
   });
 
-  it('deletes the files of the reply’s earlier calls with its own, once the reply ends', async () => {
+  it('leaves an earlier call’s files alone: that call deleted them', async () => {
     respondInTurn(() => message([{ type: 'text', text: 'All done.' }]));
 
     await makeProvider().chat(
@@ -344,9 +345,19 @@ describe('the files a run makes', () => {
     );
     await settle();
 
-    expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
-    // Named on the call that made it, not again.
+    expect(filesDeleteMock).not.toHaveBeenCalled();
     expect(filesMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes them on a call cut off at max_tokens, which raises', async () => {
+    respondInTurn(() => message([bashUse, bashResult], 'max_tokens'));
+
+    await expect(
+      makeProvider().chat(ask, { model: MODEL, providerTools: CODE })
+    ).rejects.toMatchObject({ code: 'truncated_no_output' });
+    await settle();
+
+    expect(filesDeleteMock).toHaveBeenCalledWith('file_1');
   });
 
   it('keeps the id when a name can’t be read, and logs a delete that fails', async () => {
@@ -605,8 +616,8 @@ describe('a streamed code execution response', () => {
     expect(done.reasoning?.[1]).toEqual(expect.objectContaining({ containerId: 'container_1' }));
     // Same container as the earlier 3 s run: 3 s + 4.2 s is still under the minimum.
     expect(done.usage.codeExecution).toEqual({ runs: 1, billedSeconds: 0, usdPerHour: 0.05 });
-    // The reply goes on to a tool call: nothing deleted yet.
-    expect(filesDeleteMock).not.toHaveBeenCalled();
+    // Only this call's file: the earlier call deleted its own.
+    expect(filesDeleteMock).toHaveBeenCalledTimes(1);
   });
 
   it('carries a paused stream on in the container it started in', async () => {

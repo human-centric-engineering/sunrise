@@ -42,7 +42,7 @@ export function CodeExecutionField({
           <p className="mt-2">
             Files the code makes aren&rsquo;t passed on to users, though a reply may mention one. On
             Anthropic, Sunrise deletes them from your organisation&rsquo;s Anthropic file storage
-            when the reply ends.
+            straight after each step.
           </p>
           <p className="mt-2">
             The provider bills the sandbox by time: Anthropic $0.05 an hour after 1,550 free hours a

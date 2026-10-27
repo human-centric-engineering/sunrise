@@ -285,8 +285,11 @@ export function buildResponsesParams(
       type: 'code_interpreter',
       container: { type: 'auto', network_policy: { type: 'disabled' } },
     });
-    // With web search on too, `max_tool_calls` (the search limit) counts
-    // code runs as well: OpenAI caps built-in calls together.
+    // `max_tool_calls` counts every built-in call, code runs too, so the
+    // search limit would cut data work off without a word. With code on it
+    // isn't sent, and searches go uncapped here (owner ruling, t-956); each
+    // is still costed and traced.
+    delete params.max_tool_calls;
   }
   if (tools.length > 0) {
     params.tools = tools;
