@@ -514,6 +514,48 @@ describe('the conversation as Responses input', () => {
     ]);
   });
 
+  it('leaves out a search item whose action OpenAI would not take back, such as a damaged checkpoint’s', async () => {
+    await makeProvider().chat(
+      [
+        { role: 'user', content: 'x' },
+        {
+          role: 'assistant',
+          content: 'Found it.',
+          reasoning: [
+            {
+              type: 'openai_web_search_call',
+              id: 'ws_bad',
+              status: 'completed',
+              action: { type: 'teleport' },
+            },
+            {
+              type: 'openai_web_search_call',
+              id: 'ws_ok',
+              status: 'completed',
+              action: { type: 'find_in_page', pattern: 'strike', url: 'https://news.example/a' },
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-5-mini', providerTools: SEARCH }
+    );
+
+    expect(sentParams().input).toEqual([
+      { role: 'user', content: 'x' },
+      {
+        type: 'web_search_call',
+        id: 'ws_ok',
+        status: 'completed',
+        action: { type: 'find_in_page', pattern: 'strike', url: 'https://news.example/a' },
+      },
+      { role: 'assistant', content: 'Found it.' },
+    ]);
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'OpenAI: web search item left out of replay, action not recognised',
+      { id: 'ws_bad' }
+    );
+  });
+
   it('leaves out another provider’s blocks, such as Claude thinking after a fallback', async () => {
     await makeProvider().chat(
       [

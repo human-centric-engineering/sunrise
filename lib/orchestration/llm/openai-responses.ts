@@ -51,6 +51,7 @@ import type {
   ToolChoiceOptions,
   WebSearchTool,
 } from 'openai/resources/responses/responses';
+import { z } from 'zod';
 
 import { logger } from '@/lib/logging';
 import { isRecord } from '@/lib/utils';
@@ -300,19 +301,37 @@ function toReplayItem(block: LlmReasoningBlock): ResponseInputItem | undefined {
         summary: block.summary.map((text) => ({ type: 'summary_text', text })),
         encrypted_content: block.encryptedContent,
       };
-    case 'openai_web_search_call':
-      // The SDK's input type for this item is its output type; the action is
-      // sent back as it came.
-      return {
-        type: 'web_search_call',
-        id: block.id,
-        status: block.status,
-        action: block.action as unknown as ResponseFunctionWebSearch['action'],
-      };
+    case 'openai_web_search_call': {
+      // The block can come back from a stored `agent_call` checkpoint, so the
+      // action is checked against what OpenAI takes before it goes out.
+      const action = webSearchActionSchema.safeParse(block.action);
+      if (!action.success) {
+        logger.warn('OpenAI: web search item left out of replay, action not recognised', {
+          id: block.id,
+        });
+        return undefined;
+      }
+      return { type: 'web_search_call', id: block.id, status: block.status, action: action.data };
+    }
     default:
       return undefined;
   }
 }
+
+/** A `web_search_call` item's action, as the Responses API takes it back. */
+const webSearchActionSchema: z.ZodType<ResponseFunctionWebSearch['action']> = z.discriminatedUnion(
+  'type',
+  [
+    z.object({
+      type: z.literal('search'),
+      queries: z.array(z.string()).optional(),
+      query: z.string().optional(),
+      sources: z.array(z.object({ type: z.literal('url'), url: z.string() })).optional(),
+    }),
+    z.object({ type: z.literal('open_page'), url: z.string().nullable().optional() }),
+    z.object({ type: z.literal('find_in_page'), pattern: z.string(), url: z.string() }),
+  ]
+);
 
 function toInputContent(parts: ContentPart[]): ResponseInputContent[] {
   return parts.map<ResponseInputContent>((part) => {
