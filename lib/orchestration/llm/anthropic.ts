@@ -991,9 +991,11 @@ function appendPausedTurn(
   parts: PausedPart[],
   extend: boolean
 ): void {
-  const blocks = parts.map((part): ContentBlockParam =>
-    part.type === 'text' ? { type: 'text', text: part.text } : toReasoningBlockParam(part)
-  );
+  const blocks = parts.flatMap((part): ContentBlockParam[] => {
+    if (part.type === 'text') return [{ type: 'text', text: part.text }];
+    const block = toReasoningBlockParam(part);
+    return block ? [block] : [];
+  });
   const last = params.messages[params.messages.length - 1];
   if (extend && last?.role === 'assistant' && Array.isArray(last.content)) {
     last.content.push(...blocks);
@@ -1182,7 +1184,10 @@ function splitSystemMessages(
       // Thinking blocks go back first and unchanged, signatures included:
       // a tool loop on a thinking model must replay them on the turn it
       // continues.
-      const blocks: ContentBlockParam[] = (msg.reasoning ?? []).map(toReasoningBlockParam);
+      const blocks: ContentBlockParam[] = (msg.reasoning ?? []).flatMap((reasoning) => {
+        const block = toReasoningBlockParam(reasoning);
+        return block ? [block] : [];
+      });
       const text = getTextContent(msg.content);
       if (text) blocks.push({ type: 'text', text });
       for (const call of msg.toolCalls ?? []) {
@@ -1414,7 +1419,12 @@ function toAnthropicBlocks(parts: ContentPart[]): ContentBlockParam[] {
   return blocks;
 }
 
-function toReasoningBlockParam(block: LlmReasoningBlock): ContentBlockParam {
+/**
+ * An Anthropic block as the request takes it back, or `undefined` for one
+ * from OpenAI's Responses path, which a turn carries only when a fallback
+ * moved it here mid-reply. Anthropic would 400 on it.
+ */
+function toReasoningBlockParam(block: LlmReasoningBlock): ContentBlockParam | undefined {
   switch (block.type) {
     case 'thinking':
       return { type: 'thinking', thinking: block.thinking, signature: block.signature };
@@ -1440,6 +1450,9 @@ function toReasoningBlockParam(block: LlmReasoningBlock): ContentBlockParam {
                 ...(result.pageAge !== undefined ? { page_age: result.pageAge } : {}),
               })),
       };
+    case 'openai_reasoning':
+    case 'openai_web_search_call':
+      return undefined;
   }
 }
 

@@ -79,7 +79,9 @@ export const providerToolsSchema = z
  * A tool loop's options for its next call, with the searches the reply has
  * already run taken off the search limit. The agent's `maxUses` caps one
  * reply, which can take several calls; each call runs at most what is left,
- * down to 0. Options with no limit, or no search yet, come back unchanged.
+ * down to 0. The whole limit stays on `replyLimit`, for OpenAI, which caps
+ * each call instead. Options with no limit, or no search yet, come back
+ * unchanged.
  */
 export function spendWebSearches<T extends { providerTools?: ProviderTools }>(
   options: T,
@@ -91,7 +93,11 @@ export function spendWebSearches<T extends { providerTools?: ProviderTools }>(
     ...options,
     providerTools: {
       ...options.providerTools,
-      webSearch: { ...search, maxUses: Math.max(0, search.maxUses - used) },
+      webSearch: {
+        ...search,
+        maxUses: Math.max(0, search.maxUses - used),
+        replyLimit: search.replyLimit ?? search.maxUses,
+      },
     },
   };
 }

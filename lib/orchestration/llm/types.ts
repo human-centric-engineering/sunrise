@@ -26,13 +26,21 @@ export interface LlmToolCall {
 
 /**
  * A block a provider returned alongside an assistant turn that has to go
- * back with it — today Anthropic's `thinking` / `redacted_thinking` blocks,
- * and the `server_tool_use` / `web_search_tool_result` blocks of a web search
- * it ran itself ({@link ProviderTools}). Opaque to everything but the
- * provider that produced it: a tool loop carries it on the assistant message
- * and the provider sends it back unchanged on the request that continues the
- * turn, which Anthropic requires when thinking is on and needs for the model
- * to keep what a search found. Other providers ignore it.
+ * back with it:
+ *
+ * - Anthropic's `thinking` / `redacted_thinking` blocks, and the
+ *   `server_tool_use` / `web_search_tool_result` blocks of a web search it
+ *   ran itself ({@link ProviderTools}).
+ * - On OpenAI's Responses path (`openai-responses.ts`), its `reasoning`
+ *   items (`openai_reasoning`) and `web_search_call` items
+ *   (`openai_web_search_call`). That path stores nothing on OpenAI's side,
+ *   so these are what lets the next request carry on the turn.
+ *
+ * Opaque to everything but the provider that produced it: a tool loop
+ * carries it on the assistant message and the provider sends it back
+ * unchanged on the request that continues the turn, which Anthropic requires
+ * when thinking is on and both need for the model to keep what a search
+ * found. Every other provider, the other one included, leaves it out.
  */
 export type LlmReasoningBlock =
   | { type: 'thinking'; thinking: string; signature: string }
@@ -44,6 +52,25 @@ export type LlmReasoningBlock =
       /** Empty when the search failed — `errorCode` then says why. */
       results: WebSearchResult[];
       errorCode?: string;
+    }
+  | {
+      type: 'openai_reasoning';
+      id: string;
+      /** Opaque reasoning OpenAI needs back to continue the turn. */
+      encryptedContent: string;
+      /** The reasoning summary's parts, when one was asked for. */
+      summary: string[];
+    }
+  | {
+      type: 'openai_web_search_call';
+      id: string;
+      /** `completed`, `failed`, or `searching` / `in_progress` when cut short. */
+      status: 'in_progress' | 'searching' | 'completed' | 'failed' | 'incomplete';
+      /**
+       * What the model did: `{ type: 'search', queries?, sources? }`,
+       * `open_page` or `find_in_page`. Sent back as it came.
+       */
+      action: Record<string, unknown>;
     };
 
 /** One page a provider's web search returned. */
@@ -236,8 +263,9 @@ export interface LlmOptions {
   serviceTier?: ServiceTier;
   /**
    * Tools the provider runs on its own side rather than through the
-   * capability dispatcher (Anthropic web search). Sent only to providers and
-   * models that offer them; dropped elsewhere.
+   * capability dispatcher (web search, on Anthropic and on OpenAI's
+   * Responses path). Sent only to providers and models that offer them;
+   * dropped elsewhere.
    */
   providerTools?: ProviderTools;
   /** Override the provider's default request timeout. */
@@ -260,6 +288,13 @@ export interface WebSearchOptions {
    * provider's limit.
    */
   maxUses?: number;
+  /**
+   * The agent's whole limit, kept by `spendWebSearches` when it takes a
+   * reply's searches off `maxUses`. OpenAI caps each call with it instead:
+   * taking its search tool away loses what earlier searches found, so it
+   * can't hold a per-reply limit (owner ruling, t-955).
+   */
+  replyLimit?: number;
   /** Search only these domains. */
   allowedDomains?: string[];
   /** Never search these domains. */
@@ -267,10 +302,9 @@ export interface WebSearchOptions {
 }
 
 /**
- * Anthropic's web search — USD per search ($10 per 1,000), on top of the
- * tokens the results add to the input. Only Anthropic runs a search for
- * Sunrise today; OpenAI's per-call rate comes with its Responses path.
- * Here rather than in `cost-tracker`, which tests often mock whole.
+ * A provider web search — USD per search, on top of the tokens the results
+ * add to the input. Anthropic and OpenAI's `web_search` tool both charge $10
+ * per 1,000. Here rather than in `cost-tracker`, which tests often mock whole.
  */
 export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
 

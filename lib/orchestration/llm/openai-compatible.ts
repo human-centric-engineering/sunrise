@@ -26,6 +26,7 @@
 
 import OpenAI, { toFile } from 'openai';
 import type { TranscriptionVerbose } from 'openai/resources/audio/transcriptions';
+import type { Response as OpenAiResponse } from 'openai/resources/responses/responses';
 import type {
   ChatCompletion,
   ChatCompletionChunk,
@@ -43,6 +44,7 @@ import { isRecord } from '@/lib/utils';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   acceptsFlexTier,
+  acceptsOpenAiWebSearch,
   acceptsVerbosity,
   deriveParamProfile,
   openAiReasoningEffort,
@@ -82,6 +84,13 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
 import { isCompleteJson } from '@/lib/orchestration/llm/json-completeness';
+import {
+  buildResponsesParams,
+  fromResponsesResult,
+  fromResponsesStream,
+  isSummaryVerificationError,
+  usesResponsesApi,
+} from '@/lib/orchestration/llm/openai-responses';
 
 /**
  * The embeddings response, as far as `embedMany` reads it. Validated rather
@@ -166,6 +175,13 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * OpenAI-compatible hosts either ignore it or 400 on a value they lack.
    */
   private readonly isOpenAiHost: boolean;
+  /**
+   * OpenAI refused reasoning summaries to this credential's organisation (it
+   * isn't verified), so Responses requests stop asking for them. Lives as
+   * long as the cached instance, so a refusal costs one failed call per
+   * cache period, not one per request.
+   */
+  private summariesRefused = false;
 
   constructor(options: OpenAiCompatibleProviderOptions) {
     if (!options.baseUrl) {
@@ -211,6 +227,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 
   async chat(messages: LlmMessage[], options: LlmOptions): Promise<LlmResponse> {
+    const isReasoning = resolveParamProfile(options.model, this.name) === 'openai-reasoning';
+    if (this.routesToResponses(options, isReasoning)) {
+      return this.chatResponses(messages, options, isReasoning);
+    }
     const params = this.buildNonStreamingParams(messages, options);
     logger.info('OpenAI-compatible chat request', {
       provider: this.name,
@@ -346,6 +366,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 
   async *chatStream(messages: LlmMessage[], options: LlmOptions): AsyncIterable<StreamChunk> {
+    const isReasoning = resolveParamProfile(options.model, this.name) === 'openai-reasoning';
+    if (this.routesToResponses(options, isReasoning)) {
+      yield* this.chatStreamResponses(messages, options, isReasoning);
+      return;
+    }
     const params = this.buildStreamingParams(messages, options);
     logger.info('OpenAI-compatible chat stream request', {
       provider: this.name,
@@ -681,6 +706,133 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 
   // --- internal helpers ---
+
+  /**
+   * Does this request take the Responses API path (`openai-responses.ts`)?
+   * Only OpenAI itself, with web search on, on a model that offers it. On
+   * OpenAI with a model that doesn't, the search is dropped and logged, as
+   * Anthropic drops it on Claude 3.0; other hosts ignore it.
+   */
+  private routesToResponses(options: LlmOptions, isReasoning: boolean): boolean {
+    const routes = usesResponsesApi(options, {
+      isOpenAiHost: this.isOpenAiHost,
+      isReasoning,
+      providerName: this.name,
+    });
+    if (
+      !routes &&
+      this.isOpenAiHost &&
+      options.providerTools?.webSearch !== undefined &&
+      !options.responseFormat
+    ) {
+      logger.info('OpenAI: web search dropped, model or reasoning effort does not offer it', {
+        provider: this.name,
+        model: options.model,
+        modelOffersIt: acceptsOpenAiWebSearch(options.model),
+      });
+    }
+    return routes;
+  }
+
+  private async chatResponses(
+    messages: LlmMessage[],
+    options: LlmOptions,
+    isReasoning: boolean
+  ): Promise<LlmResponse> {
+    logger.info('OpenAI Responses chat request', {
+      provider: this.name,
+      model: options.model,
+      messageCount: messages.length,
+      hasTools: Boolean(options.tools?.length),
+    });
+    const requestOptions = buildRequestOptions(options);
+    let response: OpenAiResponse;
+    try {
+      response = await this.withSummaryFallback(isReasoning, (summaries) => {
+        const params = buildResponsesParams(messages, options, {
+          isReasoning,
+          providerName: this.name,
+          summaries,
+          tokenCap: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+        });
+        return withRetry<OpenAiResponse>(
+          () => this.client.responses.create(params, requestOptions),
+          {
+            maxRetries: this.maxRetries,
+            isLocal: this.isLocal,
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
+            operation: 'openai.responses.create',
+          }
+        );
+      });
+    } catch (err) {
+      throw toProviderError(err, 'OpenAI Responses chat request failed');
+    }
+    return fromResponsesResult(response, options);
+  }
+
+  private async *chatStreamResponses(
+    messages: LlmMessage[],
+    options: LlmOptions,
+    isReasoning: boolean
+  ): AsyncIterable<StreamChunk> {
+    logger.info('OpenAI Responses chat stream request', {
+      provider: this.name,
+      model: options.model,
+      messageCount: messages.length,
+      hasTools: Boolean(options.tools?.length),
+    });
+    const requestOptions = buildRequestOptions(options);
+    let stream: Awaited<ReturnType<typeof this.openResponsesStream>>;
+    try {
+      stream = await this.withSummaryFallback(isReasoning, (summaries) =>
+        this.openResponsesStream(
+          buildResponsesParams(messages, options, {
+            isReasoning,
+            providerName: this.name,
+            summaries,
+            tokenCap: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+          }),
+          requestOptions
+        )
+      );
+    } catch (err) {
+      throw toProviderError(err, 'OpenAI Responses chat stream failed');
+    }
+    yield* fromResponsesStream(stream, options.signal);
+  }
+
+  private openResponsesStream(
+    params: ReturnType<typeof buildResponsesParams>,
+    requestOptions: ReturnType<typeof buildRequestOptions>
+  ) {
+    return this.client.responses.create({ ...params, stream: true }, requestOptions);
+  }
+
+  /**
+   * Run a Responses request asking for reasoning summaries, unless this
+   * instance has already been refused them; on the refusal (an unverified
+   * organisation), remember it and run it once more without.
+   */
+  private async withSummaryFallback<T>(
+    isReasoning: boolean,
+    run: (summaries: boolean) => Promise<T>
+  ): Promise<T> {
+    const summaries = isReasoning && !this.summariesRefused;
+    try {
+      return await run(summaries);
+    } catch (err) {
+      if (!summaries || !isSummaryVerificationError(err)) throw err;
+      this.summariesRefused = true;
+      logger.warn(
+        'OpenAI refused reasoning summaries (organisation not verified); retrying without',
+        {
+          provider: this.name,
+        }
+      );
+      return run(false);
+    }
+  }
 
   private buildNonStreamingParams(
     messages: LlmMessage[],

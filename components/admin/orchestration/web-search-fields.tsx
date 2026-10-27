@@ -98,14 +98,15 @@ export function WebSearchFields({
           Web search{' '}
           <FieldHelp title="Provider web search">
             <p>
-              Lets the model search the web while it answers, and use what it finds. Anthropic runs
-              the searches, and each one costs $0.01 on top of the tokens its results add. Cost
+              Lets the model search the web while it answers, and use what it finds. The provider
+              runs the searches, and each one costs $0.01 on top of the tokens its results add. Cost
               tracking includes both, and each search shows in the conversation trace.
             </p>
             <p className="mt-2">
-              Claude models only (3.5 and later). Other providers and older models ignore it. An
-              admin of your Anthropic organisation has to turn web search on in the Anthropic
-              Console first, or requests from this agent will fail.
+              Works on Claude models (3.5 and later), and on OpenAI models from gpt-4o on (not
+              gpt-4.1-nano) when the provider is OpenAI itself. Other providers and models ignore
+              it. On Anthropic, an admin of your Anthropic organisation has to turn web search on in
+              the Anthropic Console first, or requests from this agent will fail.
             </p>
           </FieldHelp>
         </Label>
@@ -132,9 +133,14 @@ export function WebSearchFields({
                   , counted across every step of the reply. Leave it empty for no limit.
                 </p>
                 <p className="mt-2">
-                  With a limit set, each later step of a reply that has already searched, such as
-                  the step after a tool call, is sent the searches it has left. That step
-                  can&rsquo;t use the prompt cache, so its input costs more.
+                  On Claude, each later step of a reply that has already searched, such as the step
+                  after a tool call, is sent the searches it has left. That step can&rsquo;t use the
+                  prompt cache, so its input costs more.
+                </p>
+                <p className="mt-2">
+                  On OpenAI, the limit applies to each step instead. The step after a tool call
+                  usually searches again to cite its sources, and stopping it loses what the earlier
+                  searches found. So a reply that calls tools can run past the limit.
                 </p>
               </FieldHelp>
             </Label>
@@ -158,10 +164,17 @@ export function WebSearchFields({
             <Label htmlFor={`${idPrefix}-web-search-domain-mode`}>
               Sites{' '}
               <FieldHelp title="Which sites to search">
-                Search any site, only the sites you list, or any site except the ones you list. Put
-                one domain on each line, like <code>example.com</code> or{' '}
-                <code>docs.example.com/guides</code>, without <code>https://</code>. A domain
-                includes its subdomains.
+                <p>
+                  Search any site, only the sites you list, or any site except the ones you list.
+                  Put one domain on each line, like <code>example.com</code> or{' '}
+                  <code>docs.example.com/guides</code>, without <code>https://</code>. A domain
+                  includes its subdomains.
+                </p>
+                <p className="mt-2">
+                  OpenAI models take domains without a path, so <code>docs.example.com/guides</code>{' '}
+                  covers all of <code>docs.example.com</code> there. gpt-4o-mini and gpt-4.1-mini
+                  can&rsquo;t limit sites at all, so with a list set they don&rsquo;t search.
+                </p>
               </FieldHelp>
             </Label>
             <Select

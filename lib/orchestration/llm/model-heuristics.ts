@@ -652,6 +652,37 @@ export function anthropicAdaptiveEffort(
 }
 
 /**
+ * Does this OpenAI model take the Responses API's `web_search` tool?
+ *
+ * Measured against the live API (2026-10-27): GPT-5 and its numbered releases
+ * (nano included), gpt-4.1 and gpt-4.1-mini, gpt-4o and gpt-4o-mini, and per
+ * OpenAI's docs o3 and o4-mini. gpt-4.1-nano is a 400, as are o3-mini and the
+ * older chat models. A model it doesn't recognise returns false, so the
+ * request stays on Chat Completions without search rather than 400ing.
+ *
+ * GPT-5 also refuses the tool at `minimal` reasoning effort; the routing in
+ * `openai-responses.ts` checks that, since it depends on the request.
+ */
+export function acceptsOpenAiWebSearch(modelId: string): boolean {
+  const id = bareOpenAiId(modelId);
+  if (/^gpt-4\.1-nano(?:$|-)/.test(id)) return false;
+  return /^(?:gpt-5(?:$|[-.])|gpt-4\.1(?:$|-)|gpt-4o(?:$|-(?:mini(?:$|-)|\d{4}-))|o3(?:$|-\d{4}-)|o4-mini(?:$|-))/.test(
+    id
+  );
+}
+
+/**
+ * Does this OpenAI model take `filters` (allowed / blocked sites) on its
+ * `web_search` tool? gpt-4o-mini and gpt-4.1-mini search but refuse filters
+ * with a 400 (measured 2026-10-27); every other model
+ * {@link acceptsOpenAiWebSearch} accepts takes them.
+ */
+export function acceptsOpenAiWebSearchFilters(modelId: string): boolean {
+  if (!acceptsOpenAiWebSearch(modelId)) return false;
+  return !/^gpt-4(?:o|\.1)-mini(?:$|-)/.test(bareOpenAiId(modelId));
+}
+
+/**
  * Does this model take OpenAI's `verbosity`? The GPT-5 family does; the
  * o-series and older chat models refuse it. Anchored at the start of the
  * bare id, so `openai/gpt-5-mini` and dated snapshots match and a fine-tune
