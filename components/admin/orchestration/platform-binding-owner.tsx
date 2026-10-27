@@ -83,7 +83,8 @@ export function PlatformBindingOwner({
           While the platform picks them, it keeps this agent on the strongest tool-using model this
           organisation can reach, and moves it when that changes. Saving your own provider or model
           makes them this organisation&apos;s, and the platform leaves them alone. &ldquo;Let the
-          platform choose&rdquo; hands them back.
+          platform choose&rdquo; hands them back: the agent moves at once, or on the next
+          maintenance pass if the platform can&apos;t pick just then.
         </FieldHelp>
       </p>
       {platformDecides ? (

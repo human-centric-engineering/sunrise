@@ -212,18 +212,26 @@ describe('AgentVersionHistoryTab', () => {
         "This is a platform agent, so a restore brings back only this org's settings."
       );
       // What comes back and what stays, each under its own label (t-957).
-      expect(screen.getByTestId('restore-brings-back')).toHaveTextContent(
-        'Brought back from version 2Its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept.'
-      );
+      const back = screen.getByTestId('restore-brings-back');
+      expect(within(back).getByText('Brought back from version 2')).toBeInTheDocument();
+      expect(
+        within(back).getByText(
+          'Its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept.'
+        )
+      ).toBeInTheDocument();
       // Says only what is true of everything outside the list: the platform's
       // own settings are untouched. Not "set by the platform" — capabilities
       // can be the org's, and a fork's unowned field is restored.
       const leaves = screen.getByTestId('restore-leaves');
-      expect(leaves).toHaveTextContent(
-        'Left as they areIts instructions, knowledge and the other settings the platform owns.'
-      );
-      // The binding line belongs only to a binding the platform owns.
-      expect(within(leaves).getAllByRole('listitem')).toHaveLength(1);
+      expect(within(leaves).getByText('Left as they are')).toBeInTheDocument();
+      expect(
+        within(leaves).getByText(
+          'Its instructions, knowledge and the other settings the platform owns.'
+        )
+      ).toBeInTheDocument();
+      // One thing left alone reads as a sentence, not a one-item list; the
+      // binding line belongs only to a binding the platform owns.
+      expect(within(leaves).queryByRole('list')).toBeNull();
       // The old wording promised the instructions back, which the API refuses.
       expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
     });
@@ -247,25 +255,71 @@ describe('AgentVersionHistoryTab', () => {
       await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
       const dialog = screen.getByRole('alertdialog');
 
-      expect(within(dialog).getByTestId('restore-brings-back')).toHaveTextContent(
-        'Its monthly budget and how long its conversations are kept.'
-      );
+      expect(
+        within(within(dialog).getByTestId('restore-brings-back')).getByText(
+          'Its monthly budget and how long its conversations are kept.'
+        )
+      ).toBeInTheDocument();
       expect(within(dialog).getByTestId('restore-brings-back')).not.toHaveTextContent(/provider/);
       const leftItems = within(within(dialog).getByTestId('restore-leaves')).getAllByRole(
         'listitem'
       );
       expect(leftItems.map((li) => li.textContent)).toEqual([
-        'Its provider, model and provider configuration. The platform picks these for this org, on the strongest model it can reach.',
+        'Its provider, model and provider configuration. The platform picks these for this org, on the strongest tool-using model it can reach.',
         'Its instructions, knowledge and the other settings the platform owns.',
       ]);
+    });
+
+    it('names no field both as brought back and as left alone, in either binding state', async () => {
+      const fields = ['provider', 'model', 'providerConfig', 'monthlyBudgetUsd'];
+      for (const follows of [true, false]) {
+        const user = userEvent.setup();
+        const { unmount } = render(
+          <AgentVersionHistoryTab
+            agentId={AGENT_ID}
+            platformTunableFields={fields}
+            bindingFollowsPlatform={follows}
+          />
+        );
+        await waitFor(() => expect(screen.getByText('v2')).toBeInTheDocument());
+        await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
+        const back = screen.getByTestId('restore-brings-back').textContent ?? '';
+        const left = screen.getByTestId('restore-leaves').textContent ?? '';
+        for (const phrase of ['provider configuration', 'monthly budget']) {
+          expect(back.includes(phrase) && left.includes(phrase)).toBe(false);
+        }
+        expect(back.includes('model') || left.includes('model')).toBe(true);
+        unmount();
+      }
+    });
+
+    it('says nothing tunable comes back, rather than "Its .", when every field stays', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentVersionHistoryTab
+          agentId={AGENT_ID}
+          platformTunableFields={['provider', 'model', 'providerConfig']}
+          bindingFollowsPlatform
+        />
+      );
+      await waitFor(() => expect(screen.getByText('v2')).toBeInTheDocument());
+      await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
+
+      expect(screen.getByTestId('restore-brings-back')).toHaveTextContent(
+        'None of the settings this org tunes. Only a new version entry is written.'
+      );
+      expect(screen.getByTestId('restore-brings-back')).not.toHaveTextContent('Its .');
     });
 
     it('builds the list from the prop, not a copy of it', async () => {
       const dialog = await openRestoreDialog({ platformTunableFields: ['model', 'retentionDays'] });
 
-      expect(within(dialog).getByTestId('restore-brings-back')).toHaveTextContent(
-        'Its model and how long its conversations are kept.'
-      );
+      // The prop's list, rendered in full and in the form's order.
+      expect(
+        within(within(dialog).getByTestId('restore-brings-back')).getByText(
+          'Its model and how long its conversations are kept.'
+        )
+      ).toBeInTheDocument();
       expect(dialog).not.toHaveTextContent(/monthly budget/);
     });
 

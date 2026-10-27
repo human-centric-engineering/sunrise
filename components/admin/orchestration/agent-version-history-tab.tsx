@@ -194,6 +194,16 @@ export function AgentVersionHistoryTab({
   const restoredFields = (platformTunableFields ?? []).filter(
     (f) => !bindingFollowsPlatform || !LEFT_WITH_THE_PLATFORM.has(f)
   );
+  // What it leaves alone, one line per kind: the binding (while the platform
+  // owns it), named from the route's own list, and the platform's settings.
+  const leftAlone = [
+    ...(bindingFollowsPlatform
+      ? [
+          `Its ${describeTunableFields(PLATFORM_BINDING_FIELDS, { includeProviderConfig: true })}. The platform picks these for this org, on the strongest tool-using model it can reach.`,
+        ]
+      : []),
+    'Its instructions, knowledge and the other settings the platform owns.',
+  ];
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -485,20 +495,22 @@ export function AgentVersionHistoryTab({
                       Brought back from version {restoreTarget?.version}
                     </p>
                     <p>
-                      Its {describeTunableFields(restoredFields, { includeProviderConfig: true })}.
+                      {restoredFields.length > 0
+                        ? `Its ${describeTunableFields(restoredFields, { includeProviderConfig: true })}.`
+                        : 'None of the settings this org tunes. Only a new version entry is written.'}
                     </p>
                   </div>
                   <div data-testid="restore-leaves">
                     <p className="text-foreground font-medium">Left as they are</p>
-                    <ul className="list-disc space-y-0.5 pl-5">
-                      {bindingFollowsPlatform && (
-                        <li>
-                          Its provider, model and provider configuration. The platform picks these
-                          for this org, on the strongest model it can reach.
-                        </li>
-                      )}
-                      <li>Its instructions, knowledge and the other settings the platform owns.</li>
-                    </ul>
+                    {leftAlone.length > 1 ? (
+                      <ul className="list-disc space-y-0.5 pl-5">
+                        {leftAlone.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>{leftAlone[0]}</p>
+                    )}
                   </div>
                   <p>
                     A new version entry records the restore. Conversations and cost history are not

@@ -300,7 +300,7 @@ describe('AgentForm — platform agent', () => {
         /provider configuration/
       );
       expect(within(dialog).getByTestId('restore-leaves')).toHaveTextContent(
-        'Its provider, model and provider configuration. The platform picks these for this org'
+        'Its provider, model and provider configuration. The platform picks these for this org, on the strongest tool-using model'
       );
     });
 
