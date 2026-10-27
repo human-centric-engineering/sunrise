@@ -36,7 +36,10 @@ release process.
   (`{ runs, billedSeconds, usdPerHour }`) is priced by `calculateCost` and
   stamped on the cost row: each container a reply uses is billed the larger
   of its measured run time and 5 minutes (`lib/orchestration/llm/code-execution.ts`),
-  an estimate since neither provider reports the time. On OpenAI, with code execution on, the search limit isn't sent as `max_tool_calls`, which would cap code runs too. New
+  an estimate since neither provider reports the time. On OpenAI, with code execution on, the search limit isn't sent as `max_tool_calls`, which would cap code runs too. New exports on
+  `@/lib/orchestration/llm`: `CodeExecutionOptions`, `CodeExecutionUsage`,
+  `CODE_EXECUTION_MIN_BILLED_SECONDS`, `CODE_EXECUTION_USD_PER_HOUR`,
+  `AnthropicCodeExecutionContent` and `AnthropicServerToolName`. New
   `withProviderTool()` sets one provider tool and keeps the others: turning
   web search off on the form no longer clears the whole value. **Forks:** a
   consumer that switches on `LlmReasoningBlock.type`, or reads

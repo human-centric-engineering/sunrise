@@ -279,8 +279,8 @@ export function buildResponsesParams(
   }
   if (taken.codeExecution) {
     // `auto` reuses the container a replayed `code_interpreter_call` item
-    // names (measured), and makes a new one when that has expired, where
-    // naming it would fail. No network, as on Anthropic.
+    // names, and makes a new one when that has expired (both measured), so a
+    // step resumed long after still runs. No network, as on Anthropic.
     tools.push({
       type: 'code_interpreter',
       container: { type: 'auto', network_policy: { type: 'disabled' } },
