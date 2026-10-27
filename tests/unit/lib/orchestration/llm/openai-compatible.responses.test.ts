@@ -10,6 +10,7 @@
  *   tool loop, with another provider's blocks left out
  * - Response and stream mapping (text, tool calls, blocks, usage, searches)
  * - The reasoning-summary fallback for an unverified organisation
+ * - The retry without reasoning items OpenAI can't decrypt (t-959)
  *
  * Response fixtures are shaped on live gpt-5-mini responses (2026-10-27).
  *
@@ -1049,5 +1050,121 @@ describe('reasoning summaries refused to an unverified organisation', () => {
       makeProvider().chat(ask, { model: 'gpt-5-mini', providerTools: SEARCH })
     ).rejects.toBeInstanceOf(ProviderError);
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('replayed reasoning OpenAI cannot decrypt (t-959)', () => {
+  // As the SDK raises it (measured 2026-10-27): a 400 with this code.
+  const undecryptable = () =>
+    Object.assign(
+      new Error(
+        '400 The encrypted content for item rs_1 could not be verified. Reason: Encrypted content could not be decrypted or parsed.'
+      ),
+      { status: 400, code: 'invalid_encrypted_content' }
+    );
+
+  /** A turn that continues a reply which reasoned and searched. */
+  const continuing: LlmMessage[] = [
+    ...ask,
+    {
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 'call_1', name: 'lookup_order', arguments: { id: '4471' } }],
+      reasoning: [
+        {
+          type: 'openai_reasoning',
+          id: 'rs_1',
+          encryptedContent: 'enc-from-another-org',
+          summary: [],
+        },
+        {
+          type: 'openai_web_search_call',
+          id: 'ws_1',
+          status: 'completed',
+          action: { type: 'search', queries: ['courier strike dates'] },
+        },
+      ],
+    },
+    { role: 'tool', toolCallId: 'call_1', content: 'dispatched Monday' },
+  ];
+
+  const inputTypes = (call: number) =>
+    (sentParams(call).input as Array<{ type?: string; role?: string }>).map(
+      (item) => item.type ?? item.role
+    );
+
+  it('retries once without the reasoning items, keeping the search items, and warns', async () => {
+    responsesCreateMock.mockRejectedValueOnce(undecryptable()).mockResolvedValue(makeResponse());
+
+    const res = await makeProvider().chat(continuing, {
+      model: 'gpt-5-mini',
+      providerTools: SEARCH,
+    });
+
+    expect(res.content).toBe('Strikes are on Thursday.');
+    expect(responsesCreateMock).toHaveBeenCalledTimes(2);
+    expect(inputTypes(0)).toEqual([
+      'user',
+      'reasoning',
+      'web_search_call',
+      'function_call',
+      'function_call_output',
+    ]);
+    expect(inputTypes(1)).toEqual([
+      'user',
+      'web_search_call',
+      'function_call',
+      'function_call_output',
+    ]);
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'OpenAI could not decrypt replayed reasoning; retrying without it',
+      { provider: 'openai', model: 'gpt-5-mini' }
+    );
+  });
+
+  it('does the same for a stream, which is refused before its first event', async () => {
+    responsesCreateMock
+      .mockRejectedValueOnce(undecryptable())
+      .mockResolvedValue(
+        toAsyncIterable([{ type: 'response.completed', response: makeResponse() }])
+      );
+
+    const chunks = await collect(
+      makeProvider().chatStream(continuing, { model: 'gpt-5-mini', providerTools: SEARCH })
+    );
+
+    expect(chunks.at(-1)).toMatchObject({ type: 'done' });
+    expect(inputTypes(1)).not.toContain('reasoning');
+    expect(inputTypes(1)).toContain('web_search_call');
+  });
+
+  it('raises a second refusal, without trying a third time', async () => {
+    responsesCreateMock.mockRejectedValue(undecryptable());
+
+    await expect(
+      makeProvider().chat(continuing, { model: 'gpt-5-mini', providerTools: SEARCH })
+    ).rejects.toBeInstanceOf(ProviderError);
+    expect(responsesCreateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry any other 400', async () => {
+    responsesCreateMock.mockRejectedValue(
+      Object.assign(new Error('400 Invalid domain'), { status: 400, code: 'invalid_value' })
+    );
+
+    await expect(
+      makeProvider().chat(continuing, { model: 'gpt-5-mini', providerTools: SEARCH })
+    ).rejects.toBeInstanceOf(ProviderError);
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry when the request carried no reasoning to leave out', async () => {
+    responsesCreateMock.mockRejectedValue(undecryptable());
+
+    await expect(
+      makeProvider().chat(ask, { model: 'gpt-5-mini', providerTools: SEARCH })
+    ).rejects.toBeInstanceOf(ProviderError);
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warn).not.toHaveBeenCalled();
   });
 });

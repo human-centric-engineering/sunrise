@@ -64,7 +64,11 @@ release process.
   each call, not the reply: `spendWebSearches()` now keeps the agent's whole
   limit on the new `WebSearchOptions.replyLimit`. Searches cost $0.01 each and
   show in the trace, as on Anthropic. `stopSequences` is dropped on this
-  path. **Forks:** a fork `LlmProvider` or consumer that switches on
+  path. A replayed reasoning item OpenAI can't decrypt (`400
+  invalid_encrypted_content`, as a damaged checkpoint gets) is retried once
+  without the reasoning items, keeping the search and code items; it is
+  meant for a fallback onto another organisation's credential too (t-959).
+  **Forks:** a fork `LlmProvider` or consumer that switches on
   `LlmReasoningBlock.type` meets two more variants. A fork that checks
   `agent_call` turns against its own schema must accept them, or a resumed
   OpenAI step starts again.

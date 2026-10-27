@@ -40,6 +40,10 @@
  *   `reasoning` chunks. An organisation OpenAI has not verified gets a 400 for
  *   asking; the provider class retries without them
  *   (`isSummaryVerificationError`).
+ * - **Reasoning OpenAI can't decrypt** is a 400 `invalid_encrypted_content`
+ *   (measured on changed content). The provider class retries once without
+ *   the reasoning items (`isUndecryptableReasoningError`), for a damaged
+ *   checkpoint or a fallback onto another organisation's credential.
  * - **Dropped here:** `stopSequences`, which the Responses API does not take.
  *
  * Platform-agnostic: no Next.js imports.
@@ -791,6 +795,42 @@ export function isSummaryVerificationError(err: unknown): boolean {
     node = node.cause;
   }
   return false;
+}
+
+/**
+ * Is this the 400 OpenAI returns for a replayed reasoning item it can't
+ * decrypt (`invalid_encrypted_content`: "The encrypted content for item rs_…
+ * could not be verified")? Matched on the SDK error's `code`, read down the
+ * `cause` chain as `isSummaryVerificationError` does. Measured with a
+ * reasoning item whose content was changed or never came from OpenAI.
+ * Whether another organisation's content gets the same 400 wasn't measured
+ * (it takes two organisations' keys); a damaged checkpoint and such a
+ * fallback are what the retry is for.
+ */
+export function isUndecryptableReasoningError(err: unknown): boolean {
+  let node: unknown = err;
+  for (let depth = 0; depth < 5 && node instanceof Error; depth++) {
+    if ('code' in node && node.code === 'invalid_encrypted_content') return true;
+    node = node.cause;
+  }
+  return false;
+}
+
+/**
+ * `messages` with every `openai_reasoning` block left out of the replay, or
+ * `messages` itself when none carries any. The search and code items stay:
+ * without the search items the model writes raw citation markup, and a code
+ * item keeps the container. Measured: OpenAI takes the turn this way and
+ * answers the same.
+ */
+export function withoutOpenAiReasoning(messages: LlmMessage[]): LlmMessage[] {
+  const isReasoning = (block: LlmReasoningBlock) => block.type === 'openai_reasoning';
+  if (!messages.some((message) => message.reasoning?.some(isReasoning))) return messages;
+  return messages.map((message) =>
+    message.reasoning?.some(isReasoning)
+      ? { ...message, reasoning: message.reasoning.filter((block) => !isReasoning(block)) }
+      : message
+  );
 }
 
 /**
