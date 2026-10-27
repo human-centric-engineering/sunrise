@@ -353,7 +353,10 @@ export class AnthropicProvider implements LlmProvider {
       try {
         stream = await this.client.messages.create(params, buildRequestOptions(options));
       } catch (err) {
-        throw toProviderError(err, 'Anthropic chat stream failed');
+        // The segments before a continuation were billed; carry them (#592).
+        throw priorUsage
+          ? toProviderErrorWithUsage(err, 'Anthropic chat stream failed', priorUsage)
+          : toProviderError(err, 'Anthropic chat stream failed');
       }
 
       inputTokens = 0;
@@ -813,11 +816,18 @@ export class AnthropicProvider implements LlmProvider {
       }
     }
     // Anthropic's own web search, beside the agent's tools. Not on a
-    // structured-output request answered through the extraction tool: that
-    // tool's arguments are the whole result, and the response handlers key on
-    // it being the only tool.
+    // structured-output request: through the extraction tool, that tool's
+    // arguments are the whole result and the response handlers key on it being
+    // the only tool; otherwise the JSON arrives as text, and text the model
+    // writes around a search would be joined into it.
     const webSearch = options.providerTools?.webSearch;
-    if (webSearch && !installsExtractionTool(params)) {
+    const structured = options.responseFormat !== undefined && !options.tools?.length;
+    if (webSearch && structured) {
+      logger.info('Anthropic: web search dropped, request wants structured output', {
+        provider: this.name,
+        model: options.model,
+      });
+    } else if (webSearch) {
       if (acceptsWebSearch(options.model)) {
         params.tools = [...(params.tools ?? []), toWebSearchTool(webSearch)];
       } else {

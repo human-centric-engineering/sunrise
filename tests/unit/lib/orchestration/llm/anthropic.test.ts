@@ -4113,6 +4113,36 @@ describe('AnthropicProvider — web search (t-912)', () => {
       ]);
       expect(response.content).toBe('{"a":1}');
     });
+
+    it('drops it on native structured output, where text around a search would join the JSON', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: '{"a":1}' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-opus-5-5',
+        responseFormat: {
+          type: 'json_schema',
+          name: 'out',
+          schema: { type: 'object', properties: { a: { type: 'number' } }, required: ['a'] },
+        },
+        providerTools: { webSearch: {} },
+      });
+
+      const params = sentParams();
+      expect(params.output_config.format.type).toBe('json_schema');
+      expect(params).not.toHaveProperty('tools');
+    });
+
+    it('drops it on a json_object request', async () => {
+      createMock.mockResolvedValue(endTurn([{ type: 'text', text: '{"a":1}' }]));
+
+      await makeProvider().chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-sonnet-4-6',
+        responseFormat: { type: 'json_object' },
+        providerTools: { webSearch: {} },
+      });
+
+      expect(sentParams()).not.toHaveProperty('tools');
+    });
   });
 
   describe('response', () => {
@@ -4495,6 +4525,34 @@ describe('AnthropicProvider — web search (t-912)', () => {
 
       await expect(run()).rejects.toMatchObject({
         usage: { inputTokens: 50, outputTokens: 7, webSearchRequests: 1 },
+      });
+    });
+
+    it('bills the first segment when the continuation request itself fails', async () => {
+      createMock
+        .mockResolvedValueOnce(
+          makeStream([
+            ...streamedSearch,
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'pause_turn' },
+              usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } },
+            },
+          ])
+        )
+        .mockRejectedValueOnce(new Error('overloaded'));
+
+      const run = async () => {
+        for await (const _chunk of makeProvider().chatStream([{ role: 'user', content: 'x' }], {
+          model: 'claude-sonnet-4-6',
+          providerTools: { webSearch: {} },
+        })) {
+          // drain
+        }
+      };
+
+      await expect(run()).rejects.toMatchObject({
+        usage: { inputTokens: 10, outputTokens: 7, webSearchRequests: 1 },
       });
     });
   });
