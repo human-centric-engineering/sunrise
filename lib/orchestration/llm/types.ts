@@ -442,12 +442,6 @@ export interface TranscribeOptions {
   language?: string;
   /** Free-text prompt to bias spelling / vocabulary. */
   prompt?: string;
-  /**
-   * Tools the provider runs on its own side rather than through the
-   * capability dispatcher (Anthropic web search). Sent only to providers and
-   * models that offer them; dropped elsewhere.
-   */
-  providerTools?: ProviderTools;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */
