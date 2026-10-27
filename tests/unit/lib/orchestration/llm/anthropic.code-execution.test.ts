@@ -13,7 +13,8 @@
  *   Files storage once a call ends the reply, never mid-reply
  *
  * Block shapes follow Anthropic's code execution doc and the SDK's types
- * (`@anthropic-ai/sdk` 0.137); no Anthropic key was available to measure.
+ * (`@anthropic-ai/sdk` 0.137), and were checked live on claude-haiku-5-5 and
+ * claude-sonnet-5-5 (2026-10-27).
  *
  * @see lib/orchestration/llm/anthropic.ts
  * @see lib/orchestration/llm/code-execution.ts
@@ -165,7 +166,7 @@ describe('the code execution request', () => {
       'lookup',
       'code_execution',
     ]);
-    expect(sent[0].tools[1]).toEqual({ type: 'code_execution_20250825', name: 'code_execution' });
+    expect(sent[0].tools[1]).toEqual({ type: 'code_execution_20260521', name: 'code_execution' });
     expect(sent[0]).not.toHaveProperty('container');
   });
 
@@ -381,6 +382,105 @@ describe('the files a run makes', () => {
 });
 
 describe('review fixes (t-956)', () => {
+  it('warns about a direct code_execution call it does not map, and leaves it out', async () => {
+    respondInTurn(() =>
+      message([
+        {
+          type: 'server_tool_use',
+          id: 'srvtoolu_9',
+          name: 'code_execution',
+          input: { code: 'x' },
+          caller: { type: 'direct' },
+        },
+        {
+          type: 'code_execution_tool_result',
+          tool_use_id: 'srvtoolu_9',
+          content: {
+            type: 'code_execution_result',
+            stdout: '1',
+            stderr: '',
+            return_code: 0,
+            content: [],
+          },
+        },
+        { type: 'text', text: 'Done.' },
+      ])
+    );
+
+    const res = await makeProvider().chat(ask, { model: MODEL, providerTools: CODE });
+
+    expect(res.reasoning).toBeUndefined();
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'Anthropic: code execution block not mapped, left out of the replay',
+      { type: 'server_tool_use', name: 'code_execution' }
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'Anthropic: code execution block not mapped, left out of the replay',
+      { type: 'code_execution_tool_result' }
+    );
+  });
+
+  it('warns about one in a stream too', async () => {
+    createMock.mockImplementation(() =>
+      Promise.resolve(
+        (async function* () {
+          yield {
+            type: 'message_start',
+            message: { usage: { input_tokens: 1, output_tokens: 0 } },
+          };
+          yield {
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+              type: 'server_tool_use',
+              id: 'srvtoolu_9',
+              name: 'code_execution',
+              input: {},
+            },
+          };
+          yield { type: 'content_block_stop', index: 0 };
+          yield {
+            type: 'content_block_start',
+            index: 1,
+            content_block: {
+              type: 'code_execution_tool_result',
+              tool_use_id: 'srvtoolu_9',
+              content: {
+                type: 'code_execution_result',
+                stdout: '',
+                stderr: '',
+                return_code: 0,
+                content: [],
+              },
+            },
+          };
+          yield { type: 'content_block_stop', index: 1 };
+          yield {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn' },
+            usage: { output_tokens: 1 },
+          };
+        })()
+      )
+    );
+
+    for await (const _chunk of makeProvider().chatStream(ask, {
+      model: MODEL,
+      providerTools: CODE,
+    })) {
+      // drain
+    }
+
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'Anthropic: code execution block not mapped, left out of the replay',
+      { type: 'server_tool_use', name: 'code_execution' }
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'Anthropic: code execution block not mapped, left out of the replay',
+      { type: 'code_execution_tool_result' }
+    );
+  });
+
   it('reads file names within a short timeout and the caller’s signal', async () => {
     respondInTurn(() => message([bashUse, bashResult]));
     const controller = new AbortController();

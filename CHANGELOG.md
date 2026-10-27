@@ -22,7 +22,7 @@ release process.
   gains `codeExecution` (`{}`, stored in `AiAgent.providerTools` beside
   `webSearch`), with a switch on the agent form. On Claude Opus, Sonnet and
   Haiku 4.5 and later (new `acceptsCodeExecution()`) Anthropic's
-  `code_execution_20250825` tool is sent; on OpenAI itself the request takes
+  `code_execution_20260521` tool is sent; on OpenAI itself the request takes
   the Responses API path with `code_interpreter` in a no-network container
   (new `acceptsOpenAiCodeInterpreter()`, `takenProviderTools()`,
   `codeInterpreterRefusal()`). `LlmReasoningBlock` gains

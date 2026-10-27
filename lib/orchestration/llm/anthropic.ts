@@ -22,7 +22,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type {
   BashCodeExecutionToolResultErrorCode,
-  CodeExecutionTool20250825,
+  CodeExecutionTool20260521,
   ContentBlock,
   ContentBlockParam,
   Message,
@@ -272,7 +272,8 @@ export class AnthropicProvider implements LlmProvider {
         block.type === 'server_tool_use' ||
         block.type === 'web_search_tool_result' ||
         block.type === 'bash_code_execution_tool_result' ||
-        block.type === 'text_editor_code_execution_tool_result'
+        block.type === 'text_editor_code_execution_tool_result' ||
+        block.type === 'code_execution_tool_result'
       ) {
         const serverBlock = toServerToolBlock(block, runs);
         if (serverBlock) reasoning.push(serverBlock);
@@ -468,7 +469,11 @@ export class AnthropicProvider implements LlmProvider {
                     partial: '',
                     server: true,
                   });
+                } else if (block.name === 'code_execution') {
+                  warnUnmappedCodeBlock(block.type, block.name);
                 }
+              } else if (block.type === 'code_execution_tool_result') {
+                warnUnmappedCodeBlock(block.type);
               } else if (block.type === 'web_search_tool_result') {
                 reasoningBlocks.set(
                   event.index,
@@ -1304,13 +1309,32 @@ function toServerToolBlock(
   ) {
     return toCodeExecutionResultBlock(block, runs.get(block.tool_use_id));
   }
+  if (block.type === 'code_execution_tool_result') warnUnmappedCodeBlock(block.type);
+  if (block.type === 'server_tool_use' && block.name === 'code_execution') {
+    warnUnmappedCodeBlock(block.type, block.name);
+  }
   return undefined;
 }
 
 /**
- * The server tools whose blocks a turn carries. `code_execution_20250825`
- * runs code through the two sub-tools only; the REPL `code_execution` call
- * comes with programmatic tool calling, which Sunrise doesn't turn on.
+ * Log a direct `code_execution` call or its result. The models send neither
+ * without programmatic tool calling, so one arriving means that has changed;
+ * the block is left out of the replay, which may cost the turn what the code
+ * did.
+ */
+function warnUnmappedCodeBlock(type: string, name?: string): void {
+  logger.warn('Anthropic: code execution block not mapped, left out of the replay', {
+    type,
+    ...(name ? { name } : {}),
+  });
+}
+
+/**
+ * The server tools whose blocks a turn carries. Without programmatic tool
+ * calling, which Sunrise doesn't turn on, `code_execution_20260521` runs
+ * code through the two sub-tools only (measured on claude-haiku-5-5 and
+ * claude-sonnet-5-5, 2026-10-27). A direct `code_execution` call is not
+ * mapped; `warnUnmappedCodeBlock` says if one arrives.
  */
 function isReplayedServerTool(
   name: string
@@ -1462,8 +1486,8 @@ function narrowTextEditorErrorCode(code: string): TextEditorCodeExecutionToolRes
 }
 
 /** The request's code execution server tool. */
-const CODE_EXECUTION_TOOL: CodeExecutionTool20250825 = {
-  type: 'code_execution_20250825',
+const CODE_EXECUTION_TOOL: CodeExecutionTool20260521 = {
+  type: 'code_execution_20260521',
   name: 'code_execution',
 };
 
