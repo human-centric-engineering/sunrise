@@ -112,6 +112,8 @@ One card per `AiMessage`, ordered by `createdAt asc`. Each card shows:
 - **Raw toggle** — only appears when `metadata` has at least one key. Expands a `<pre>` with `JSON.stringify(metadata, null, 2)`.
 - **Inline tool-call trace** — when an assistant message carries `provenance.capabilityCalls` (always-on for capability-using assistant turns; not gated by `includeTrace`), `<MessageTrace>` (`components/admin/orchestration/chat/message-trace.tsx`) renders a collapsible strip with one card per dispatched capability: slug, args JSON, latency, success state, optional cost, and a result preview. Pre-feature conversations and capability-free turns leave `provenance` null and the strip is absent. See `.context/orchestration/chat.md#inline-trace-annotations-admin-only` for the full wire contract.
 
+- **Reasoning panel** — when an assistant message carries `metadata.reasoningSummary`, `<ReasoningPanel>` (`components/admin/orchestration/chat/reasoning-panel.tsx`) renders a collapsed "Reasoning · N words" toggle above the content. It expands to show the model's reasoning text. Messages without a summary show no panel.
+
 `toolCallId` is on the wire type but unused by the component — the tool-call linkage is reconstructed from the denormalised `capabilityCalls[]` array on the assistant turn rather than from cross-message parent/child references.
 
 ### Download provenance bundle

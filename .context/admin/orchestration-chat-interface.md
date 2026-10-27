@@ -79,7 +79,7 @@ Hits `POST /api/v1/admin/orchestration/chat/stream` (admin-only endpoint with `c
 
 Uses `fetch` + `ReadableStream.getReader()` (not EventSource). Parses standard SSE frames (`event:` + `data:` separated by `\n\n`). Reads `delta` field from `content` events.
 
-Events handled: `start` (tracks conversationId), `content` (appends delta or buffers for animation), `content_reset` (clears accumulated text), `status` (shows inline status), `warning` (shows reconnecting banner), `capability_result` (forwards single result via callback), `capability_results` (forwards each result from parallel tools via callback), `done` (flushes animation, calls onStreamComplete), `error` (shows friendly fallback via `getUserFacingError()`).
+Events handled: `start` (tracks conversationId), `content` (appends delta or buffers for animation), `content_reset` (clears accumulated text and reasoning), `reasoning` (appends to the assistant message's reasoning; only with `showInlineTrace`), `status` (shows inline status), `warning` (shows reconnecting banner), `capability_result` (forwards single result via callback), `capability_results` (forwards each result from parallel tools via callback), `done` (flushes animation, calls onStreamComplete), `error` (shows friendly fallback via `getUserFacingError()`).
 
 Raw error text is never forwarded to the DOM. The AbortController is cleaned up on unmount.
 
@@ -114,6 +114,8 @@ Admin-only. When `true`, the chat:
 2. Routes every SSE frame through the validated parser at `components/admin/orchestration/chat/chat-events.ts` (Zod-typed) — never reads raw `parseSseBlock` output for trace fields.
 3. Accumulates traces onto the in-flight assistant message in component state.
 4. Renders `<MessageTrace>` (`components/admin/orchestration/chat/message-trace.tsx`) below the bubble: collapsed strip shows "N tools · totalLatency"; expanded view shows per-tool cards with slug pill, latency, optional cost, arguments JSON, and a result preview.
+
+5. Collects `reasoning` events onto the in-flight assistant message and renders `<ReasoningPanel>` (`components/admin/orchestration/chat/reasoning-panel.tsx`) above the bubble. While text is still streaming the label reads "Reasoning…"; afterwards it reads "Reasoning · N words". It starts collapsed. A `content_reset` clears it. Without `showInlineTrace` the server sends no `reasoning` events and the chat ignores any that arrive.
 
 The strip is also rendered post-hoc by `conversation-trace-viewer.tsx` from the persisted `metadata.toolCalls` on the terminal assistant message, so the same component covers live + replay views.
 

@@ -126,7 +126,8 @@ Concretely:
 
 8. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
 9. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `citation_missing` / `citation_hallucinated` (citation guard detected a violation in `warn_and_continue` mode), `provider_retry` (falling back to next provider), `tool_not_advertised` (the model asked for a tool the agent was never offered this turn — refused before dispatch, and also emitted as the `capability.refused_not_advertised` hook event), `tool_unavailable` (the repeated-failure circuit breaker skipped a tool). Clients should display transiently and clear when the stream ends. **The embed widget currently drops `warning` frames entirely** — its event dispatch handles `start` / `content` / `content_reset` / `status` / `citations` / `approval_required` / `error` / `done` and nothing else — so every code above is admin-surface-only today. That predates the codes added for #488 and applies to all of them equally; it is worth knowing before relying on a warning reaching an end user.
-10. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
+10. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh. Discard any buffered `reasoning` deltas too.
+11. **`reasoning`** — admin-only, sent only when the request sets `includeTrace`. Carries `delta`: readable text of the model's reasoning, before or between `content` deltas. Claude sends a summary of its thinking (the adapter asks for `display: 'summarized'`), and OpenAI-compatible providers send their `reasoning_content` / `reasoning` deltas. OpenAI's own models send nothing here: Chat Completions does not return their reasoning summaries. When a tool loop makes more than one LLM call, the first delta of each later call starts with a blank line (`\n\n`). See [Reasoning summary](#reasoning-summary-admin-only).
 
 ## Pre-token latency
 
@@ -356,6 +357,14 @@ Internal admin chat surfaces — the Learning Lab pattern advisor and quiz, the 
 **Wire-format guarantee.** The consumer route does not thread `includeTrace` into `streamChat`, even if a client sets the flag in its POST body. A regression test in `tests/unit/app/api/v1/chat/stream/route.test.ts` locks this in: a body with `includeTrace: true` must result in `streamChat()` being called without that field. If you add a new consumer-facing chat surface, follow the same pattern — leave the flag unset.
 
 **Client integration.** The shared admin parser (`components/admin/orchestration/chat/chat-events.ts`) validates every SSE block through a discriminated-union Zod schema so the new `trace` field arrives strongly typed. UI consumers should never reach into `parseSseBlock`'s `data: Record<string, unknown>` for trace fields; route them through `parseChatStreamEvent()` instead.
+
+### Reasoning summary (admin-only)
+
+Providers yield the model's readable reasoning as `{ type: 'reasoning', text }` stream chunks. The streaming handler forwards each one as a `reasoning` event only when `includeTrace` is set, so consumer and embed streams never carry it.
+
+Whether or not `includeTrace` is set, the handler collects each LLM call's reasoning text and saves it as `metadata.reasoningSummary` on the assistant message written for that call. A turn that loops through tools therefore has one summary per assistant row. A provider fallback clears the text along with the content. Only the normal assistant-message write saves the summary; the budget, approval and error paths do not. The consumer messages route returns no metadata, so the saved text stays admin-only. Message metadata is part of the subject export and is erased with its conversation.
+
+This is the readable summary only. The signed thinking blocks that a Claude tool loop replays are separate (`LlmMessage.reasoning`; see [LLM providers](./llm-providers.md)).
 
 ### Input-token breakdown on the `done` event
 
