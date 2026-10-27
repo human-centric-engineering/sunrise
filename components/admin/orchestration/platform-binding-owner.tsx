@@ -80,13 +80,10 @@ export function PlatformBindingOwner({
       <p className="flex items-center gap-1 font-medium">
         Who picks the provider and model{' '}
         <FieldHelp title="Who picks the provider and model">
-          The platform can choose this agent&apos;s provider and model for this organisation. While
-          it does, it keeps the agent on the strongest tool-using model the organisation can reach,
-          and moves it when that changes: a provider approved or revoked, a key added, a stronger
-          model switched on. Choosing a provider or model below and saving makes them this
-          organisation&apos;s, and the platform then leaves them alone. &ldquo;Let the platform
-          choose&rdquo; hands them back: the agent moves to the platform&apos;s pick straight away,
-          or, if the platform cannot pick just then, on its next maintenance pass.
+          While the platform picks them, it keeps this agent on the strongest tool-using model this
+          organisation can reach, and moves it when that changes. Saving your own provider or model
+          makes them this organisation&apos;s, and the platform leaves them alone. &ldquo;Let the
+          platform choose&rdquo; hands them back.
         </FieldHelp>
       </p>
       {platformDecides ? (

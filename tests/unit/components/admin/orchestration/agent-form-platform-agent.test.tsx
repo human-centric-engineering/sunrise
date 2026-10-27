@@ -272,8 +272,8 @@ describe('AgentForm — platform agent', () => {
 
       // The same list the API enforces (`platformAgentFieldNames('org')`),
       // including the provider configuration the form has no control for.
-      expect(dialog).toHaveTextContent(
-        "only this org's settings from version 1: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept."
+      expect(within(dialog).getByTestId('restore-brings-back')).toHaveTextContent(
+        'Its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept.'
       );
       expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
     });
@@ -293,11 +293,15 @@ describe('AgentForm — platform agent', () => {
         })
       );
 
-      expect(dialog).toHaveTextContent(
-        "only this org's settings from version 1: its fallback providers"
+      expect(within(dialog).getByTestId('restore-brings-back')).toHaveTextContent(
+        'Its fallback providers, monthly budget'
       );
-      expect(dialog).toHaveTextContent('and so are its provider, model and provider configuration');
-      expect(dialog).not.toHaveTextContent(/its fallback providers, provider configuration/);
+      expect(within(dialog).getByTestId('restore-brings-back')).not.toHaveTextContent(
+        /provider configuration/
+      );
+      expect(within(dialog).getByTestId('restore-leaves')).toHaveTextContent(
+        'Its provider, model and provider configuration. The platform picks these for this org'
+      );
     });
 
     it("keeps the full-restore wording on an org's own agent", async () => {

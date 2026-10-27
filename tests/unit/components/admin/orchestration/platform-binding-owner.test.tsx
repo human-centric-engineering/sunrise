@@ -115,7 +115,7 @@ describe('PlatformBindingOwner', () => {
     await user.click(screen.getByRole('button', { name: /more information/i }));
 
     expect(
-      await screen.findByText(/hands them back: the agent moves to the platform/i)
+      await screen.findByText(/leaves them alone\. .Let the platform choose. hands them back\./i)
     ).toBeVisible();
   });
 });

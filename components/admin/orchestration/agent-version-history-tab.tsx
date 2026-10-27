@@ -471,26 +471,46 @@ export function AgentVersionHistoryTab({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Restore to version {restoreTarget?.version}?</AlertDialogTitle>
-            <AlertDialogDescription>
+            {/* A div, not Radix's default <p>: the platform-agent wording holds lists. */}
+            <AlertDialogDescription asChild>
               {isPlatformAgent ? (
-                <>
-                  This is a platform agent, so a restore brings back only this org&apos;s settings
-                  from version {restoreTarget?.version}: its{' '}
-                  {describeTunableFields(restoredFields, { includeProviderConfig: true })}. Its
-                  instructions, knowledge and the other settings the platform owns are left as they
-                  are
-                  {bindingFollowsPlatform
-                    ? ', and so are its provider, model and provider configuration: the platform picks the provider and model for this org, and keeps them on the strongest model it can reach'
-                    : ''}
-                  . A new version entry will be created to record this action. Conversations and
-                  cost history are not affected.
-                </>
+                // Two labelled parts, so what comes back and what stays read apart (t-957).
+                <div className="space-y-3">
+                  <p>
+                    This is a platform agent, so a restore brings back only this org&apos;s
+                    settings.
+                  </p>
+                  <div data-testid="restore-brings-back">
+                    <p className="text-foreground font-medium">
+                      Brought back from version {restoreTarget?.version}
+                    </p>
+                    <p>
+                      Its {describeTunableFields(restoredFields, { includeProviderConfig: true })}.
+                    </p>
+                  </div>
+                  <div data-testid="restore-leaves">
+                    <p className="text-foreground font-medium">Left as they are</p>
+                    <ul className="list-disc space-y-0.5 pl-5">
+                      {bindingFollowsPlatform && (
+                        <li>
+                          Its provider, model and provider configuration. The platform picks these
+                          for this org, on the strongest model it can reach.
+                        </li>
+                      )}
+                      <li>Its instructions, knowledge and the other settings the platform owns.</li>
+                    </ul>
+                  </div>
+                  <p>
+                    A new version entry records the restore. Conversations and cost history are not
+                    affected.
+                  </p>
+                </div>
               ) : (
-                <>
+                <p>
                   This will revert the agent&apos;s configuration (model, instructions, settings) to
                   the state captured in version {restoreTarget?.version}. A new version entry will
                   be created to record this action. Conversations and cost history are not affected.
-                </>
+                </p>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
