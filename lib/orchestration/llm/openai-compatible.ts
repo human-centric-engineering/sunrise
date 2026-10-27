@@ -903,8 +903,12 @@ function mapToolChoice(
  */
 function reasoningDelta(delta: unknown): string | undefined {
   if (!isRecord(delta)) return undefined;
-  const text = delta.reasoning_content ?? delta.reasoning;
-  return typeof text === 'string' && text.length > 0 ? text : undefined;
+  // First non-empty one: a gateway may send `reasoning_content: ''` beside a
+  // populated `reasoning`.
+  for (const text of [delta.reasoning_content, delta.reasoning]) {
+    if (typeof text === 'string' && text.length > 0) return text;
+  }
+  return undefined;
 }
 
 function toolCallFromSdk(call: ChatCompletionMessageToolCall): LlmToolCall | null {

@@ -736,6 +736,36 @@ describe('chatStream', () => {
     ]);
   });
 
+  it('falls through an empty reasoning_content to a populated reasoning field', async () => {
+    chatCreateMock.mockResolvedValue(
+      toAsyncIterable([
+        {
+          id: 'chunk-r',
+          model: 'deepseek-reasoner',
+          choices: [
+            {
+              index: 0,
+              delta: { reasoning_content: '', reasoning: 'Step one.' },
+              finish_reason: null,
+            },
+          ],
+        },
+        makeChunk({ finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+      ])
+    );
+
+    const collected: Array<{ type: string }> = [];
+    for await (const chunk of makeProvider().chatStream([{ role: 'user', content: 'hi' }], {
+      model: 'deepseek-reasoner',
+    })) {
+      collected.push(chunk);
+    }
+
+    expect(collected.filter((c) => c.type !== 'done')).toEqual([
+      { type: 'reasoning', text: 'Step one.' },
+    ]);
+  });
+
   it('yields no reasoning chunk for a null, empty or non-string reasoning field', async () => {
     const withDelta = (delta: Record<string, unknown>) => ({
       id: 'chunk-x',

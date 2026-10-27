@@ -572,16 +572,42 @@ function AssistantMetaStrip({
   );
 }
 
+/** Apply `patch` to the trailing assistant message; a no-op when there isn't one. */
+function updateLastAssistant(
+  prev: ChatMessage[],
+  patch: (last: ChatMessage) => Partial<ChatMessage>
+): ChatMessage[] {
+  const last = prev[prev.length - 1];
+  if (!last || last.role !== 'assistant') return prev;
+  const updated = [...prev];
+  updated[updated.length - 1] = { ...last, ...patch(last) };
+  return updated;
+}
+
 function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMessage[] {
   if (traces.length === 0) return prev;
-  const updated = [...prev];
-  const last = updated[updated.length - 1];
-  if (!last || last.role !== 'assistant') return prev;
-  updated[updated.length - 1] = {
-    ...last,
+  return updateLastAssistant(prev, (last) => ({
     toolCalls: [...(last.toolCalls ?? []), ...traces],
-  };
-  return updated;
+  }));
+}
+
+/**
+ * True when `next` differs from `prev` only in the trailing message's
+ * `reasoning`. The reasoning panel is collapsed by default, so a reasoning
+ * delta changes nothing on screen and must not pull the view to the bottom.
+ */
+function onlyReasoningChanged(prev: ChatMessage[], next: ChatMessage[]): boolean {
+  if (prev === next || prev.length !== next.length || next.length === 0) return false;
+  for (let i = 0; i < next.length - 1; i++) {
+    if (prev[i] !== next[i]) return false;
+  }
+  const { reasoning: prevReasoning, ...prevRest } = prev[prev.length - 1];
+  const { reasoning: nextReasoning, ...nextRest } = next[next.length - 1];
+  if (prevReasoning === nextReasoning) return false;
+  const keys = Object.keys(nextRest) as (keyof typeof nextRest)[];
+  return (
+    keys.length === Object.keys(prevRest).length && keys.every((k) => prevRest[k] === nextRest[k])
+  );
 }
 
 /**
@@ -822,8 +848,15 @@ export function ChatInterface({
   // Scroll to bottom when messages change OR when the typing buffer
   // grows. Tracking `typing.displayText` keeps the auto-scroll in
   // sync during animated streaming without forcing a setMessages on
-  // every frame.
+  // every frame. A reasoning-only change is skipped: the panel is
+  // collapsed by default, so nothing visible moved.
+  const scrolledForRef = useRef({ messages, displayText: typing.displayText });
   useEffect(() => {
+    const prev = scrolledForRef.current;
+    scrolledForRef.current = { messages, displayText: typing.displayText };
+    if (prev.displayText === typing.displayText && onlyReasoningChanged(prev.messages, messages)) {
+      return;
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typing.displayText]);
 
@@ -883,6 +916,36 @@ export function ChatInterface({
       let fullText = '';
       const streamStartedAt = Date.now();
 
+      // Reasoning can arrive as thousands of small deltas. Writing each one
+      // into `messages` is the setState-per-tick pattern noted above, so they
+      // collect here and land at most once per frame. A pending frame is
+      // committed before any other event touches `messages`, so the reasoning
+      // still lands on the message it was streamed for.
+      let reasoningText = '';
+      let reasoningFrame: number | null = null;
+      const commitReasoning = (): void => {
+        if (reasoningFrame === null) return;
+        cancelAnimationFrame(reasoningFrame);
+        reasoningFrame = null;
+        const text = reasoningText;
+        setMessages((prev) => updateLastAssistant(prev, () => ({ reasoning: text || undefined })));
+      };
+      const scheduleReasoning = (): void => {
+        if (reasoningFrame !== null) return;
+        reasoningFrame = requestAnimationFrame(() => {
+          if (controller.signal.aborted) {
+            reasoningFrame = null;
+            return;
+          }
+          commitReasoning();
+        });
+      };
+      const resetReasoning = (): void => {
+        if (reasoningFrame !== null) cancelAnimationFrame(reasoningFrame);
+        reasoningFrame = null;
+        reasoningText = '';
+      };
+
       /** Wait until MIN_THINKING_MS has elapsed since stream start. */
       const ensureMinThinking = async (): Promise<void> => {
         const elapsed = Date.now() - streamStartedAt;
@@ -901,6 +964,12 @@ export function ChatInterface({
       const abandoned = (): boolean => controller.signal.aborted;
 
       for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+        if (attempt > 0) {
+          // The retried request re-runs the turn and streams its reasoning
+          // afresh; keeping the interrupted attempt's would show both.
+          resetReasoning();
+          setMessages((prev) => updateLastAssistant(prev, () => ({ reasoning: undefined })));
+        }
         try {
           const res = await fetch(streamEndpoint, {
             method: 'POST',
@@ -950,6 +1019,7 @@ export function ChatInterface({
               buffer = buffer.slice(sepIndex + 2);
               const parsed = parseSseBlock(block);
               if (!parsed) continue;
+              if (parsed.type !== 'reasoning') commitReasoning();
 
               if (parsed.type === 'start') {
                 const cid = parsed.data.conversationId;
@@ -962,42 +1032,23 @@ export function ChatInterface({
                 if (enableTypingAnimation) {
                   typing.appendDelta(delta);
                 } else {
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    const last = updated[updated.length - 1];
-                    if (last?.role === 'assistant') {
-                      updated[updated.length - 1] = { ...last, content: last.content + delta };
-                    }
-                    return updated;
-                  });
+                  setMessages((prev) =>
+                    updateLastAssistant(prev, (last) => ({ content: last.content + delta }))
+                  );
                 }
               } else if (parsed.type === 'reasoning') {
                 const typed = showInlineTrace ? parseChatStreamEvent(block) : null;
                 if (typed?.type === 'reasoning') {
-                  const delta = typed.delta;
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    const last = updated[updated.length - 1];
-                    if (last?.role === 'assistant') {
-                      updated[updated.length - 1] = {
-                        ...last,
-                        reasoning: (last.reasoning ?? '') + delta,
-                      };
-                    }
-                    return updated;
-                  });
+                  reasoningText += typed.delta;
+                  scheduleReasoning();
                 }
               } else if (parsed.type === 'content_reset') {
                 fullText = '';
                 typing.reset();
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === 'assistant') {
-                    updated[updated.length - 1] = { ...last, content: '', reasoning: undefined };
-                  }
-                  return updated;
-                });
+                resetReasoning();
+                setMessages((prev) =>
+                  updateLastAssistant(prev, () => ({ content: '', reasoning: undefined }))
+                );
               } else if (parsed.type === 'status' && typeof parsed.data.message === 'string') {
                 setStatus(parsed.data.message);
               } else if (parsed.type === 'capability_result') {
@@ -1047,14 +1098,7 @@ export function ChatInterface({
                 setWarning(parsed.data.message);
               } else if (parsed.type === 'citations' && Array.isArray(parsed.data.citations)) {
                 const citations = parsed.data.citations as Citation[];
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === 'assistant') {
-                    updated[updated.length - 1] = { ...last, citations };
-                  }
-                  return updated;
-                });
+                setMessages((prev) => updateLastAssistant(prev, () => ({ citations })));
               } else if (
                 parsed.type === 'approval_required' &&
                 parsed.data.pendingApproval &&
@@ -1136,6 +1180,7 @@ export function ChatInterface({
           // renderer falls back to the empty msg.content once
           // `streaming` flips false).
           typing.flush();
+          commitReasoning();
           if (fullText.length > 0) {
             setMessages((prev) => {
               const last = prev[prev.length - 1];

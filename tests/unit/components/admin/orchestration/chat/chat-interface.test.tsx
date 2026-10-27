@@ -1909,6 +1909,77 @@ describe('ChatInterface', () => {
         expect(screen.getByTestId('reasoning-panel-text')).toHaveTextContent(/^Fresh plan\.$/);
       });
 
+      it("drops the interrupted attempt's reasoning when the turn reconnects", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        const encoder = new TextEncoder();
+        // Fail on a later pull: erroring in `start` would discard the queued frames.
+        let pulls = 0;
+        const interrupted = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (pulls++ === 0) {
+              controller.enqueue(
+                encoder.encode(startFrame('conv-1', 'msg-1') + reasoningFrame('Half a thought.'))
+              );
+            } else {
+              controller.error(new TypeError('network error'));
+            }
+          },
+        });
+        const fetchMock = vi
+          .fn()
+          .mockResolvedValueOnce({ ok: true, body: interrupted })
+          .mockResolvedValueOnce({
+            ok: true,
+            body: makeSseStream([
+              startFrame('conv-1', 'msg-1'),
+              reasoningFrame('Whole thought.'),
+              contentFrame('Done.'),
+              doneFrame(),
+            ]),
+          });
+        vi.stubGlobal('fetch', fetchMock);
+        render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+        await user.type(screen.getByPlaceholderText(/type a message/i), 'help');
+        await user.click(screen.getByRole('button', { name: /send/i }));
+
+        await vi.advanceTimersByTimeAsync(2000);
+        await waitFor(() => expect(screen.getByText('Done.')).toBeInTheDocument());
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        await user.click(screen.getByRole('button', { name: /reasoning/i }));
+        expect(screen.getByTestId('reasoning-panel-text')).toHaveTextContent(/^Whole thought\.$/);
+        vi.useRealTimers();
+      });
+
+      it('does not scroll to the bottom for a reasoning-only update', async () => {
+        const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView');
+        let push: (chunk: string) => void = () => {};
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            push = (chunk) => controller.enqueue(encoder.encode(chunk));
+          },
+        });
+        const user = userEvent.setup();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+        render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+        await user.type(screen.getByPlaceholderText(/type a message/i), 'help');
+        await user.click(screen.getByRole('button', { name: /send/i }));
+
+        push(startFrame('conv-1', 'msg-1'));
+        push(reasoningFrame('First.'));
+        await waitFor(() => expect(screen.getByTestId('reasoning-panel')).toBeInTheDocument());
+        const callsBefore = scrollSpy.mock.calls.length;
+
+        push(reasoningFrame(' Second.'));
+        await waitFor(() =>
+          expect(screen.getByTestId('reasoning-panel')).toHaveTextContent('Reasoning…')
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(scrollSpy.mock.calls.length).toBe(callsBefore);
+      });
+
       it('renders no panel when showInlineTrace is off, even if a reasoning event arrives', async () => {
         await send(
           makeSseStream([

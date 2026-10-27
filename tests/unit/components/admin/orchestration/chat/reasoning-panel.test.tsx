@@ -19,6 +19,12 @@ describe('ReasoningPanel', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders nothing when the text is only whitespace', () => {
+    const { container } = render(<ReasoningPanel text={'\n\n '} />);
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('starts collapsed with a word count, and toggles the text', async () => {
     const user = userEvent.setup();
     render(<ReasoningPanel text="  Check the order status first.  " />);

@@ -35,9 +35,10 @@ export function ReasoningPanel({
   className,
 }: ReasoningPanelProps): React.ReactElement | null {
   const [open, setOpen] = useState(defaultOpen);
-  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
 
-  const words = text.trim().split(/\s+/).length;
+  const words = trimmed.split(/\s+/).length;
   const label = streaming ? 'Reasoning…' : `Reasoning · ${words} word${words === 1 ? '' : 's'}`;
 
   return (
