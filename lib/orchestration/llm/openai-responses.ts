@@ -789,9 +789,20 @@ export async function* fromResponsesStream(
  * `toProviderError` wrap the SDK's error.
  */
 export function isSummaryVerificationError(err: unknown): boolean {
+  return someInCauseChain(err, (node) =>
+    /must be verified to generate reasoning summar/i.test(node.message)
+  );
+}
+
+/**
+ * Does `test` hold for `err` or an error in its `cause` chain? `withRetry`
+ * and `toProviderError` wrap the SDK's error, so what OpenAI said is a few
+ * layers down.
+ */
+function someInCauseChain(err: unknown, test: (node: Error) => boolean): boolean {
   let node: unknown = err;
   for (let depth = 0; depth < 5 && node instanceof Error; depth++) {
-    if (/must be verified to generate reasoning summar/i.test(node.message)) return true;
+    if (test(node)) return true;
     node = node.cause;
   }
   return false;
@@ -808,23 +819,34 @@ export function isSummaryVerificationError(err: unknown): boolean {
  * fallback are what the retry is for.
  */
 export function isUndecryptableReasoningError(err: unknown): boolean {
-  let node: unknown = err;
-  for (let depth = 0; depth < 5 && node instanceof Error; depth++) {
-    if ('code' in node && node.code === 'invalid_encrypted_content') return true;
-    node = node.cause;
-  }
-  return false;
+  return someInCauseChain(
+    err,
+    (node) => 'code' in node && node.code === 'invalid_encrypted_content'
+  );
+}
+
+/** The ids of the `openai_reasoning` blocks `messages` replays. */
+export function replayedReasoningIds(messages: readonly LlmMessage[]): string[] {
+  return messages.flatMap((message) =>
+    (message.reasoning ?? []).flatMap((block) =>
+      block.type === 'openai_reasoning' ? [block.id] : []
+    )
+  );
 }
 
 /**
- * `messages` with every `openai_reasoning` block left out of the replay, or
- * `messages` itself when none carries any. The search and code items stay:
- * without the search items the model writes raw citation markup, and a code
- * item keeps the container. Measured: OpenAI takes the turn this way and
- * answers the same.
+ * `messages` with `openai_reasoning` blocks left out of the replay (those in
+ * `ids`, or every one), or `messages` itself when that leaves out none. The
+ * search and code items stay: without the search items the model writes raw
+ * citation markup, and a code item keeps the container. Measured on
+ * gpt-5-mini: OpenAI takes the turn this way and answers the same.
  */
-export function withoutOpenAiReasoning(messages: LlmMessage[]): LlmMessage[] {
-  const isReasoning = (block: LlmReasoningBlock) => block.type === 'openai_reasoning';
+export function withoutOpenAiReasoning(
+  messages: LlmMessage[],
+  ids?: ReadonlySet<string>
+): LlmMessage[] {
+  const isReasoning = (block: LlmReasoningBlock) =>
+    block.type === 'openai_reasoning' && (ids === undefined || ids.has(block.id));
   if (!messages.some((message) => message.reasoning?.some(isReasoning))) return messages;
   return messages.map((message) =>
     message.reasoning?.some(isReasoning)

@@ -1118,8 +1118,55 @@ describe('replayed reasoning OpenAI cannot decrypt (t-959)', () => {
     ]);
     expect(loggerMock.warn).toHaveBeenCalledWith(
       'OpenAI could not decrypt replayed reasoning; retrying without it',
-      { provider: 'openai', model: 'gpt-5-mini' }
+      {
+        provider: 'openai',
+        model: 'gpt-5-mini',
+        items: 1,
+        // OpenAI's own words, which name the item it couldn't verify.
+        error: expect.stringContaining('could not be verified'),
+      }
     );
+  });
+
+  it('leaves the items it was refused out of the next call up front, keeping the reply’s new reasoning', async () => {
+    responsesCreateMock.mockRejectedValueOnce(undecryptable()).mockResolvedValue(makeResponse());
+    const provider = makeProvider();
+    await provider.chat(continuing, { model: 'gpt-5-mini', providerTools: SEARCH });
+
+    // The tool loop's next call replays the refused item beside the
+    // reasoning this credential has just returned.
+    await provider.chat(
+      [
+        ...continuing,
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_2', name: 'lookup_order', arguments: { id: '4472' } }],
+          reasoning: [
+            { type: 'openai_reasoning', id: 'rs_2', encryptedContent: 'enc-own', summary: [] },
+          ],
+        },
+        { role: 'tool', toolCallId: 'call_2', content: 'dispatched Tuesday' },
+      ],
+      { model: 'gpt-5-mini', providerTools: SEARCH }
+    );
+
+    // Two requests for the first call, one for the second: no refusal first.
+    expect(responsesCreateMock).toHaveBeenCalledTimes(3);
+    const ids = (sentParams(2).input as Array<{ type?: string; id?: string }>)
+      .filter((item) => item.type === 'reasoning')
+      .map((item) => item.id);
+    expect(ids).toEqual(['rs_2']);
+  });
+
+  it('remembers refused items per provider instance, not across credentials', async () => {
+    responsesCreateMock.mockRejectedValueOnce(undecryptable()).mockResolvedValue(makeResponse());
+    await makeProvider().chat(continuing, { model: 'gpt-5-mini', providerTools: SEARCH });
+
+    // Another instance (another credential) is sent the item as it is.
+    await makeProvider().chat(continuing, { model: 'gpt-5-mini', providerTools: SEARCH });
+
+    expect(inputTypes(2)).toContain('reasoning');
   });
 
   it('does the same for a stream, which is refused before its first event', async () => {

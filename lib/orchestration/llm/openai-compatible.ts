@@ -90,6 +90,7 @@ import {
   isSummaryVerificationError,
   isUndecryptableReasoningError,
   pricedTier,
+  replayedReasoningIds,
   safeParseJson,
   takenProviderTools,
   usesResponsesApi,
@@ -188,6 +189,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * cache period, not one per request.
    */
   private summariesRefused = false;
+  /**
+   * Ids of replayed reasoning items OpenAI couldn't decrypt for this
+   * credential, left out of later requests (`withReasoningFallback`).
+   */
+  private readonly undecryptableReasoning = new Set<string>();
 
   constructor(options: OpenAiCompatibleProviderOptions) {
     if (!options.baseUrl) {
@@ -843,24 +849,36 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * a replayed reasoning item (`isUndecryptableReasoningError`), run it once
    * more with the reasoning items left out (`withoutOpenAiReasoning`), the
    * search and code items kept. A second refusal, or any other error, is
-   * raised as it is. Unlike the summary refusal nothing is remembered: the
-   * cause is in the items, not the organisation.
+   * raised as it is.
+   *
+   * The items left out are remembered on this instance (one per credential,
+   * cached 5 minutes) and left out of later requests up front: a tool loop
+   * replays them on every call that follows, and each would otherwise be
+   * refused first, then lose this credential's own reasoning with them.
    */
   private async withReasoningFallback<T>(
     messages: LlmMessage[],
     options: LlmOptions,
     run: (replayed: LlmMessage[]) => Promise<T>
   ): Promise<T> {
+    const replayed =
+      this.undecryptableReasoning.size > 0
+        ? withoutOpenAiReasoning(messages, this.undecryptableReasoning)
+        : messages;
     try {
-      return await run(messages);
+      return await run(replayed);
     } catch (err) {
-      const without = withoutOpenAiReasoning(messages);
-      if (without === messages || !isUndecryptableReasoningError(err)) throw err;
+      if (!isUndecryptableReasoningError(err)) throw err;
+      const ids = replayedReasoningIds(replayed);
+      if (ids.length === 0) throw err;
+      for (const id of ids) this.undecryptableReasoning.add(id);
       logger.warn('OpenAI could not decrypt replayed reasoning; retrying without it', {
         provider: this.name,
         model: options.model,
+        items: ids.length,
+        error: err instanceof Error ? err.message : String(err),
       });
-      return run(without);
+      return run(withoutOpenAiReasoning(replayed));
     }
   }
 
