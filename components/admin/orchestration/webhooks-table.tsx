@@ -55,6 +55,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { isStaleSave } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
@@ -155,6 +156,14 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
       setDeleting(false);
     }
   };
+
+  // Committed while the delete runs: Escape and outside clicks wait for it.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: deleting,
+    onClose: () => setDeleteTarget(null),
+    clear: deleteSave.clear,
+  });
 
   const { clear: clearRowSave, report: reportRowSave } = rowSave;
   const handleToggleActive = useCallback(
@@ -332,10 +341,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => {
-                            deleteSave.clear();
-                            setDeleteTarget(wh);
-                          }}
+                          onClick={() => setDeleteTarget(wh)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -378,15 +384,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
       )}
 
       {/* Delete confirmation */}
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete runs: Escape and outside clicks wait for it.
-          if (open || deleting) return;
-          setDeleteTarget(null);
-          deleteSave.clear();
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete subscription?</AlertDialogTitle>
@@ -399,14 +397,11 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
+            {/* Stays open on failure, so the error inside it can be read (§124). */}
             <AlertDialogAction
-              onClick={(e) => {
-                // Stays open on failure, so the error inside it can be read (§124).
-                e.preventDefault();
-                void handleDelete();
-              }}
-              disabled={deleting}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
             >
               Delete

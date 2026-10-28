@@ -15,6 +15,7 @@ import {
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 interface PendingChangeRecord {
   id: string;
@@ -158,14 +159,13 @@ export function PendingChangeModal({
     reportRejectFailure,
   ]);
 
+  // Committed while Accept or Reject runs: Escape waits for it. The failures
+  // are cleared by the load effect above, keyed on the change id, so they
+  // clear when the change shown switches as well as when the dialog opens.
+  const dialog = useCommittedDialog({ open, pending: acting !== null, onClose });
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while Accept or Reject runs: Escape waits for it.
-        if (!next && acting === null) onClose();
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -205,8 +205,8 @@ export function PendingChangeModal({
         <div className="flex justify-end gap-2">
           <Button
             variant="ghost"
-            onClick={() => void reject()}
-            disabled={acting !== null || !record}
+            {...dialog.actionProps({ disabled: !record })}
+            onClick={(e) => dialog.confirm(e, reject)}
           >
             {acting === 'reject' ? (
               <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -215,7 +215,10 @@ export function PendingChangeModal({
             )}
             Reject
           </Button>
-          <Button onClick={() => void accept()} disabled={acting !== null || !record}>
+          <Button
+            {...dialog.actionProps({ disabled: !record })}
+            onClick={(e) => dialog.confirm(e, accept)}
+          >
             {acting === 'accept' ? (
               <Loader2 className="mr-1 h-3 w-3 animate-spin" />
             ) : (

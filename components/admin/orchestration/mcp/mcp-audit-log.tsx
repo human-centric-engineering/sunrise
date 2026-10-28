@@ -43,6 +43,7 @@ import {
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { API } from '@/lib/api/endpoints';
 import {
   auditEntrySchema,
@@ -169,6 +170,15 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
     }
   }
 
+  // Committed while the purge runs: Escape waits for it.
+  const purgeDialog = useCommittedDialog({
+    open: purgeOpen,
+    pending: purging,
+    onOpen: () => setPurgeOpen(true),
+    onClose: () => setPurgeOpen(false),
+    clear: purgeFailure.clear,
+  });
+
   const hasFilters = method || responseCode || dateFrom || dateTo;
 
   return (
@@ -246,15 +256,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
 
       {/* Purge + info */}
       <div className="flex items-center gap-3">
-        <AlertDialog
-          open={purgeOpen}
-          onOpenChange={(next) => {
-            // Committed while the purge runs: Escape waits for it.
-            if (!next && purging) return;
-            purgeFailure.clear();
-            setPurgeOpen(next);
-          }}
-        >
+        <AlertDialog open={purgeOpen} onOpenChange={purgeDialog.onOpenChange}>
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={purging}>
               {purging ? 'Purging...' : 'Purge Old Logs'}
@@ -270,15 +272,12 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
             </AlertDialogHeader>
             <SaveError failure={purgeFailure.failure} />
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={purging}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel {...purgeDialog.cancelProps}>Cancel</AlertDialogCancel>
+              {/* Closes only on success, so a failure stays readable here. */}
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                disabled={purging}
-                onClick={(e) => {
-                  // Closes only on success, so a failure stays readable here.
-                  e.preventDefault();
-                  void handlePurge();
-                }}
+                {...purgeDialog.actionProps()}
+                onClick={(e) => purgeDialog.confirm(e, handlePurge)}
               >
                 Purge
               </AlertDialogAction>

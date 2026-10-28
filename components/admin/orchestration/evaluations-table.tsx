@@ -55,6 +55,7 @@ import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
@@ -248,6 +249,14 @@ export function EvaluationsTable({
     [clearArchiveSave, reportArchiveSave]
   );
 
+  // Committed while the archive runs: Escape and outside clicks wait for it.
+  const archiveDialog = useCommittedDialog({
+    open: !!archiveTarget,
+    pending: archiving,
+    onClose: () => setArchiveTarget(null),
+    clear: clearArchiveSave,
+  });
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -380,12 +389,7 @@ export function EvaluationsTable({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => {
-                              clearArchiveSave();
-                              setArchiveTarget(ev.id);
-                            }}
-                          >
+                          <DropdownMenuItem onClick={() => setArchiveTarget(ev.id)}>
                             <Archive className="mr-2 h-4 w-4" />
                             Archive
                           </DropdownMenuItem>
@@ -428,15 +432,7 @@ export function EvaluationsTable({
       </div>
 
       {/* Archive confirmation dialog */}
-      <AlertDialog
-        open={!!archiveTarget}
-        onOpenChange={(open) => {
-          // Committed while the archive runs: Escape and outside clicks wait for it.
-          if (open || archiving) return;
-          setArchiveTarget(null);
-          clearArchiveSave();
-        }}
-      >
+      <AlertDialog open={!!archiveTarget} onOpenChange={archiveDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Archive evaluation?</AlertDialogTitle>
@@ -447,14 +443,13 @@ export function EvaluationsTable({
           </AlertDialogHeader>
           <SaveError failure={archiveSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...archiveDialog.cancelProps}>Cancel</AlertDialogCancel>
+            {/* Closes only on success, so a refusal can be read inside it. */}
             <AlertDialogAction
-              disabled={archiving}
-              onClick={(e) => {
-                // Closes only on success, so a refusal can be read inside it.
-                e.preventDefault();
-                if (archiveTarget) void handleArchive(archiveTarget);
-              }}
+              {...archiveDialog.actionProps()}
+              onClick={(e) =>
+                archiveDialog.confirm(e, () => archiveTarget && handleArchive(archiveTarget))
+              }
             >
               Archive
             </AlertDialogAction>

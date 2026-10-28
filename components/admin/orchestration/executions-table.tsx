@@ -67,6 +67,7 @@ import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -274,6 +275,17 @@ export function ExecutionsTable({
     reportForceFailSave,
   ]);
 
+  // Committed while the force-fail runs; one row's failure never shows on the next.
+  const forceFailDialog = useCommittedDialog({
+    open: forceFailTarget !== null,
+    pending: forceFailSubmitting,
+    onClose: () => {
+      setForceFailTarget(null);
+      setForceFailReason('');
+    },
+    clear: clearForceFailSave,
+  });
+
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {
       month: 'short',
@@ -471,7 +483,6 @@ export function ExecutionsTable({
                                   if (!canForceFail) return;
                                   setForceFailTarget(ex);
                                   setForceFailReason('');
-                                  clearForceFailSave();
                                 }}
                                 className="text-red-600 focus:text-red-700"
                               >
@@ -496,16 +507,7 @@ export function ExecutionsTable({
         onClose={() => setLeaseInspectorId(null)}
       />
 
-      <AlertDialog
-        open={forceFailTarget !== null}
-        onOpenChange={(next) => {
-          if (!next && !forceFailSubmitting) {
-            setForceFailTarget(null);
-            setForceFailReason('');
-            clearForceFailSave();
-          }
-        }}
-      >
+      <AlertDialog open={forceFailTarget !== null} onOpenChange={forceFailDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Force-fail this execution?</AlertDialogTitle>
@@ -531,13 +533,10 @@ export function ExecutionsTable({
           </div>
           <SaveError failure={forceFailSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={forceFailSubmitting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...forceFailDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={forceFailSubmitting}
-              onClick={(e) => {
-                e.preventDefault();
-                void handleForceFailConfirm();
-              }}
+              {...forceFailDialog.actionProps()}
+              onClick={(e) => forceFailDialog.confirm(e, handleForceFailConfirm)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {forceFailSubmitting ? 'Force-failing…' : 'Force fail'}

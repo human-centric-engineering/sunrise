@@ -52,6 +52,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 interface AgentOption {
   id: string;
@@ -107,13 +108,18 @@ export function GenerateCasesButton({
     setSelectedIndices(new Set());
   }
 
-  function handleOpen(next: boolean): void {
-    // Committed while the cases are being saved: a refusal lands here.
-    if (!next && committing) return;
-    if (next) commitSave.clear();
-    else reset();
-    setOpen(next);
+  function close(): void {
+    reset();
+    setOpen(false);
   }
+
+  // Committed while the cases are being saved: a refusal lands here.
+  const dialog = useCommittedDialog({
+    open,
+    pending: committing,
+    onClose: close,
+    clear: commitSave.clear,
+  });
 
   async function handleGenerate(): Promise<void> {
     if (!agentId) {
@@ -178,7 +184,7 @@ export function GenerateCasesButton({
       // Refresh the server-rendered dataset page so the new caseCount
       // + content hash + first-N case list reflect the synth.
       router.refresh();
-      handleOpen(false);
+      close();
     } catch (err) {
       commitSave.report(err);
     } finally {
@@ -197,11 +203,11 @@ export function GenerateCasesButton({
 
   return (
     <>
-      <Button variant="outline" onClick={() => handleOpen(true)}>
+      <Button variant="outline" onClick={() => setOpen(true)}>
         <Sparkles className="mr-1.5 h-4 w-4" aria-hidden />
         Generate cases
       </Button>
-      <Dialog open={open} onOpenChange={handleOpen}>
+      <Dialog open={open} onOpenChange={dialog.onOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Generate dataset cases</DialogTitle>
@@ -243,7 +249,7 @@ export function GenerateCasesButton({
           <DialogFooter>
             {step === 'configure' ? (
               <>
-                <Button variant="ghost" onClick={() => handleOpen(false)} disabled={generating}>
+                <Button variant="ghost" onClick={close} disabled={generating}>
                   Cancel
                 </Button>
                 <Button
@@ -260,12 +266,12 @@ export function GenerateCasesButton({
               </>
             ) : (
               <>
-                <Button variant="ghost" onClick={reset} disabled={committing}>
+                <Button variant="ghost" onClick={reset} {...dialog.cancelProps}>
                   Back
                 </Button>
                 <Button
-                  onClick={() => void handleCommit()}
-                  disabled={committing || selectedIndices.size === 0}
+                  {...dialog.actionProps({ disabled: selectedIndices.size === 0 })}
+                  onClick={(e) => dialog.confirm(e, handleCommit)}
                 >
                   {committing ? (
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />

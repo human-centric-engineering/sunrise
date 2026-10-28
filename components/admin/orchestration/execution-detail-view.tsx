@@ -46,6 +46,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { API } from '@/lib/api/endpoints';
 import {
   useExecutionLivePoll,
@@ -874,6 +875,17 @@ export function ExecutionDetailView({
     }
   }, [execution.id, rejectReason, router, clearActionSave, clearRejectSave, reportRejectSave]);
 
+  // Committed while the rejection runs: Escape and outside clicks wait for it.
+  const rejectDialog = useCommittedDialog({
+    open: rejectDialogOpen,
+    pending: rejectLoading,
+    onClose: () => {
+      setRejectDialogOpen(false);
+      setRejectReason('');
+    },
+    clear: clearRejectSave,
+  });
+
   const handleRetryStep = useCallback(
     async (stepId: string) => {
       setActionLoading(true);
@@ -1052,10 +1064,7 @@ export function ExecutionDetailView({
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => {
-                clearRejectSave();
-                setRejectDialogOpen(true);
-              }}
+              onClick={() => setRejectDialogOpen(true)}
               disabled={actionLoading}
             >
               <XCircle className="mr-2 h-4 w-4" />
@@ -1461,17 +1470,7 @@ export function ExecutionDetailView({
       </section>
 
       {/* ─── Reject Dialog ───────────────────────────────────────────────── */}
-      <AlertDialog
-        open={rejectDialogOpen}
-        onOpenChange={(open) => {
-          // Committed while the rejection runs: Escape and outside clicks wait for it.
-          if (!open && !rejectLoading) {
-            setRejectDialogOpen(false);
-            setRejectReason('');
-            clearRejectSave();
-          }
-        }}
-      >
+      <AlertDialog open={rejectDialogOpen} onOpenChange={rejectDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reject execution?</AlertDialogTitle>
@@ -1499,13 +1498,10 @@ export function ExecutionDetailView({
           </div>
           <SaveError failure={rejectSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={rejectLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...rejectDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void handleReject();
-              }}
-              disabled={rejectLoading || !rejectReason.trim()}
+              {...rejectDialog.actionProps({ disabled: !rejectReason.trim() })}
+              onClick={(e) => rejectDialog.confirm(e, handleReject)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {rejectLoading ? (
@@ -1527,8 +1523,9 @@ export function ExecutionDetailView({
       <AlertDialog
         open={reviewDialogOpen}
         onOpenChange={(open) => {
-          // Only react to explicit close — matches the reject-dialog
-          // pattern and avoids a stale-handler race if Radix re-fires.
+          // Only react to explicit close — avoids a stale-handler race if
+          // Radix re-fires. `handleReview` closes this dialog before the
+          // review runs, so it is never committed to it.
           if (!open) setReviewDialogOpen(false);
         }}
       >

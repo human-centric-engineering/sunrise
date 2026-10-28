@@ -34,6 +34,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 const chunksResponseSchema = z.object({
   success: z.boolean(),
@@ -135,9 +136,6 @@ export function DocumentKeywordsModal({
   }, [documentId]);
 
   useEffect(() => {
-    // Opening (or switching document) starts clean: one document's failed
-    // enrich never shows on the next.
-    clearEnrichFailure();
     if (open && documentId) {
       void fetchKeywords();
     }
@@ -148,7 +146,7 @@ export function DocumentKeywordsModal({
       setConfirmEnrich(false);
       setEnrichResult(null);
     }
-  }, [open, documentId, fetchKeywords, clearEnrichFailure]);
+  }, [open, documentId, fetchKeywords]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -185,15 +183,18 @@ export function DocumentKeywordsModal({
     }
   }, [documentId, fetchKeywords, onEnriched, clearEnrichFailure, reportEnrichFailure]);
 
+  // Committed while the enrich runs: Escape waits for it. Opening starts
+  // clean, so one document's failed enrich never shows on the next.
+  const dialog = useCommittedDialog({
+    open,
+    pending: enriching,
+    onOpen: () => onOpenChange(true),
+    onClose: () => onOpenChange(false),
+    clear: clearEnrichFailure,
+  });
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while the enrich runs: Escape waits for it.
-        if (!next && enriching) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -297,18 +298,22 @@ export function DocumentKeywordsModal({
                   variant="ghost"
                   size="sm"
                   onClick={() => setConfirmEnrich(false)}
-                  disabled={enriching}
+                  {...dialog.cancelProps}
                 >
                   Cancel
                 </Button>
-                <Button size="sm" onClick={() => void handleEnrich()} disabled={enriching}>
+                <Button
+                  size="sm"
+                  {...dialog.actionProps()}
+                  onClick={(e) => dialog.confirm(e, handleEnrich)}
+                >
                   {enriching ? 'Enriching…' : 'Yes, overwrite'}
                 </Button>
               </span>
             </span>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={enriching}>
+              <Button variant="ghost" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
                 Close
               </Button>
               <Button onClick={() => setConfirmEnrich(true)} disabled={enriching}>

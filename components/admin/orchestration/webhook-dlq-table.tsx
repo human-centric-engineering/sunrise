@@ -49,6 +49,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -209,6 +210,15 @@ export function WebhookDlqTable({
     }
   };
 
+  // One discard dialog is open at a time (each row's trigger sets its id):
+  // committed while its discard runs, cleared each time it opens.
+  const discardDialog = useCommittedDialog({
+    open: discardId !== null,
+    pending: discardId !== null && actionId === discardId,
+    onClose: () => setDiscardId(null),
+    clear: discardSave.clear,
+  });
+
   return (
     <div className="space-y-4">
       {/* Filter bar */}
@@ -363,17 +373,13 @@ export function WebhookDlqTable({
                       </Button>
                       <AlertDialog
                         open={discardId === d.id}
-                        onOpenChange={(open) => {
-                          // Committed while the discard runs: Escape and outside clicks wait for it.
-                          if (!open && actionId === d.id) return;
-                          setDiscardId(open ? d.id : null);
-                          discardSave.clear();
-                        }}
+                        onOpenChange={discardDialog.onOpenChange}
                       >
                         <AlertDialogTrigger asChild>
                           <Button
                             variant="ghost"
                             size="icon"
+                            onClick={() => setDiscardId(d.id)}
                             disabled={actionId === d.id}
                             title="Discard from DLQ"
                           >
@@ -391,16 +397,13 @@ export function WebhookDlqTable({
                           </AlertDialogHeader>
                           <SaveError failure={discardSave.failure} />
                           <AlertDialogFooter>
-                            <AlertDialogCancel disabled={actionId === d.id}>
+                            <AlertDialogCancel {...discardDialog.cancelProps}>
                               Cancel
                             </AlertDialogCancel>
+                            {/* Closes only on success, so a refusal can be read inside it. */}
                             <AlertDialogAction
-                              disabled={actionId === d.id}
-                              onClick={(e) => {
-                                // Closes only on success, so a refusal can be read inside it.
-                                e.preventDefault();
-                                void handleDelete(d.id);
-                              }}
+                              {...discardDialog.actionProps()}
+                              onClick={(e) => discardDialog.confirm(e, () => handleDelete(d.id))}
                             >
                               Delete
                             </AlertDialogAction>

@@ -20,6 +20,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 const knowledgeDocumentSchema = z.object({
   id: z.string(),
@@ -114,14 +115,6 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
     [clearRetryFailure, reportRetryFailure]
   );
 
-  const openDelete = useCallback(
-    (doc: KnowledgeDocument | null) => {
-      clearDeleteFailure();
-      setDeleteTarget(doc);
-    },
-    [clearDeleteFailure]
-  );
-
   // The dialog stays open on failure, with the error above its buttons.
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -137,6 +130,14 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
       setDeleting(false);
     }
   }, [deleteTarget, clearDeleteFailure, reportDeleteFailure]);
+
+  // Committed while the delete runs: Escape and outside clicks wait for it.
+  const deleteDialog = useCommittedDialog({
+    open: deleteTarget !== null,
+    pending: deleting,
+    onClose: () => setDeleteTarget(null),
+    clear: clearDeleteFailure,
+  });
 
   if (loading) {
     return (
@@ -220,7 +221,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
                   />
                   Retry
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => openDelete(doc)}>
+                <Button variant="destructive" size="sm" onClick={() => setDeleteTarget(doc)}>
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                   Delete
                 </Button>
@@ -231,13 +232,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
       </div>
 
       {/* Delete confirmation modal */}
-      <Dialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          // Committed while the delete runs: Escape and outside clicks wait for it.
-          if (!open && !deleting) openDelete(null);
-        }}
-      >
+      <Dialog open={deleteTarget !== null} onOpenChange={deleteDialog.onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete document?</DialogTitle>
@@ -249,11 +244,15 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
           <SaveError failure={deleteFailure.failure} />
           <DialogFooter>
             <DialogClose asChild>
-              <Button variant="outline" disabled={deleting}>
+              <Button variant="outline" {...deleteDialog.cancelProps}>
                 Cancel
               </Button>
             </DialogClose>
-            <Button variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
+            <Button
+              variant="destructive"
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
+            >
               {deleting ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogFooter>

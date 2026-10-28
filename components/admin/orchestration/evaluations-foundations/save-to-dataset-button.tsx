@@ -45,6 +45,7 @@ import { APIClientError, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 interface DatasetOption {
   id: string;
@@ -169,34 +170,30 @@ export function SaveToDatasetButton({
     }
   }
 
-  function openDialog(): void {
-    save.clear();
-    setOpen(true);
-  }
-
   function handleClose(): void {
     setOpen(false);
     // Reset success/error on close so the modal opens fresh next time.
     // Keep `datasets` cached so we don't refetch on every open.
     setSuccess(null);
     setError(null);
-    save.clear();
   }
+
+  // Committed while saving: a refusal lands here, not in a closed dialog.
+  const dialog = useCommittedDialog({
+    open,
+    pending: submitting,
+    onOpen: () => setOpen(true),
+    onClose: handleClose,
+    clear: save.clear,
+  });
 
   return (
     <>
-      <Button size={size} variant="outline" onClick={openDialog}>
+      <Button size={size} variant="outline" onClick={() => setOpen(true)}>
         <Bookmark className="mr-1.5 h-3.5 w-3.5" aria-hidden />
         {label}
       </Button>
-      <Dialog
-        open={open}
-        onOpenChange={(o) => {
-          // Committed while saving: a refusal lands here, not in a closed dialog.
-          if (o) openDialog();
-          else if (!submitting) handleClose();
-        }}
-      >
+      <Dialog open={open} onOpenChange={dialog.onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Save to dataset</DialogTitle>
@@ -249,10 +246,13 @@ export function SaveToDatasetButton({
           {!success ? <SaveError failure={save.failure} /> : null}
           {!success ? (
             <DialogFooter>
-              <Button variant="ghost" onClick={handleClose} disabled={submitting}>
+              <Button variant="ghost" onClick={handleClose} {...dialog.cancelProps}>
                 Cancel
               </Button>
-              <Button onClick={() => void handleSave()} disabled={submitting || !datasetId}>
+              <Button
+                {...dialog.actionProps({ disabled: !datasetId })}
+                onClick={(e) => dialog.confirm(e, handleSave)}
+              >
                 {submitting ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
                 ) : null}
