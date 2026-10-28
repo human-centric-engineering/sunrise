@@ -42,8 +42,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { McpScope, ALL_MCP_SCOPES } from '@/types/mcp';
 import { apiKeyRowSchema, type ApiKeyRow } from '@/lib/validations/mcp';
 import { z } from 'zod';
@@ -76,12 +78,25 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     keyId: string;
     plaintext: string;
   } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Create and revoke fail inside their dialogs; a row's Rotate above the table.
+  const createFailure = useSaveFailure({
+    fallback: 'Could not create the API key. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const [revokeId, setRevokeId] = useState<string | null>(null);
+  const revokeFailure = useSaveFailure({
+    fallback: 'Could not revoke the key. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const listFailure = useSaveFailure({
+    fallback: 'Could not rotate the key. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   async function handleCreate() {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
     setCreating(true);
-    setError(null);
+    createFailure.clear();
     try {
       const body: Record<string, unknown> = {
         name: newKeyName.trim(),
@@ -105,32 +120,29 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setNewKeyExpiry('');
       setNewKeyRateLimit('');
     } catch (err) {
-      // A refused rate limit (§111 t-811) says what the limit is; show it.
-      setError(
-        err instanceof APIClientError && err.status === 400
-          ? err.message
-          : 'Failed to create API key.'
-      );
+      // A refused rate limit (§111 t-811) says what the limit is; it shows.
+      createFailure.report(err);
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRevoke(keyId: string) {
-    setError(null);
+    revokeFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpKeyById(keyId), {
         body: { isActive: false },
       });
       setKeys((prev) => prev.map((k) => (k.id === keyId ? { ...k, isActive: false } : k)));
-    } catch {
-      setError('Failed to revoke key.');
+      setRevokeId(null);
+    } catch (err) {
+      revokeFailure.report(err);
     }
   }
 
   async function handleRotate(keyId: string) {
     setRotatingId(keyId);
-    setError(null);
+    listFailure.clear();
     try {
       const data = await apiClient.post<{ plaintextKey: string }>(
         API.ADMIN.ORCHESTRATION.mcpKeyRotate(keyId)
@@ -142,8 +154,8 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
         params: { page: 1, limit: 50 },
       });
       setKeys(z.array(apiKeyRowSchema).parse(rawList));
-    } catch {
-      setError('Failed to rotate key.');
+    } catch (err) {
+      listFailure.report(err);
     } finally {
       setRotatingId(null);
     }
@@ -162,7 +174,6 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Rotated key plaintext dialog */}
       <Dialog
         open={rotatedPlaintext !== null}
@@ -198,6 +209,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
         open={createDialogOpen}
         onOpenChange={(open) => {
           setCreateDialogOpen(open);
+          createFailure.clear();
           if (!open) setShowPlaintext(null);
         }}
       >
@@ -308,6 +320,8 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
             </div>
           )}
 
+          <SaveError failure={createFailure.failure} />
+
           <DialogFooter>
             {!showPlaintext && (
               <Button
@@ -320,6 +334,8 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SaveError failure={listFailure.failure} />
 
       {/* Keys Table */}
       <div className="rounded-md border">
@@ -431,7 +447,13 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                             >
                               {rotatingId === key.id ? 'Rotating...' : 'Rotate'}
                             </Button>
-                            <AlertDialog>
+                            <AlertDialog
+                              open={revokeId === key.id}
+                              onOpenChange={(open) => {
+                                revokeFailure.clear();
+                                setRevokeId(open ? key.id : null);
+                              }}
+                            >
                               <AlertDialogTrigger asChild>
                                 <Button
                                   variant="ghost"
@@ -449,11 +471,16 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                                     it will lose access. This action cannot be undone.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
+                                <SaveError failure={revokeFailure.failure} />
                                 <AlertDialogFooter>
                                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                                   <AlertDialogAction
                                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                    onClick={() => void handleRevoke(key.id)}
+                                    onClick={(e) => {
+                                      // Closes only on success, so a failure stays readable here.
+                                      e.preventDefault();
+                                      void handleRevoke(key.id);
+                                    }}
                                   >
                                     Revoke
                                   </AlertDialogAction>

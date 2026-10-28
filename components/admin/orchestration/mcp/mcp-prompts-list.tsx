@@ -39,8 +39,10 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -103,7 +105,24 @@ function previewTemplate(
 export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [prompts, setPrompts] = useState(initialPrompts);
-  const [error, setError] = useState<string | null>(null);
+  // A row's toggle fails above the table; create, edit and remove inside their dialogs.
+  const listFailure = useSaveFailure({
+    fallback: 'Could not change the prompt. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const createFailure = useSaveFailure({
+    fallback: 'Could not create the prompt. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const editFailure = useSaveFailure({
+    fallback: 'Could not save the prompt. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const removeFailure = useSaveFailure({
+    fallback: 'Could not remove the prompt. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -119,26 +138,25 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
     isEnabled: true,
   });
   const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
 
   // Preview dialog
   const [previewPrompt, setPreviewPrompt] = useState<PromptRow | null>(null);
   const [previewArgs, setPreviewArgs] = useState<Record<string, string>>({});
 
   async function handleToggle(id: string, isEnabled: boolean): Promise<void> {
-    setError(null);
+    listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpPromptById(id), { body: { isEnabled } });
       setPrompts((prev) => prev.map((p) => (p.id === id ? { ...p, isEnabled } : p)));
     } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to toggle prompt.'));
+      listFailure.report(err);
     }
   }
 
   async function handleCreate(): Promise<void> {
     if (!createForm.name.trim() || !createForm.template.trim()) return;
     setCreating(true);
-    setError(null);
+    createFailure.clear();
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_PROMPTS, {
         body: {
@@ -154,7 +172,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       setCreateForm(EMPTY_CREATE_FORM);
       setCreateOpen(false);
     } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to create prompt.'));
+      // A refused cap (PROMPT_CAP_EXCEEDED) says what the cap is; it shows.
+      createFailure.report(err);
     } finally {
       setCreating(false);
     }
@@ -162,7 +181,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
 
   function openEdit(prompt: PromptRow): void {
     setEditingPrompt(prompt);
-    setEditError(null);
+    editFailure.clear();
     setEditForm({
       description: prompt.description,
       template: prompt.template,
@@ -174,7 +193,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
   async function handleEditSave(): Promise<void> {
     if (!editingPrompt) return;
     setEditSaving(true);
-    setEditError(null);
+    editFailure.clear();
     try {
       const body: Record<string, unknown> = {
         description: editForm.description.trim(),
@@ -198,19 +217,20 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       );
       setEditingPrompt(null);
     } catch (err) {
-      setEditError(extractErrorMessage(err, 'Failed to update prompt.'));
+      editFailure.report(err);
     } finally {
       setEditSaving(false);
     }
   }
 
   async function handleRemove(id: string): Promise<void> {
-    setError(null);
+    removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpPromptById(id));
       setPrompts((prev) => prev.filter((p) => p.id !== id));
+      setRemoveId(null);
     } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to remove prompt.'));
+      removeFailure.report(err);
     }
   }
 
@@ -226,13 +246,12 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-destructive text-sm">{error}</p>}
-
       {/* Create button + dialog */}
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
           setCreateOpen(open);
+          createFailure.clear();
           if (!open) setCreateForm(EMPTY_CREATE_FORM);
         }}
       >
@@ -253,6 +272,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
             includeName
             isNameImmutable={false}
           />
+          <SaveError failure={createFailure.failure} />
           <DialogFooter>
             <Button
               onClick={() => void handleCreate()}
@@ -271,7 +291,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
         onOpenChange={(open) => {
           if (!open) {
             setEditingPrompt(null);
-            setEditError(null);
+            editFailure.clear();
           }
         }}
       >
@@ -300,7 +320,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
             includeName
             isNameImmutable
           />
-          {editError && <p className="text-destructive text-sm">{editError}</p>}
+          <SaveError failure={editFailure.failure} />
           <DialogFooter>
             <Button
               onClick={() => void handleEditSave()}
@@ -387,6 +407,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
         </Card>
       )}
 
+      <SaveError failure={listFailure.failure} />
+
       {/* Table */}
       {!isEmpty && (
         <div className="rounded-md border">
@@ -448,7 +470,13 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                         >
                           Edit
                         </Button>
-                        <AlertDialog>
+                        <AlertDialog
+                          open={removeId === prompt.id}
+                          onOpenChange={(open) => {
+                            removeFailure.clear();
+                            setRemoveId(open ? prompt.id : null);
+                          }}
+                        >
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="sm" className="text-destructive text-xs">
                               Remove
@@ -464,11 +492,16 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                                 cannot be undone.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
+                            <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => void handleRemove(prompt.id)}
+                                onClick={(e) => {
+                                  // Closes only on success, so a failure stays readable here.
+                                  e.preventDefault();
+                                  void handleRemove(prompt.id);
+                                }}
                               >
                                 Remove
                               </AlertDialogAction>
@@ -654,26 +687,4 @@ function PromptFormFields({ form, onChange, includeName, isNameImmutable }: Prom
       </div>
     </div>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function extractErrorMessage(err: unknown, fallback: string): string {
-  if (
-    err !== null &&
-    typeof err === 'object' &&
-    'message' in err &&
-    typeof (err as { message?: unknown }).message === 'string'
-  ) {
-    const msg = (err as { message: string }).message;
-    if (msg) return msg;
-  }
-  // ApiClientError shape: { code, message, status }
-  if (err !== null && typeof err === 'object') {
-    const e = err as { code?: string; message?: string };
-    if (e.code === 'PROMPT_CAP_EXCEEDED' && e.message) return e.message;
-  }
-  return fallback;
 }

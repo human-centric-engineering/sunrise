@@ -33,15 +33,12 @@ const { mockApiClientGet } = vi.hoisted(() => ({
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError and apiErrorFromResponse, so a failed Accept or
+// Reject is read as it would be in the app (§124).
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: mockApiClientGet,
-  },
-  APIClientError: class APIClientError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = 'APIClientError';
-    }
   },
 }));
 
@@ -105,6 +102,8 @@ function makeAcceptRejectUrl(docId: string, changeId: string, action: 'accept' |
 describe('PendingChangeModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -277,7 +276,8 @@ describe('PendingChangeModal', () => {
       status: 500,
       json: () =>
         Promise.resolve({
-          error: { message: 'Accept operation failed on server' },
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Accept operation failed on server' },
         }),
     });
 
@@ -291,7 +291,7 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Accept/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Accept operation failed on server/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/Accept operation failed on server/i);
     });
 
     expect(onResolved).not.toHaveBeenCalled();
@@ -318,7 +318,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Accept/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Accept failed (500)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not accept the change. Try again.'
+      );
     });
   });
 
@@ -338,7 +340,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Accept/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Accept failed')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not accept the change. Try again.'
+      );
     });
   });
 
@@ -362,7 +366,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Reject/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Reject failed (422)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not reject the change. Try again.'
+      );
     });
   });
 
@@ -382,7 +388,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Reject/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Reject failed')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not reject the change. Try again.'
+      );
     });
   });
 
@@ -409,7 +417,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Accept/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Accept failed (502)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not accept the change. Try again.'
+      );
     });
   });
 
@@ -432,7 +442,9 @@ describe('PendingChangeModal', () => {
     await user.click(screen.getByRole('button', { name: /Reject/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Reject failed (502)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not reject the change. Try again.'
+      );
     });
   });
 

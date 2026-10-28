@@ -23,8 +23,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 interface ImportResult {
@@ -47,7 +49,18 @@ export function BackupPanel() {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // A failed export (a download, not a save) keeps its own box; a failed
+  // import shows in the save error directly above the drop zone.
   const [error, setError] = useState<string | null>(null);
+  const importFailure = useSaveFailure({
+    fallback: 'Could not import the backup. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const {
+    clear: clearImportFailure,
+    report: reportImportFailure,
+    show: showImportFailure,
+  } = importFailure;
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -89,6 +102,7 @@ export function BackupPanel() {
     async (file: File) => {
       setImporting(true);
       setError(null);
+      clearImportFailure();
       setImportResult(null);
 
       try {
@@ -97,7 +111,7 @@ export function BackupPanel() {
         try {
           json = JSON.parse(text);
         } catch {
-          setError('File is not valid JSON');
+          showImportFailure('File is not valid JSON');
           setImporting(false);
           return;
         }
@@ -108,16 +122,12 @@ export function BackupPanel() {
         );
         setImportResult(result);
       } catch (err) {
-        if (err instanceof APIClientError) {
-          setError(err.message);
-        } else {
-          setError(err instanceof Error ? err.message : 'Import failed');
-        }
+        reportImportFailure(err);
       } finally {
         setImporting(false);
       }
     },
-    [scopeQuery]
+    [scopeQuery, clearImportFailure, reportImportFailure, showImportFailure]
   );
 
   const onFileChange = useCallback(
@@ -210,6 +220,9 @@ export function BackupPanel() {
             it may move (§109 t-738). */}
         <div>
           <h4 className="mb-2 text-sm font-medium">Import Configuration</h4>
+          <div className="mb-2 empty:hidden">
+            <SaveError failure={importFailure.failure} />
+          </div>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -247,7 +260,7 @@ export function BackupPanel() {
           </div>
         </div>
 
-        {/* Error */}
+        {/* Export error */}
         {error && (
           <div className="flex items-start gap-2 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

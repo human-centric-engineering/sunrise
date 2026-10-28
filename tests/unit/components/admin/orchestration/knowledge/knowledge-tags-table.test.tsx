@@ -109,6 +109,8 @@ const TAG_DESC = makeTag({
 describe('KnowledgeTagsTable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
 
     // Default: refresh returns a list, tag detail returns empty usage
     vi.mocked(apiClient.get).mockResolvedValue([]);
@@ -512,7 +514,7 @@ describe('KnowledgeTagsTable', () => {
       await user.click(screen.getByRole('button', { name: /create tag/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to save the tag.')).toBeInTheDocument();
+        expect(screen.getByText('Could not save the tag. Try again.')).toBeInTheDocument();
       });
     });
 
@@ -750,7 +752,7 @@ describe('KnowledgeTagsTable', () => {
       });
     });
 
-    it('shows "Failed to delete the tag." for non-APIClientError', async () => {
+    it('shows the delete fallback for non-APIClientError', async () => {
       vi.mocked(apiClient.delete).mockRejectedValue(new Error('network failure'));
 
       const user = userEvent.setup();
@@ -760,7 +762,7 @@ describe('KnowledgeTagsTable', () => {
       await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to delete the tag.')).toBeInTheDocument();
+        expect(screen.getByText('Could not delete the tag. Try again.')).toBeInTheDocument();
       });
     });
 
@@ -860,7 +862,7 @@ describe('KnowledgeTagsTable', () => {
       });
     });
 
-    it('shows "Bulk delete failed" for non-APIClientError', async () => {
+    it('shows the bulk delete fallback for non-APIClientError', async () => {
       vi.mocked(apiClient.delete).mockRejectedValue(new Error('network error'));
 
       const user = userEvent.setup();
@@ -870,7 +872,9 @@ describe('KnowledgeTagsTable', () => {
       await user.click(screen.getByRole('button', { name: /confirm/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Bulk delete failed')).toBeInTheDocument();
+        expect(
+          screen.getByText('Could not delete the unused tags. Try again.')
+        ).toBeInTheDocument();
       });
     });
 

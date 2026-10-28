@@ -52,8 +52,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { exposedToolRowSchema, type ExposedToolRow } from '@/lib/validations/mcp';
 
 interface CapabilityRow {
@@ -120,27 +122,41 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     openWorldHint: 'unset',
   });
   const [editSaving, setEditSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Add Tool and a row's toggle fail above the table (directly below Add);
+  // edit and remove inside their dialogs.
+  const listFailure = useSaveFailure({
+    fallback: 'Could not update the tools. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const editFailure = useSaveFailure({
+    fallback: 'Could not save the tool. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const removeFailure = useSaveFailure({
+    fallback: 'Could not remove the tool. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const exposedCapabilityIds = new Set(tools.map((t) => t.capabilityId));
   const availableCapabilities = capabilities.filter((c) => !exposedCapabilityIds.has(c.id));
 
   async function handleToggle(toolId: string, isEnabled: boolean) {
-    setError(null);
+    listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
         body: { isEnabled },
       });
       setTools((prev) => prev.map((t) => (t.id === toolId ? { ...t, isEnabled } : t)));
-    } catch {
-      setError('Failed to toggle tool.');
+    } catch (err) {
+      listFailure.report(err);
     }
   }
 
   async function handleAdd() {
     if (!selectedCapabilityId) return;
     setAdding(true);
-    setError(null);
+    listFailure.clear();
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
         body: { capabilityId: selectedCapabilityId, isEnabled: false },
@@ -148,24 +164,26 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       const data = exposedToolRowSchema.parse(raw);
       setTools((prev) => [...prev, data]);
       setSelectedCapabilityId('');
-    } catch {
-      setError('Failed to add tool.');
+    } catch (err) {
+      listFailure.report(err);
     } finally {
       setAdding(false);
     }
   }
 
   async function handleRemove(toolId: string) {
-    setError(null);
+    removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpToolById(toolId));
       setTools((prev) => prev.filter((t) => t.id !== toolId));
-    } catch {
-      setError('Failed to remove tool.');
+      setRemoveId(null);
+    } catch (err) {
+      removeFailure.report(err);
     }
   }
 
   function openEdit(tool: ExposedToolRow) {
+    editFailure.clear();
     setEditingTool(tool);
     setEditForm({
       customName: tool.customName ?? '',
@@ -183,7 +201,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
   async function handleEditSave() {
     if (!editingTool) return;
     setEditSaving(true);
-    setError(null);
+    editFailure.clear();
     try {
       const body: Record<string, unknown> = {};
       const name = editForm.customName.trim();
@@ -227,8 +245,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
         )
       );
       setEditingTool(null);
-    } catch {
-      setError('Failed to save tool changes.');
+    } catch (err) {
+      editFailure.report(err);
     } finally {
       setEditSaving(false);
     }
@@ -236,12 +254,14 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Edit Tool Dialog */}
       <Dialog
         open={editingTool !== null}
         onOpenChange={(open) => {
-          if (!open) setEditingTool(null);
+          if (!open) {
+            setEditingTool(null);
+            editFailure.clear();
+          }
         }}
       >
         <DialogContent>
@@ -395,6 +415,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
               ))}
             </div>
           </div>
+          <SaveError failure={editFailure.failure} />
           <DialogFooter>
             <Button onClick={() => void handleEditSave()} disabled={editSaving}>
               {editSaving ? 'Saving...' : 'Save Changes'}
@@ -427,6 +448,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
           </Button>
         </div>
       )}
+
+      <SaveError failure={listFailure.failure} />
 
       {/* Table */}
       <div className="rounded-md border">
@@ -525,7 +548,13 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                           <Pencil className="mr-1 h-3 w-3" />
                           Edit
                         </Button>
-                        <AlertDialog>
+                        <AlertDialog
+                          open={removeId === tool.id}
+                          onOpenChange={(open) => {
+                            removeFailure.clear();
+                            setRemoveId(open ? tool.id : null);
+                          }}
+                        >
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="sm" className="text-destructive text-xs">
                               Remove
@@ -539,11 +568,16 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                                 be able to call it.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
+                            <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => void handleRemove(tool.id)}
+                                onClick={(e) => {
+                                  // Closes only on success, so a failure stays readable here.
+                                  e.preventDefault();
+                                  void handleRemove(tool.id);
+                                }}
                               >
                                 Remove
                               </AlertDialogAction>

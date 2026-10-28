@@ -24,7 +24,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { datasetHelp } from '@/components/admin/orchestration/evaluations-foundations/help-text';
 import { SampleDownloadButtons } from '@/components/admin/orchestration/evaluations-foundations/sample-download-buttons';
+import { SaveError } from '@/components/forms/form-error';
+import { APIClientError, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 const ACCEPTED_EXTENSIONS = ['.csv', '.jsonl', '.ndjson'];
 const MAX_FILE_MB = 10;
@@ -43,7 +47,12 @@ export function DatasetUploadForm(): React.ReactElement {
   const [description, setDescription] = React.useState('');
   const [tags, setTags] = React.useState('');
   const [isUploading, setIsUploading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  // Shown directly above Upload (§124): the file and name checks, and a
+  // refused upload.
+  const save = useSaveFailure({
+    fallback: 'Upload failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>): void {
     const selected = e.target.files?.[0];
@@ -53,14 +62,14 @@ export function DatasetUploadForm(): React.ReactElement {
     }
     const ext = `.${selected.name.split('.').pop()?.toLowerCase() ?? ''}`;
     if (!ACCEPTED_EXTENSIONS.includes(ext)) {
-      setError(`Unsupported file type. Use one of ${ACCEPTED_EXTENSIONS.join(', ')}.`);
+      save.show(`Unsupported file type. Use one of ${ACCEPTED_EXTENSIONS.join(', ')}.`);
       return;
     }
     if (selected.size > MAX_FILE_MB * 1024 * 1024) {
-      setError(`File exceeds ${MAX_FILE_MB} MB cap.`);
+      save.show(`File exceeds ${MAX_FILE_MB} MB cap.`);
       return;
     }
-    setError(null);
+    save.clear();
     setFile(selected);
     if (!name) {
       // Seed the name from the filename stem if the user hasn't typed one.
@@ -71,13 +80,13 @@ export function DatasetUploadForm(): React.ReactElement {
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    setError(null);
+    save.clear();
     if (!file) {
-      setError('Pick a CSV or JSONL file to upload.');
+      save.show('Pick a CSV or JSONL file to upload.');
       return;
     }
     if (!name.trim()) {
-      setError('Give the dataset a name.');
+      save.show('Give the dataset a name.');
       return;
     }
     setIsUploading(true);
@@ -93,16 +102,20 @@ export function DatasetUploadForm(): React.ReactElement {
         method: 'POST',
         body: formData,
       });
-      const payload = (await res.json()) as
-        { success: true; data: UploadResult } | { success: false; error: { message: string } };
-      if (!res.ok || !payload.success) {
-        const msg = !payload.success ? payload.error.message : `Upload failed (${res.status})`;
-        setError(msg);
-        return;
+      // A multipart upload, so its own fetch (see .context/ui/form-errors.md).
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      const payload = await parseApiResponse<UploadResult>(res);
+      if (!payload.success) {
+        throw new APIClientError(
+          payload.error.message,
+          payload.error.code,
+          res.status,
+          payload.error.details
+        );
       }
       router.push(`/admin/orchestration/evaluations/datasets/${payload.data.datasetId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      save.report(err);
     } finally {
       setIsUploading(false);
     }
@@ -212,11 +225,7 @@ export function DatasetUploadForm(): React.ReactElement {
         </CardContent>
       </Card>
 
-      {error ? (
-        <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
-          {error}
-        </div>
-      ) : null}
+      <SaveError failure={save.failure} />
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={() => router.back()} disabled={isUploading}>

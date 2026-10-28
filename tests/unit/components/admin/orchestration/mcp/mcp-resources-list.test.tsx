@@ -54,6 +54,8 @@ const originalFetch = global.fetch;
 beforeEach(() => {
   vi.clearAllMocks();
   global.fetch = mockFetch as typeof fetch;
+  // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -808,19 +810,19 @@ describe('edit dialog', () => {
     await user.click(screen.getByTestId('edit-resource-save'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Failed to update resource/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('boom');
     });
 
     // Close via Escape — drives the Dialog onOpenChange(false) callback.
     await user.keyboard('{Escape}');
 
     await waitFor(() => {
-      expect(screen.queryByText(/Failed to update resource/i)).not.toBeInTheDocument();
+      expect(screen.queryByText('boom')).not.toBeInTheDocument();
     });
 
     // Reopen — error state should not have leaked.
     await user.click(screen.getByTestId('edit-resource-r-1'));
-    expect(screen.queryByText(/Failed to update resource/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('boom')).not.toBeInTheDocument();
   });
 
   it('editing the MIME Type field sends the new value in the PATCH body', async () => {
@@ -848,7 +850,7 @@ describe('edit dialog', () => {
     });
   });
 
-  it('surfaces a generic error when PATCH fails', async () => {
+  it('surfaces the server error inside the dialog when PATCH fails', async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValueOnce({
       ok: false,
@@ -866,7 +868,7 @@ describe('edit dialog', () => {
     await user.click(screen.getByTestId('edit-resource-save'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Failed to update resource/i)).toBeInTheDocument();
+      expect(within(screen.getByRole('dialog')).getByRole('alert')).toHaveTextContent('boom');
     });
   });
 });

@@ -16,7 +16,10 @@ import {
 } from '@/components/ui/dialog';
 import { z } from 'zod';
 
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 const knowledgeDocumentSchema = z.object({
   id: z.string(),
@@ -52,9 +55,19 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [retryError, setRetryError] = useState<string | null>(null);
+  // A row's Retry failing shows above the list; a delete failing shows in its dialog.
+  const retryFailure = useSaveFailure({
+    fallback: 'Could not retry the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRetryFailure, report: reportRetryFailure } = retryFailure;
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const deleteFailure = useSaveFailure({
+    fallback: 'Could not delete the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearDeleteFailure, report: reportDeleteFailure } = deleteFailure;
 
   const fetchFailed = useCallback(async () => {
     setLoading(true);
@@ -84,43 +97,45 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
     void fetchFailed();
   }, [fetchFailed]);
 
-  const handleRetry = useCallback(async (docId: string) => {
-    setRetryingId(docId);
-    setRetryError(null);
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRetry(docId), {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const raw = apiResponseSchema.safeParse(await res.json().catch(() => null));
-        setRetryError(
-          (raw.success ? raw.data?.error?.message : null) ?? `Retry failed (${res.status})`
-        );
-        return;
+  const handleRetry = useCallback(
+    async (docId: string) => {
+      setRetryingId(docId);
+      clearRetryFailure();
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.knowledgeDocumentRetry(docId));
+        setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      } catch (err) {
+        reportRetryFailure(err);
+      } finally {
+        setRetryingId(null);
       }
-      setDocuments((prev) => prev.filter((d) => d.id !== docId));
-    } catch {
-      setRetryError('Network error — could not reach the server.');
-    } finally {
-      setRetryingId(null);
-    }
-  }, []);
+    },
+    [clearRetryFailure, reportRetryFailure]
+  );
 
+  const openDelete = useCallback(
+    (doc: KnowledgeDocument | null) => {
+      clearDeleteFailure();
+      setDeleteTarget(doc);
+    },
+    [clearDeleteFailure]
+  );
+
+  // The dialog stays open on failure, with the error above its buttons.
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    clearDeleteFailure();
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(deleteTarget.id), {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        setDocuments((prev) => prev.filter((d) => d.id !== deleteTarget.id));
-      }
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(deleteTarget.id));
+      setDocuments((prev) => prev.filter((d) => d.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      reportDeleteFailure(err);
     } finally {
       setDeleting(false);
-      setDeleteTarget(null);
     }
-  }, [deleteTarget]);
+  }, [deleteTarget, clearDeleteFailure, reportDeleteFailure]);
 
   if (loading) {
     return (
@@ -167,7 +182,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
         </Button>
       </div>
 
-      {retryError && <p className="text-destructive text-sm">{retryError}</p>}
+      <SaveError failure={retryFailure.failure} />
 
       <div className="space-y-3">
         {documents.map((doc) => (
@@ -204,7 +219,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
                   />
                   Retry
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => setDeleteTarget(doc)}>
+                <Button variant="destructive" size="sm" onClick={() => openDelete(doc)}>
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                   Delete
                 </Button>
@@ -215,7 +230,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
       </div>
 
       {/* Delete confirmation modal */}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && openDelete(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete document?</DialogTitle>
@@ -224,6 +239,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
               chunks or embeddings. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
+          <SaveError failure={deleteFailure.failure} />
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>

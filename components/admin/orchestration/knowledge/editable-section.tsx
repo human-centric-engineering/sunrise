@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Loader2, Pencil, Sparkles } from 'lucide-react';
 
+import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { apiErrorFromResponse } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { sha256Hex } from '@/lib/orchestration/knowledge/cleanup-client';
 import type { Section } from '@/lib/orchestration/knowledge/section-detection';
 
@@ -66,7 +69,14 @@ export function EditableSection({
   // Captured once at startEdit so the 409 CONTENT_MISMATCH guard can fire.
   const [baselineBody, setBaselineBody] = useState(section.body);
   const [saving, setSaving] = useState(false);
+  // A failed refine (an agent proposal, not a save). A failed save shows in
+  // the save error by Save; a 409 shows the conflict panel instead.
   const [error, setError] = useState<string | null>(null);
+  const saveFailure = useSaveFailure({
+    fallback: 'Could not save the section. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearSaveFailure, report: reportSaveFailure, show: showSaveFailure } = saveFailure;
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineInstructions, setRefineInstructions] = useState('');
@@ -83,6 +93,7 @@ export function EditableSection({
 
   const startEdit = useCallback(async () => {
     setError(null);
+    clearSaveFailure();
     setConflict(null);
     // Acquire the lock first — bail if another admin holds it.
     const ok = await acquireLock();
@@ -90,19 +101,21 @@ export function EditableSection({
     setDraft(section.body);
     setBaselineBody(section.body);
     setEditing(true);
-  }, [acquireLock, section.body]);
+  }, [acquireLock, section.body, clearSaveFailure]);
 
   const cancel = useCallback(() => {
     setEditing(false);
     setDraft(section.body);
     setError(null);
+    clearSaveFailure();
     setConflict(null);
-  }, [section.body]);
+  }, [section.body, clearSaveFailure]);
 
   const save = useCallback(
     async (overrideFingerprint?: string) => {
       setSaving(true);
       setError(null);
+      clearSaveFailure();
       try {
         const expectedFingerprint = overrideFingerprint ?? (await sha256Hex(baselineBody));
         const res = await fetch(
@@ -121,7 +134,7 @@ export function EditableSection({
           }
         );
         if (res.status === 423) {
-          setError('Another admin is editing this document. Your changes were not saved.');
+          showSaveFailure('Another admin is editing this document. Your changes were not saved.');
           return;
         }
         if (res.status === 409) {
@@ -133,22 +146,26 @@ export function EditableSection({
           setConflict({ currentBody, currentFingerprint });
           return;
         }
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(body?.error?.message ?? `Save failed (${res.status})`);
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         setEditing(false);
         setConflict(null);
         onSaved();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Save failed');
+        reportSaveFailure(err);
       } finally {
         setSaving(false);
       }
     },
-    [documentId, draft, baselineBody, section.id, onSaved]
+    [
+      documentId,
+      draft,
+      baselineBody,
+      section.id,
+      onSaved,
+      clearSaveFailure,
+      reportSaveFailure,
+      showSaveFailure,
+    ]
   );
 
   const keepMine = useCallback(() => {
@@ -166,8 +183,9 @@ export function EditableSection({
     setBaselineBody(conflict.currentBody);
     setConflict(null);
     setError(null);
+    clearSaveFailure();
     // Stay in edit mode so the admin can hand-merge if they want.
-  }, [conflict]);
+  }, [conflict, clearSaveFailure]);
 
   const refineWithAgent = useCallback(async () => {
     if (refineInstructions.trim().length === 0) return;
@@ -332,6 +350,9 @@ export function EditableSection({
           </p>
         </div>
       ) : null}
+      <div className="border-t px-3 pt-2 empty:hidden">
+        <SaveError failure={saveFailure.failure} />
+      </div>
       <div className="flex items-center justify-between border-t px-3 py-2">
         <span className="text-muted-foreground flex items-center gap-2 text-xs">
           <span>

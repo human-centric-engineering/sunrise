@@ -24,6 +24,8 @@ import { DocumentKeywordsModal } from '@/components/admin/orchestration/knowledg
 const mockFetch = vi.fn();
 beforeEach(() => {
   mockFetch.mockReset();
+  // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+  Element.prototype.scrollIntoView = vi.fn();
   global.fetch = mockFetch;
 });
 
@@ -302,10 +304,10 @@ describe('DocumentKeywordsModal', () => {
     await user.click(screen.getByRole('button', { name: /enrich keywords/i }));
     await user.click(screen.getByRole('button', { name: /yes, overwrite/i }));
 
-    // Assert: network error surfaces in the enrichError paragraph
-    await waitFor(() => {
-      expect(screen.getByText('Network failure')).toBeInTheDocument();
-    });
+    // Assert: a network failure has no server message, so the save
+    // error says what failed in its own words, not the browser's.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not enrich the keywords. Try again.');
   });
 
   it('shows generic error message when fetch throws a non-Error value', async () => {

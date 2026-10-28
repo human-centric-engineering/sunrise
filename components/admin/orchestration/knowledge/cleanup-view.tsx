@@ -27,11 +27,13 @@ import {
   TextDiffViewer,
   type DiffMode,
 } from '@/components/admin/orchestration/knowledge/text-diff-viewer';
+import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSession } from '@/lib/auth/client';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { detectSections } from '@/lib/orchestration/knowledge/section-detection';
 import { useCleanupEditLock } from '@/lib/hooks/use-cleanup-edit-lock';
 
@@ -94,7 +96,11 @@ export function CleanupView({
   const [pendingAction, setPendingAction] = useState<'commit' | 'use-original' | 'delete' | null>(
     null
   );
-  const [error, setError] = useState<string | null>(null);
+  const finaliseFailure = useSaveFailure({
+    fallback: 'Could not finish the clean up. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearFinaliseFailure, report: reportFinaliseFailure } = finaliseFailure;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [previewTab, setPreviewTab] = useState('cleaned');
   const [diffMode, setDiffMode] = useState<DiffMode>('unified');
@@ -166,7 +172,7 @@ export function CleanupView({
   const finalise = useCallback(
     async (action: 'commit' | 'use-original' | 'delete') => {
       setPendingAction(action);
-      setError(null);
+      clearFinaliseFailure();
       try {
         const res = await fetch(
           `${API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId)}/cleanup/finalise`,
@@ -176,20 +182,15 @@ export function CleanupView({
             body: JSON.stringify({ action }),
           }
         );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(errBody?.error?.message ?? `Failed (${res.status})`);
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         router.push('/admin/orchestration/knowledge');
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Action failed');
+        reportFinaliseFailure(err);
       } finally {
         setPendingAction(null);
       }
     },
-    [documentId, router]
+    [documentId, router, clearFinaliseFailure, reportFinaliseFailure]
   );
 
   const sizeLabel = useMemo(() => SIZE_CLASS_LABEL[sizeClass], [sizeClass]);
@@ -294,6 +295,12 @@ export function CleanupView({
             </Button>
           </div>
         </div>
+        {/* In the sticky header, directly below the finalise buttons. */}
+        {finaliseFailure.failure ? (
+          <div className="mt-3">
+            <SaveError failure={finaliseFailure.failure} />
+          </div>
+        ) : null}
         {!llmRewriteAllowed ? (
           <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-300/40 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -315,7 +322,6 @@ export function CleanupView({
             </span>
           </div>
         ) : null}
-        {error ? <p className="text-destructive mt-3 text-sm">{error}</p> : null}
       </header>
 
       <div className="grid gap-4 lg:grid-cols-2">

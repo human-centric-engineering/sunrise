@@ -13,8 +13,10 @@ import {
   TextDiffViewer,
   type DiffMode,
 } from '@/components/admin/orchestration/knowledge/text-diff-viewer';
+import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_REVISION_RETENTION } from '@/lib/orchestration/knowledge/revision-retention';
 
 interface RevisionRow {
@@ -76,7 +78,13 @@ export function RevisionHistory({
   const [detail, setDetail] = useState<RevisionDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [restoring, setRestoring] = useState<number | null>(null);
+  // Load errors (the list, a revision). A failed restore shows by its button.
   const [error, setError] = useState<string | null>(null);
+  const restoreFailure = useSaveFailure({
+    fallback: 'Could not restore that version. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRestoreFailure, report: reportRestoreFailure } = restoreFailure;
   const [compareTarget, setCompareTarget] = useState<CompareTarget>('previous');
   const [mode, setMode] = useState<DiffMode>('unified');
 
@@ -102,6 +110,7 @@ export function RevisionHistory({
   // The list endpoint sends metadata only — every revision row holds the whole
   // document, so content is fetched one revision at a time, on selection.
   useEffect(() => {
+    clearRestoreFailure();
     if (selectedVersion === null) {
       setDetail(null);
       return;
@@ -128,7 +137,7 @@ export function RevisionHistory({
     return () => {
       cancelled = true;
     };
-  }, [documentId, selectedVersion]);
+  }, [documentId, selectedVersion, clearRestoreFailure]);
 
   const selected = useMemo(
     () => revisions.find((r) => r.version === selectedVersion) ?? null,
@@ -138,27 +147,22 @@ export function RevisionHistory({
   const restore = useCallback(
     async (version: number) => {
       setRestoring(version);
-      setError(null);
+      clearRestoreFailure();
       try {
         const res = await fetch(
           `/api/v1/admin/orchestration/knowledge/documents/${documentId}/cleanup/revisions/${version}/restore`,
           { method: 'POST' }
         );
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(body?.error?.message ?? `Restore failed (${res.status})`);
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         onRestored();
         onAfterRestore?.();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Restore failed');
+        reportRestoreFailure(err);
       } finally {
         setRestoring(null);
       }
     },
-    [documentId, onRestored, onAfterRestore]
+    [documentId, onRestored, onAfterRestore, clearRestoreFailure, reportRestoreFailure]
   );
 
   // "previous" answers "what did this step change?"; "current" answers "what
@@ -237,6 +241,7 @@ export function RevisionHistory({
             </p>
           ) : (
             <>
+              <SaveError failure={restoreFailure.failure} />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">v{selected.version}</span>

@@ -74,6 +74,8 @@ function makeRefineUrl(docId: string) {
 describe('EditableSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -263,9 +265,13 @@ describe('EditableSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Another admin is editing/i)).toBeInTheDocument();
-    });
+    // The save error, directly above the row holding Save, focused.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Another admin is editing/i);
+    expect(alert.parentElement?.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /^Save$/i })
+    );
+    expect(alert).toHaveFocus();
 
     // Should still be in edit mode (textarea present)
     expect(document.querySelector('textarea')).not.toBeNull();
@@ -522,8 +528,7 @@ describe('EditableSection', () => {
 
   // ── Save: non-ok with no error.message ───────────────────────────────────────
 
-  it('shows "Save failed (500)" when save returns 500 with no error.message in the body', async () => {
-    // Exercises the `body?.error?.message ?? \`Save failed (${res.status})\`` fallback at L105.
+  it('shows the fallback when save returns 500 with no error envelope in the body', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -544,14 +549,13 @@ describe('EditableSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Save failed (500)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not save the section. Try again.');
     });
   });
 
   // ── Save: non-Error thrown by fetch ──────────────────────────────────────────
 
-  it('shows "Save failed" when fetch rejects with a non-Error value', async () => {
-    // Exercises the `err instanceof Error ? err.message : 'Save failed'` branch at L111.
+  it('shows the fallback when fetch rejects with a non-Error value', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue('plain string — not an Error');
 
     render(<EditableSection {...BASE_PROPS} />);
@@ -568,7 +572,7 @@ describe('EditableSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Save failed')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not save the section. Try again.');
     });
   });
 

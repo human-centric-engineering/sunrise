@@ -93,6 +93,8 @@ describe('DocumentTagsModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setupDefaultGetMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -400,9 +402,14 @@ describe('DocumentTagsModal', () => {
       await user.click(screen.getByRole('checkbox', { name: /apply tag sales/i }));
       await user.click(screen.getByRole('button', { name: /save tags/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText('Save failed')).toBeInTheDocument();
-      });
+      // Above the footer holding Save, inside the dialog, focused.
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Save failed');
+      expect(screen.getByRole('dialog')).toContainElement(alert);
+      expect(alert.nextElementSibling).toContainElement(
+        screen.getByRole('button', { name: /save tags/i })
+      );
+      expect(alert).toHaveFocus();
     });
 
     it('shows "Failed to save tags" for non-APIClientError on save', async () => {
@@ -419,7 +426,7 @@ describe('DocumentTagsModal', () => {
       await user.click(screen.getByRole('button', { name: /save tags/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to save tags')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Could not save the tags. Try again.');
       });
     });
 
@@ -587,6 +594,9 @@ describe('DocumentTagsModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Name too short')).toBeInTheDocument();
       });
+      // The summary by Create says how many; focus goes to the named input.
+      expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.');
+      await waitFor(() => expect(screen.getByLabelText(/^name$/i)).toHaveFocus());
     });
 
     it('shows generic createError when APIClientError has no field details', async () => {
@@ -607,7 +617,7 @@ describe('DocumentTagsModal', () => {
       await user.click(screen.getByRole('button', { name: /create & apply/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
       });
     });
 
@@ -627,7 +637,7 @@ describe('DocumentTagsModal', () => {
       await user.click(screen.getByRole('button', { name: /create & apply/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to create tag.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Could not create the tag. Try again.');
       });
     });
 

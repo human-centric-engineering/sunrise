@@ -74,6 +74,8 @@ const FAILED_DOCS_RESPONSE = {
 describe('ErrorsTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -158,7 +160,10 @@ describe('ErrorsTab', () => {
   it('calls retry endpoint and removes document from list on success', async () => {
     mockFetch.mockImplementation((url: string, options?: RequestInit) => {
       if (options?.method === 'POST' && url.includes('/retry')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: {} }),
+        });
       }
       return Promise.resolve({
         ok: true,
@@ -210,7 +215,10 @@ describe('ErrorsTab', () => {
   it('calls delete endpoint and removes document from list on confirm', async () => {
     mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
       if (options?.method === 'DELETE') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: {} }),
+        });
       }
       return Promise.resolve({
         ok: true,
@@ -331,7 +339,10 @@ describe('ErrorsTab', () => {
           ok: false,
           status: 422,
           json: () =>
-            Promise.resolve({ success: false, error: { message: 'Cannot retry this document' } }),
+            Promise.resolve({
+              success: false,
+              error: { code: 'CONFLICT', message: 'Cannot retry this document' },
+            }),
         });
       }
       return Promise.resolve({
@@ -349,9 +360,7 @@ describe('ErrorsTab', () => {
 
     await user.click(screen.getAllByRole('button', { name: /retry/i })[0]);
 
-    await waitFor(() => {
-      expect(screen.getByText('Cannot retry this document')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot retry this document');
   });
 
   it('shows network error when retry fetch throws', async () => {
@@ -374,9 +383,9 @@ describe('ErrorsTab', () => {
 
     await user.click(screen.getAllByRole('button', { name: /retry/i })[0]);
 
-    await waitFor(() => {
-      expect(screen.getByText('Network error — could not reach the server.')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not retry the document. Try again.'
+    );
   });
 
   // ── Single document count ─────────────────────────────────────────────────

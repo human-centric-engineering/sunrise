@@ -29,7 +29,9 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import { API } from '@/lib/api/endpoints';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
@@ -81,21 +83,24 @@ export function McpDashboard({
     initialSettings ?? DEFAULT_SETTINGS
   );
   const [toggling, setToggling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toggleFailure = useSaveFailure({
+    fallback: 'Could not turn the MCP server on or off. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   async function handleToggle(enabled: boolean) {
     const prev = settings;
     setSettings((s) => ({ ...s, isEnabled: enabled }));
     setToggling(true);
-    setError(null);
+    toggleFailure.clear();
     try {
       const raw = await apiClient.patch<unknown>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
         body: { isEnabled: enabled },
       });
       setSettings(mcpSettingsResponseSchema.parse(raw));
-    } catch {
+    } catch (err) {
       setSettings(prev);
-      setError('Failed to toggle MCP server. Please try again.');
+      toggleFailure.report(err);
     } finally {
       setToggling(false);
     }
@@ -232,7 +237,8 @@ export function McpDashboard({
             </span>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-2">
+          <SaveError failure={toggleFailure.failure} />
           <div className="flex items-center gap-3">
             <Switch
               id="mcp-enabled"
@@ -250,7 +256,6 @@ export function McpDashboard({
               working again the moment you re-enable it.
             </FieldHelp>
           </div>
-          {error && <p className="text-destructive mt-2 text-sm">{error}</p>}
         </CardContent>
       </Card>
 

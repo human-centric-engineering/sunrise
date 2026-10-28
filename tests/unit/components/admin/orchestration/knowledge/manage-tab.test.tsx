@@ -38,18 +38,15 @@ globalThis.fetch = mockFetch;
 // globalThis.fetch mock returns bare `{}` by default which would fail that parsing and
 // break every test that opens the upload dialog. Coverage of the real apiClient
 // Zod-parsing and envelope-unwrapping path lives in the apiClient unit tests.
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError and apiErrorFromResponse, so a failed action is read
+// as it would be in the app (§124).
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: vi.fn().mockResolvedValue([]),
     post: vi.fn(),
     patch: vi.fn(),
     delete: vi.fn(),
-  },
-  APIClientError: class APIClientError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = 'APIClientError';
-    }
   },
 }));
 
@@ -144,6 +141,8 @@ function getRechunkActionButton(): HTMLElement {
 describe('ManageTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     // Default: all supplementary fetches succeed with no data
     mockFetch.mockResolvedValue({
       ok: true,
@@ -275,7 +274,11 @@ describe('ManageTab', () => {
         return Promise.resolve({
           ok: false,
           status: 500,
-          json: () => Promise.resolve({ error: { message: 'Seed data not found' } }),
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'ERROR', message: 'Seed data not found' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -304,7 +307,9 @@ describe('ManageTab', () => {
     await user.click(screen.getByRole('button', { name: /load agentic design patterns/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not load the patterns. Try again.'
+      );
     });
   });
 
@@ -419,7 +424,11 @@ describe('ManageTab', () => {
         return Promise.resolve({
           ok: false,
           status: 500,
-          json: () => Promise.resolve({ error: { message: 'Provider unavailable' } }),
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'ERROR', message: 'Provider unavailable' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -473,7 +482,9 @@ describe('ManageTab', () => {
     await user.click(embedButtons[0]);
 
     await waitFor(() => {
-      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not generate the embeddings. Try again.'
+      );
     });
   });
 
@@ -783,7 +794,8 @@ describe('ManageTab', () => {
         return Promise.resolve({
           ok: false,
           status: 403,
-          json: () => Promise.resolve({ error: { message: 'Not allowed' } }),
+          json: () =>
+            Promise.resolve({ success: false, error: { code: 'ERROR', message: 'Not allowed' } }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -825,7 +837,9 @@ describe('ManageTab', () => {
     await user.click(screen.getByRole('button', { name: /^yes$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not update the document. Try again.'
+      );
     });
   });
 
@@ -838,7 +852,11 @@ describe('ManageTab', () => {
         return Promise.resolve({
           ok: false,
           status: 409,
-          json: () => Promise.resolve({ error: { message: 'Document is processing' } }),
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'ERROR', message: 'Document is processing' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -867,7 +885,9 @@ describe('ManageTab', () => {
     await user.click(getRechunkActionButton());
 
     await waitFor(() => {
-      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not update the document. Try again.'
+      );
     });
   });
 
@@ -1293,7 +1313,9 @@ describe('ManageTab', () => {
 
     // Assert: fallback error message using the status code
     await waitFor(() => {
-      expect(screen.getByText(/Load failed \(500\)/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not load the patterns. Try again.'
+      );
     });
   });
 
@@ -1333,7 +1355,9 @@ describe('ManageTab', () => {
     await user.click(embedButtons[0]);
 
     await waitFor(() => {
-      expect(screen.getByText(/Embedding failed \(503\)/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not generate the embeddings. Try again.'
+      );
     });
   });
 
@@ -1356,7 +1380,9 @@ describe('ManageTab', () => {
     await user.click(getRechunkActionButton());
 
     await waitFor(() => {
-      expect(screen.getByText(/Rechunk failed \(422\)/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not update the document. Try again.'
+      );
     });
   });
 
@@ -1385,7 +1411,9 @@ describe('ManageTab', () => {
     await user.click(screen.getByRole('button', { name: /^yes$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Delete failed \(409\)/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not update the document. Try again.'
+      );
     });
   });
 

@@ -33,9 +33,11 @@ import userEvent from '@testing-library/user-event';
 
 const { mockApiClientGet } = vi.hoisted(() => ({ mockApiClientGet: vi.fn() }));
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError and apiErrorFromResponse, so a failed restore is
+// read as it would be in the app (§124).
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: { get: mockApiClientGet },
-  APIClientError: class APIClientError extends Error {},
 }));
 
 vi.mock('@/components/admin/orchestration/knowledge/text-diff-viewer', () => ({
@@ -105,6 +107,8 @@ function arrangeApi(options: {
 describe('RevisionHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -321,7 +325,11 @@ describe('RevisionHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
-      json: () => Promise.resolve({ error: { message: 'Internal server error during restore' } }),
+      json: () =>
+        Promise.resolve({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Internal server error during restore' },
+        }),
     });
 
     render(
@@ -333,7 +341,13 @@ describe('RevisionHistory', () => {
     await user.click(screen.getByRole('button', { name: /v2/i }));
     await user.click(await screen.findByRole('button', { name: /Restore this version/i }));
 
-    expect(await screen.findByText('Internal server error during restore')).toBeInTheDocument();
+    // Directly above the row holding Restore, focused.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Internal server error during restore');
+    expect(alert.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /Restore this version/i })
+    );
+    expect(alert).toHaveFocus();
     expect(onRestored).not.toHaveBeenCalled();
     expect(onAfterRestore).not.toHaveBeenCalled();
   });

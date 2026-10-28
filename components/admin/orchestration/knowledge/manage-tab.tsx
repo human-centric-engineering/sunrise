@@ -52,7 +52,10 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { z } from 'zod';
 
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   CSV_MAX_ROW_CHARS,
@@ -250,12 +253,27 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const [seeding, setSeeding] = useState(false);
   const readOnly = useSharedSettingsReadOnly();
-  const [seedError, setSeedError] = useState<string | null>(null);
   const [embedding, setEmbedding] = useState(false);
-  const [embedError, setEmbedError] = useState<string | null>(null);
+  // Load Patterns and Generate Embeddings share a row: whichever was pressed
+  // shows its failure directly above it.
+  const seedFailure = useSaveFailure({
+    fallback: 'Could not load the patterns. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const embedFailure = useSaveFailure({
+    fallback: 'Could not generate the embeddings. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearSeedFailure, report: reportSeedFailure } = seedFailure;
+  const { clear: clearEmbedFailure, report: reportEmbedFailure } = embedFailure;
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
-  const [rechunkError, setRechunkError] = useState<string | null>(null);
+  // A row's Rechunk or Delete failing shows above the table.
+  const rowFailure = useSaveFailure({
+    fallback: 'Could not update the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRowFailure, report: reportRowFailure } = rowFailure;
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);
   const [viewKeywordsName, setViewKeywordsName] = useState<string | null>(null);
@@ -274,7 +292,6 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
   // Separate state so the Tags chip on a row opens the tag editor directly,
@@ -323,69 +340,60 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const handleSeed = useCallback(async () => {
     setSeeding(true);
-    setSeedError(null);
+    clearSeedFailure();
+    clearEmbedFailure();
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEED, { method: 'POST' });
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        setSeedError(
-          (raw.success ? raw.data?.error?.message : null) ?? `Load failed (${res.status})`
-        );
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       refreshAll();
       void fetchEmbeddingStatus();
       void fetchLastSeededAt();
-    } catch {
-      setSeedError('Network error — could not reach the server.');
+    } catch (err) {
+      reportSeedFailure(err);
     } finally {
       setSeeding(false);
     }
-  }, [refreshAll, fetchEmbeddingStatus, fetchLastSeededAt]);
+  }, [
+    refreshAll,
+    fetchEmbeddingStatus,
+    fetchLastSeededAt,
+    clearSeedFailure,
+    clearEmbedFailure,
+    reportSeedFailure,
+  ]);
 
   const handleEmbed = useCallback(async () => {
     setEmbedding(true);
-    setEmbedError(null);
+    clearSeedFailure();
+    clearEmbedFailure();
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBED, { method: 'POST' });
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        setEmbedError(
-          (raw.success ? raw.data?.error?.message : null) ?? `Embedding failed (${res.status})`
-        );
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       void fetchEmbeddingStatus();
-    } catch {
-      setEmbedError('Network error — could not reach the server.');
+    } catch (err) {
+      reportEmbedFailure(err);
     } finally {
       setEmbedding(false);
     }
-  }, [fetchEmbeddingStatus]);
+  }, [fetchEmbeddingStatus, clearSeedFailure, clearEmbedFailure, reportEmbedFailure]);
 
   const handleRechunk = useCallback(
     async (docId: string) => {
       setRechunkingId(docId);
-      setRechunkError(null);
+      clearRowFailure();
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRechunk(docId), {
           method: 'POST',
         });
-        if (!res.ok) {
-          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-          const msg =
-            (raw.success ? raw.data?.error?.message : null) ?? `Rechunk failed (${res.status})`;
-          setRechunkError(msg);
-          return;
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         refreshAll();
-      } catch {
-        setRechunkError('Network error — could not reach the server.');
+      } catch (err) {
+        reportRowFailure(err);
       } finally {
         setRechunkingId(null);
       }
     },
-    [refreshAll]
+    [refreshAll, clearRowFailure, reportRowFailure]
   );
 
   const handleDelete = useCallback(
@@ -394,28 +402,22 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
       previewRequestRef.current += 1;
       setReviewingId(null);
       setDeletingId(docId);
-      setDeleteError(null);
+      clearRowFailure();
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId), {
           method: 'DELETE',
         });
-        if (!res.ok) {
-          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-          setDeleteError(
-            (raw.success ? raw.data?.error?.message : null) ?? `Delete failed (${res.status})`
-          );
-          return;
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         refreshAll();
         void fetchEmbeddingStatus();
-      } catch {
-        setDeleteError('Network error — could not reach the server.');
+      } catch (err) {
+        reportRowFailure(err);
       } finally {
         setDeletingId(null);
         setDeleteConfirmId(null);
       }
     },
-    [refreshAll, fetchEmbeddingStatus]
+    [refreshAll, fetchEmbeddingStatus, clearRowFailure, reportRowFailure]
   );
 
   const handlePdfPreview = useCallback((data: PdfPreviewData) => {
@@ -535,6 +537,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
             <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
             Generate embeddings to enable vector search (requires an embedding provider).
           </p>
+          <SaveError failure={seedFailure.failure ?? embedFailure.failure} />
           <div className="flex flex-wrap items-center gap-3">
             {readOnly ? (
               // Loading writes the shared settings' seeded timestamp, so it is
@@ -652,8 +655,6 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
               })}
             </p>
           )}
-          {seedError && <p className="text-destructive text-sm">{seedError}</p>}
-          {embedError && <p className="text-destructive text-sm">{embedError}</p>}
           {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
             <EmbeddingStatusBanner
               providerState={providerState}
@@ -804,9 +805,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           </div>
         ) : (
           <>
-            {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
-            {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
             {reviewError && <p className="text-destructive text-sm">{reviewError}</p>}
+            <SaveError failure={rowFailure.failure} />
             <div className={`overflow-x-auto rounded-lg border ${listLoading ? 'opacity-60' : ''}`}>
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">

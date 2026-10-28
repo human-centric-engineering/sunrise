@@ -41,8 +41,10 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -120,17 +122,33 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(EMPTY_RESOURCE_FORM);
-  const [error, setError] = useState<string | null>(null);
+  // A row's toggle fails above the table; create, edit and remove inside their dialogs.
+  const listFailure = useSaveFailure({
+    fallback: 'Could not change the resource. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const createFailure = useSaveFailure({
+    fallback: 'Could not create the resource. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const editFailure = useSaveFailure({
+    fallback: 'Could not save the resource. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const removeFailure = useSaveFailure({
+    fallback: 'Could not remove the resource. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   // Edit dialog state. `editingResource` doubles as the open/closed indicator.
   const [editingResource, setEditingResource] = useState<ResourceRow | null>(null);
   const [editForm, setEditForm] = useState<EditResourceForm>(EMPTY_EDIT_FORM);
   const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
 
   function openEdit(resource: ResourceRow): void {
     setEditingResource(resource);
-    setEditError(null);
+    editFailure.clear();
     setEditForm({
       name: resource.name,
       description: resource.description,
@@ -146,7 +164,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
   async function handleEditSave(): Promise<void> {
     if (!editingResource) return;
     setEditSaving(true);
-    setEditError(null);
+    editFailure.clear();
     try {
       const body: Record<string, unknown> = {};
       const name = editForm.name.trim();
@@ -163,7 +181,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
         try {
           body.handlerConfig = JSON.parse(handlerConfigRaw);
         } catch {
-          setEditError('handlerConfig must be valid JSON (or leave blank to keep unchanged).');
+          editFailure.show('handlerConfig must be valid JSON (or leave blank to keep unchanged).');
           setEditSaving(false);
           return;
         }
@@ -194,29 +212,29 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
         )
       );
       setEditingResource(null);
-    } catch {
-      setEditError('Failed to update resource.');
+    } catch (err) {
+      editFailure.report(err);
     } finally {
       setEditSaving(false);
     }
   }
 
   async function handleToggle(resourceId: string, isEnabled: boolean) {
-    setError(null);
+    listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
         body: { isEnabled },
       });
       setResources((prev) => prev.map((r) => (r.id === resourceId ? { ...r, isEnabled } : r)));
-    } catch {
-      setError('Failed to toggle resource.');
+    } catch (err) {
+      listFailure.report(err);
     }
   }
 
   async function handleCreate() {
     if (!form.name.trim() || !form.uri.trim() || !form.resourceType) return;
     setCreating(true);
-    setError(null);
+    createFailure.clear();
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
         body: form,
@@ -225,20 +243,21 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       setResources((prev) => [...prev, data]);
       setForm(EMPTY_RESOURCE_FORM);
       setCreateOpen(false);
-    } catch {
-      setError('Failed to create resource.');
+    } catch (err) {
+      createFailure.report(err);
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRemove(resourceId: string) {
-    setError(null);
+    removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId));
       setResources((prev) => prev.filter((r) => r.id !== resourceId));
-    } catch {
-      setError('Failed to remove resource.');
+      setRemoveId(null);
+    } catch (err) {
+      removeFailure.report(err);
     }
   }
 
@@ -255,15 +274,13 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-destructive text-sm">{error}</p>}
-
       {/* Edit Resource Dialog */}
       <Dialog
         open={editingResource !== null}
         onOpenChange={(open) => {
           if (!open) {
             setEditingResource(null);
-            setEditError(null);
+            editFailure.clear();
           }
         }}
       >
@@ -331,8 +348,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                 onChange={(e) => setEditForm((f) => ({ ...f, handlerConfig: e.target.value }))}
               />
             </div>
-            {editError && <p className="text-destructive text-sm">{editError}</p>}
           </div>
+          <SaveError failure={editFailure.failure} />
           <DialogFooter>
             <Button
               onClick={() => void handleEditSave()}
@@ -350,6 +367,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
         open={createOpen}
         onOpenChange={(open) => {
           setCreateOpen(open);
+          createFailure.clear();
           if (!open) setForm(EMPTY_RESOURCE_FORM);
         }}
       >
@@ -441,6 +459,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
               />
             </div>
           </div>
+          <SaveError failure={createFailure.failure} />
           <DialogFooter>
             <Button
               onClick={() => void handleCreate()}
@@ -494,6 +513,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
           </CardContent>
         </Card>
       )}
+
+      <SaveError failure={listFailure.failure} />
 
       {/* Table */}
       {!isEmpty && (
@@ -566,7 +587,13 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                       >
                         Edit
                       </Button>
-                      <AlertDialog>
+                      <AlertDialog
+                        open={removeId === resource.id}
+                        onOpenChange={(open) => {
+                          removeFailure.clear();
+                          setRemoveId(open ? resource.id : null);
+                        }}
+                      >
                         <AlertDialogTrigger asChild>
                           <Button variant="ghost" size="sm" className="text-destructive text-xs">
                             Remove
@@ -580,11 +607,16 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                               longer be able to read it.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
+                          <SaveError failure={removeFailure.failure} />
                           <AlertDialogFooter>
                             <AlertDialogCancel>Cancel</AlertDialogCancel>
                             <AlertDialogAction
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => void handleRemove(resource.id)}
+                              onClick={(e) => {
+                                // Closes only on success, so a failure stays readable here.
+                                e.preventDefault();
+                                void handleRemove(resource.id);
+                              }}
                             >
                               Remove
                             </AlertDialogAction>

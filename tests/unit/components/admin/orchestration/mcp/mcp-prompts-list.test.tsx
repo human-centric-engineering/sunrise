@@ -31,6 +31,8 @@ const originalFetch = global.fetch;
 beforeEach(() => {
   vi.clearAllMocks();
   global.fetch = mockFetch as typeof fetch;
+  // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -168,8 +170,8 @@ describe('toggle handler', () => {
     await user.click(screen.getByRole('switch', { name: /Enable analyze-pattern/i }));
 
     await waitFor(() => {
-      // extractErrorMessage returns the API message when present, else the fallback.
-      expect(screen.getByText(/boom|Failed to toggle prompt/i)).toBeInTheDocument();
+      // The server's message, in the save error above the table.
+      expect(screen.getByRole('alert')).toHaveTextContent('boom');
     });
   });
 });
@@ -268,7 +270,7 @@ describe('create flow', () => {
     await user.click(screen.getByTestId('create-prompt-submit'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Cap exceeded|Failed to create prompt/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Cap exceeded');
     });
     // Dialog still open.
     expect(screen.getByText(/Create MCP Prompt/i)).toBeInTheDocument();
@@ -405,7 +407,7 @@ describe('edit flow', () => {
     await user.click(screen.getByTestId('edit-prompt-save'));
 
     await waitFor(() => {
-      expect(screen.getByText(/server unavailable|Failed to update prompt/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('server unavailable');
     });
   });
 });
@@ -497,8 +499,7 @@ describe('error extraction', () => {
     await user.type(screen.getByTestId('prompt-name-input'), 'my-prompt');
     await user.type(screen.getByLabelText(/Template/i), 'hello');
 
-    // APIClientError preserves the error.code from the API response body,
-    // which extractErrorMessage uses to render the cap message verbatim.
+    // The cap message is the server's own, and every save shows that.
     mockNotOk(
       409,
       'Cannot create another enabled prompt — the limit of 200 has been reached.',
@@ -803,7 +804,7 @@ describe('create flow: result placement and failure modes', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('shows the fallback message when the API error carries no message', async () => {
+  it('shows the fallback message when the API sent no error envelope', async () => {
     const user = userEvent.setup();
     render(<McpPromptsList initialPrompts={[]} />);
 
@@ -811,10 +812,18 @@ describe('create flow: result placement and failure modes', () => {
     await user.type(screen.getByTestId('prompt-name-input'), 'my-prompt');
     await user.type(screen.getByLabelText(/Template/i), 'hello');
 
-    mockNotOk(500, '');
+    // A 502 from a proxy: no JSON, so the server never explained it.
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    });
     await user.click(screen.getByTestId('create-prompt-submit'));
 
-    expect(await screen.findByText('Failed to create prompt.')).toBeInTheDocument();
+    expect(await screen.findByText('Could not create the prompt. Try again.')).toBeInTheDocument();
     // Dialog stays open and nothing was added to the table.
     expect(screen.getByText(/Create MCP Prompt/i)).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
@@ -834,7 +843,10 @@ describe('create flow: result placement and failure modes', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Create MCP Prompt/i)).toBeInTheDocument();
-      expect(screen.getByText(/invalid/i)).toBeInTheDocument();
+      // A response that doesn't parse is not the server's message: the fallback shows.
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not create the prompt. Try again.'
+      );
     });
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });

@@ -28,21 +28,22 @@ vi.mock('next/navigation', () => ({
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-// apiClient.get is used for the tags fetch and apiClient.post for inline tag creation
-vi.mock('@/lib/api/client', () => ({
-  apiClient: {
-    get: vi.fn().mockResolvedValue([]),
-    post: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
-  APIClientError: class APIClientError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = 'APIClientError';
-    }
-  },
-}));
+// apiClient.get is used for the tags fetch and apiClient.post for inline tag
+// creation and the URL fetch. The real APIClientError and
+// apiErrorFromResponse, so a failed upload is read as it would be in the app;
+// `post` sends through the real client (onto mockFetch) unless a test stubs it.
+vi.mock('@/lib/api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/client')>();
+  return {
+    ...actual,
+    apiClient: {
+      get: vi.fn().mockResolvedValue([]),
+      post: vi.fn(actual.apiClient.post),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    },
+  };
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,10 +72,16 @@ function setupDefaultMocks() {
 describe('DocumentUploadZone', () => {
   const onUploadComplete = vi.fn();
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     setupDefaultMocks();
     mockPush.mockReset();
+    // A test that stubs `post` (inline tag creation) must not leak into the next.
+    const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockImplementation(actual.apiClient.post);
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   it('renders the drop zone', async () => {
@@ -551,7 +558,12 @@ describe('DocumentUploadZone', () => {
       if (options?.method === 'POST') {
         return Promise.resolve({
           ok: false,
-          json: () => Promise.resolve({ error: { message: 'Duplicate document' } }),
+          status: 409,
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'CONFLICT', message: 'Duplicate document' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -571,9 +583,9 @@ describe('DocumentUploadZone', () => {
 
     await user.click(screen.getByRole('button', { name: /^upload$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Duplicate document')).toBeInTheDocument();
-    });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Duplicate document');
+    expect(alert).toHaveFocus();
 
     expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
@@ -609,10 +621,8 @@ describe('DocumentUploadZone', () => {
 
     await user.click(screen.getByRole('button', { name: /^upload$/i }));
 
-    // Assert: network error message shown in the error paragraph, upload not completed
-    await waitFor(() => {
-      expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
-    });
+    // Assert: the browser's text is not shown, the save error's fallback is
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not upload. Try again.');
     expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
@@ -772,7 +782,7 @@ describe('DocumentUploadZone', () => {
 
     // Assert: error text from bulk result is shown
     await waitFor(() => {
-      expect(screen.getByText(/bad\.md: Parse error/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/bad\.md: Parse error/i);
     });
     // onUploadComplete still fires even when there are partial errors
     expect(onUploadComplete).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
@@ -846,7 +856,12 @@ describe('DocumentUploadZone', () => {
       if (options?.method === 'POST') {
         return Promise.resolve({
           ok: false,
-          json: () => Promise.resolve({ error: { message: 'Bulk limit exceeded' } }),
+          status: 400,
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'BAD_REQUEST', message: 'Bulk limit exceeded' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -864,9 +879,7 @@ describe('DocumentUploadZone', () => {
 
     await user.click(screen.getByRole('button', { name: /upload 2 files/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Bulk limit exceeded')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Bulk limit exceeded');
     expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
@@ -955,7 +968,10 @@ describe('DocumentUploadZone', () => {
         });
       }
       if (typeof url === 'string' && url.includes('/fetch-url')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: {} }),
+        });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
     });
@@ -997,7 +1013,11 @@ describe('DocumentUploadZone', () => {
         return Promise.resolve({
           ok: false,
           status: 422,
-          json: () => Promise.resolve({ error: { message: 'URL not reachable' } }),
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'UNPROCESSABLE', message: 'URL not reachable' },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -1010,10 +1030,13 @@ describe('DocumentUploadZone', () => {
     await user.type(urlInput, 'https://bad-url.example.com/doc.md');
     await user.click(screen.getByRole('button', { name: /^fetch$/i }));
 
-    // Assert: server error message shown in FetchFromUrl section
-    await waitFor(() => {
-      expect(screen.getByText('URL not reachable')).toBeInTheDocument();
-    });
+    // Assert: server error message shown directly above the Fetch row
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('URL not reachable');
+    expect(alert.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /^fetch$/i })
+    );
+    expect(alert).toHaveFocus();
     expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
@@ -1042,9 +1065,9 @@ describe('DocumentUploadZone', () => {
     await user.type(urlInput, 'https://example.com/doc.md');
     await user.click(screen.getByRole('button', { name: /^fetch$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Network unreachable')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not fetch the document. Try again.'
+    );
   });
 
   it('does not fetch when URL input is empty', async () => {
@@ -1072,7 +1095,10 @@ describe('DocumentUploadZone', () => {
             }),
         });
       }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: {} }),
+      });
     });
 
     const user = userEvent.setup();
@@ -1127,9 +1153,7 @@ describe('DocumentUploadZone', () => {
     await user.click(screen.getByRole('button', { name: /^upload$/i }));
 
     // Assert: generic fallback message shown
-    await waitFor(() => {
-      expect(screen.getByText('Upload failed')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not upload. Try again.');
   });
 
   // ── Document Clean Up checkbox ─────────────────────────────────────────────

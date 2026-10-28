@@ -69,6 +69,8 @@ const STATS_EMPTY = { tools: 0, resources: 0, prompts: 0, keys: 0 };
 describe('McpDashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -188,6 +190,11 @@ describe('McpDashboard', () => {
       await waitFor(() => {
         expect(screen.getByText('Disabled')).toBeInTheDocument();
       });
+      // The failure shows directly above the switch row, and takes focus.
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('Could not turn the MCP server on or off. Try again.');
+      expect(alert.nextElementSibling).toContainElement(toggle);
+      expect(alert).toHaveFocus();
     });
   });
 

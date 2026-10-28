@@ -58,6 +58,8 @@ describe('DocumentRenameModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.patch).mockResolvedValue({ id: 'doc-1' });
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -122,9 +124,14 @@ describe('DocumentRenameModal', () => {
     await user.type(screen.getByLabelText('Name'), ' edit');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Name already exists')).toBeInTheDocument();
-    });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Name already exists');
+    // Inside the dialog, directly above the footer holding Save.
+    expect(screen.getByRole('dialog')).toContainElement(alert);
+    expect(alert.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /^save$/i })
+    );
+    expect(alert).toHaveFocus();
     expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
   });
 });
