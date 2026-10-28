@@ -15,6 +15,8 @@ was also amber, which doesn't read as a failure.
 | -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | `readSaveError()`    | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
 | `applyFieldErrors()` | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
+| `isStaleSave()`      | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
+| `useSaveFailure()`   | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
 | `<SaveError>`        | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
 | `<StaleSaveNotice>`  | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
@@ -30,10 +32,10 @@ it is the inline box for a client-side message or an auth-flow code.
 2. **Red, always.** A refused save failed, including a stale one.
 3. **Every new failure moves.** Each failure is a new object from
    `readSaveError()`, and each one brings the error into view and takes focus,
-   so a second refusal with the same message still moves. Clear it
-   (`setSaveFailure(null)`) on every press of Save, in the `<form onSubmit>`
-   wrapper: a press that client validation blocks never reaches the submit
-   handler, and an old summary must not sit beside the new client errors.
+   so a second refusal with the same message still moves. Clear it on every
+   press of Save, before validation: a press that client validation blocks
+   never reaches the submit handler, and an old summary must not sit beside
+   the new client errors. `useSaveFailure()`'s `submit()` does both.
 4. **Named fields get the focus.** When the server named fields, their
    messages go under those fields, the summary by Save says how many
    (`"2 fields need fixing."`), and focus moves to the first of them **in page
@@ -95,45 +97,80 @@ milliseconds, and its field takes seconds.
 ## Recipe: a react-hook-form form
 
 ```tsx
-const { setError, ... } = useForm<FormData>(...);
-const [saveFailure, setSaveFailure] = useState<SaveFailure<keyof FormData> | null>(null);
+const { setError, handleSubmit, ... } = useForm<FormData>(...);
+const save = useSaveFailure({
+  fallback: 'Could not save. Try again in a moment.',
+  fields: SERVER_FIELDS,
+  setError,
+});
 
 const onSubmit = async (values: FormData) => {
   try {
     await apiClient.patch(url, { body: values });
   } catch (err) {
-    const failure = readSaveError(err, {
-      fallback: 'Could not save. Try again in a moment.',
-      fields: SERVER_FIELDS,
-    });
-    applyFieldErrors(failure, setError);
-    setSaveFailure(failure);
+    save.report(err); // reads it, sets field messages, shows it
   }
 };
 
-<form
-  onSubmit={(e) => {
-    setSaveFailure(null); // every press, including one client validation blocks
-    void handleSubmit(onSubmit)(e);
-  }}
->
+<form onSubmit={save.submit(handleSubmit(onSubmit))}>
 
 // beside Save:
 <div className="sticky bottom-4 space-y-2">
-  <SaveError failure={saveFailure} stale={{ what: 'This record' }} />
+  <SaveError failure={save.failure} stale={{ what: 'This record' }} />
   <Button type="submit">Save</Button>
 </div>
 ```
 
 The field renders its message as it already does (`errors.x?.message`).
-`applyFieldErrors()` passes `shouldFocus: false`, because `<SaveError>` does
-the focusing and picks the first field in page order.
+`report()` passes `shouldFocus: false` to `setError`, because `<SaveError>`
+does the focusing and picks the first field in page order. It returns the
+failure, so a caller can branch on `stale`.
+
+A check the form makes itself when Save is pressed (invalid JSON in an editor,
+a name that must match the slug) is a failed save too: `save.show(message)`
+puts it in the same place. Client validation that blocks fields on a **tabbed**
+form goes there as well, with the fields, so their tab comes forward:
+
+```tsx
+const onInvalid = (formErrors: FieldErrors<FormData>) =>
+  save.show('2 fields need fixing.', namedFields(formErrors)); // only SERVER_FIELDS entries
+<form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}>
+```
+
+A load error is not a save error. When a form shared one state between them,
+split it: the load error keeps its own display.
 
 ## Recipe: a plain-state form
 
-Call `readSaveError(err, { fallback })` (or with a table, to rename paths),
-keep the `SaveFailure`, and render each `failure.fields` entry under its
-field. Pass the same failure to `<SaveError>`.
+`useSaveFailure({ fallback, fields: {} })`: with an empty table every server
+message joins the summary by Save, which is right for a form that renders no
+message under its controls. A plain form that does place messages passes a
+table (or none, to take server paths as field names), and renders each
+`save.failure.fields` entry under its field. Call `save.clear()` first thing in
+the Save handler when there is no `<form onSubmit>` to wrap.
+
+## Recipe: a dialog
+
+An action confirmed in a dialog shows its failure **inside the dialog**,
+directly above its buttons, and the dialog **stays open** on failure, so the
+person can read it and try again or cancel. Close it only on success. Radix's
+`AlertDialogAction` closes the dialog on click, so its handler calls
+`e.preventDefault()`. A dialog that closes and then shows the error elsewhere,
+or draws it behind its own overlay, loses it (owner ruling, 2026-10-28).
+
+A controlled dialog with no `DialogTrigger` returns no focus when it closes.
+One with a trigger hands focus back to it, after a failure shown outside the
+dialog has taken focus: prevent that with
+`onCloseAutoFocus={(e) => e.preventDefault()}` on that close.
+
+## Recipe: a list's row actions
+
+A toggle, delete or retry in a row has no Save to sit beside. Each list
+renders **one** `<SaveError>` directly above its table, fed by one
+`useSaveFailure()`; every row action clears it, then reports into it. It
+brings itself into view and takes focus, so a failure on row 40 is not lost
+off-screen (owner ruling, 2026-10-28). An action confirmed in a dialog follows
+the dialog recipe instead.
 
 ## Finding the field to focus
 
@@ -154,15 +191,22 @@ just lands on the summary.
 ## A field on a hidden tab
 
 A field on a tab that isn't showing is as invisible as one off-screen. A
-tabbed form passes `onRevealField`:
+tabbed form controls its tabs and passes `onRevealField`:
 
 ```tsx
-<SaveError failure={saveFailure} onRevealField={(field) => setTab(tabOf(field))} />
+<SaveError failure={save.failure} onRevealField={(fields) => setTab(earliestTabHolding(fields))} />
 ```
 
-When a named field is not on the page, `<SaveError>` calls it with the first
-named field, then looks again on the next frame and focuses what the reveal
-brought forward. Without `onRevealField`, the error box takes focus.
+When not every named field is on the page, `<SaveError>` calls it with all of
+them. The form brings forward the **earliest tab, in tab order**, holding one;
+when that is the tab already showing, it changes nothing. `<SaveError>` then
+looks again over the next few frames and focuses the first named field on the
+page. With errors on two tabs, focus goes to the earlier tab's field; the
+summary by Save says how many fields need fixing, and the next save brings the
+other tab forward. Without `onRevealField`, the error box takes focus.
+
+The agent form derives its field → tab map from the agent field registry
+(`fieldToTab()`); the capability form declares one beside its table.
 
 ## The stale variant
 
@@ -178,8 +222,9 @@ props:
 Without `stale` props, a stale failure shows its message like any other.
 
 A page that shows the stale notice without a `<SaveError>` (a list whose row
-toggles are refused, the workflow builder's toolbar) mounts
-`<StaleSaveNotice>` with the same props. It is the same component, so it is
+toggles are refused, the workflow builder's toolbar) tells a stale refusal
+apart with `isStaleSave(err)` and mounts `<StaleSaveNotice>` with the same
+props. It is the same component, so it is
 red and moves too. Mounting it is what counts as "appearing", so the page
 counts refusals and keys the notice on the count, which remounts it on each
 one without hiding it in between (another row's toggle succeeding must not
@@ -204,9 +249,14 @@ boundaries, and `ErrorCard` are not save errors and keep their own display.
   always that list.
 - `components/admin/orchestration/webhook-form.tsx`: sticky Save in the top
   bar.
+- The agent and capability forms: sticky Save in the top bar, and tabs.
+- The other admin forms with a Save button (profiles, providers, models,
+  default models, embedding model, widget appearance, MCP settings,
+  evaluations, triggers, feature flags, users, members, support grants, org
+  providers).
 - `<StaleSaveNotice>`: webhooks table, workflow schedules tab, workflow
   builder.
 
-The remaining admin forms (including the tabbed agent and capability forms),
-`components/forms/` and the auth pages move onto it in §124's later tasks,
-which also add a check against hand-drawn save-error boxes.
+The admin lists and dialogs, `components/forms/` and the auth pages move onto
+it in §124's later tasks, which also add a check against hand-drawn
+save-error boxes.
