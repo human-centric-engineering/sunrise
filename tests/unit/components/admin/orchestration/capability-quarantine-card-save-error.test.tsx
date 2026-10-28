@@ -87,4 +87,33 @@ describe('CapabilityQuarantineCard — failed saves', () => {
     expect(alert.nextElementSibling).toBe(lift);
     expect(alert).toHaveFocus();
   });
+
+  it('is committed to a quarantine in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{ quarantineState: 'active', quarantineReason: null, quarantineUntil: null }}
+        affectedAgents={AFFECTED}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Emergency disable/i }));
+    await user.type(screen.getByPlaceholderText(/Stripe charges/i), 'vendor outage');
+    await user.click(screen.getByRole('button', { name: /^Quarantine$/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /Confirm quarantine/i }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Quarantining…' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
 });

@@ -75,7 +75,7 @@ describe('ProviderDetectionsBanner — failed Configure', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'Could not configure Anthropic: A provider with slug "anthropic" exists'
+      'Couldn\'t configure "Anthropic": A provider with slug "anthropic" exists'
     );
     expect(alert.nextElementSibling).toHaveTextContent('Anthropic');
     expect(alert).toHaveFocus();

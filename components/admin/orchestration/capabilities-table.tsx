@@ -156,6 +156,7 @@ export function CapabilitiesTable({
   const { clear: clearList, report: reportList } = listSave;
   const { clear: clearDelete, report: reportDelete } = deleteSave;
   const [deleteTarget, setDeleteTarget] = useState<AiCapabilityListItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [showOnlyQuarantined, setShowOnlyQuarantined] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -290,7 +291,7 @@ export function CapabilitiesTable({
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     const target = deleteTarget;
-    setIsLoading(true);
+    setIsDeleting(true);
     clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.capabilityById(target.id));
@@ -300,7 +301,7 @@ export function CapabilitiesTable({
       // The dialog stays open with the failure above its buttons.
       reportDelete(err);
     } finally {
-      setIsLoading(false);
+      setIsDeleting(false);
     }
   }, [deleteTarget, fetchCapabilities, meta.page, clearDelete, reportDelete]);
 
@@ -577,7 +578,10 @@ export function CapabilitiesTable({
                         {!cap.isSystem && !readOnly && (
                           <DropdownMenuItem
                             className="text-red-600"
-                            onClick={() => setDeleteTarget(cap)}
+                            onClick={() => {
+                              clearDelete();
+                              setDeleteTarget(cap);
+                            }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
@@ -629,7 +633,7 @@ export function CapabilitiesTable({
         usedBy={deleteTarget?._agents ?? []}
         otherOrgAgentCount={deleteTarget?._otherOrgAgentCount ?? 0}
         failure={deleteSave.failure}
-        isDeleting={isLoading}
+        isDeleting={isDeleting}
         onCancel={() => {
           setDeleteTarget(null);
           clearDelete();

@@ -493,7 +493,9 @@ describe('components/admin/feature-flag-list', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText('Failed to toggle flag')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t update "TEST_FLAG": Failed to toggle flag'
+        );
       });
     });
   });

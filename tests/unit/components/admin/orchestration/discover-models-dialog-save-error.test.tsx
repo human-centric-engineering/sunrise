@@ -75,4 +75,27 @@ describe('DiscoverModelsDialog — failed add', () => {
     expect(alert.nextElementSibling).toContainElement(add);
     expect(alert).toHaveFocus();
   });
+
+  it('is committed to an add in flight: no second request, no Cancel or Back, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue({ providerSlug: 'openai', candidates: [CANDIDATE] });
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    render(<DiscoverModelsDialog open onOpenChange={onOpenChange} providerSlug="openai" />);
+
+    await user.click(await screen.findByRole('checkbox', { name: /select gpt-4o-mini/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(await screen.findByRole('button', { name: /add 1 model/i }));
+
+    const pending = screen.getByRole('button', { name: /adding/i });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /back/i })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the in-flight dialog must not ask to close;
+  });
 });

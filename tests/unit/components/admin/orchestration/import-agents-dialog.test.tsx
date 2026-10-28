@@ -343,4 +343,27 @@ describe('ImportAgentsDialog', () => {
     await user.click(closeButtons[0]);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it('is committed to an import in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    render(<ImportAgentsDialog open={true} onOpenChange={onOpenChange} onImported={vi.fn()} />);
+
+    await user.upload(
+      document.getElementById('import-agents-file')!,
+      makeJsonFile([{ name: 'Agent', slug: 'agent' }])
+    );
+    await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+    const pending = await screen.findByRole('button', { name: 'Importing…' });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the in-flight dialog must not ask to close;
+  });
 });

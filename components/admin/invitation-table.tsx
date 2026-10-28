@@ -92,6 +92,7 @@ export function InvitationTable({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
   const [deleteEmail, setDeleteEmail] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   // Row actions (resend) report above the table; the delete dialog has its own.
@@ -239,7 +240,7 @@ export function InvitationTable({
   const handleDelete = useCallback(async () => {
     if (!deleteEmail) return;
 
-    setIsLoading(true);
+    setIsDeleting(true);
     clearDelete();
     try {
       await apiClient.delete(API.ADMIN.invitationByEmail(deleteEmail));
@@ -249,7 +250,7 @@ export function InvitationTable({
       // The dialog stays open with the failure above its buttons.
       reportDelete(error);
     } finally {
-      setIsLoading(false);
+      setIsDeleting(false);
     }
   }, [deleteEmail, fetchInvitations, meta.page, clearDelete, reportDelete]);
 
@@ -276,7 +277,7 @@ export function InvitationTable({
         // Refresh the list to get updated expiration
         void fetchInvitations(meta.page);
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't resend the invitation to "${invitation.email}"`);
       } finally {
         setResendingEmail(null);
       }
@@ -443,7 +444,10 @@ export function InvitationTable({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => setDeleteEmail(invitation.email)}
+                          onClick={() => {
+                            clearDelete();
+                            setDeleteEmail(invitation.email);
+                          }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -499,6 +503,8 @@ export function InvitationTable({
       <AlertDialog
         open={!!deleteEmail}
         onOpenChange={(open) => {
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && isDeleting) return;
           if (!open) {
             setDeleteEmail(null);
             clearDelete();
@@ -516,7 +522,7 @@ export function InvitationTable({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a failure stays readable here.
@@ -524,9 +530,9 @@ export function InvitationTable({
                 void handleDelete();
               }}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isLoading}
+              disabled={isDeleting}
             >
-              {isLoading ? 'Deleting...' : 'Delete'}
+              {isDeleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

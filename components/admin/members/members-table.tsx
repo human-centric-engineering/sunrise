@@ -66,6 +66,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
   const router = useRouter();
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<OrgMember | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
   // A role change reports above the table; the remove dialog has its own.
   const listSave = useSaveFailure({
     fallback: 'Could not change the role. Try again.',
@@ -84,7 +85,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
       await apiClient.patch(API.ORGS.member(orgId, member.id), { body: { role } });
       router.refresh();
     } catch (err) {
-      listSave.report(err);
+      listSave.report(err, `Couldn't change the role of "${member.name || member.email}"`);
     } finally {
       setBusyUserId(null);
     }
@@ -93,6 +94,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
   // The dialog stays open on failure, with the refusal above its buttons.
   const remove = async (member: OrgMember) => {
     setBusyUserId(member.id);
+    setIsRemoving(true);
     removeSave.clear();
     try {
       await apiClient.delete(API.ORGS.member(orgId, member.id));
@@ -101,6 +103,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
     } catch (err) {
       removeSave.report(err);
     } finally {
+      setIsRemoving(false);
       setBusyUserId(null);
     }
   };
@@ -172,7 +175,10 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                       variant="ghost"
                       size="icon"
                       disabled={busyUserId === member.id}
-                      onClick={() => setRemoving(member)}
+                      onClick={() => {
+                        removeSave.clear();
+                        setRemoving(member);
+                      }}
                       aria-label={`Remove ${member.name || member.email}`}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -188,6 +194,8 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
       <AlertDialog
         open={!!removing}
         onOpenChange={(open) => {
+          // Committed while the removal is in flight: a late failure must land here.
+          if (!open && isRemoving) return;
           if (!open) {
             setRemoving(null);
             removeSave.clear();
@@ -205,9 +213,9 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
           </AlertDialogHeader>
           <SaveError failure={removeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isRemoving}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={!!removing && busyUserId === removing.id}
+              disabled={isRemoving}
               onClick={(e) => {
                 // Closes only on success, so a failure stays readable here.
                 e.preventDefault();

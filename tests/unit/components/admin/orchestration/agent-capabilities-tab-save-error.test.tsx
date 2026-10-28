@@ -82,7 +82,9 @@ describe('AgentCapabilitiesTab — failed saves', () => {
     await user.click(screen.getByRole('switch', { name: 'Toggle Web Search' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('This binding belongs to the platform');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t update "Web Search": This binding belongs to the platform'
+    );
     // Directly above the two lists.
     expect(alert.nextElementSibling).toContainElement(screen.getByText('Attached'));
     expect(alert).toHaveFocus();
@@ -98,7 +100,24 @@ describe('AgentCapabilitiesTab — failed saves', () => {
 
     await user.click(screen.getByRole('button', { name: 'Attach' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Capability already attached');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Couldn\'t attach "Calculator": Capability already attached'
+    );
+  });
+
+  it('names the capability whose detach was refused', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockRejectedValue(
+      new APIClientError('Binding is locked', 'FORBIDDEN', 403)
+    );
+    const user = userEvent.setup();
+    await renderTab();
+
+    await user.click(screen.getByRole('button', { name: 'Detach Web Search' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Couldn\'t detach "Web Search": Binding is locked'
+    );
   });
 
   it('shows a refused configure save above the dialog buttons, read from the raw response', async () => {
@@ -123,5 +142,24 @@ describe('AgentCapabilitiesTab — failed saves', () => {
     expect(alert).toHaveTextContent('customRateLimit is too high');
     expect(alert.nextElementSibling).toContainElement(save);
     expect(alert).toHaveFocus();
+  });
+
+  it('keeps the configure dialog open while its save is in flight', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    await renderTab();
+
+    await user.click(screen.getByRole('button', { name: 'Configure Web Search' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Saving…' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

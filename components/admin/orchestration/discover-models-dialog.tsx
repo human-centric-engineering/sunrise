@@ -482,7 +482,14 @@ export function DiscoverModelsDialog({
   }, [initialProviderName, providerSlug, providers]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the add is in flight: a late failure must land here.
+        if (!next && submitting) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -570,10 +577,10 @@ export function DiscoverModelsDialog({
           )}
           {step === 'review' && (
             <>
-              <Button variant="ghost" onClick={() => setStep('discovery')}>
+              <Button variant="ghost" onClick={() => setStep('discovery')} disabled={submitting}>
                 ← Back
               </Button>
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
                 Cancel
               </Button>
               <Button

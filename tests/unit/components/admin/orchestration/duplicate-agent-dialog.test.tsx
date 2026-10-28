@@ -199,4 +199,23 @@ describe('DuplicateAgentDialog', () => {
     // Assert: router was NOT called
     expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
+
+  it('is committed to a duplicate in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    render(<DuplicateAgentDialog source={SOURCE_AGENT} onOpenChange={onOpenChange} />);
+
+    await user.click(screen.getByRole('button', { name: /^duplicate$/i }));
+
+    const pending = screen.getByRole('button', { name: 'Duplicating…' });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the in-flight dialog must not ask to close;
+  });
 });

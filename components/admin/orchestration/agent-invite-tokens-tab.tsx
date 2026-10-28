@@ -133,14 +133,14 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
     }
   };
 
-  const handleRevoke = async (tokenId: string) => {
-    setRevoking(tokenId);
+  const handleRevoke = async (token: InviteToken) => {
+    setRevoking(token.id);
     listSave.clear();
     try {
-      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentInviteTokenById(agentId, tokenId));
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentInviteTokenById(agentId, token.id));
       await fetchTokens();
     } catch (err) {
-      listSave.report(err);
+      listSave.report(err, `Couldn't revoke "${token.label || token.token.slice(0, 8)}"`);
     } finally {
       setRevoking(null);
     }
@@ -200,7 +200,14 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
               : 'No tokens yet'}
           </p>
         </div>
-        <Button type="button" size="sm" onClick={() => setShowCreate(true)}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => {
+            createSave.clear();
+            setShowCreate(true);
+          }}
+        >
           <Plus className="mr-1 h-3.5 w-3.5" />
           Create token
         </Button>
@@ -276,7 +283,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => void handleRevoke(t.id)}
+                          onClick={() => void handleRevoke(t)}
                           disabled={revoking === t.id}
                           className="text-destructive hover:text-destructive h-7 px-2"
                           aria-label={`Revoke token ${t.label || t.token.slice(0, 8)}`}
@@ -305,6 +312,8 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
       <Dialog
         open={showCreate}
         onOpenChange={(open) => {
+          // Committed while the create is in flight: a late failure must land here.
+          if (!open && creating) return;
           setShowCreate(open);
           createSave.clear();
         }}
@@ -369,6 +378,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                 setShowCreate(false);
                 createSave.clear();
               }}
+              disabled={creating}
             >
               Cancel
             </Button>

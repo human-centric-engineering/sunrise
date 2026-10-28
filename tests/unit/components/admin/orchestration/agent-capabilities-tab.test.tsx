@@ -576,9 +576,11 @@ describe('AgentCapabilitiesTab', () => {
       // Act: click Detach
       await user.click(screen.getByRole('button', { name: /detach/i }));
 
-      // Assert: generic fallback message (not the plain Error message)
+      // Assert: the named context, not the plain Error message
       await waitFor(() => {
-        expect(screen.getByRole('alert')).toHaveTextContent(/could not update the capability/i);
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t detach "Web Search". Try again.'
+        );
       });
     });
 
@@ -597,9 +599,11 @@ describe('AgentCapabilitiesTab', () => {
       const switches = screen.getAllByRole('switch');
       await user.click(switches[0]);
 
-      // Assert: generic fallback message
+      // Assert: the named context, not the plain Error message
       await waitFor(() => {
-        expect(screen.getByRole('alert')).toHaveTextContent(/could not update the capability/i);
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t update "Web Search". Try again.'
+        );
       });
     });
   });

@@ -199,7 +199,10 @@ export function InstructionsHistoryPanel({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => setRevertTarget({ entry, versionIndex })}
+                          onClick={() => {
+                            clearRevert();
+                            setRevertTarget({ entry, versionIndex });
+                          }}
                         >
                           <RotateCcw className="mr-1 h-3 w-3" />
                           Revert
@@ -241,6 +244,8 @@ export function InstructionsHistoryPanel({
       <AlertDialog
         open={!!revertTarget}
         onOpenChange={(open) => {
+          // Committed while the revert is in flight: a late failure must land here.
+          if (!open && reverting) return;
           if (!open) {
             setRevertTarget(null);
             clearRevert();

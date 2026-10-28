@@ -162,7 +162,10 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
                           variant="outline"
                           size="sm"
                           disabled={busy}
-                          onClick={() => setRevoking(grant)}
+                          onClick={() => {
+                            revokeSave.clear();
+                            setRevoking(grant);
+                          }}
                         >
                           Revoke
                         </Button>
@@ -179,6 +182,8 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
       <AlertDialog
         open={!!revoking}
         onOpenChange={(open) => {
+          // Committed while the revoke is in flight: a late failure must land here.
+          if (!open && busy) return;
           if (!open) {
             setRevoking(null);
             revokeSave.clear();
@@ -195,7 +200,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={revokeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={busy}
               onClick={(e) => {

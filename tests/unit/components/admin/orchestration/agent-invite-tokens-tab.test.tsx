@@ -721,7 +721,9 @@ describe('AgentInviteTokensTab', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/could not revoke the token/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t revoke "Acme Corp". Try again.'
+        );
       });
     });
   });

@@ -162,7 +162,9 @@ describe('BudgetAlertsList', () => {
 
       // Assert: error message shows APIClientError message
       await waitFor(() => {
-        expect(screen.getByText('Budget limit exceeded')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t pause "Test Agent": Budget limit exceeded'
+        );
       });
 
       // Assert: Paused badge is gone (reverted)
@@ -180,9 +182,11 @@ describe('BudgetAlertsList', () => {
       // Act
       await user.click(screen.getByRole('button', { name: /pause agent/i }));
 
-      // Assert: generic fallback message
+      // Assert: nothing from the server, so the named context says it all
       await waitFor(() => {
-        expect(screen.getByText('Could not pause agent. Try again.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t pause "Test Agent". Try again.'
+        );
       });
     });
   });

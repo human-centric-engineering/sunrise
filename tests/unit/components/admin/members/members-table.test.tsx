@@ -153,7 +153,10 @@ describe('MembersTable', () => {
     await user.selectOptions(screen.getAllByTestId('role-select')[0], 'MEMBER');
 
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByRole('alert').textContent).toBe(message);
+    // The box sits above the table, so it names the member; the refusal follows verbatim.
+    expect(screen.getByRole('alert').textContent).toBe(
+      `Couldn't change the role of "Alice Owner": ${message}`
+    );
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
@@ -165,7 +168,7 @@ describe('MembersTable', () => {
     await user.selectOptions(screen.getAllByTestId('role-select')[1], 'ADMIN');
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Could not change the role. Try again.');
+    expect(alert).toHaveTextContent('Couldn\'t change the role of "bob@example.com". Try again.');
     expect(alert).not.toHaveTextContent('boom');
   });
 

@@ -92,6 +92,7 @@ export function UserTable({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const deleteSave = useSaveFailure({
     fallback: 'Could not delete the user. Try again.',
     fields: NO_SERVER_FIELDS,
@@ -231,7 +232,7 @@ export function UserTable({
   const handleDelete = useCallback(async () => {
     if (!deleteUserId) return;
 
-    setIsLoading(true);
+    setIsDeleting(true);
     clearDelete();
     try {
       await apiClient.delete(API.USERS.byId(deleteUserId));
@@ -241,7 +242,7 @@ export function UserTable({
       // The dialog stays open with the failure above its buttons.
       reportDelete(error);
     } finally {
-      setIsLoading(false);
+      setIsDeleting(false);
     }
   }, [deleteUserId, fetchUsers, meta.page, clearDelete, reportDelete]);
 
@@ -396,7 +397,10 @@ export function UserTable({
                         {!user.erasureRequestedAt && (
                           <DropdownMenuItem
                             className="text-red-600"
-                            onClick={() => setDeleteUserId(user.id)}
+                            onClick={() => {
+                              clearDelete();
+                              setDeleteUserId(user.id);
+                            }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
@@ -447,6 +451,8 @@ export function UserTable({
       <AlertDialog
         open={!!deleteUserId}
         onOpenChange={(open) => {
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && isDeleting) return;
           if (!open) {
             setDeleteUserId(null);
             clearDelete();
@@ -477,7 +483,7 @@ export function UserTable({
               </AlertDialogHeader>
               <SaveError failure={deleteSave.failure} />
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={(e) => {
                     // Closes only on success, so a failure stays readable here.
@@ -485,9 +491,9 @@ export function UserTable({
                     void handleDelete();
                   }}
                   className="bg-red-600 hover:bg-red-700"
-                  disabled={isLoading}
+                  disabled={isDeleting}
                 >
-                  {isLoading ? 'Deleting...' : 'Delete'}
+                  {isDeleting ? 'Deleting...' : 'Delete'}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </>

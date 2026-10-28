@@ -363,7 +363,8 @@ function ActiveView({
       <AlertDialog
         open={confirmOpen}
         onOpenChange={(open) => {
-          if (!open) setConfirmOpen(false);
+          // Committed while the quarantine is in flight: a late failure must land here.
+          if (!open && !saving) setConfirmOpen(false);
         }}
       >
         <AlertDialogContent>

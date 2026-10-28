@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ProvidersList, type ProviderRow } from '@/components/admin/orchestration/providers-list';
@@ -46,6 +46,14 @@ function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null },
     ...overrides,
   } as ProviderRow;
+}
+
+const OPENAI = provider({ id: 'prov-2', name: 'OpenAI', slug: 'openai', providerType: 'openai' });
+
+async function openFromMenu(user: ReturnType<typeof userEvent.setup>, row: number, item: RegExp) {
+  await user.click(document.querySelectorAll<HTMLElement>('button[aria-haspopup="menu"]')[row]);
+  await user.click(await screen.findByRole('menuitem', { name: item }));
+  return screen.findByRole('alertdialog');
 }
 
 describe('ProvidersList — failed row actions', () => {
@@ -94,7 +102,8 @@ describe('ProvidersList — failed row actions', () => {
     await user.click(await screen.findByRole('menuitem', { name: /reactivate/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('API key env var is not set');
+    // Above the grid, so it names the provider.
+    expect(alert).toHaveTextContent('Couldn\'t reactivate "Anthropic": API key env var is not set');
     expect(alert.nextElementSibling).toHaveTextContent('Anthropic');
     expect(alert).toHaveFocus();
   });
@@ -120,7 +129,65 @@ describe('ProvidersList — failed row actions', () => {
     await user.click(screen.getByRole('button', { name: /reset/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Upstream timeout');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t reset the circuit breaker on "Anthropic": Upstream timeout'
+    );
     expect(alert).toHaveFocus();
+  });
+
+  describe.each([
+    { action: 'deactivate', item: /deactivate/i, confirm: 'Deactivate', busy: 'Deactivating…' },
+    {
+      action: 'permanent delete',
+      item: /delete permanently/i,
+      confirm: 'Delete permanently',
+      busy: 'Deleting…',
+    },
+  ])('the $action dialog', ({ item, confirm, busy }) => {
+    it('is committed while in flight: no second request, no Cancel, no Escape', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[provider()]} />);
+
+      const dialog = await openFromMenu(user, 0, item);
+      await user.click(within(dialog).getByRole('button', { name: confirm }));
+
+      const pending = within(dialog).getByRole('button', { name: busy });
+      expect(pending).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      await user.click(pending);
+      await user.keyboard('{Escape}');
+
+      expect(apiClient.delete).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    });
+
+    it("never shows one provider's failure in the next provider's dialog", async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      let reject: (err: unknown) => void = () => {};
+      vi.mocked(apiClient.delete).mockReturnValue(
+        new Promise((_, rej) => {
+          reject = rej;
+        })
+      );
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[provider(), OPENAI]} />);
+
+      const first = await openFromMenu(user, 0, item);
+      await user.click(within(first).getByRole('button', { name: confirm }));
+      // An attempt to leave while the request is in flight, then it fails.
+      await user.keyboard('{Escape}');
+      await act(async () =>
+        reject(new APIClientError('Provider is referenced by 2 agents', 'CONFLICT', 409))
+      );
+      // Leave the dialog if it is still open (it should be: it ignored the Escape).
+      const open = screen.queryByRole('alertdialog');
+      if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+      const dialog = await openFromMenu(user, 1, item);
+      expect(dialog).toHaveTextContent('OpenAI');
+      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    });
   });
 });

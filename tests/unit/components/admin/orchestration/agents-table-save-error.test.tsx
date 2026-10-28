@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AgentsTable } from '@/components/admin/orchestration/agents-table';
@@ -52,6 +52,21 @@ const agent = {
   _budget: null,
 } as unknown as AiAgentListItem;
 const meta: PaginationMeta = { page: 1, limit: 25, total: 1, totalPages: 1 };
+const beta = { ...agent, id: 'agent-2', name: 'Beta', slug: 'beta' } as AiAgentListItem;
+
+async function openDelete(user: ReturnType<typeof userEvent.setup>, row: number) {
+  await user.click(screen.getAllByRole('button', { name: /row actions/i })[row]);
+  await user.click(await screen.findByRole('menuitem', { name: /delete/i, hidden: true }));
+  return screen.findByRole('alertdialog');
+}
+
+function deferred() {
+  let reject: (err: unknown) => void = () => {};
+  const promise = new Promise<never>((_, rej) => {
+    reject = rej;
+  });
+  return { promise, reject };
+}
 
 describe('AgentsTable — failed saves', () => {
   beforeEach(() => {
@@ -123,5 +138,93 @@ describe('AgentsTable — failed saves', () => {
     expect(alert).toHaveTextContent('Bulk delete is not allowed');
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     expect(alert).toHaveFocus();
+  });
+
+  it('is committed to a delete in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<AgentsTable initialAgents={[agent]} initialMeta={meta} />);
+
+    const dialog = await openDelete(user, 0);
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Deleting…' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it("never shows one agent's failed delete in the next agent's dialog", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    const pending = deferred();
+    vi.mocked(apiClient.delete).mockReturnValue(pending.promise);
+    const user = userEvent.setup();
+    render(<AgentsTable initialAgents={[agent, beta]} initialMeta={{ ...meta, total: 2 }} />);
+
+    const first = await openDelete(user, 0);
+    await user.click(within(first).getByRole('button', { name: 'Delete' }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () =>
+      pending.reject(new APIClientError('Agent is referenced by a workflow', 'CONFLICT', 409))
+    );
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+    const dialog = await openDelete(user, 1);
+    expect(dialog).toHaveTextContent('Beta');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('is committed to a bulk delete in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<AgentsTable initialAgents={[agent]} initialMeta={meta} />);
+
+    await user.click(screen.getAllByRole('checkbox')[1]);
+    await user.click(screen.getByRole('button', { name: /delete \(1\)/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    const busy = within(dialog).getByRole('button', { name: 'Deleting…' });
+    expect(busy).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(busy);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it('never shows an earlier failed bulk delete when the dialog opens again', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    const pending = deferred();
+    vi.mocked(apiClient.post).mockReturnValue(pending.promise);
+    const user = userEvent.setup();
+    render(<AgentsTable initialAgents={[agent]} initialMeta={meta} />);
+
+    await user.click(screen.getAllByRole('checkbox')[1]);
+    await user.click(screen.getByRole('button', { name: /delete \(1\)/i }));
+    const first = await screen.findByRole('alertdialog');
+    await user.click(within(first).getByRole('button', { name: 'Delete' }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () =>
+      pending.reject(new APIClientError('Bulk delete is not allowed', 'FORBIDDEN', 403))
+    );
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: /delete \(1\)/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

@@ -105,7 +105,14 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the import is in flight: a late failure must land here.
+        if (!next && submitting) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>

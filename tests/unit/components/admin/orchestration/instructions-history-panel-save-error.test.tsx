@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
@@ -69,5 +69,58 @@ describe('InstructionsHistoryPanel — failed revert', () => {
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     expect(alert).toHaveFocus();
     expect(onReverted).not.toHaveBeenCalled();
+  });
+
+  it('is committed to a revert in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(HISTORY);
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<InstructionsHistoryPanel agentId="agent-1" />);
+
+    await user.click(screen.getByRole('button', { name: /version history/i }));
+    const [revert] = await screen.findAllByRole('button', { name: /revert/i });
+    await user.click(revert);
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^revert$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Reverting…' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it("never shows one version's failed revert in the next version's dialog", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(HISTORY);
+    let reject: (err: unknown) => void = () => {};
+    vi.mocked(apiClient.post).mockReturnValue(
+      new Promise((_, rej) => {
+        reject = rej;
+      })
+    );
+    const user = userEvent.setup();
+    render(<InstructionsHistoryPanel agentId="agent-1" />);
+
+    await user.click(screen.getByRole('button', { name: /version history/i }));
+    await user.click((await screen.findAllByRole('button', { name: /revert/i }))[0]);
+    const first = await screen.findByRole('alertdialog');
+    await user.click(within(first).getByRole('button', { name: /^revert$/i }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () =>
+      reject(new APIClientError('Version already current — no change needed', 'CONFLICT', 409))
+    );
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getAllByRole('button', { name: /revert/i })[1]);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

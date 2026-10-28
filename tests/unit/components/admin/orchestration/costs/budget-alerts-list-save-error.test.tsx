@@ -49,7 +49,9 @@ describe('BudgetAlertsList — failed pause', () => {
     await user.click(screen.getByRole('button', { name: /pause agent/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('System agents cannot be paused');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t pause "Support Bot": System agents cannot be paused'
+    );
     expect(alert.nextElementSibling?.tagName).toBe('UL');
     expect(alert).toHaveFocus();
     expect(screen.getByRole('button', { name: /pause agent/i })).toBeEnabled();

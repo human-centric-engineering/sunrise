@@ -152,28 +152,30 @@ export function AgentCapabilitiesTab({
   }, [fetchUsage]);
 
   const handleAttach = useCallback(
-    async (capabilityId: string) => {
+    async (cap: AiCapability) => {
       clearList();
       try {
         await apiClient.post(API.ADMIN.ORCHESTRATION.agentCapabilities(agentId), {
-          body: { capabilityId },
+          body: { capabilityId: cap.id },
         });
         await fetchAll();
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't attach "${cap.name}"`);
       }
     },
     [agentId, fetchAll, clearList, reportList]
   );
 
   const handleDetach = useCallback(
-    async (capId: string) => {
+    async (link: AttachedLink) => {
       clearList();
       try {
-        await apiClient.delete(API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, capId));
+        await apiClient.delete(
+          API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId)
+        );
         await fetchAll();
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't detach "${link.capability.name}"`);
       }
     },
     [agentId, fetchAll, clearList, reportList]
@@ -191,7 +193,7 @@ export function AgentCapabilitiesTab({
         );
         await fetchAll();
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't update "${link.capability.name}"`);
       }
     },
     [agentId, fetchAll, clearList, reportList]
@@ -342,7 +344,7 @@ export function AgentCapabilitiesTab({
                         variant="ghost"
                         size="sm"
                         className="text-red-600"
-                        onClick={() => void handleDetach(link.capabilityId)}
+                        onClick={() => void handleDetach(link)}
                         aria-label={`Detach ${link.capability.name}`}
                       >
                         Detach
@@ -417,7 +419,7 @@ export function AgentCapabilitiesTab({
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleAttach(cap.id)}
+                      onClick={() => void handleAttach(cap)}
                     >
                       Attach
                     </Button>
@@ -551,7 +553,14 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
   }
 
   return (
-    <Dialog open={!!link} onOpenChange={onOpenChange}>
+    <Dialog
+      open={!!link}
+      onOpenChange={(open) => {
+        // Committed while the save is in flight: a late failure must land here.
+        if (!open && saving) return;
+        onOpenChange(open);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Configure {link?.capability.name}</DialogTitle>

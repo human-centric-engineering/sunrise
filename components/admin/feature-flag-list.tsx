@@ -87,7 +87,7 @@ export function FeatureFlagList({
 
         setFlags((prev) => prev.map((f) => (f.id === flag.id ? updatedFlag : f)));
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't update "${flag.name}"`);
       } finally {
         setTogglingId(null);
       }
@@ -208,7 +208,10 @@ export function FeatureFlagList({
                         variant="ghost"
                         size="icon"
                         className="text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                        onClick={() => setDeleteId(flag.id)}
+                        onClick={() => {
+                          clearDelete();
+                          setDeleteId(flag.id);
+                        }}
                       >
                         <Trash2 className="h-4 w-4" />
                         <span className="sr-only">Delete {flag.name}</span>
@@ -226,6 +229,8 @@ export function FeatureFlagList({
       <AlertDialog
         open={!!deleteId}
         onOpenChange={(open) => {
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && isDeleting) return;
           if (!open) {
             setDeleteId(null);
             clearDelete();
@@ -242,7 +247,7 @@ export function FeatureFlagList({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a failure stays readable here.

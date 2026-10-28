@@ -183,25 +183,32 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
     }
   }
 
-  async function handleToggle(tokenId: string, isActive: boolean): Promise<void> {
+  // Reported above the list, so a failure names its token: the label, or the
+  // token's opening characters when it has none.
+  const tokenName = (token: EmbedToken): string => token.label || token.token.slice(0, 8);
+
+  async function handleToggle(token: EmbedToken, isActive: boolean): Promise<void> {
     listSave.clear();
     try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId), {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, token.id), {
         body: { isActive },
       });
-      setTokens((prev) => prev.map((t) => (t.id === tokenId ? { ...t, isActive } : t)));
+      setTokens((prev) => prev.map((t) => (t.id === token.id ? { ...t, isActive } : t)));
     } catch (err) {
-      listSave.report(err);
+      listSave.report(
+        err,
+        `Couldn't ${isActive ? 'activate' : 'deactivate'} "${tokenName(token)}"`
+      );
     }
   }
 
-  async function handleDelete(tokenId: string): Promise<void> {
+  async function handleDelete(token: EmbedToken): Promise<void> {
     listSave.clear();
     try {
-      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId));
-      setTokens((prev) => prev.filter((t) => t.id !== tokenId));
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, token.id));
+      setTokens((prev) => prev.filter((t) => t.id !== token.id));
     } catch (err) {
-      listSave.report(err);
+      listSave.report(err, `Couldn't delete "${tokenName(token)}"`);
     }
   }
 
@@ -356,7 +363,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => void handleToggle(t.id, !t.isActive)}
+                        onClick={() => void handleToggle(t, !t.isActive)}
                         title={t.isActive ? 'Deactivate' : 'Activate'}
                         aria-label={`${t.isActive ? 'Deactivate' : 'Activate'} ${t.label || 'token'}`}
                       >
@@ -370,7 +377,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => void handleDelete(t.id)}
+                        onClick={() => void handleDelete(t)}
                         title="Delete token"
                         aria-label={`Delete ${t.label || 'token'}`}
                       >

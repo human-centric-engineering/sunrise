@@ -175,7 +175,7 @@ export function ProviderDetectionsBanner({
         await fetchDetection();
       } catch (err) {
         // One box above every detected row, so it names the provider.
-        reportConfigure(err, `Could not configure ${row.name}`);
+        reportConfigure(err, `Couldn't configure "${row.name}"`);
       } finally {
         setSubmitting(null);
       }

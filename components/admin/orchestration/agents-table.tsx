@@ -154,6 +154,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     setExportNotice(null);
   }, [selected]);
   const [deleteTarget, setDeleteTarget] = useState<AiAgentListItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   // Load and export failures stay in `listError`; a refused toggle or bulk
   // action goes to `listSave` above the table, and each confirm dialog shows
   // its own (§124).
@@ -381,7 +382,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
-    setIsLoading(true);
+    setIsDeleting(true);
     clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.agentById(deleteTarget.id));
@@ -391,7 +392,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       // The dialog stays open with the failure above its buttons.
       reportDelete(err);
     } finally {
-      setIsLoading(false);
+      setIsDeleting(false);
     }
   }, [deleteTarget, fetchAgents, meta.page, clearDelete, reportDelete]);
 
@@ -756,7 +757,13 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 Duplicate
               </DropdownMenuItem>
               {!agent.isSystem && (
-                <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(agent)}>
+                <DropdownMenuItem
+                  className="text-red-600"
+                  onClick={() => {
+                    clearDelete();
+                    setDeleteTarget(agent);
+                  }}
+                >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
                 </DropdownMenuItem>
@@ -905,7 +912,10 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={() => setBulkDeleteOpen(true)}
+                onClick={() => {
+                  clearBulkDelete();
+                  setBulkDeleteOpen(true);
+                }}
                 disabled={!!bulkAction}
               >
                 {bulkAction === 'delete' ? (
@@ -1150,6 +1160,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && isDeleting) return;
           if (!open) {
             setDeleteTarget(null);
             clearDelete();
@@ -1167,7 +1179,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a failure stays readable here.
@@ -1175,9 +1187,9 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 void handleDelete();
               }}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isLoading}
+              disabled={isDeleting}
             >
-              {isLoading ? 'Deleting…' : 'Delete'}
+              {isDeleting ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1187,6 +1199,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       <AlertDialog
         open={bulkDeleteOpen}
         onOpenChange={(open) => {
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && bulkAction === 'delete') return;
           setBulkDeleteOpen(open);
           clearBulkDelete();
         }}
@@ -1203,7 +1217,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={bulkDeleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={bulkAction === 'delete'}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a failure stays readable here.

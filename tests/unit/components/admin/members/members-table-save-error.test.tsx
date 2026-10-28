@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { MembersTable, type OrgMember } from '@/components/admin/members/members-table';
@@ -77,7 +77,9 @@ describe('MembersTable — failed saves', () => {
     await user.selectOptions(screen.getAllByTestId('role-select')[0], 'MEMBER');
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Cannot demote the last owner.');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t change the role of "Alice Owner": Cannot demote the last owner.'
+    );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });
@@ -98,5 +100,54 @@ describe('MembersTable — failed saves', () => {
     expect(alert).toHaveTextContent('Cannot remove the last owner of an organisation.');
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     expect(alert).toHaveFocus();
+  });
+
+  it('is committed to a removal in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<MembersTable orgId="org-1" members={members} currentUserId="u-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove Alice Owner' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const action = within(dialog).getByRole('button', { name: 'Remove' });
+    await user.click(action);
+
+    expect(action).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(action);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it("never shows one row's failed removal in the next row's dialog", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let reject: (err: unknown) => void = () => {};
+    vi.mocked(apiClient.delete).mockReturnValue(
+      new Promise((_, rej) => {
+        reject = rej;
+      })
+    );
+    const user = userEvent.setup();
+    render(<MembersTable orgId="org-1" members={members} currentUserId="u-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove Alice Owner' }));
+    const first = await screen.findByRole('alertdialog');
+    await user.click(within(first).getByRole('button', { name: 'Remove' }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () =>
+      reject(new APIClientError('Cannot remove the last owner.', 'FORBIDDEN', 403))
+    );
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Remove bob@example.com' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('bob@example.com');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

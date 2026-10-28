@@ -50,7 +50,10 @@ export function DeleteProviderDialog({
     <AlertDialog
       open={!!target}
       // No trigger opens it, so it only ever asks to close (Escape, Cancel).
-      onOpenChange={() => onCancel()}
+      // Committed while the request is in flight: a late failure must land here.
+      onOpenChange={() => {
+        if (!isDeleting) onCancel();
+      }}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -67,7 +70,7 @@ export function DeleteProviderDialog({
         <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             // preventDefault so the dialog doesn't auto-close while
             // the async deactivation is in flight — the parent flips

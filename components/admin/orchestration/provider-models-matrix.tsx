@@ -402,13 +402,19 @@ export function ProviderModelsMatrix({
     }
   }, [deleteTarget, router, clearDelete, reportDelete]);
 
-  const handleCancelDelete = useCallback(() => {
-    setDeleteTarget(null);
+  // Opening and closing both start clean, so one row's refusal (or its
+  // blocking refs) never shows in the next row's dialog.
+  const resetDelete = useCallback(() => {
     clearDelete();
     setDeleteBlockedAgents([]);
     setDeleteBlockedWorkflows([]);
     setDeleteBlockedElsewhere(0);
   }, [clearDelete]);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+    resetDelete();
+  }, [resetDelete]);
 
   const deleteBlocked =
     deleteBlockedAgents.length + deleteBlockedWorkflows.length + deleteBlockedElsewhere > 0;
@@ -1008,7 +1014,10 @@ export function ProviderModelsMatrix({
                           variant="ghost"
                           size="sm"
                           className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
-                          onClick={() => setDeleteTarget(model)}
+                          onClick={() => {
+                            resetDelete();
+                            setDeleteTarget(model);
+                          }}
                           aria-label={`Delete ${model.name}`}
                           title={`Delete ${model.name}`}
                         >
@@ -1037,7 +1046,8 @@ export function ProviderModelsMatrix({
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (!open) handleCancelDelete();
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && !deleting) handleCancelDelete();
         }}
       >
         <AlertDialogContent>
@@ -1119,7 +1129,7 @@ export function ProviderModelsMatrix({
           <SaveError failure={deleteBlocked ? null : deleteSave.failure} />
 
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Default closes the dialog; we want to keep it open if the

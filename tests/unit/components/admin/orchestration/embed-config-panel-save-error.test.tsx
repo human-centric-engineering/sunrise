@@ -86,8 +86,23 @@ describe('EmbedConfigPanel tokens — failed saves', () => {
     await user.click(screen.getByRole('button', { name: 'Deactivate Marketing site' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Token is locked');
+    expect(alert).toHaveTextContent('Couldn\'t deactivate "Marketing site": Token is locked');
     expect(alert.nextElementSibling).toHaveTextContent('Marketing site');
     expect(alert).toHaveFocus();
+  });
+
+  it('names the token whose delete was refused, by its opening characters when unlabelled', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockRejectedValue(
+      new APIClientError('Token is in use', 'CONFLICT', 409)
+    );
+    const user = userEvent.setup();
+    await renderPanel([{ ...TOKEN, label: null }]);
+
+    await user.click(screen.getByRole('button', { name: 'Delete token' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Couldn\'t delete "secret-a": Token is in use'
+    );
   });
 });

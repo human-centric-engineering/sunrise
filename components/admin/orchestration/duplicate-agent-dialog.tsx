@@ -88,7 +88,14 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
   }
 
   return (
-    <Dialog open={!!source} onOpenChange={onOpenChange}>
+    <Dialog
+      open={!!source}
+      onOpenChange={(next) => {
+        // Committed while the duplicate is in flight: a late failure must land here.
+        if (!next && submitting) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Duplicate agent</DialogTitle>

@@ -439,7 +439,10 @@ export function AgentVersionHistoryTab({
                         variant="ghost"
                         size="sm"
                         className="shrink-0"
-                        onClick={() => setRestoreTarget(v)}
+                        onClick={() => {
+                          clearRestore();
+                          setRestoreTarget(v);
+                        }}
                         title={
                           isPlatformAgent
                             ? `Restore this org's settings from version ${v.version}`
@@ -477,7 +480,9 @@ export function AgentVersionHistoryTab({
 
       <AlertDialog
         open={!!restoreTarget}
-        onOpenChange={() => {
+        onOpenChange={(open) => {
+          // Committed while the restore is in flight: a late failure must land here.
+          if (!open && restoring) return;
           setRestoreTarget(null);
           clearRestore();
         }}
@@ -532,7 +537,7 @@ export function AgentVersionHistoryTab({
           </AlertDialogHeader>
           <SaveError failure={restoreSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               // Prevent Radix's default close-on-click: a failed restore must
               // keep the dialog open so its failure (rendered above) is

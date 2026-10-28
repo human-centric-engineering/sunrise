@@ -83,7 +83,7 @@ describe('SetupWizard provider step — failed create', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'Could not create the Anthropic provider: Slug "anthropic" is already taken'
+      'Couldn\'t configure "Anthropic": Slug "anthropic" is already taken'
     );
     expect(alert.nextElementSibling).toContainElement(card);
     expect(alert).toHaveFocus();

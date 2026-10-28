@@ -510,7 +510,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
   }, [permanentTarget, clearPermanent, reportPermanent]);
 
   const handleReactivate = useCallback(
-    async (providerId: string) => {
+    async ({ id: providerId, name }: ProviderRow) => {
       clearList();
       try {
         await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
@@ -537,14 +537,15 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
           prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p))
         );
       } catch (err) {
-        reportList(err);
+        // Reported above the grid, so it names the provider.
+        reportList(err, `Couldn't reactivate "${name}"`);
       }
     },
     [clearList, reportList]
   );
 
   const handleResetBreaker = useCallback(
-    async (providerId: string) => {
+    async ({ id: providerId, name }: ProviderRow) => {
       setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
       clearList();
       try {
@@ -573,7 +574,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
           )
         );
       } catch (err) {
-        reportList(err);
+        reportList(err, `Couldn't reset the circuit breaker on "${name}"`);
       } finally {
         setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
       }
@@ -696,7 +697,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                         </Link>
                       </DropdownMenuItem>
                       {!p.isActive && !readOnly && (
-                        <DropdownMenuItem onSelect={() => void handleReactivate(p.id)}>
+                        <DropdownMenuItem onSelect={() => void handleReactivate(p)}>
                           <Power className="mr-2 h-4 w-4" /> Reactivate
                         </DropdownMenuItem>
                       )}
@@ -705,7 +706,10 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       </DropdownMenuItem>
                       {p.isActive && !readOnly && (
                         <DropdownMenuItem
-                          onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                          onSelect={() => {
+                            clearDelete();
+                            setDeleteTarget({ id: p.id, name: p.name, slug: p.slug });
+                          }}
                         >
                           <PowerOff className="mr-2 h-4 w-4" /> Deactivate
                         </DropdownMenuItem>
@@ -713,9 +717,10 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       {!readOnly && (
                         <DropdownMenuItem
                           className="text-destructive"
-                          onSelect={() =>
-                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug })
-                          }
+                          onSelect={() => {
+                            clearPermanent();
+                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug });
+                          }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
                         </DropdownMenuItem>
@@ -756,7 +761,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       size="sm"
                       className="h-6 px-2 text-xs"
                       disabled={resettingBreaker[p.id]}
-                      onClick={() => void handleResetBreaker(p.id)}
+                      onClick={() => void handleResetBreaker(p)}
                     >
                       <RotateCcw className="mr-1 h-3 w-3" />
                       Reset

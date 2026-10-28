@@ -53,7 +53,10 @@ export function PermanentDeleteProviderDialog({
     <AlertDialog
       open={!!target}
       // No trigger opens it, so it only ever asks to close (Escape, Cancel).
-      onOpenChange={() => onCancel()}
+      // Committed while the request is in flight: a late failure must land here.
+      onOpenChange={() => {
+        if (!isDeleting) onCancel();
+      }}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -79,7 +82,7 @@ export function PermanentDeleteProviderDialog({
         <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             // preventDefault so Radix doesn't auto-close the dialog
             // when the async delete is in flight. The dialog stays

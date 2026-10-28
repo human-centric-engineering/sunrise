@@ -66,7 +66,7 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
     );
   }
 
-  const handlePause = async (agentId: string) => {
+  const handlePause = async (agentId: string, name: string) => {
     // Optimistic: mark paused immediately.
     save.clear();
     setState((prev) => ({
@@ -87,7 +87,8 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
         ...prev,
         [agentId]: { pausing: false, paused: false },
       }));
-      save.report(err);
+      // One box above every alert, so it names the agent.
+      save.report(err, `Couldn't pause "${name}"`);
     }
   };
 
@@ -183,7 +184,7 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
                       variant="outline"
                       size="sm"
                       disabled={rowState.pausing || rowState.paused}
-                      onClick={() => void handlePause(alert.agentId)}
+                      onClick={() => void handlePause(alert.agentId, alert.name)}
                     >
                       {rowState.pausing ? (
                         <>

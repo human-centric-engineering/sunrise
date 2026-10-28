@@ -61,7 +61,8 @@ export function DeleteCapabilityDialog({
     <AlertDialog
       open={!!target}
       onOpenChange={(open) => {
-        if (!open) onCancel();
+        // Committed while the delete is in flight: a late failure must land here.
+        if (!open && !isDeleting) onCancel();
       }}
     >
       <AlertDialogContent>
@@ -103,7 +104,7 @@ export function DeleteCapabilityDialog({
         <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => {
               // Closes only on success, so a failure stays readable here.
