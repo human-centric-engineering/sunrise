@@ -144,6 +144,23 @@ describe('DuplicateAgentDialog', () => {
 
   // ── Happy path ────────────────────────────────────────────────────────────
 
+  it.each([
+    ['Escape', async (user: ReturnType<typeof userEvent.setup>) => user.keyboard('{Escape}')],
+    [
+      'Cancel',
+      async (user: ReturnType<typeof userEvent.setup>) =>
+        user.click(screen.getByRole('button', { name: /^cancel$/i })),
+    ],
+  ])('closes on %s when nothing is in flight', async (_, leave) => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    render(<DuplicateAgentDialog source={SOURCE_AGENT} onOpenChange={onOpenChange} />);
+
+    await leave(user);
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('refuses a malformed slug by its button, without sending it', async () => {
     const { apiClient } = await import('@/lib/api/client');
     const user = userEvent.setup();

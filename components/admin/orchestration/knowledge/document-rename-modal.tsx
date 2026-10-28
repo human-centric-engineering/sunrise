@@ -90,7 +90,6 @@ export function DocumentRenameModal({
   const dialog = useCommittedDialog({
     open,
     pending: saving,
-    onOpen: () => onOpenChange(true),
     onClose: () => onOpenChange(false),
     clear: clearFailure,
   });

@@ -152,6 +152,15 @@ describe('DocumentRenameModal', () => {
     expect(input).not.toHaveAttribute('aria-invalid');
   });
 
+  it('closes on Escape when nothing is saving', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.keyboard('{Escape}');
+
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('Cancel closes the dialog without saving', async () => {
     const user = userEvent.setup();
     const props = renderModal();
