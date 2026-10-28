@@ -199,6 +199,16 @@ brings itself into view and takes focus, so a failure on row 40 is not lost
 off-screen (owner ruling, 2026-10-28). An action confirmed in a dialog follows
 the dialog recipe instead.
 
+The box sits away from the row, so say which row: a second argument to
+`report` leads the server's message with it, as in
+``save.report(err, `Couldn't update "${agent.name}"`)``. A bulk action names
+the action (`Bulk deactivate failed`).
+
+A refresh after a save that succeeded is not part of the save. Re-read the
+list outside the save's `try`, so a failed refresh isn't reported as the
+save failing (a new key's plaintext is already on screen by then). A bulk
+action that fails part-way does refresh, so what it did delete goes.
+
 ## Finding the field to focus
 
 `<SaveError>` looks inside its enclosing `<form>` (or the document) for an
@@ -281,9 +291,16 @@ boundaries, and `ErrorCard` are not save errors and keep their own display.
   default models, embedding model, widget appearance, MCP settings,
   evaluations, triggers, feature flags, users, members, support grants, org
   providers).
+- The admin lists and dialogs (t-960): users, invitations, members, flags,
+  support grants; agents, capabilities, providers and the setup wizard;
+  knowledge and MCP; evaluations, experiments, workflows, schedules,
+  executions, approvals, webhooks and triggers. Each list has one box above
+  its table; each confirm dialog keeps its failure inside and stays open.
 - `<StaleSaveNotice>`: webhooks table, workflow schedules tab, workflow
   builder.
 
-The admin lists and dialogs, `components/forms/` and the auth pages move onto
-it in §124's later tasks, which also add a check against hand-drawn
-save-error boxes.
+Not converted, by rule: load errors, test / run / preview / search actions
+(test buttons, the audit-models and rerun dialogs, the builder's run panel,
+the pairwise judge, LLM generation previews, knowledge search), the chat, and
+org switches. `components/forms/` and the auth pages move onto it in t-950,
+which also adds a check against hand-drawn save-error boxes.

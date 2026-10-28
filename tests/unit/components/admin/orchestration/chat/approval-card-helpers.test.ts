@@ -218,16 +218,4 @@ describe('reducer — fallback message branches', () => {
     // Assert: fallback ?? 'Workflow failed' at source L44
     expect(next).toEqual({ kind: 'failed', message: 'Workflow failed' });
   });
-
-  it('falls back to "Action failed" when failure has no payload message', () => {
-    // Arrange: idle state — generic failure event with no payload
-    const state: CardState = { kind: 'idle' };
-    const event: ReducerEvent = { type: 'failure' };
-
-    // Act
-    const next = reducer(state, event);
-
-    // Assert: fallback ?? 'Action failed' at source L48
-    expect(next).toEqual({ kind: 'failed', message: 'Action failed' });
-  });
 });

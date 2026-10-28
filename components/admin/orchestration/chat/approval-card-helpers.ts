@@ -9,8 +9,7 @@ export type Action =
   | 'submit_ok'
   | 'poll_completed'
   | 'poll_failed'
-  | 'poll_expired'
-  | 'failure';
+  | 'poll_expired';
 
 export type CardState =
   | { kind: 'idle' }
@@ -44,8 +43,6 @@ export function reducer(state: CardState, event: ReducerEvent): CardState {
       return { kind: 'failed', message: event.payload?.message ?? 'Workflow failed' };
     case 'poll_expired':
       return { kind: 'expired' };
-    case 'failure':
-      return { kind: 'failed', message: event.payload?.message ?? 'Action failed' };
     default:
       return state;
   }
