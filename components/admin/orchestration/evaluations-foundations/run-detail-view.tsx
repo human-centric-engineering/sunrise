@@ -26,7 +26,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -129,6 +132,11 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<CaseResult | null>(null);
   const [cancelling, setCancelling] = React.useState(false);
+  // A refused cancel, shown directly above the Cancel run button (§124).
+  const cancelSave = useSaveFailure({
+    fallback: 'Could not cancel the run. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   // Poll loop — 3s while active, single fetch when terminal.
   React.useEffect(() => {
@@ -181,9 +189,13 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
   }, [runId]);
 
   async function handleCancel(): Promise<void> {
+    cancelSave.clear();
     setCancelling(true);
     try {
-      await fetch(API.ADMIN.ORCHESTRATION.evalRunCancel(runId), { method: 'POST' });
+      const res = await fetch(API.ADMIN.ORCHESTRATION.evalRunCancel(runId), { method: 'POST' });
+      if (!res.ok) throw await apiErrorFromResponse(res);
+    } catch (err) {
+      cancelSave.report(err);
     } finally {
       setCancelling(false);
     }
@@ -222,16 +234,23 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
             <p className="text-muted-foreground mt-1 text-sm">{run.description}</p>
           ) : null}
         </div>
-        {ACTIVE_STATUSES.has(run.status) ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleCancel()}
-            disabled={cancelling}
-          >
-            <X className="mr-1 h-4 w-4" aria-hidden />
-            {cancelling ? 'Cancelling…' : 'Cancel run'}
-          </Button>
+        {/* A refused cancel outlives the button: "already completed" arrives
+            just as the run finishes, and the next poll removes Cancel. */}
+        {ACTIVE_STATUSES.has(run.status) || cancelSave.failure ? (
+          <div className="flex max-w-sm flex-col items-end gap-2">
+            <SaveError failure={cancelSave.failure} />
+            {ACTIVE_STATUSES.has(run.status) ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCancel()}
+                disabled={cancelling}
+              >
+                <X className="mr-1 h-4 w-4" aria-hidden />
+                {cancelling ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

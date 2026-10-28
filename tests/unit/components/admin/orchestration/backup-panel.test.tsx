@@ -70,6 +70,8 @@ function makeFile(content: string, name = 'backup.json') {
 describe('BackupPanel', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
 
     // Default: export succeeds
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -249,7 +251,7 @@ describe('BackupPanel', () => {
     await userEvent.upload(input, makeFile('not-json', 'bad.json'));
 
     await waitFor(() => {
-      expect(screen.getByText('File is not valid JSON')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('File is not valid JSON');
     });
     expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
@@ -263,12 +265,16 @@ describe('BackupPanel', () => {
 
     await userEvent.upload(input, makeFile(makeBackupJson()));
 
-    await waitFor(() => {
-      expect(screen.getByText('Schema version mismatch')).toBeInTheDocument();
-    });
+    // Directly above the drop zone, focused.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Schema version mismatch');
+    expect(alert.parentElement?.nextElementSibling).toBe(
+      screen.getByRole('button', { name: /drop a backup/i })
+    );
+    expect(alert).toHaveFocus();
   });
 
-  it('shows generic error message when import throws a plain Error', async () => {
+  it('shows the import fallback when import throws a plain Error', async () => {
     mockPost.mockRejectedValue(new Error('Unexpected server error'));
 
     const { container } = render(<BackupPanel />);
@@ -277,7 +283,10 @@ describe('BackupPanel', () => {
     await userEvent.upload(input, makeFile(makeBackupJson()));
 
     await waitFor(() => {
-      expect(screen.getByText('Unexpected server error')).toBeInTheDocument();
+      // Not the server's message (it never sent one): the save error's own.
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not import the backup. Try again.'
+      );
     });
   });
 

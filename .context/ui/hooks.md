@@ -167,9 +167,10 @@ schedule(() => setSaved(false), 2500);
 
 **File:** `lib/hooks/use-save-failure.ts`
 
-Owns a page's failed save for `<SaveError>`: `report(err)` reads what a save
-threw (and, given a react-hook-form `setError` and a field table, puts field
-messages under their fields), `show(message, fields?)` reports a failure the
+Owns a page's failed save for `<SaveError>`: `report(err, context?)` reads
+what a save threw (and, given a react-hook-form `setError` and a field table,
+puts field messages under their fields; `context` leads the message, for a
+list row reported above its table), `show(message, fields?)` reports a failure the
 page found itself, `clear()` hides it, and `submit(handler)` wraps a form's
 submit so every press clears the last failure first. Each report is a new
 object, so the same message moves into view again. Full rules and recipes:

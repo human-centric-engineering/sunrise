@@ -85,6 +85,33 @@ describe('useSaveFailure', () => {
     expect(result.current.failure?.message).toBe('Unknown jurisdiction Pick at least one');
   });
 
+  it('leads with what the failure was about, for a list row reported above the table', () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'Could not save.' }));
+
+    act(() => {
+      result.current.report(
+        new APIClientError('Slug already taken', 'CONFLICT', 409),
+        'Couldn’t update "Support bot"'
+      );
+    });
+
+    expect(result.current.failure?.message).toBe(
+      'Couldn’t update "Support bot": Slug already taken'
+    );
+  });
+
+  it('with nothing from the server, says the context and to try again, not the fallback too', () => {
+    const { result } = renderHook(() =>
+      useSaveFailure({ fallback: 'Could not update the agents. Try again in a moment.' })
+    );
+
+    act(() => {
+      result.current.report(new TypeError('Failed to fetch'), 'Couldn’t update "Support bot"');
+    });
+
+    expect(result.current.failure?.message).toBe('Couldn’t update "Support bot". Try again.');
+  });
+
   it('makes a new failure object each time, so the same message moves again', () => {
     const { result } = renderHook(() => useSaveFailure({ fallback: 'Could not save.' }));
 

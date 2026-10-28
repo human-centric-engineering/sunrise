@@ -616,10 +616,8 @@ describe('components/admin/invitation-table', () => {
       await user.click(actionButtons[0]);
       await user.click(screen.getByRole('menuitem', { name: /resend/i }));
 
-      // Assert: Should not crash (error is logged but not displayed to user in current implementation)
-      await waitFor(() => {
-        expect(apiClient.post).toHaveBeenCalled();
-      });
+      // Assert: the failure is shown above the table (§124)
+      expect(await screen.findByRole('alert')).toHaveTextContent('Failed to resend invitation');
     });
   });
 

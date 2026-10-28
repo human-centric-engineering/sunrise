@@ -21,6 +21,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import type { SaveFailure } from '@/lib/errors/save-error';
 
 export interface DeleteProviderTarget {
   id: string;
@@ -30,7 +32,8 @@ export interface DeleteProviderTarget {
 
 export interface DeleteProviderDialogProps {
   target: DeleteProviderTarget | null;
-  error: string | null;
+  /** The refused deactivation, from `useSaveFailure()`; shown above the buttons. */
+  failure: SaveFailure | null;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -38,7 +41,7 @@ export interface DeleteProviderDialogProps {
 
 export function DeleteProviderDialog({
   target,
-  error,
+  failure,
   isDeleting,
   onCancel,
   onConfirm,
@@ -46,8 +49,10 @@ export function DeleteProviderDialog({
   return (
     <AlertDialog
       open={!!target}
-      onOpenChange={(open) => {
-        if (!open) onCancel();
+      // No trigger opens it, so it only ever asks to close (Escape, Cancel).
+      // Committed while the request is in flight: a late failure must land here.
+      onOpenChange={() => {
+        if (!isDeleting) onCancel();
       }}
     >
       <AlertDialogContent>
@@ -62,10 +67,10 @@ export function DeleteProviderDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {error && <p className="text-destructive text-sm">{error}</p>}
+        <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             // preventDefault so the dialog doesn't auto-close while
             // the async deactivation is in flight — the parent flips

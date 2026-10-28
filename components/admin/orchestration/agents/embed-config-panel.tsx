@@ -19,8 +19,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { WidgetAppearanceSection } from '@/components/admin/orchestration/agents/widget-appearance-section';
 
@@ -110,7 +112,17 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
   const schedule = useTimeout();
   const [tokens, setTokens] = React.useState<EmbedToken[]>([]);
   const [loading, setLoading] = React.useState(true);
+  // Load failures only; a refused create sits by Create, a refused toggle or
+  // delete above the token list (§124).
   const [error, setError] = React.useState<string | null>(null);
+  const createSave = useSaveFailure({
+    fallback: 'Could not create the token. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const listSave = useSaveFailure({
+    fallback: 'Could not update the token. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [newLabel, setNewLabel] = React.useState('');
   const [newOrigins, setNewOrigins] = React.useState('');
   const [creating, setCreating] = React.useState(false);
@@ -135,7 +147,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
 
   async function handleCreate(): Promise<void> {
     setCreating(true);
-    setError(null);
+    createSave.clear();
     try {
       const origins = newOrigins
         .split(',')
@@ -147,7 +159,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
         try {
           new URL(origin);
         } catch {
-          setError(
+          createSave.show(
             `Invalid origin URL: "${origin}". Each origin must be a full URL (e.g. https://example.com).`
           );
           setCreating(false);
@@ -165,29 +177,38 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
       setNewLabel('');
       setNewOrigins('');
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to create token');
+      createSave.report(err);
     } finally {
       setCreating(false);
     }
   }
 
-  async function handleToggle(tokenId: string, isActive: boolean): Promise<void> {
+  // Reported above the list, so a failure names its token: the label, or the
+  // token's opening characters when it has none.
+  const tokenName = (token: EmbedToken): string => token.label || token.token.slice(0, 8);
+
+  async function handleToggle(token: EmbedToken, isActive: boolean): Promise<void> {
+    listSave.clear();
     try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId), {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, token.id), {
         body: { isActive },
       });
-      setTokens((prev) => prev.map((t) => (t.id === tokenId ? { ...t, isActive } : t)));
+      setTokens((prev) => prev.map((t) => (t.id === token.id ? { ...t, isActive } : t)));
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to update token');
+      listSave.report(
+        err,
+        `Couldn't ${isActive ? 'activate' : 'deactivate'} "${tokenName(token)}"`
+      );
     }
   }
 
-  async function handleDelete(tokenId: string): Promise<void> {
+  async function handleDelete(token: EmbedToken): Promise<void> {
+    listSave.clear();
     try {
-      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId));
-      setTokens((prev) => prev.filter((t) => t.id !== tokenId));
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, token.id));
+      setTokens((prev) => prev.filter((t) => t.id !== token.id));
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to delete token');
+      listSave.report(err, `Couldn't delete "${tokenName(token)}"`);
     }
   }
 
@@ -274,6 +295,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
               />
             </div>
           </div>
+          <SaveError failure={createSave.failure} />
           <Button type="button" size="sm" onClick={() => void handleCreate()} disabled={creating}>
             <Plus className="mr-1 h-3 w-3" />
             {creating ? 'Creating...' : 'Create Token'}
@@ -290,6 +312,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                 : `${tokens.length} ${tokens.length === 1 ? 'token' : 'tokens'}`}
             </span>
           </div>
+          <SaveError failure={listSave.failure} />
           {tokens.length === 0 ? (
             <p className="text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm">
               No embed tokens yet. Create one above to get started.
@@ -340,7 +363,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => void handleToggle(t.id, !t.isActive)}
+                        onClick={() => void handleToggle(t, !t.isActive)}
                         title={t.isActive ? 'Deactivate' : 'Activate'}
                         aria-label={`${t.isActive ? 'Deactivate' : 'Activate'} ${t.label || 'token'}`}
                       >
@@ -354,7 +377,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => void handleDelete(t.id)}
+                        onClick={() => void handleDelete(t)}
                         title="Delete token"
                         aria-label={`Delete ${t.label || 'token'}`}
                       >

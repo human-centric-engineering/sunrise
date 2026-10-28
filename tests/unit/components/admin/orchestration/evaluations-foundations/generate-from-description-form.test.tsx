@@ -103,6 +103,7 @@ function mockPreviewThenCommit(): ReturnType<typeof vi.fn> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -480,7 +481,7 @@ describe('GenerateFromDescriptionForm', () => {
       expect(screen.getByText(/Review proposed cases/i)).toBeInTheDocument();
     });
 
-    it('shows "Failed (N)" when commit response is not ok but payload.success is true', async () => {
+    it('shows the fallback when commit response is not ok but payload.success is true', async () => {
       const fetchMock = vi.fn(async (url: string) => {
         if (url === API.ADMIN.ORCHESTRATION.EVAL_DATASETS_GENERATE_FROM_DESCRIPTION) {
           return {
@@ -516,10 +517,13 @@ describe('GenerateFromDescriptionForm', () => {
 
       await user.click(screen.getByRole('button', { name: /Save 1 case/i }));
 
-      await screen.findByText(/Failed \(503\)/);
+      // No server message to show: the fallback, by Save (§124).
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not save the dataset. Try again in a moment.'
+      );
     });
 
-    it('shows network error message when commit fetch throws', async () => {
+    it('shows the fallback when commit fetch throws (the browser text is not the server talking)', async () => {
       const fetchMock = vi.fn(async (url: string) => {
         if (url === API.ADMIN.ORCHESTRATION.EVAL_DATASETS_GENERATE_FROM_DESCRIPTION) {
           return {
@@ -551,7 +555,9 @@ describe('GenerateFromDescriptionForm', () => {
 
       await user.click(screen.getByRole('button', { name: /Save 1 case/i }));
 
-      await screen.findByText(/Commit network failure/);
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not save the dataset. Try again in a moment.'
+      );
     });
 
     it('includes description in commit POST body when description field is filled', async () => {

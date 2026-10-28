@@ -42,7 +42,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -104,7 +106,10 @@ function CreateExperimentForm({
   const [agentId, setAgentId] = React.useState('');
   const [variants, setVariants] = React.useState([{ label: 'Variant A' }, { label: 'Variant B' }]);
   const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Failed to create experiment',
+    fields: NO_SERVER_FIELDS,
+  });
 
   React.useEffect(() => {
     async function loadAgents(): Promise<void> {
@@ -144,7 +149,7 @@ function CreateExperimentForm({
     if (!name.trim() || !agentId) return;
 
     setSubmitting(true);
-    setError(null);
+    save.clear();
     try {
       await apiClient.post(ENDPOINT, {
         body: {
@@ -156,7 +161,7 @@ function CreateExperimentForm({
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to create experiment');
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -169,8 +174,6 @@ function CreateExperimentForm({
       </CardHeader>
       <CardContent>
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
           {/* Name */}
           <div className="space-y-1.5">
             <Label htmlFor="exp-name">
@@ -298,6 +301,7 @@ function CreateExperimentForm({
           </div>
 
           {/* Actions */}
+          <SaveError failure={save.failure} />
           <div className="flex items-center gap-2 pt-2">
             <Button
               type="submit"
@@ -331,6 +335,16 @@ export function ExperimentsList(): React.ReactElement {
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [completingId, setCompletingId] = React.useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<Experiment | null>(null);
+  // A refused complete: shown in the one box above the table (§124).
+  const rowSave = useSaveFailure({
+    fallback: 'Failed to complete experiment',
+    fields: NO_SERVER_FIELDS,
+  });
+  // A refused delete: shown inside its dialog, which stays open.
+  const deleteSave = useSaveFailure({
+    fallback: 'Failed to delete experiment',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const fetchExperiments = React.useCallback(async () => {
     try {
@@ -361,30 +375,31 @@ export function ExperimentsList(): React.ReactElement {
     }
   }
 
-  async function handleComplete(id: string): Promise<void> {
-    setError(null);
+  async function handleComplete(exp: Experiment): Promise<void> {
+    const id = exp.id;
+    rowSave.clear();
     setCompletingId(id);
     try {
       await apiClient.patch(`${ENDPOINT}/${id}`, { body: { status: 'completed' } });
       await fetchExperiments();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to complete experiment');
+      rowSave.report(err, `Couldn't complete "${exp.name}"`);
     } finally {
       setCompletingId(null);
     }
   }
 
   async function handleDelete(id: string): Promise<void> {
-    setError(null);
+    deleteSave.clear();
     setDeletingId(id);
     try {
       await apiClient.delete(`${ENDPOINT}/${id}`);
       setExperiments((prev) => prev.filter((e) => e.id !== id));
+      setDeleteTarget(null);
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to delete experiment');
+      deleteSave.report(err);
     } finally {
       setDeletingId(null);
-      setDeleteTarget(null);
     }
   }
 
@@ -431,6 +446,7 @@ export function ExperimentsList(): React.ReactElement {
       </div>
 
       {/* Experiment table */}
+      <SaveError failure={rowSave.failure} />
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -541,7 +557,7 @@ export function ExperimentsList(): React.ReactElement {
                           variant="outline"
                           size="sm"
                           disabled={completingId === exp.id}
-                          onClick={() => void handleComplete(exp.id)}
+                          onClick={() => void handleComplete(exp)}
                         >
                           {completingId === exp.id ? (
                             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -557,7 +573,10 @@ export function ExperimentsList(): React.ReactElement {
                           size="sm"
                           aria-label="Delete experiment"
                           disabled={deletingId === exp.id}
-                          onClick={() => setDeleteTarget(exp)}
+                          onClick={() => {
+                            deleteSave.clear();
+                            setDeleteTarget(exp);
+                          }}
                         >
                           {deletingId === exp.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -576,7 +595,15 @@ export function ExperimentsList(): React.ReactElement {
       </div>
 
       {/* Delete confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (open || deletingId) return;
+          setDeleteTarget(null);
+          deleteSave.clear();
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete experiment</AlertDialogTitle>
@@ -585,10 +612,15 @@ export function ExperimentsList(): React.ReactElement {
               permanently remove the experiment and all its variants.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteTarget && void handleDelete(deleteTarget.id)}
+              onClick={(e) => {
+                // Closes only on success, so a refusal can be read inside it (§124).
+                e.preventDefault();
+                if (deleteTarget) void handleDelete(deleteTarget.id);
+              }}
               className="bg-red-600 hover:bg-red-700"
               disabled={!!deletingId}
             >

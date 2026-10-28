@@ -26,8 +26,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 const MAX_NAME_LENGTH = 255;
 
@@ -50,15 +52,19 @@ export function DocumentRenameModal({
   const router = useRouter();
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const failure = useSaveFailure({
+    fallback: 'Could not rename the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const clearFailure = failure.clear;
 
   // Seed the input from the current name each time the modal opens.
   useEffect(() => {
     if (open) {
       setName(documentName ?? '');
-      setError(null);
+      clearFailure();
     }
-  }, [open, documentName]);
+  }, [open, documentName, clearFailure]);
 
   const trimmed = name.trim();
   const dirty = trimmed.length > 0 && trimmed !== (documentName ?? '').trim();
@@ -66,7 +72,7 @@ export function DocumentRenameModal({
   async function save(): Promise<void> {
     if (!documentId || !dirty) return;
     setSaving(true);
-    setError(null);
+    failure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId), {
         body: { name: trimmed },
@@ -76,14 +82,21 @@ export function DocumentRenameModal({
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to rename document');
+      failure.report(err);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the save is in flight, so its failure is shown here.
+        if (!next && saving) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="w-full max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -104,7 +117,8 @@ export function DocumentRenameModal({
             maxLength={MAX_NAME_LENGTH}
             onChange={(e) => {
               setName(e.target.value);
-              setError(null);
+              // A refusal was about the name it was given; editing answers it.
+              failure.clear();
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && dirty && !saving) {
@@ -113,10 +127,11 @@ export function DocumentRenameModal({
               }
             }}
             placeholder="Document name"
-            aria-invalid={error ? true : undefined}
+            aria-invalid={failure.failure ? true : undefined}
           />
-          {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </div>
+
+        <SaveError failure={failure.failure} />
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>

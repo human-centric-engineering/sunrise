@@ -73,6 +73,7 @@ const POPULATED_DATA = {
 describe('WorkflowSchedulesTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -414,7 +415,9 @@ describe('WorkflowSchedulesTab', () => {
     // Arrange
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue(EMPTY_DATA);
-    vi.mocked(apiClient.post).mockRejectedValue(new Error('Cron invalid'));
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('Cron invalid', 'BAD_REQUEST', 400)
+    );
 
     render(<WorkflowSchedulesTab workflowId="wf-1" />);
 
@@ -432,10 +435,9 @@ describe('WorkflowSchedulesTab', () => {
     await user.click(screen.getByRole('button', { name: /^create$/i }));
 
     // Assert: error message rendered inside dialog, dialog remains open
-    await waitFor(() => {
-      expect(screen.getByText(/cron invalid/i)).toBeInTheDocument();
-    });
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/cron invalid/i);
+    expect(screen.getByRole('dialog')).toContainElement(alert);
   });
 
   it('Create button is disabled when name or cron is empty, enabled when both are filled', async () => {

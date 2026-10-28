@@ -22,22 +22,14 @@ import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-cap
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError and apiErrorFromResponse, so failures are read as in the app.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: vi.fn(),
     post: vi.fn(),
     patch: vi.fn(),
     delete: vi.fn(),
-  },
-  APIClientError: class APIClientError extends Error {
-    constructor(
-      message: string,
-      public code = 'INTERNAL_ERROR',
-      public status = 500
-    ) {
-      super(message);
-      this.name = 'APIClientError';
-    }
   },
 }));
 
@@ -584,9 +576,11 @@ describe('AgentCapabilitiesTab', () => {
       // Act: click Detach
       await user.click(screen.getByRole('button', { name: /detach/i }));
 
-      // Assert: generic fallback message (not the plain Error message)
+      // Assert: the named context, not the plain Error message
       await waitFor(() => {
-        expect(screen.getByText(/could not detach capability/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t detach "Web Search". Try again.'
+        );
       });
     });
 
@@ -605,9 +599,11 @@ describe('AgentCapabilitiesTab', () => {
       const switches = screen.getAllByRole('switch');
       await user.click(switches[0]);
 
-      // Assert: generic fallback message
+      // Assert: the named context, not the plain Error message
       await waitFor(() => {
-        expect(screen.getByText(/could not update capability/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t update "Web Search". Try again.'
+        );
       });
     });
   });
@@ -821,9 +817,9 @@ describe('AgentCapabilitiesTab', () => {
     });
 
     it('shows server error message when save PATCH returns non-OK', async () => {
-      // Arrange — the dialog now uses raw fetch so non-OK responses are
-      // parsed via parseApiResponse and the server's error.message is
-      // surfaced inline.
+      // Arrange — the dialog uses raw fetch (it reads the response meta), so a
+      // non-OK response becomes an APIClientError via apiErrorFromResponse and
+      // the server's error.message shows above the dialog's buttons.
       const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(

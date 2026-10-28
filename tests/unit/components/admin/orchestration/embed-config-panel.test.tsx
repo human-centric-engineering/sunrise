@@ -308,7 +308,9 @@ describe('EmbedConfigPanel', () => {
     await user.click(toggleBtn!);
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to update token')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Couldn\'t deactivate "Marketing site". Try again.'
+      );
     });
   });
 
@@ -348,7 +350,9 @@ describe('EmbedConfigPanel', () => {
     await user.click(deleteBtn!);
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to delete token')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Couldn\'t delete "Marketing site". Try again.'
+      );
     });
   });
 

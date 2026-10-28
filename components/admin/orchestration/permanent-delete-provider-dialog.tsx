@@ -24,6 +24,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import type { SaveFailure } from '@/lib/errors/save-error';
 
 export interface PermanentDeleteTarget {
   id: string;
@@ -33,7 +35,8 @@ export interface PermanentDeleteTarget {
 
 export interface PermanentDeleteProviderDialogProps {
   target: PermanentDeleteTarget | null;
-  error: string | null;
+  /** The refused delete, from `useSaveFailure()`; shown above the buttons. */
+  failure: SaveFailure | null;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -41,7 +44,7 @@ export interface PermanentDeleteProviderDialogProps {
 
 export function PermanentDeleteProviderDialog({
   target,
-  error,
+  failure,
   isDeleting,
   onCancel,
   onConfirm,
@@ -49,8 +52,10 @@ export function PermanentDeleteProviderDialog({
   return (
     <AlertDialog
       open={!!target}
-      onOpenChange={(open) => {
-        if (!open) onCancel();
+      // No trigger opens it, so it only ever asks to close (Escape, Cancel).
+      // Committed while the request is in flight: a late failure must land here.
+      onOpenChange={() => {
+        if (!isDeleting) onCancel();
       }}
     >
       <AlertDialogContent>
@@ -74,12 +79,10 @@ export function PermanentDeleteProviderDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {error && (
-          <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-        )}
+        <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             // preventDefault so Radix doesn't auto-close the dialog
             // when the async delete is in flight. The dialog stays

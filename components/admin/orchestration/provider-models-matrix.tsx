@@ -7,6 +7,7 @@
  * sortable columns, and provider/tier/capability filters.
  */
 
+import { z } from 'zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState } from 'react';
@@ -45,7 +46,9 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { Input } from '@/components/ui/input';
 import {
@@ -145,6 +148,11 @@ export interface ModelRowWorkflowRef {
   name: string;
   slug: string;
 }
+
+/** The in-use refs a refused delete names in its `details` (external data). */
+const blockingRefsSchema = z.array(
+  z.object({ id: z.string(), name: z.string(), slug: z.string() })
+);
 
 export interface ModelRow {
   id: string;
@@ -343,11 +351,15 @@ export function ProviderModelsMatrix({
   const [sortAsc, setSortAsc] = useState(true);
 
   // Row deletion state. `target` doubles as the open flag for the
-  // confirmation dialog. `error` surfaces 409 in-use responses or
-  // network failures.
+  // confirmation dialog. `deleteSave` holds a refused delete, shown above
+  // the dialog's buttons unless the in-use lists already explain it.
   const [deleteTarget, setDeleteTarget] = useState<ModelRow | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSave = useSaveFailure({
+    fallback: "Couldn't delete the model. Try again.",
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const [deleteBlockedAgents, setDeleteBlockedAgents] = useState<ModelRowAgentRef[]>([]);
   const [deleteBlockedWorkflows, setDeleteBlockedWorkflows] = useState<ModelRowWorkflowRef[]>([]);
   // Agents and workflows in other orgs still using the model: counted by the
@@ -357,7 +369,7 @@ export function ProviderModelsMatrix({
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerModelById(deleteTarget.id));
       setDeleteTarget(null);
@@ -371,12 +383,10 @@ export function ProviderModelsMatrix({
       // instead of just an opaque error message.
       if (err instanceof APIClientError) {
         if (err.status === 409) {
-          if (Array.isArray(err.details?.agents)) {
-            setDeleteBlockedAgents(err.details.agents as ModelRowAgentRef[]);
-          }
-          if (Array.isArray(err.details?.workflows)) {
-            setDeleteBlockedWorkflows(err.details.workflows as ModelRowWorkflowRef[]);
-          }
+          const agents = blockingRefsSchema.safeParse(err.details?.agents);
+          if (agents.success) setDeleteBlockedAgents(agents.data);
+          const workflows = blockingRefsSchema.safeParse(err.details?.workflows);
+          if (workflows.success) setDeleteBlockedWorkflows(workflows.data);
           const elsewhere = (key: string) => {
             const n = err.details?.[key];
             return typeof n === 'number' ? n : 0;
@@ -385,22 +395,26 @@ export function ProviderModelsMatrix({
             elsewhere('otherOrgAgentCount') + elsewhere('otherOrgWorkflowCount')
           );
         }
-        setDeleteError(err.message);
-      } else {
-        setDeleteError(err instanceof Error ? err.message : "Couldn't delete the model.");
       }
+      reportDelete(err);
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, router]);
+  }, [deleteTarget, router, clearDelete, reportDelete]);
 
-  const handleCancelDelete = useCallback(() => {
-    setDeleteTarget(null);
-    setDeleteError(null);
+  // Opening and closing both start clean, so one row's refusal (or its
+  // blocking refs) never shows in the next row's dialog.
+  const resetDelete = useCallback(() => {
+    clearDelete();
     setDeleteBlockedAgents([]);
     setDeleteBlockedWorkflows([]);
     setDeleteBlockedElsewhere(0);
-  }, []);
+  }, [clearDelete]);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+    resetDelete();
+  }, [resetDelete]);
 
   const deleteBlocked =
     deleteBlockedAgents.length + deleteBlockedWorkflows.length + deleteBlockedElsewhere > 0;
@@ -1000,7 +1014,10 @@ export function ProviderModelsMatrix({
                           variant="ghost"
                           size="sm"
                           className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
-                          onClick={() => setDeleteTarget(model)}
+                          onClick={() => {
+                            resetDelete();
+                            setDeleteTarget(model);
+                          }}
                           aria-label={`Delete ${model.name}`}
                           title={`Delete ${model.name}`}
                         >
@@ -1029,7 +1046,8 @@ export function ProviderModelsMatrix({
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (!open) handleCancelDelete();
+          // Committed while the delete is in flight: a late failure must land here.
+          if (!open && !deleting) handleCancelDelete();
         }}
       >
         <AlertDialogContent>
@@ -1108,12 +1126,10 @@ export function ProviderModelsMatrix({
             </p>
           )}
 
-          {deleteError && !deleteBlocked && (
-            <p className="text-destructive text-sm">{deleteError}</p>
-          )}
+          <SaveError failure={deleteBlocked ? null : deleteSave.failure} />
 
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Default closes the dialog; we want to keep it open if the

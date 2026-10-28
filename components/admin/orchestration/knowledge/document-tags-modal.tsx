@@ -34,8 +34,10 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { createKnowledgeTagSchema } from '@/lib/validations/orchestration';
 import { cn } from '@/lib/utils';
 
@@ -62,6 +64,17 @@ interface CreateFieldErrors {
   description?: string;
 }
 
+/**
+ * Server path → the id of the create-tag input that shows its message, so the
+ * save error can focus it (`.context/ui/form-errors.md`).
+ */
+const CREATE_TAG_FIELDS: Partial<Record<string, string>> = {
+  name: 'new-tag-name',
+  slug: 'new-tag-slug',
+  description: 'new-tag-description',
+};
+const CREATE_TAG_KEYS = ['name', 'slug', 'description'] as const;
+
 export interface DocumentTagsModalProps {
   documentId: string | null;
   documentName: string | null;
@@ -85,7 +98,13 @@ export function DocumentTagsModal({
   const [originalTagIds, setOriginalTagIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The load error; a failed save shows above the footer instead.
   const [error, setError] = useState<string | null>(null);
+  const saveFailure = useSaveFailure({
+    fallback: 'Could not save the tags. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const clearSaveFailure = saveFailure.clear;
 
   const fetchTagsAndDoc = useCallback(async () => {
     if (!documentId) return;
@@ -118,8 +137,9 @@ export function DocumentTagsModal({
       setTagIds([]);
       setOriginalTagIds([]);
       setError(null);
+      clearSaveFailure();
     }
-  }, [open, documentId, fetchTagsAndDoc]);
+  }, [open, documentId, fetchTagsAndDoc, clearSaveFailure]);
 
   // Inline tag-creation state. Operators who realise a tag is missing
   // can spin one up without leaving the modal — the new tag is added to
@@ -131,7 +151,11 @@ export function DocumentTagsModal({
   const [createDescription, setCreateDescription] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createFieldErrors, setCreateFieldErrors] = useState<CreateFieldErrors>({});
-  const [createError, setCreateError] = useState<string | null>(null);
+  const createFailure = useSaveFailure({
+    fallback: 'Could not create the tag. Try again.',
+    fields: CREATE_TAG_FIELDS,
+  });
+  const clearCreateFailure = createFailure.clear;
 
   useEffect(() => {
     if (!open) {
@@ -141,9 +165,9 @@ export function DocumentTagsModal({
       setCreateSlugDirty(false);
       setCreateDescription('');
       setCreateFieldErrors({});
-      setCreateError(null);
+      clearCreateFailure();
     }
-  }, [open]);
+  }, [open, clearCreateFailure]);
 
   const [filter, setFilter] = useState('');
   useEffect(() => {
@@ -179,6 +203,7 @@ export function DocumentTagsModal({
   }, [tagIds, originalTagIds]);
 
   async function createTag(): Promise<void> {
+    createFailure.clear();
     const payload = {
       slug: createSlug.trim(),
       name: createName.trim(),
@@ -201,7 +226,6 @@ export function DocumentTagsModal({
     }
 
     setCreateBusy(true);
-    setCreateError(null);
     setCreateFieldErrors({});
     try {
       const created = await apiClient.post<TagRow>(API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS, {
@@ -223,21 +247,15 @@ export function DocumentTagsModal({
       setCreateSlugDirty(false);
       setCreateDescription('');
     } catch (err) {
-      if (err instanceof APIClientError) {
-        const details: Record<string, unknown> = err.details ?? {};
-        const next: CreateFieldErrors = {};
-        for (const key of ['name', 'slug', 'description'] as const) {
-          const v = details[key];
-          if (Array.isArray(v) && typeof v[0] === 'string') next[key] = v[0];
-        }
-        if (Object.keys(next).length > 0) {
-          setCreateFieldErrors(next);
-        } else {
-          setCreateError(err.message);
-        }
-      } else {
-        setCreateError('Failed to create tag.');
+      // The summary shows above Create; a field the server named gets its
+      // message under the input, which the summary's focus lands on.
+      const failure = createFailure.report(err);
+      const next: CreateFieldErrors = {};
+      for (const key of CREATE_TAG_KEYS) {
+        const placed = failure.fields.find((f) => f.field === CREATE_TAG_FIELDS[key]);
+        if (placed) next[key] = placed.message;
       }
+      setCreateFieldErrors(next);
     } finally {
       setCreateBusy(false);
     }
@@ -246,7 +264,7 @@ export function DocumentTagsModal({
   async function save(): Promise<void> {
     if (!documentId) return;
     setSaving(true);
-    setError(null);
+    saveFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId), {
         body: { tagIds },
@@ -258,14 +276,21 @@ export function DocumentTagsModal({
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to save tags');
+      saveFailure.report(err);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while a save or a tag create is in flight.
+        if (!next && (saving || createBusy)) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-h-[85vh] w-full max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-start gap-2">
@@ -408,7 +433,7 @@ export function DocumentTagsModal({
                   <p className="text-destructive text-xs">{createFieldErrors.description}</p>
                 ) : null}
               </div>
-              {createError ? <p className="text-destructive text-xs">{createError}</p> : null}
+              <SaveError failure={createFailure.failure} />
               <div className="flex items-center justify-end gap-2">
                 <Button
                   type="button"
@@ -416,7 +441,7 @@ export function DocumentTagsModal({
                   size="sm"
                   onClick={() => {
                     setCreateOpen(false);
-                    setCreateError(null);
+                    createFailure.clear();
                     setCreateFieldErrors({});
                   }}
                   disabled={createBusy}
@@ -511,6 +536,8 @@ export function DocumentTagsModal({
 
           {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </div>
+
+        <SaveError failure={saveFailure.failure} />
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>

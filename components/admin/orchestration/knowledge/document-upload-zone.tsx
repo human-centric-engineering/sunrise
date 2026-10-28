@@ -12,8 +12,10 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { apiClient } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface TagRow {
   id: string;
@@ -36,12 +38,6 @@ function slugifyTagName(input: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
 }
-
-const errorBodySchema = z
-  .object({
-    error: z.object({ message: z.string().optional() }).optional(),
-  })
-  .nullable();
 
 const pdfPreviewDataSchema = z.object({
   document: z.object({
@@ -120,17 +116,51 @@ export interface PdfPreviewData {
   runCleanup: boolean;
 }
 
-interface DocumentUploadZoneProps {
-  onUploadComplete: () => void;
-  onPdfPreview?: (data: PdfPreviewData) => void;
+/** What an upload left behind for the host to act on. */
+export interface UploadOutcome {
+  /**
+   * True when a bulk upload refused some files. Their failure is shown in
+   * this zone, so a host that closes on completion must stay open for it.
+   */
+  refused: boolean;
 }
 
-export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentUploadZoneProps) {
+interface DocumentUploadZoneProps {
+  onUploadComplete: (outcome: UploadOutcome) => void;
+  onPdfPreview?: (data: PdfPreviewData) => void;
+  /**
+   * Told whenever an upload or URL fetch starts or ends, so a host dialog can
+   * stay open while one is in flight (see `.context/ui/form-errors.md`).
+   */
+  onBusyChange?: (busy: boolean) => void;
+}
+
+export function DocumentUploadZone({
+  onUploadComplete,
+  onPdfPreview,
+  onBusyChange,
+}: DocumentUploadZoneProps) {
   const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [fetchingUrl, setFetchingUrl] = useState(false);
+  const busy = uploading || fetchingUrl;
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+  // Files refused before upload (type, size, count); a failed upload shows
+  // in the save error below the upload controls instead.
   const [error, setError] = useState<string | null>(null);
+  const uploadFailure = useSaveFailure({
+    fallback: 'Could not upload. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const {
+    clear: clearUploadFailure,
+    report: reportUploadFailure,
+    show: showUploadFailure,
+  } = uploadFailure;
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<TagRow[]>([]);
@@ -216,6 +246,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     if (stagedFiles.length === 0) return;
 
     setError(null);
+    clearUploadFailure();
     setUploading(true);
 
     try {
@@ -247,10 +278,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           body: formData,
         });
 
-        if (!res.ok) {
-          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-          throw new Error((raw.success ? raw.data?.error?.message : null) ?? 'Upload failed');
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
 
         const responseBody = uploadResponseSchema.parse(await res.json());
 
@@ -284,7 +312,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           router.push(responseBody.data.redirectTo);
           return;
         }
-        onUploadComplete();
+        onUploadComplete({ refused: false });
         return;
       }
 
@@ -302,10 +330,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         body: formData,
       });
 
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        throw new Error((raw.success ? raw.data?.error?.message : null) ?? 'Bulk upload failed');
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
 
       const responseBody = bulkUploadResponseSchema.parse(await res.json());
 
@@ -323,16 +348,17 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         );
       }
 
+      // Some files were refused: the upload partly failed.
       if (messages.length > 0) {
-        setError(messages.join('. '));
+        showUploadFailure(messages.join('. '));
       }
 
       setStagedFiles([]);
       setTagIds([]);
       setDisplayName('');
-      onUploadComplete();
+      onUploadComplete({ refused: messages.length > 0 });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      reportUploadFailure(err);
     } finally {
       setUploading(false);
     }
@@ -345,6 +371,9 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     onUploadComplete,
     onPdfPreview,
     router,
+    clearUploadFailure,
+    reportUploadFailure,
+    showUploadFailure,
   ]);
 
   const handleDrop = useCallback(
@@ -682,6 +711,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         </div>
       )}
 
+      {/* Below the Upload button. Outside the staged panel, which a bulk
+          upload that refused some files has already cleared. */}
+      <SaveError failure={uploadFailure.failure} />
+
       <input
         ref={inputRef}
         type="file"
@@ -693,7 +726,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       />
 
       {/* Fetch from URL */}
-      <FetchFromUrl tagIds={tagIds} onFetchComplete={onUploadComplete} />
+      <FetchFromUrl
+        tagIds={tagIds}
+        onFetchComplete={() => onUploadComplete({ refused: false })}
+        onFetchingChange={setFetchingUrl}
+      />
 
       {error && <p className="text-destructive text-sm">{error}</p>}
     </div>
@@ -705,37 +742,38 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 function FetchFromUrl({
   tagIds,
   onFetchComplete,
+  onFetchingChange,
 }: {
   tagIds: string[];
   onFetchComplete: () => void;
+  onFetchingChange: (fetching: boolean) => void;
 }): ReactElement {
   const [url, setUrl] = useState('');
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetching, setFetchingState] = useState(false);
+  const setFetching = (value: boolean): void => {
+    setFetchingState(value);
+    onFetchingChange(value);
+  };
+  const fetchFailure = useSaveFailure({
+    fallback: 'Could not fetch the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   async function handleFetch(): Promise<void> {
     if (!url.trim()) return;
     setFetching(true);
-    setFetchError(null);
+    fetchFailure.clear();
     try {
-      const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/fetch-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await apiClient.post(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/fetch-url`, {
+        body: {
           url: url.trim(),
           ...(tagIds.length > 0 ? { tagIds } : {}),
-        }),
+        },
       });
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        throw new Error(
-          (raw.success ? raw.data?.error?.message : null) ?? `Fetch failed (HTTP ${res.status})`
-        );
-      }
       setUrl('');
       onFetchComplete();
     } catch (err) {
-      setFetchError(err instanceof Error ? err.message : 'Fetch failed');
+      fetchFailure.report(err);
     } finally {
       setFetching(false);
     }
@@ -747,6 +785,7 @@ function FetchFromUrl({
         <Globe className="text-muted-foreground h-3.5 w-3.5" />
         <span className="text-xs font-medium">Fetch from URL</span>
       </div>
+      <SaveError failure={fetchFailure.failure} />
       <div className="flex gap-2">
         <Input
           type="url"
@@ -769,7 +808,6 @@ function FetchFromUrl({
           {fetching ? 'Fetching...' : 'Fetch'}
         </Button>
       </div>
-      {fetchError && <p className="text-destructive text-xs">{fetchError}</p>}
     </div>
   );
 }

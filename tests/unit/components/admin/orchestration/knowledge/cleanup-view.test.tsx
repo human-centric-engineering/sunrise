@@ -97,16 +97,12 @@ vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
   },
 }));
 
-// apiClient.get is used for the doc refetch after chat events.
-vi.mock('@/lib/api/client', () => ({
+// apiClient.get is used for the doc refetch after chat events. The real
+// APIClientError and apiErrorFromResponse read a failed finalise (§124).
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: vi.fn(),
-  },
-  APIClientError: class APIClientError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = 'APIClientError';
-    }
   },
 }));
 
@@ -232,7 +228,7 @@ function makeFetchError(message = 'Internal Server Error') {
   return Promise.resolve({
     ok: false,
     status: 500,
-    json: () => Promise.resolve({ error: { message } }),
+    json: () => Promise.resolve({ success: false, error: { code: 'INTERNAL_ERROR', message } }),
   });
 }
 
@@ -260,6 +256,8 @@ describe('CleanupView', () => {
     capturedRevisionDrawerProps = null;
     capturedPendingChangeModalProps = null;
 
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     // Default: all fetches succeed with an empty JSON body
     globalThis.fetch = vi.fn().mockImplementation(() => makeFetchSuccess({}));
 
@@ -518,9 +516,13 @@ describe('CleanupView', () => {
     render(<CleanupView {...BASE_PROPS} />);
     await user.click(screen.getByRole('button', { name: /Mark cleaned/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Something went wrong on the server/i)).toBeInTheDocument();
-    });
+    // In the sticky header, directly below the row holding the finalise buttons.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Something went wrong on the server/i);
+    expect(alert.parentElement?.previousElementSibling).toContainElement(
+      screen.getByRole('button', { name: /Mark cleaned/i })
+    );
+    expect(alert).toHaveFocus();
 
     // Should NOT redirect on failure
     expect(mockPush).not.toHaveBeenCalled();
@@ -534,7 +536,7 @@ describe('CleanupView', () => {
     await user.click(screen.getByRole('button', { name: /Use original/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Server error/i)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/Server error/i);
     });
 
     expect(mockPush).not.toHaveBeenCalled();
@@ -664,7 +666,7 @@ describe('CleanupView', () => {
     expect(screen.queryByText(/% reduction/)).not.toBeInTheDocument();
   });
 
-  it('falls back to "Failed (status)" when the finalise error body has no message', async () => {
+  it("falls back to the save error's own message when the finalise error body has no message", async () => {
     const user = userEvent.setup();
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -676,12 +678,14 @@ describe('CleanupView', () => {
     await user.click(screen.getByRole('button', { name: /Mark cleaned/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Failed (503)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not finish the clean up. Try again.'
+      );
     });
     expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it('falls back to "Action failed" when finalise rejects with a non-Error value', async () => {
+  it("falls back to the save error's own message when finalise rejects with a non-Error value", async () => {
     const user = userEvent.setup();
     globalThis.fetch = vi.fn().mockRejectedValue('boom — plain string thrown');
     render(<CleanupView {...BASE_PROPS} />);
@@ -689,7 +693,9 @@ describe('CleanupView', () => {
     await user.click(screen.getByRole('button', { name: /Mark cleaned/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Action failed')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not finish the clean up. Try again.'
+      );
     });
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -809,7 +815,7 @@ describe('CleanupView', () => {
     expect(screen.getByTestId('revision-drawer-open')).toBeInTheDocument();
   });
 
-  it('falls back to "Failed (status)" when finalise error body fails to parse as JSON', async () => {
+  it("falls back to the save error's own message when finalise error body fails to parse as JSON", async () => {
     // Exercises the `.catch(() => null)` arrow on `res.json()` (L144) — fires
     // when the server returned non-OK AND the body is malformed JSON.
     const user = userEvent.setup();
@@ -824,7 +830,9 @@ describe('CleanupView', () => {
     await user.click(screen.getByRole('button', { name: /Mark cleaned/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Failed (504)')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not finish the clean up. Try again.'
+      );
     });
     expect(mockPush).not.toHaveBeenCalled();
   });

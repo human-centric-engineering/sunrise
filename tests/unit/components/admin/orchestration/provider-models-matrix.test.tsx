@@ -24,7 +24,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -923,6 +923,60 @@ describe('ProviderModelsMatrix', () => {
   // ── Row delete action + in-use guard ──────────────────────────────────────
 
   describe('row delete action', () => {
+    it('is committed to a delete in flight: no second request, no Cancel, no Escape', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+      const pending = within(dialog).getByRole('button', { name: /deleting/i });
+      expect(pending).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      await user.click(pending);
+      await user.keyboard('{Escape}');
+
+      expect(apiClient.delete).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    });
+
+    it("never shows one model's refused delete in the next model's dialog", async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      let reject: (err: unknown) => void = () => {};
+      vi.mocked(apiClient.delete).mockReturnValue(
+        new Promise((_, rej) => {
+          reject = rej;
+        })
+      );
+      const user = userEvent.setup();
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({ name: 'GPT-5', agents: [] }),
+            makeModel({ id: 'model-2', slug: 'claude', name: 'Claude', agents: [] }),
+          ]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      const first = await screen.findByRole('alertdialog');
+      await user.click(within(first).getByRole('button', { name: /^delete$/i }));
+      // An attempt to leave while the request is in flight, then it fails.
+      await user.keyboard('{Escape}');
+      await act(async () => reject(new APIClientError('Provider is read-only', 'FORBIDDEN', 403)));
+      // Leave the dialog if it is still open (it should be: it ignored the Escape).
+      const open = screen.queryByRole('alertdialog');
+      if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+      await user.click(screen.getByRole('button', { name: /^delete Claude$/i }));
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog).toHaveTextContent('Claude');
+      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    });
+
     it('row delete is disabled when at least one agent is bound', () => {
       render(
         <ProviderModelsMatrix

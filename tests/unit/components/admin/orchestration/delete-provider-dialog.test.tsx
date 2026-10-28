@@ -50,7 +50,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={null}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -68,7 +68,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -82,7 +82,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -96,7 +96,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -110,7 +110,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -129,7 +129,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error="Something went wrong"
+          failure={{ message: 'Something went wrong', stale: false, fields: [] }}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -143,7 +143,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -163,7 +163,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={true}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -177,7 +177,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={true}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -191,7 +191,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -205,7 +205,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -226,7 +226,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}
@@ -245,7 +245,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={onCancel}
           onConfirm={vi.fn()}
@@ -269,7 +269,7 @@ describe('DeleteProviderDialog', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}

@@ -21,7 +21,9 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError, so a failed save is read as it would be in the app.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: vi.fn(),
     post: vi.fn(),
@@ -81,6 +83,8 @@ const UNUSED_CAPABILITY = {
 describe('McpToolsList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -187,7 +191,9 @@ describe('McpToolsList', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to toggle tool.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t disable "Send Email". Try again.'
+        );
       });
     });
 
@@ -213,7 +219,9 @@ describe('McpToolsList', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to add tool.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not update the tools. Try again.'
+        );
       });
     });
 
@@ -231,7 +239,9 @@ describe('McpToolsList', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to remove tool.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not remove the tool. Try again.'
+        );
       });
     });
 
@@ -248,7 +258,7 @@ describe('McpToolsList', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to save tool changes.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Could not save the tool. Try again.');
       });
     });
   });

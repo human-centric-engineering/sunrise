@@ -29,8 +29,10 @@
  *
  * Errors never throw out of the dialog. Fetch failures become friendly
  * inline messages — the raw `err.message` from a fetch is not forwarded
- * to the UI (could leak provider SDK internals). Detailed errors are
- * logged to the server via `logger.error` in the underlying API routes.
+ * to the UI (could leak provider SDK internals). A refused provider create
+ * shows the API's own error-envelope message through `<SaveError>`, by the
+ * control that was pressed (§124). Detailed errors are logged to the server
+ * via `logger.error` in the underlying API routes.
  */
 
 import Link from 'next/link';
@@ -63,7 +65,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
 import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
@@ -468,7 +473,10 @@ const detectionResultSchema = z.object({
 
 function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not create the provider. Check your network and try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [detection, setDetection] = useState<DetectionRow[] | null>(null);
   const [hasExisting, setHasExisting] = useState<boolean | null>(null);
   const [manualMode, setManualMode] = useState(false);
@@ -584,7 +592,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   }
 
   async function createProviderFromRow(row: DetectionRow): Promise<void> {
-    setError(null);
+    save.clear();
     setSubmitting(true);
     try {
       const payload: Record<string, unknown> = {
@@ -596,18 +604,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       if (row.defaultBaseUrl) payload.baseUrl = row.defaultBaseUrl;
       if (row.apiKeyEnvVar) payload.apiKeyEnvVar = row.apiKeyEnvVar;
 
-      const res = await fetch(API.ADMIN.ORCHESTRATION.PROVIDERS, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        setError(
-          `Could not create the ${row.name} provider. Open the Providers page and add it manually.`
-        );
-        return;
-      }
+      await apiClient.post(API.ADMIN.ORCHESTRATION.PROVIDERS, { body: payload });
       await persistSuggestedDefaults(row);
       // Cache draft for the agent step (so its provider dropdown defaults to this slug).
       setDraft({
@@ -621,8 +618,9 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
         suggestedEmbeddingModel: row.suggestedEmbeddingModel ?? '',
       });
       onComplete();
-    } catch {
-      setError('Could not reach the server. Check your network and try again.');
+    } catch (err) {
+      // One box above every detected row, so it names the provider.
+      save.report(err, `Couldn't configure "${row.name}"`);
     } finally {
       setSubmitting(false);
     }
@@ -630,9 +628,9 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
 
   async function handleManualSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
-    setError(null);
+    save.clear();
     if (!draft.providerType) {
-      setError('Pick a provider type before submitting.');
+      save.show('Pick a provider type before submitting.');
       return;
     }
     setSubmitting(true);
@@ -646,19 +644,10 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       if (draft.baseUrl) payload.baseUrl = draft.baseUrl;
       if (draft.apiKeyEnvVar) payload.apiKeyEnvVar = draft.apiKeyEnvVar;
 
-      const res = await fetch(API.ADMIN.ORCHESTRATION.PROVIDERS, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        setError('Could not create the provider. Check the fields and try again.');
-        return;
-      }
+      await apiClient.post(API.ADMIN.ORCHESTRATION.PROVIDERS, { body: payload });
       onComplete();
-    } catch {
-      setError('Could not reach the server. Check your network and try again.');
+    } catch (err) {
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -739,6 +728,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
           environment. Pick a provider to configure it now — Sunrise will fill in the base URL and
           recommend a chat model.
         </p>
+        <SaveError failure={save.failure} />
         <ul className="space-y-2">
           {detectedAvailable.map((row) => (
             <li key={row.slug}>
@@ -765,12 +755,14 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
             </li>
           ))}
         </ul>
-        {error && <div className="text-destructive text-sm">{error}</div>}
         <div className="flex justify-between">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setManualMode(true)}
+            onClick={() => {
+              save.clear();
+              setManualMode(true);
+            }}
             disabled={submitting}
           >
             Configure manually instead →
@@ -887,14 +879,17 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
         />
       </div>
 
-      {error && <div className="text-destructive text-sm">{error}</div>}
+      <SaveError failure={save.failure} />
 
       <div className="flex justify-between">
         {detectedAvailable.length > 0 ? (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setManualMode(false)}
+            onClick={() => {
+              save.clear();
+              setManualMode(false);
+            }}
             disabled={submitting}
             type="button"
           >

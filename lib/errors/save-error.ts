@@ -140,7 +140,8 @@ export function readSaveError<TField extends string>(
 
   const message =
     fields.length === 0 && unplaced.length === 0
-      ? err.message
+      ? // A server that sent no words gets the fallback, not an empty box.
+        err.message.trim() || options.fallback
       : [fields.length > 0 ? fieldCount(fields.length) : '', ...unplaced].filter(Boolean).join(' ');
 
   return {

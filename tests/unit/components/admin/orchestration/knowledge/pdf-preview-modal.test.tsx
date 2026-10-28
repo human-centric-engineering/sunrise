@@ -52,6 +52,8 @@ describe('PdfPreviewModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPush.mockReset();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ success: true, data: { document: { id: 'doc-1' } } }),
@@ -234,14 +236,22 @@ describe('PdfPreviewModal', () => {
       />
     );
     await user.click(screen.getByRole('button', { name: /discard/i }));
-    expect(await screen.findByText(/Failed to discard document/)).toBeInTheDocument();
+    // A 500 with no error envelope: the save error says what failed.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not discard the document. Try again.');
+    expect(screen.getByRole('dialog')).toContainElement(alert);
     expect(onDiscarded).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error message when confirm fails', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
-      json: () => Promise.resolve({ error: { message: 'Document not in pending_review state' } }),
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          success: false,
+          error: { code: 'CONFLICT', message: 'Document not in pending_review state' },
+        }),
     });
 
     const user = userEvent.setup();
@@ -256,16 +266,21 @@ describe('PdfPreviewModal', () => {
 
     await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Document not in pending_review state')).toBeInTheDocument();
-    });
+    // Inside the dialog, directly above the footer holding Confirm, focused.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Document not in pending_review state');
+    expect(screen.getByRole('dialog')).toContainElement(alert);
+    expect(alert.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /confirm & chunk/i })
+    );
+    expect(alert).toHaveFocus();
 
     expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows fallback error message when non-ok response has no parseable body', async () => {
-    // Simulate a 500 response whose JSON parse fails — exercises the `.catch(() => null)` branch
-    // that produces the "Confirmation failed (500)" fallback message.
+    // Simulate a 500 response whose JSON parse fails: no server message, so
+    // the save error's own fallback shows.
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
@@ -284,10 +299,9 @@ describe('PdfPreviewModal', () => {
 
     await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
 
-    // The component constructs "Confirmation failed (500)" when body is null
-    await waitFor(() => {
-      expect(screen.getByText('Confirmation failed (500)')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not confirm the document. Try again.'
+    );
 
     expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
@@ -309,10 +323,10 @@ describe('PdfPreviewModal', () => {
 
     await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
 
-    // The catch block propagates err.message directly
-    await waitFor(() => {
-      expect(screen.getByText('Network request failed')).toBeInTheDocument();
-    });
+    // The browser's text is not shown: the save error's fallback is
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not confirm the document. Try again.'
+    );
 
     // onConfirmed and onOpenChange must not be called — the dialog stays open
     expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;

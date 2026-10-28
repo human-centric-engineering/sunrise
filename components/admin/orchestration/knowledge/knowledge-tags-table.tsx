@@ -36,8 +36,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import type { SaveFailure } from '@/lib/errors/save-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { ClientDate } from '@/components/ui/client-date';
 import { createKnowledgeTagSchema } from '@/lib/validations/orchestration';
 import type { PaginationMeta } from '@/types/api';
@@ -65,18 +68,22 @@ interface FieldErrors {
 }
 
 /**
- * Map a `ValidationError` response's `details` (the zod issue map from
- * `handleAPIError`) onto our flat field-error shape. Server returns each
- * field as `{ path: [string[]] }` where the value is a list of messages —
- * we surface the first one.
+ * Server path → the id of the dialog input that shows its message, so the
+ * save error can focus it (`.context/ui/form-errors.md`).
  */
-function detailsToFieldErrors(details: unknown): FieldErrors {
+const TAG_FIELDS: Partial<Record<string, string>> = {
+  slug: 'tag-slug',
+  name: 'tag-name',
+  description: 'tag-description',
+};
+const TAG_FIELD_KEYS = ['slug', 'name', 'description'] as const;
+
+/** A failed save's field messages, keyed as the dialog shows them. */
+function placedFieldErrors(failure: SaveFailure): FieldErrors {
   const out: FieldErrors = {};
-  if (!details || typeof details !== 'object') return out;
-  const rec = details as Record<string, unknown>;
-  for (const key of ['slug', 'name', 'description'] as const) {
-    const v = rec[key];
-    if (Array.isArray(v) && typeof v[0] === 'string') out[key] = v[0];
+  for (const key of TAG_FIELD_KEYS) {
+    const placed = failure.fields.find((f) => f.field === TAG_FIELDS[key]);
+    if (placed) out[key] = placed.message;
   }
   return out;
 }
@@ -133,8 +140,29 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
   const [tags, setTags] = useState<KnowledgeTagListItem[]>(initialTags);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Each failure shows where its action was pressed: the create / edit and
+  // delete dialogs above their buttons, the bulk delete above the table.
+  const formFailure = useSaveFailure({
+    fallback: 'Could not save the tag. Try again.',
+    fields: TAG_FIELDS,
+  });
+  const deleteFailure = useSaveFailure({
+    fallback: 'Could not delete the tag. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const listFailure = useSaveFailure({
+    fallback: 'Could not delete the unused tags. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  // Opening the form clears the last save's failure, so a failure left by
+  // an earlier dialog never shows in this one.
+  function openForm(next: Extract<DialogState, { kind: 'create' | 'edit' }>): void {
+    formFailure.clear();
+    setFieldErrors({});
+    setDialog(next);
+  }
 
   // Drill-down state: which tag is expanded, and what data we've loaded.
   // Cached by tag id so re-opening the same row doesn't refetch.
@@ -198,10 +226,17 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
     <>
       {!readOnly && (
         <div className="flex items-center justify-between gap-2">
-          <BulkDeleteUnusedButton tags={tags} onRefresh={() => void refresh()} />
-          <Button onClick={() => setDialog({ kind: 'create' })}>New tag</Button>
+          <BulkDeleteUnusedButton
+            tags={tags}
+            onStart={listFailure.clear}
+            onFailure={(err) => listFailure.report(err, "Couldn't delete the unused tags")}
+            onRefresh={() => void refresh()}
+          />
+          <Button onClick={() => openForm({ kind: 'create' })}>New tag</Button>
         </div>
       )}
+
+      <SaveError failure={listFailure.failure} />
 
       <div className="rounded-md border">
         <Table>
@@ -272,7 +307,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDialog({ kind: 'edit', tag });
+                                openForm({ kind: 'edit', tag });
                               }}
                               aria-label={`Edit ${tag.name}`}
                             >
@@ -283,6 +318,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                deleteFailure.clear();
                                 setDialog({ kind: 'delete', tag, phase: 'initial' });
                               }}
                               aria-label={`Delete ${tag.name}`}
@@ -323,17 +359,18 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
         key={dialog.kind === 'edit' ? `edit-${dialog.tag.id}` : dialog.kind}
         state={dialog}
         busy={busy}
-        error={error}
+        failure={formFailure.failure}
         fieldErrors={fieldErrors}
         onClearFieldError={(key) => setFieldErrors((prev) => ({ ...prev, [key]: undefined }))}
         onClose={() => {
           setDialog({ kind: 'closed' });
-          setError(null);
+          formFailure.clear();
           setFieldErrors({});
         }}
+        onPress={formFailure.clear}
         onSubmit={async (payload) => {
           setBusy(true);
-          setError(null);
+          formFailure.clear();
           setFieldErrors({});
           try {
             if (dialog.kind === 'create') {
@@ -346,25 +383,10 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
             setDialog({ kind: 'closed' });
             await refresh();
           } catch (err) {
-            // Server-side validation errors arrive with per-field `details`
-            // (the zod issue map from `handleAPIError`). Surface those under
-            // the matching inputs; fall back to a top-level message for
-            // anything that isn't a field-shaped error (e.g. unique-conflict
-            // on slug, network errors).
-            if (err instanceof APIClientError) {
-              const fields = detailsToFieldErrors(err.details);
-              if (Object.keys(fields).length > 0) {
-                setFieldErrors(fields);
-                // Suppress the generic top-level "Validation failed" since
-                // the field-level messages tell the operator exactly what
-                // to fix.
-                setError(null);
-              } else {
-                setError(err.message);
-              }
-            } else {
-              setError('Failed to save the tag.');
-            }
+            // Fields the server named get their messages under the inputs;
+            // the summary above the buttons says how many, or says what
+            // failed (a slug conflict, a network error).
+            setFieldErrors(placedFieldErrors(formFailure.report(err)));
           } finally {
             setBusy(false);
           }
@@ -374,15 +396,15 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
       <DeleteDialog
         state={dialog}
         busy={busy}
-        error={error}
+        failure={deleteFailure.failure}
         onClose={() => {
           setDialog({ kind: 'closed' });
-          setError(null);
+          deleteFailure.clear();
         }}
         onConfirm={async () => {
           if (dialog.kind !== 'delete') return;
           setBusy(true);
-          setError(null);
+          deleteFailure.clear();
           try {
             const url =
               dialog.phase === 'force-confirm'
@@ -420,10 +442,10 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                   otherOrgCount: count('otherOrgDocumentCount'),
                 });
               } else {
-                setError(err.message);
+                deleteFailure.report(err);
               }
             } else {
-              setError(err instanceof APIClientError ? err.message : 'Failed to delete the tag.');
+              deleteFailure.report(err);
             }
           } finally {
             setBusy(false);
@@ -437,20 +459,24 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
 interface DialogCommonProps {
   state: DialogState;
   busy: boolean;
-  error: string | null;
+  /** The failed save, shown above the dialog's buttons. */
+  failure: SaveFailure | null;
   onClose: () => void;
 }
 
 function CreateOrEditDialog({
   state,
   busy,
-  error,
+  failure,
   fieldErrors,
   onClearFieldError,
   onClose,
+  onPress,
   onSubmit,
 }: DialogCommonProps & {
   fieldErrors: FieldErrors;
+  /** Fires on every press of Save, before client validation: clears the last failure. */
+  onPress: () => void;
   /** Clear a single field error — fires on edit so the operator gets immediate feedback. */
   onClearFieldError: (key: keyof FieldErrors) => void;
   onSubmit: (payload: { slug: string; name: string; description?: string }) => Promise<void>;
@@ -476,6 +502,7 @@ function CreateOrEditDialog({
   const errs: FieldErrors = { ...fieldErrors, ...localErrors };
 
   function handleSubmit(): void {
+    onPress();
     const payload = {
       slug: slug.trim(),
       name: name.trim(),
@@ -503,7 +530,9 @@ function CreateOrEditDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) onClose();
+        // Committed while the save is in flight: Escape and an outside click
+        // would otherwise close it before its failure arrives.
+        if (!o && !busy) onClose();
       }}
     >
       <DialogContent>
@@ -597,8 +626,8 @@ function CreateOrEditDialog({
               </p>
             ) : null}
           </div>
-          {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </div>
+        <SaveError failure={failure} />
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
@@ -615,7 +644,7 @@ function CreateOrEditDialog({
 function DeleteDialog({
   state,
   busy,
-  error,
+  failure,
   onClose,
   onConfirm,
 }: DialogCommonProps & { onConfirm: () => Promise<void> }): React.ReactElement | null {
@@ -631,7 +660,8 @@ function DeleteDialog({
     <Dialog
       open
       onOpenChange={(o) => {
-        if (!o) onClose();
+        // Committed while the delete runs: Escape waits for it.
+        if (!o && !busy) onClose();
       }}
     >
       <DialogContent>
@@ -683,7 +713,7 @@ function DeleteDialog({
           </p>
         ) : null}
 
-        {error ? <p className="text-destructive text-sm">{error}</p> : null}
+        <SaveError failure={failure} />
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
@@ -708,14 +738,19 @@ function DeleteDialog({
 
 function BulkDeleteUnusedButton({
   tags,
+  onStart,
+  onFailure,
   onRefresh,
 }: {
   tags: KnowledgeTagListItem[];
+  /** Clears the list's save failure as the bulk delete starts. */
+  onStart: () => void;
+  /** Reports a failed bulk delete into the list's save failure, above the table. */
+  onFailure: (err: unknown) => void;
   onRefresh: () => void;
 }): React.ReactElement | null {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
   const unused = tags.filter((t) => t.documentCount === 0 && t.agentCount === 0);
   if (unused.length === 0) {
@@ -724,7 +759,7 @@ function BulkDeleteUnusedButton({
 
   async function run(): Promise<void> {
     setBusy(true);
-    setErr(null);
+    onStart();
     // Serial DELETEs — the route doesn't accept a bulk operation. For ~10s
     // of tags this is fine; if this grows we'd want a `?bulk=` POST.
     try {
@@ -734,7 +769,9 @@ function BulkDeleteUnusedButton({
       setConfirming(false);
       onRefresh();
     } catch (e) {
-      setErr(e instanceof APIClientError ? e.message : 'Bulk delete failed');
+      onFailure(e);
+      // Tags deleted before the failure are gone: show the list as it is now.
+      onRefresh();
     } finally {
       setBusy(false);
     }
@@ -768,7 +805,6 @@ function BulkDeleteUnusedButton({
       <Button variant="ghost" size="sm" onClick={() => setConfirming(false)} disabled={busy}>
         Cancel
       </Button>
-      {err ? <span className="text-destructive text-xs">{err}</span> : null}
     </div>
   );
 }

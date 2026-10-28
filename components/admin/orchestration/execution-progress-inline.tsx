@@ -32,8 +32,10 @@ import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   useExecutionLivePoll,
   isTerminalStatus,
@@ -209,11 +211,21 @@ function ApprovalInlineCard({
   const [notes, setNotes] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // A refused decision: shown directly above the Confirm button (§124).
+  const approveSave = useSaveFailure({
+    fallback: 'Approval failed — try again or refresh.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const rejectSave = useSaveFailure({
+    fallback: 'Rejection failed — try again or refresh.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearApproveSave, report: reportApproveSave } = approveSave;
+  const { clear: clearRejectSave, report: reportRejectSave, show: showRejectSave } = rejectSave;
 
   const submitApprove = useCallback(async () => {
     setSubmitting(true);
-    setError(null);
+    clearApproveSave();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(executionId), {
         body: { notes: notes.trim() || undefined },
@@ -223,21 +235,19 @@ function ApprovalInlineCard({
       setMode('idle');
       setNotes('');
     } catch (err) {
-      setError(
-        err instanceof APIClientError ? err.message : 'Approval failed — try again or refresh.'
-      );
+      reportApproveSave(err);
     } finally {
       setSubmitting(false);
     }
-  }, [executionId, notes, onApproved]);
+  }, [executionId, notes, onApproved, clearApproveSave, reportApproveSave]);
 
   const submitReject = useCallback(async () => {
+    clearRejectSave();
     if (!reason.trim()) {
-      setError('A reason is required when rejecting.');
+      showRejectSave('A reason is required when rejecting.');
       return;
     }
     setSubmitting(true);
-    setError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionReject(executionId), {
         body: { reason: reason.trim() },
@@ -246,13 +256,14 @@ function ApprovalInlineCard({
       setMode('idle');
       setReason('');
     } catch (err) {
-      setError(
-        err instanceof APIClientError ? err.message : 'Rejection failed — try again or refresh.'
-      );
+      reportRejectSave(err);
     } finally {
       setSubmitting(false);
     }
-  }, [executionId, reason, onRejected]);
+  }, [executionId, reason, onRejected, clearRejectSave, reportRejectSave, showRejectSave]);
+
+  const failure =
+    mode === 'approve' ? approveSave.failure : mode === 'reject' ? rejectSave.failure : null;
 
   return (
     <div
@@ -313,10 +324,10 @@ function ApprovalInlineCard({
         </div>
       )}
 
-      {error && (
-        <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">
-          {error}
-        </p>
+      {failure && (
+        <div className="mt-2">
+          <SaveError failure={failure} />
+        </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -357,7 +368,8 @@ function ApprovalInlineCard({
               variant="ghost"
               onClick={() => {
                 setMode('idle');
-                setError(null);
+                clearApproveSave();
+                clearRejectSave();
               }}
               disabled={submitting}
             >

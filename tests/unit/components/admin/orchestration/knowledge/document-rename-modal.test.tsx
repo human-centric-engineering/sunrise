@@ -58,6 +58,8 @@ describe('DocumentRenameModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.patch).mockResolvedValue({ id: 'doc-1' });
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -122,9 +124,139 @@ describe('DocumentRenameModal', () => {
     await user.type(screen.getByLabelText('Name'), ' edit');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Name already exists')).toBeInTheDocument();
-    });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Name already exists');
+    // Inside the dialog, directly above the footer holding Save.
+    expect(screen.getByRole('dialog')).toContainElement(alert);
+    expect(alert.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: /^save$/i })
+    );
+    expect(alert).toHaveFocus();
     expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it('marks the name invalid after a refusal, and clears both once the name is edited', async () => {
+    vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Name already exists'));
+    const user = userEvent.setup();
+    renderModal();
+    const input = screen.getByLabelText('Name');
+
+    await user.type(input, ' edit');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await screen.findByRole('alert');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await user.type(input, 'ed');
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('Cancel closes the dialog without saving', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), ' edit');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it('Enter in the input saves the trimmed name when the name changed', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    const input = screen.getByLabelText('Name');
+    await user.clear(input);
+    await user.type(input, ' Renamed {Enter}');
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/documents/doc-1'),
+        { body: { name: 'Renamed' } }
+      );
+    });
+    await waitFor(() => expect(props.onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('Enter does nothing while the name is unchanged', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), '{Enter}');
+
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('Enter does not start a second save while one is in flight', async () => {
+    let finish!: (v: unknown) => void;
+    vi.mocked(apiClient.patch).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    renderModal();
+
+    const input = screen.getByLabelText('Name');
+    await user.type(input, ' v2{Enter}');
+    await screen.findByRole('button', { name: /saving/i });
+    await user.type(input, '{Enter}');
+
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+    finish({ id: 'doc-1' });
+  });
+
+  it('ignores Escape while the save is in flight, so its failure is shown in the dialog', async () => {
+    let fail!: (err: unknown) => void;
+    vi.mocked(apiClient.patch).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      })
+    );
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), ' v2');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await screen.findByRole('button', { name: /saving/i });
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled();
+    await user.keyboard('{Escape}');
+
+    expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
+    fail(new APIClientError('Name taken'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Name taken');
+  });
+
+  it('starts empty for a document with no name, and saves what is typed', async () => {
+    const user = userEvent.setup();
+    renderModal({ documentName: null });
+
+    const input = screen.getByLabelText('Name');
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+
+    await user.type(input, 'Fresh name');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(expect.any(String), {
+        body: { name: 'Fresh name' },
+      });
+    });
+  });
+
+  it('does not PATCH when there is no document id, even with a changed name', async () => {
+    const user = userEvent.setup();
+    const props = renderModal({ documentId: null });
+
+    await user.type(screen.getByLabelText('Name'), ' edit');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    expect(props.onSaved).not.toHaveBeenCalled();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
   });
 });

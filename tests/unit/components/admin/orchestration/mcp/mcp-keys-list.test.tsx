@@ -111,6 +111,8 @@ async function openCreateDialog() {
 describe('McpKeysList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // happy-dom has no scrollIntoView; <SaveError> calls it when it appears.
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -285,14 +287,14 @@ describe('McpKeysList', () => {
         expect(within(document.body).getByText(/not raised above it/)).toBeInTheDocument();
       });
       expect(
-        within(document.body).queryByText('Failed to create API key.')
+        within(document.body).queryByText('Could not create the API key. Try again.')
       ).not.toBeInTheDocument();
     });
 
-    it('control: any other failure still reads as a generic failure', async () => {
-      vi.mocked(apiClient.post).mockRejectedValueOnce(
-        new APIClientError('database exploded', 'INTERNAL_ERROR', 500)
-      );
+    it('control: a failure the server never explained reads as a generic failure', async () => {
+      // Every save shows the server's own message (§124); one with none, such
+      // as a thrown network error, gets the fallback.
+      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('Failed to fetch'));
       render(<McpKeysList initialKeys={[]} />);
       const user = userEvent.setup();
       const body = await openCreateDialog();
@@ -303,7 +305,9 @@ describe('McpKeysList', () => {
       });
 
       await waitFor(() => {
-        expect(within(document.body).getByText('Failed to create API key.')).toBeInTheDocument();
+        expect(
+          within(document.body).getByText('Could not create the API key. Try again.')
+        ).toBeInTheDocument();
       });
     });
 

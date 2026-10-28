@@ -61,7 +61,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { z } from 'zod';
 import type { AiProviderConfig } from '@/types/prisma';
@@ -219,14 +221,26 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
   });
   const [deleteTarget, setDeleteTarget] = useState<DeleteProviderTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSave = useSaveFailure({
+    fallback: "Couldn't deactivate this provider. Try again in a moment.",
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const [permanentTarget, setPermanentTarget] = useState<PermanentDeleteTarget | null>(null);
   const [permanentDeleting, setPermanentDeleting] = useState(false);
-  const [permanentError, setPermanentError] = useState<string | null>(null);
+  const permanentSave = useSaveFailure({
+    fallback: "Couldn't permanently delete this provider. Try again in a moment.",
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearPermanent, report: reportPermanent } = permanentSave;
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
-  const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
-  const [breakerError, setBreakerError] = useState<string | null>(null);
+  // Row actions (reactivate, breaker reset) report above the grid (§124).
+  const listSave = useSaveFailure({
+    fallback: "Couldn't update this provider. Try again in a moment.",
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearList, report: reportList } = listSave;
   const [testingInFlight, setTestingInFlight] = useState<Record<string, boolean>>({});
 
   // Lazy-fetch model counts for every visible provider after mount.
@@ -434,7 +448,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
       // Soft-delete flips isActive=false; clear the cached test result
@@ -455,20 +469,16 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
       );
       setDeleteTarget(null);
     } catch (err) {
-      setDeleteError(
-        err instanceof APIClientError
-          ? err.message
-          : "Couldn't delete this provider. Try again in a moment."
-      );
+      reportDelete(err);
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget]);
+  }, [deleteTarget, clearDelete, reportDelete]);
 
   const confirmPermanentDelete = useCallback(async () => {
     if (!permanentTarget) return;
     setPermanentDeleting(true);
-    setPermanentError(null);
+    clearPermanent();
     try {
       // Hits the same DELETE /providers/:id route with ?permanent=true.
       // The server returns 409 with a clear message if any agent or
@@ -493,87 +503,84 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
       setProviders((prev) => prev.filter((p) => p.id !== permanentTarget.id));
       setPermanentTarget(null);
     } catch (err) {
-      setPermanentError(
-        err instanceof APIClientError
-          ? err.message
-          : "Couldn't permanently delete this provider. Try again in a moment."
-      );
+      reportPermanent(err);
     } finally {
       setPermanentDeleting(false);
     }
-  }, [permanentTarget]);
+  }, [permanentTarget, clearPermanent, reportPermanent]);
 
-  const handleReactivate = useCallback(async (providerId: string) => {
-    setReactivateError(null);
-    try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
-        body: { isActive: true },
-      });
-      // Reactivation could mean the operator changed env vars / base
-      // URL since the last test ran — invalidate so the dot defaults to
-      // grey until they retest. Also clear the controlled `testResults`
-      // entry so any old failure message disappears immediately, and the
-      // auto-probe `useEffect` re-fires (filter checks `testedOk[id] ===
-      // undefined`).
-      clearCachedTestResult(providerId);
-      setTestedOk((prev) => {
-        const next = { ...prev };
-        delete next[providerId];
-        return next;
-      });
-      setTestResults((prev) => {
-        const next = { ...prev };
-        delete next[providerId];
-        return next;
-      });
-      setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
-    } catch (err) {
-      setReactivateError(
-        err instanceof APIClientError
-          ? err.message
-          : "Couldn't reactivate this provider. Try again in a moment."
-      );
-    }
-  }, []);
+  const handleReactivate = useCallback(
+    async ({ id: providerId, name }: ProviderRow) => {
+      clearList();
+      try {
+        await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
+          body: { isActive: true },
+        });
+        // Reactivation could mean the operator changed env vars / base
+        // URL since the last test ran — invalidate so the dot defaults to
+        // grey until they retest. Also clear the controlled `testResults`
+        // entry so any old failure message disappears immediately, and the
+        // auto-probe `useEffect` re-fires (filter checks `testedOk[id] ===
+        // undefined`).
+        clearCachedTestResult(providerId);
+        setTestedOk((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setTestResults((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setProviders((prev) =>
+          prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p))
+        );
+      } catch (err) {
+        // Reported above the grid, so it names the provider.
+        reportList(err, `Couldn't reactivate "${name}"`);
+      }
+    },
+    [clearList, reportList]
+  );
 
-  const handleResetBreaker = useCallback(async (providerId: string) => {
-    setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
-    setBreakerError(null);
-    try {
-      await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
-      // Breaker reset means recent failures have been forgiven —
-      // invalidate the cached test result so the operator runs a fresh
-      // check rather than trusting an old "tested OK" from before the
-      // failures. Clear the controlled result so the old failure
-      // message vanishes when the auto-probe re-fires.
-      clearCachedTestResult(providerId);
-      setTestedOk((prev) => {
-        const next = { ...prev };
-        delete next[providerId];
-        return next;
-      });
-      setTestResults((prev) => {
-        const next = { ...prev };
-        delete next[providerId];
-        return next;
-      });
-      setProviders((prev) =>
-        prev.map((p) =>
-          p.id === providerId
-            ? { ...p, circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null } }
-            : p
-        )
-      );
-    } catch (err) {
-      setBreakerError(
-        err instanceof APIClientError
-          ? err.message
-          : "Couldn't reset the circuit breaker. Try again in a moment."
-      );
-    } finally {
-      setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
-    }
-  }, []);
+  const handleResetBreaker = useCallback(
+    async ({ id: providerId, name }: ProviderRow) => {
+      setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
+      clearList();
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
+        // Breaker reset means recent failures have been forgiven —
+        // invalidate the cached test result so the operator runs a fresh
+        // check rather than trusting an old "tested OK" from before the
+        // failures. Clear the controlled result so the old failure
+        // message vanishes when the auto-probe re-fires.
+        clearCachedTestResult(providerId);
+        setTestedOk((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setTestResults((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setProviders((prev) =>
+          prev.map((p) =>
+            p.id === providerId
+              ? { ...p, circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null } }
+              : p
+          )
+        );
+      } catch (err) {
+        reportList(err, `Couldn't reset the circuit breaker on "${name}"`);
+      } finally {
+        setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
+      }
+    },
+    [clearList, reportList]
+  );
 
   return (
     <div className="space-y-4">
@@ -598,17 +605,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
         showNoKeysWarning={providers.length === 0}
       />
 
-      {reactivateError && (
-        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
-          {reactivateError}
-        </div>
-      )}
-
-      {breakerError && (
-        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
-          {breakerError}
-        </div>
-      )}
+      <SaveError failure={listSave.failure} />
 
       {providers.length === 0 ? (
         <div className="rounded-md border border-dashed py-12 text-center">
@@ -700,7 +697,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                         </Link>
                       </DropdownMenuItem>
                       {!p.isActive && !readOnly && (
-                        <DropdownMenuItem onSelect={() => void handleReactivate(p.id)}>
+                        <DropdownMenuItem onSelect={() => void handleReactivate(p)}>
                           <Power className="mr-2 h-4 w-4" /> Reactivate
                         </DropdownMenuItem>
                       )}
@@ -709,7 +706,10 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       </DropdownMenuItem>
                       {p.isActive && !readOnly && (
                         <DropdownMenuItem
-                          onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                          onSelect={() => {
+                            clearDelete();
+                            setDeleteTarget({ id: p.id, name: p.name, slug: p.slug });
+                          }}
                         >
                           <PowerOff className="mr-2 h-4 w-4" /> Deactivate
                         </DropdownMenuItem>
@@ -717,9 +717,10 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       {!readOnly && (
                         <DropdownMenuItem
                           className="text-destructive"
-                          onSelect={() =>
-                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug })
-                          }
+                          onSelect={() => {
+                            clearPermanent();
+                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug });
+                          }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
                         </DropdownMenuItem>
@@ -760,7 +761,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       size="sm"
                       className="h-6 px-2 text-xs"
                       disabled={resettingBreaker[p.id]}
-                      onClick={() => void handleResetBreaker(p.id)}
+                      onClick={() => void handleResetBreaker(p)}
                     >
                       <RotateCcw className="mr-1 h-3 w-3" />
                       Reset
@@ -835,22 +836,22 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
 
       <DeleteProviderDialog
         target={deleteTarget}
-        error={deleteError}
+        failure={deleteSave.failure}
         isDeleting={deleting}
         onCancel={() => {
           setDeleteTarget(null);
-          setDeleteError(null);
+          clearDelete();
         }}
         onConfirm={() => void confirmDelete()}
       />
 
       <PermanentDeleteProviderDialog
         target={permanentTarget}
-        error={permanentError}
+        failure={permanentSave.failure}
         isDeleting={permanentDeleting}
         onCancel={() => {
           setPermanentTarget(null);
-          setPermanentError(null);
+          clearPermanent();
         }}
         onConfirm={() => void confirmPermanentDelete()}
       />

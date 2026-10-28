@@ -40,8 +40,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { cn } from '@/lib/utils';
 
 interface HistoryEntry {
@@ -84,7 +86,11 @@ export function InstructionsHistoryPanel({
     versionIndex: number;
   } | null>(null);
   const [reverting, setReverting] = useState(false);
-  const [revertError, setRevertError] = useState<string | null>(null);
+  const revertSave = useSaveFailure({
+    fallback: 'Revert failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRevert, report: reportRevert } = revertSave;
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -112,7 +118,7 @@ export function InstructionsHistoryPanel({
   const handleRevert = useCallback(async () => {
     if (!revertTarget) return;
     setReverting(true);
-    setRevertError(null);
+    clearRevert();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.agentInstructionsRevert(agentId), {
         body: { versionIndex: revertTarget.versionIndex },
@@ -121,13 +127,11 @@ export function InstructionsHistoryPanel({
       await fetchHistory();
       onReverted?.();
     } catch (err) {
-      setRevertError(
-        err instanceof APIClientError ? err.message : 'Revert failed. Try again in a moment.'
-      );
+      reportRevert(err);
     } finally {
       setReverting(false);
     }
-  }, [revertTarget, agentId, fetchHistory, onReverted]);
+  }, [revertTarget, agentId, fetchHistory, onReverted, clearRevert, reportRevert]);
 
   return (
     <div className="border-border rounded-md border">
@@ -195,7 +199,10 @@ export function InstructionsHistoryPanel({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => setRevertTarget({ entry, versionIndex })}
+                          onClick={() => {
+                            clearRevert();
+                            setRevertTarget({ entry, versionIndex });
+                          }}
                         >
                           <RotateCcw className="mr-1 h-3 w-3" />
                           Revert
@@ -237,9 +244,11 @@ export function InstructionsHistoryPanel({
       <AlertDialog
         open={!!revertTarget}
         onOpenChange={(open) => {
+          // Committed while the revert is in flight: a late failure must land here.
+          if (!open && reverting) return;
           if (!open) {
             setRevertTarget(null);
-            setRevertError(null);
+            clearRevert();
           }
         }}
       >
@@ -251,10 +260,17 @@ export function InstructionsHistoryPanel({
               overwritten, so nothing is lost — you can revert again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {revertError && <p className="text-destructive text-sm">{revertError}</p>}
+          <SaveError failure={revertSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleRevert()} disabled={reverting}>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                void handleRevert();
+              }}
+              disabled={reverting}
+            >
               {reverting ? 'Reverting…' : 'Revert'}
             </AlertDialogAction>
           </AlertDialogFooter>

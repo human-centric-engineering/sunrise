@@ -17,8 +17,12 @@ export interface SaveFailureState<TField extends string> {
   /**
    * Reads what a save threw, puts any field messages on the form, and shows
    * it. Returns the failure, so a caller can branch on `stale`.
+   *
+   * `context` leads the message, for a failure shown away from what it was
+   * about: a list's row action reports into one box above the table, so it
+   * names the row (`Couldn't update "Support bot"`).
    */
-  report: (err: unknown) => SaveFailure<TField>;
+  report: (err: unknown, context?: string) => SaveFailure<TField>;
   /**
    * Shows a failure the page found itself before saving: a client-side check
    * on Save, or fields its own validation blocked.
@@ -76,7 +80,7 @@ export function useSaveFailure<TField extends string>(
   // Stable while the form's options are: a module-level or memoised table
   // (`NO_SERVER_FIELDS` for none) and react-hook-form's `setError` are.
   const report = useCallback(
-    (err: unknown) => {
+    (err: unknown, context?: string) => {
       let next: SaveFailure<TField | string>;
       if (fields) {
         const read = readSaveError(err, { fallback, fields });
@@ -84,6 +88,12 @@ export function useSaveFailure<TField extends string>(
         next = read;
       } else {
         next = readSaveError(err, { fallback });
+      }
+      if (context) {
+        // With nothing from the server, the context says it all: the page's
+        // fallback would repeat it ("Couldn't update "X": Could not update…").
+        const said = next.message === fallback ? 'Try again.' : null;
+        next = { ...next, message: said ? `${context}. ${said}` : `${context}: ${next.message}` };
       }
       setFailure(next);
       return next;

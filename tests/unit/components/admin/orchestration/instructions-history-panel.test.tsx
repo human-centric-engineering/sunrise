@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
@@ -299,18 +299,9 @@ describe('InstructionsHistoryPanel', () => {
     });
 
     it('does NOT call onReverted when POST fails with APIClientError', async () => {
-      // NOTE: AlertDialogPrimitive.Action closes the dialog synchronously on click,
-      // which fires onOpenChange(false) → setRevertTarget(null) + setRevertError(null)
-      // before the async handleRevert resolves. This means the revertError state is
-      // set after the dialog is already closed and its content unmounted, so the error
-      // paragraph rendered inside AlertDialogContent is not reachable via user interaction.
-      //
-      // SUSPECTED CODE BUG: the revertError UI is unreachable — the AlertDialogAction
-      // triggers dialog closure synchronously before the POST resolves, so {revertError}
-      // inside the dialog is never visible to the user. The component should either use
-      // a regular Dialog with a manual close button, or handle the error outside the dialog.
-      //
-      // Observable behavior we CAN assert: onReverted is not called when the POST fails.
+      // The confirm button prevents Radix's close-on-click, so a failed revert
+      // keeps the dialog open with the failure above its buttons (§124; it used
+      // to close first, leaving the error unreachable).
       const { apiClient, APIClientError } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(TWO_VERSIONS);
       vi.mocked(apiClient.post).mockRejectedValue(
@@ -341,11 +332,14 @@ describe('InstructionsHistoryPanel', () => {
 
       // onReverted must NOT have been called because the POST failed
       expect(onReverted).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      // The dialog is still open, with the server's message inside it.
+      expect(await within(screen.getByRole('alertdialog')).findByRole('alert')).toHaveTextContent(
+        'Version already current — no change needed'
+      );
     });
 
     it('does NOT call onReverted when POST fails with a generic error', async () => {
-      // Same observable-behavior test for the non-APIClientError branch.
-      // See the note above about revertError being unreachable in the UI.
+      // Same test for the non-APIClientError branch: the fallback shows instead.
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(TWO_VERSIONS);
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Network timeout'));
@@ -373,6 +367,9 @@ describe('InstructionsHistoryPanel', () => {
 
       // onReverted must NOT have been called because the POST failed
       expect(onReverted).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(await within(screen.getByRole('alertdialog')).findByRole('alert')).toHaveTextContent(
+        'Revert failed. Try again in a moment.'
+      );
     });
   });
 

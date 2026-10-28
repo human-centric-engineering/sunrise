@@ -40,7 +40,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import {
   auditEntrySchema,
@@ -80,6 +82,12 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
   const [loading, setLoading] = useState(false);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+  // The confirm dialog stays open on a failed purge, with the error inside it.
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const purgeFailure = useSaveFailure({
+    fallback: 'Could not purge the logs. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [error, setError] = useState<string | null>(null);
 
   // Filters
@@ -140,6 +148,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
   async function handlePurge() {
     setPurging(true);
     setPurgeResult(null);
+    purgeFailure.clear();
     try {
       const data = await apiClient.delete<{ deleted: number; message?: string }>(
         API.ADMIN.ORCHESTRATION.MCP_AUDIT
@@ -150,10 +159,11 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
           ? `Purged ${String(deleted)} log entries`
           : (data.message ?? 'No old entries to purge')
       );
+      setPurgeOpen(false);
       // Reset to page 1 — purge may have removed enough rows to make the current page empty
       void fetchEntries(1);
-    } catch {
-      setPurgeResult('Purge failed');
+    } catch (err) {
+      purgeFailure.report(err);
     } finally {
       setPurging(false);
     }
@@ -236,7 +246,15 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
 
       {/* Purge + info */}
       <div className="flex items-center gap-3">
-        <AlertDialog>
+        <AlertDialog
+          open={purgeOpen}
+          onOpenChange={(next) => {
+            // Committed while the purge runs: Escape waits for it.
+            if (!next && purging) return;
+            purgeFailure.clear();
+            setPurgeOpen(next);
+          }}
+        >
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={purging}>
               {purging ? 'Purging...' : 'Purge Old Logs'}
@@ -250,11 +268,17 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
                 period. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <SaveError failure={purgeFailure.failure} />
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={purging}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => void handlePurge()}
+                disabled={purging}
+                onClick={(e) => {
+                  // Closes only on success, so a failure stays readable here.
+                  e.preventDefault();
+                  void handlePurge();
+                }}
               >
                 Purge
               </AlertDialogAction>

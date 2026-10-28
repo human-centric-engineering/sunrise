@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
@@ -714,5 +714,56 @@ describe('AgentVersionHistoryTab', () => {
       expect(screen.queryByText('Restore to version 2?')).not.toBeInTheDocument();
     });
     expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+  });
+
+  it('is committed to a restore in flight: no second request, no Cancel, no Escape', async () => {
+    const user = userEvent.setup();
+    mockPost.mockReturnValue(new Promise(() => {}));
+    render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+    await screen.findByText('v2');
+
+    await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Restore' }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Restoring…' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it("never shows one version's failed restore in the next version's dialog", async () => {
+    const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
+    const user = userEvent.setup();
+    let reject: (err: unknown) => void = () => {};
+    mockPost.mockReturnValue(
+      new Promise((_, rej) => {
+        reject = rej;
+      })
+    );
+    render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+    await screen.findByText('v2');
+
+    await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
+    const first = await screen.findByRole('alertdialog');
+    await user.click(within(first).getByRole('button', { name: 'Restore' }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () =>
+      reject(new MockAPIClientError('Cannot restore versions on system agents', 'FORBIDDEN', 403))
+    );
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+
+    await user.click(screen.getAllByRole('button', { name: /restore/i })[1]);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Restore to version 1?');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

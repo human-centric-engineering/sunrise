@@ -16,7 +16,10 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { Textarea } from '@/components/ui/textarea';
 import { Tip } from '@/components/ui/tooltip';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 
@@ -39,21 +42,32 @@ export function PdfPreviewModal({
   const router = useRouter();
   const [correctedContent, setCorrectedContent] = useState('');
   const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
-  const [discardError, setDiscardError] = useState<string | null>(null);
+  // Confirm and Discard share the footer, so one failure shows above it.
+  const confirmFailure = useSaveFailure({
+    fallback: 'Could not confirm the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const discardFailure = useSaveFailure({
+    fallback: 'Could not discard the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearConfirmFailure, report: reportConfirmFailure } = confirmFailure;
+  const { clear: clearDiscardFailure, report: reportDiscardFailure } = discardFailure;
+  const failure = confirmFailure.failure ?? discardFailure.failure;
 
   // Reset state when a different document is opened
   useEffect(() => {
     setCorrectedContent(data?.preview.extractedText ?? '');
-    setError(null);
-    setDiscardError(null);
-  }, [data?.document.id, data?.preview.extractedText]);
+    clearConfirmFailure();
+    clearDiscardFailure();
+  }, [data?.document.id, data?.preview.extractedText, clearConfirmFailure, clearDiscardFailure]);
 
   const handleConfirm = useCallback(async () => {
     if (!data) return;
     setConfirming(true);
-    setError(null);
+    clearConfirmFailure();
+    clearDiscardFailure();
 
     try {
       const body: Record<string, string> = { documentId: data.document.id };
@@ -65,12 +79,7 @@ export function PdfPreviewModal({
         body: JSON.stringify(body),
       });
 
-      if (!res.ok) {
-        const resBody = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(resBody?.error?.message ?? `Confirmation failed (${res.status})`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
 
       const okBody = (await res.json().catch(() => null)) as {
         data?: { redirectTo?: string };
@@ -88,34 +97,48 @@ export function PdfPreviewModal({
       }
       onConfirmed();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Confirmation failed');
+      reportConfirmFailure(err);
     } finally {
       setConfirming(false);
     }
-  }, [data, correctedContent, onOpenChange, onConfirmed, router]);
+  }, [
+    data,
+    correctedContent,
+    onOpenChange,
+    onConfirmed,
+    router,
+    clearConfirmFailure,
+    clearDiscardFailure,
+    reportConfirmFailure,
+  ]);
 
   const handleDiscard = useCallback(async () => {
     if (!data) return;
     setDiscarding(true);
-    setDiscardError(null);
+    clearConfirmFailure();
+    clearDiscardFailure();
 
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(data.document.id), {
         method: 'DELETE',
       });
-      if (!res.ok) {
-        setDiscardError(`Failed to discard document (${res.status})`);
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       setCorrectedContent('');
       onOpenChange(false);
       onDiscarded?.();
-    } catch {
-      setDiscardError('Network error — could not reach the server.');
+    } catch (err) {
+      reportDiscardFailure(err);
     } finally {
       setDiscarding(false);
     }
-  }, [data, onOpenChange, onDiscarded]);
+  }, [
+    data,
+    onOpenChange,
+    onDiscarded,
+    clearConfirmFailure,
+    clearDiscardFailure,
+    reportDiscardFailure,
+  ]);
 
   if (!data) return null;
 
@@ -127,7 +150,14 @@ export function PdfPreviewModal({
   const wantsCleanup = data.runCleanup;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while Confirm or Discard runs: Escape waits for it.
+        if (!next && (confirming || discarding)) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -215,10 +245,9 @@ export function PdfPreviewModal({
 
           {/* Tags are applied at upload time on the upload zone, not here.
               The preview flow only confirms the extracted text and chunks it. */}
-
-          {error && <p className="text-destructive text-sm">{error}</p>}
-          {discardError && <p className="text-destructive text-sm">{discardError}</p>}
         </div>
+
+        <SaveError failure={failure} />
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button
@@ -228,7 +257,7 @@ export function PdfPreviewModal({
           >
             {discarding ? 'Discarding...' : 'Discard'}
           </Button>
-          <Button onClick={() => void handleConfirm()} disabled={confirming}>
+          <Button onClick={() => void handleConfirm()} disabled={confirming || discarding}>
             {wantsCleanup ? (
               <Sparkles className="mr-1.5 h-4 w-4" />
             ) : (

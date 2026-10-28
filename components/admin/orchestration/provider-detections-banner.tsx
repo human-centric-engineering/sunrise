@@ -16,9 +16,9 @@
  *   - Footer link "Open the setup wizard" — for operators who prefer a
  *     guided walkthrough.
  *
- * Errors never throw out of the banner. Server errors surface as inline
- * red text and the row stays visible so the operator can retry or open
- * the wizard.
+ * Errors never throw out of the banner. A refused Configure shows the
+ * server's message in one `<SaveError>` above the rows (§124), and the row
+ * stays visible so the operator can retry or open the wizard.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -28,7 +28,10 @@ import { AlertTriangle, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Card, CardContent } from '@/components/ui/card';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface DetectionRow {
   slug: string;
@@ -74,7 +77,11 @@ export function ProviderDetectionsBanner({
   const readOnly = useSharedSettingsReadOnly();
   const [detected, setDetected] = useState<DetectionRow[] | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
-  const [errorBySlug, setErrorBySlug] = useState<Record<string, string>>({});
+  const configureSave = useSaveFailure({
+    fallback: 'Could not configure the provider. Try the manual form or the setup wizard.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearConfigure, report: reportConfigure } = configureSave;
 
   const fetchDetection = useCallback(async () => {
     try {
@@ -145,11 +152,7 @@ export function ProviderDetectionsBanner({
   const handleConfigure = useCallback(
     async (row: DetectionRow) => {
       setSubmitting(row.slug);
-      setErrorBySlug((prev) => {
-        const next = { ...prev };
-        delete next[row.slug];
-        return next;
-      });
+      clearConfigure();
       try {
         const payload: Record<string, unknown> = {
           name: row.name,
@@ -160,20 +163,7 @@ export function ProviderDetectionsBanner({
         if (row.defaultBaseUrl) payload.baseUrl = row.defaultBaseUrl;
         if (row.apiKeyEnvVar) payload.apiKeyEnvVar = row.apiKeyEnvVar;
 
-        const res = await fetch(API.ADMIN.ORCHESTRATION.PROVIDERS, {
-          method: 'POST',
-          credentials: 'include',
-          cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          setErrorBySlug((prev) => ({
-            ...prev,
-            [row.slug]: `Could not configure ${row.name}. Try the manual form or the setup wizard.`,
-          }));
-          return;
-        }
+        await apiClient.post(API.ADMIN.ORCHESTRATION.PROVIDERS, { body: payload });
         await persistSuggestedDefaults(row);
         // Notify the parent FIRST so the providers list starts its own
         // refetch concurrently with our detection refresh — that way
@@ -183,16 +173,14 @@ export function ProviderDetectionsBanner({
         // Refresh detection so the just-configured row drops out of
         // the banner.
         await fetchDetection();
-      } catch {
-        setErrorBySlug((prev) => ({
-          ...prev,
-          [row.slug]: 'Could not reach the server. Check your network and try again.',
-        }));
+      } catch (err) {
+        // One box above every detected row, so it names the provider.
+        reportConfigure(err, `Couldn't configure "${row.name}"`);
       } finally {
         setSubmitting(null);
       }
     },
-    [fetchDetection, onProviderCreated, persistSuggestedDefaults]
+    [fetchDetection, onProviderCreated, persistSuggestedDefaults, clearConfigure, reportConfigure]
   );
 
   // Loading path renders nothing — wait until /providers/detect returns
@@ -280,9 +268,9 @@ export function ProviderDetectionsBanner({
           </div>
         </div>
 
+        <SaveError failure={configureSave.failure} />
         <ul className="space-y-2">
           {unconfigured.map((row) => {
-            const rowError = errorBySlug[row.slug];
             const isSubmitting = submitting === row.slug;
             return (
               <li
@@ -305,8 +293,6 @@ export function ProviderDetectionsBanner({
                         which model gets picked. Suggestions come from
                         `lib/orchestration/llm/known-providers.ts`. */}
                     <ConfigurePreview row={row} />
-
-                    {rowError && <div className="text-destructive mt-1 text-xs">{rowError}</div>}
                   </div>
                 </div>
                 <Button

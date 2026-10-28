@@ -41,7 +41,11 @@ import {
   type ProposedCase,
 } from '@/components/admin/orchestration/evaluations-foundations/case-review-step';
 import { datasetHelp } from '@/components/admin/orchestration/evaluations-foundations/help-text';
+import { SaveError } from '@/components/forms/form-error';
+import { APIClientError, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface AgentOption {
   id: string;
@@ -86,7 +90,13 @@ export function GenerateFromDescriptionForm({
 
   const [generating, setGenerating] = React.useState(false);
   const [committing, setCommitting] = React.useState(false);
+  // A failed generate (an LLM preview, nothing saved) keeps its own box.
   const [error, setError] = React.useState<string | null>(null);
+  // A refused save of the dataset: directly above its Save button (§124).
+  const commitSave = useSaveFailure({
+    fallback: 'Could not save the dataset. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [preview, setPreview] = React.useState<PreviewResult | null>(null);
   const [selectedIndices, setSelectedIndices] = React.useState<Set<number>>(new Set());
 
@@ -169,17 +179,17 @@ export function GenerateFromDescriptionForm({
 
   async function handleCommit(): Promise<void> {
     if (!preview) return;
+    commitSave.clear();
     const accepted = preview.cases.filter((_, i) => selectedIndices.has(i));
     if (accepted.length === 0) {
-      setError('Select at least one case to save.');
+      commitSave.show('Select at least one case to save.');
       return;
     }
     if (!name.trim()) {
-      setError('Give the dataset a name before saving.');
+      commitSave.show('Give the dataset a name before saving.');
       return;
     }
     setCommitting(true);
-    setError(null);
     try {
       const body: Record<string, unknown> = {
         name: name.trim(),
@@ -195,14 +205,19 @@ export function GenerateFromDescriptionForm({
           body: JSON.stringify(body),
         }
       );
-      const payload = (await res.json()) as ApiSuccess<CommitResult> | ApiError;
-      if (!res.ok || !payload.success) {
-        setError(!payload.success ? payload.error.message : `Failed (${res.status})`);
-        return;
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      const payload = await parseApiResponse<CommitResult>(res);
+      if (!payload.success) {
+        throw new APIClientError(
+          payload.error.message,
+          payload.error.code,
+          res.status,
+          payload.error.details
+        );
       }
       router.push(`/admin/orchestration/evaluations/datasets/${payload.data.datasetId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      commitSave.report(err);
     } finally {
       setCommitting(false);
     }
@@ -258,11 +273,7 @@ export function GenerateFromDescriptionForm({
           </CardContent>
         </Card>
 
-        {error ? (
-          <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
-            {error}
-          </div>
-        ) : null}
+        <SaveError failure={commitSave.failure} />
 
         <div className="flex justify-end gap-2">
           <Button
@@ -270,6 +281,7 @@ export function GenerateFromDescriptionForm({
             onClick={() => {
               setStep('configure');
               setError(null);
+              commitSave.clear();
             }}
             disabled={committing}
           >

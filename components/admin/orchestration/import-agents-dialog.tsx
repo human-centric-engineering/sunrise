@@ -27,8 +27,10 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface ImportAgentsDialogProps {
   open: boolean;
@@ -48,7 +50,11 @@ interface ImportResult {
 export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAgentsDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [conflictMode, setConflictMode] = useState<ConflictMode>('skip');
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Import failed. Check the bundle shape and try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const clearSave = save.clear;
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
@@ -57,23 +63,23 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
     if (open) {
       setFile(null);
       setConflictMode('skip');
-      setError(null);
+      clearSave();
       setResult(null);
     }
-  }, [open]);
+  }, [open, clearSave]);
 
   async function handleSubmit() {
     if (!file) {
-      setError('Pick a JSON bundle first.');
+      save.show('Pick a JSON bundle first.');
       return;
     }
     const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
     if (file.size > MAX_FILE_SIZE) {
-      setError('File is too large (max 10 MB). Export fewer agents per bundle.');
+      save.show('File is too large (max 10 MB). Export fewer agents per bundle.');
       return;
     }
     setSubmitting(true);
-    setError(null);
+    save.clear();
     setResult(null);
     try {
       const text = await file.text();
@@ -81,7 +87,7 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
       try {
         bundle = JSON.parse(text);
       } catch {
-        setError('That file is not valid JSON.');
+        save.show('That file is not valid JSON.');
         return;
       }
 
@@ -92,18 +98,21 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
       setResult(res);
       onImported?.();
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Import failed. Check the bundle shape and try again.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the import is in flight: a late failure must land here.
+        if (!next && submitting) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -222,8 +231,6 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
             </label>
           </fieldset>
 
-          {error && <p className="text-destructive text-sm">{error}</p>}
-
           {result && (
             <div className="border-border rounded-md border p-3 text-sm">
               <p>
@@ -244,6 +251,7 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
           )}
         </div>
 
+        <SaveError failure={save.failure} />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             {result ? 'Close' : 'Cancel'}

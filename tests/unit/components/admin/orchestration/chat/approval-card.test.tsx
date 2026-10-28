@@ -3,8 +3,8 @@
 /**
  * ApprovalCard component tests
  *
- * Drives the state machine (idle → submitting → waiting → completed /
- * failed / expired) with a stubbed `fetch`. We don't assert on the
+ * Drives the state machine (idle → waiting → completed / failed /
+ * expired, with the card's own sending state while the POST is in flight) with a stubbed `fetch`. We don't assert on the
  * dialog primitives — those are covered by Radix's own tests and the
  * shadcn AlertDialog elsewhere — only on the submit + polling
  * behaviour and the synthesised follow-up message handed to
@@ -53,6 +53,7 @@ function mockFetchSequence(responders: Array<(url: string, init?: RequestInit) =
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -217,7 +218,14 @@ describe('ApprovalCard', () => {
   it('surfaces a failure message when the submit POST returns non-2xx', async () => {
     const onResolved = vi.fn();
     mockFetchSequence([
-      () => new Response(JSON.stringify({ error: { message: 'Token expired' } }), { status: 401 }),
+      () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'UNAUTHORIZED', message: 'Token expired' },
+          }),
+          { status: 401 }
+        ),
     ]);
 
     const user = userEvent.setup();
@@ -227,9 +235,10 @@ describe('ApprovalCard', () => {
     const confirmBtn = await screen.findByRole('button', { name: 'Approve' });
     await user.click(confirmBtn);
 
-    await waitFor(() => {
-      expect(screen.getByText(/Failed: Token expired/)).toBeInTheDocument();
-    });
+    // Inside the dialog, which stays open so the refusal can be read (§124).
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Token expired');
+    expect(screen.getByRole('alertdialog')).toContainElement(alert);
     expect(onResolved).not.toHaveBeenCalled();
   });
 
@@ -652,7 +661,7 @@ describe('ApprovalCard — error and cleanup paths', () => {
       await Promise.resolve();
     });
 
-    // Assert: AbortError is silently suppressed — the component stays in submitting state
+    // Assert: AbortError is silently suppressed — the card never leaves idle
     // (returns early from catch without dispatching failure), so no Failed: text appears.
     expect(screen.queryByText(/Failed:/i)).not.toBeInTheDocument();
 
@@ -696,10 +705,9 @@ describe('ApprovalCard — error and cleanup paths', () => {
     unmount();
   }, 10_000);
 
-  it('dispatches failure with the error message when a non-AbortError is thrown during submit', async () => {
+  it('shows the fallback in the dialog when a non-AbortError is thrown during submit', async () => {
     // Arrange: POST rejects with a generic network error (not AbortError).
-    // Exercises the else-branch of the catch at source L186:
-    //   `dispatch({ type: 'failure', payload: { message: err instanceof Error ? err.message : 'Request failed' } })`
+    // The browser's own text is not the server talking: the fallback shows (§124).
     vi.spyOn(globalThis, 'fetch').mockImplementationOnce(() =>
       Promise.reject(new Error('Network failure'))
     );
@@ -711,10 +719,9 @@ describe('ApprovalCard — error and cleanup paths', () => {
     await screen.findByRole('button', { name: 'Approve' });
     await user.click(screen.getByRole('button', { name: 'Approve' }));
 
-    // Assert: the non-AbortError dispatches `failure` with the error's message
-    await waitFor(() => {
-      expect(screen.getByText('Failed: Network failure')).toBeInTheDocument();
-    });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not send the approval. Try again.');
+    expect(screen.getByRole('alertdialog')).toContainElement(alert);
   }, 10_000);
 
   it('stays in waiting state when the poll fetch returns a non-2xx (non-ok) response', async () => {
@@ -821,7 +828,7 @@ describe('ApprovalCard — error and cleanup paths', () => {
     expect(pollSignal.aborted).toBe(true);
   }, 15_000);
 
-  it('falls back to "Request failed (N)" when the error response body cannot be parsed as JSON', async () => {
+  it('shows the fallback when the error response body cannot be parsed as JSON', async () => {
     // Arrange: 500 response whose json() rejects — exercises the .catch(() => ({})) branch
     const mockResponse = new Response('Internal Server Error', { status: 500 });
     // json() rejects with a parse error simulating a plain-text body
@@ -836,12 +843,9 @@ describe('ApprovalCard — error and cleanup paths', () => {
     await screen.findByRole('button', { name: 'Approve' });
     await user.click(screen.getByRole('button', { name: 'Approve' }));
 
-    // Assert: fallback message uses the status code — "Request failed (500)"
-    await waitFor(
-      () => {
-        expect(screen.getByText('Failed: Request failed (500)')).toBeInTheDocument();
-      },
-      { timeout: 5_000 }
+    // Assert: a body the server never wrote gets the fallback
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not send the approval. Try again.'
     );
   }, 10_000);
 

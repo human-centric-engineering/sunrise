@@ -13,7 +13,8 @@
  *     Each row has an Attach button.
  *
  * All mutations hit the Phase 3 pivot routes and refetch the left column.
- * Errors render inline — nothing toasts.
+ * A refused attach, detach or switch shows in one `<SaveError>` above the
+ * lists; the configure dialog shows its own above its buttons (§124).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,9 +43,11 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient, apiErrorFromResponse, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import type { AiAgentCapability, AiCapability } from '@/types/prisma';
 
 /**
@@ -95,7 +98,13 @@ export function AgentCapabilitiesTab({
   const [attached, setAttached] = useState<AttachedLink[] | null>(null);
   const [catalogue, setCatalogue] = useState<AiCapability[] | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failures only; a refused attach / detach / switch goes to `listSave`.
   const [error, setError] = useState<string | null>(null);
+  const listSave = useSaveFailure({
+    fallback: 'Could not update the capability. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearList, report: reportList } = listSave;
   const [configureTarget, setConfigureTarget] = useState<AttachedLink | null>(null);
   const [usage, setUsage] = useState<Record<string, number> | null>(null);
   const [availableSearch, setAvailableSearch] = useState('');
@@ -143,33 +152,38 @@ export function AgentCapabilitiesTab({
   }, [fetchUsage]);
 
   const handleAttach = useCallback(
-    async (capabilityId: string) => {
+    async (cap: AiCapability) => {
+      clearList();
       try {
         await apiClient.post(API.ADMIN.ORCHESTRATION.agentCapabilities(agentId), {
-          body: { capabilityId },
+          body: { capabilityId: cap.id },
         });
         await fetchAll();
       } catch (err) {
-        setError(err instanceof APIClientError ? err.message : 'Could not attach capability.');
+        reportList(err, `Couldn't attach "${cap.name}"`);
       }
     },
-    [agentId, fetchAll]
+    [agentId, fetchAll, clearList, reportList]
   );
 
   const handleDetach = useCallback(
-    async (capId: string) => {
+    async (link: AttachedLink) => {
+      clearList();
       try {
-        await apiClient.delete(API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, capId));
+        await apiClient.delete(
+          API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId)
+        );
         await fetchAll();
       } catch (err) {
-        setError(err instanceof APIClientError ? err.message : 'Could not detach capability.');
+        reportList(err, `Couldn't detach "${link.capability.name}"`);
       }
     },
-    [agentId, fetchAll]
+    [agentId, fetchAll, clearList, reportList]
   );
 
   const handleToggleEnabled = useCallback(
     async (link: AttachedLink, nextEnabled: boolean) => {
+      clearList();
       try {
         await apiClient.patch(
           API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId),
@@ -179,10 +193,10 @@ export function AgentCapabilitiesTab({
         );
         await fetchAll();
       } catch (err) {
-        setError(err instanceof APIClientError ? err.message : 'Could not update capability.');
+        reportList(err, `Couldn't update "${link.capability.name}"`);
       }
     },
-    [agentId, fetchAll]
+    [agentId, fetchAll, clearList, reportList]
   );
 
   const available = useMemo(() => {
@@ -289,6 +303,8 @@ export function AgentCapabilitiesTab({
         </div>
       )}
 
+      <SaveError failure={listSave.failure} />
+
       <div className={bindingsLocked ? 'grid gap-4' : 'grid gap-4 md:grid-cols-2'}>
         {/* Attached */}
         <section className="rounded-md border">
@@ -328,7 +344,7 @@ export function AgentCapabilitiesTab({
                         variant="ghost"
                         size="sm"
                         className="text-red-600"
-                        onClick={() => void handleDetach(link.capabilityId)}
+                        onClick={() => void handleDetach(link)}
                         aria-label={`Detach ${link.capability.name}`}
                       >
                         Detach
@@ -403,7 +419,7 @@ export function AgentCapabilitiesTab({
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleAttach(cap.id)}
+                      onClick={() => void handleAttach(cap)}
                     >
                       Attach
                     </Button>
@@ -449,7 +465,11 @@ interface ConfigureDialogProps {
 function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDialogProps) {
   const [configText, setConfigText] = useState('');
   const [rateLimit, setRateLimit] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not save capability config. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const clearSave = save.clear;
   const [saving, setSaving] = useState(false);
   // Soft warning surfaced from the binding-save API meta when an
   // ${env:VAR} reference points at an unset env var. Save still
@@ -464,16 +484,16 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
     if (link) {
       setConfigText(link.customConfig ? JSON.stringify(link.customConfig, null, 2) : '');
       setRateLimit(link.customRateLimit ? String(link.customRateLimit) : '');
-      setError(null);
+      clearSave();
       setMissingEnvVars([]);
       setUnavailableEnvVars({ names: [], prefix: null });
     }
-  }, [link]);
+  }, [link, clearSave]);
 
   async function handleSave() {
     if (!link) return;
     setSaving(true);
-    setError(null);
+    save.clear();
     try {
       // Blank clears the config (null), as a blank rate limit clears the
       // override below.
@@ -482,7 +502,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         try {
           customConfig = JSON.parse(configText);
         } catch {
-          setError('customConfig is not valid JSON.');
+          save.show('customConfig is not valid JSON.');
           setSaving(false);
           return;
         }
@@ -491,7 +511,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
       // override (null) rather than leaving it untouched.
       const customRateLimit = rateLimit.trim() === '' ? null : Number(rateLimit);
       if (customRateLimit !== null && (!Number.isFinite(customRateLimit) || customRateLimit < 1)) {
-        setError('Rate limit must be a positive number.');
+        save.show('Rate limit must be a positive number.');
         setSaving(false);
         return;
       }
@@ -507,16 +527,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
           body: JSON.stringify({ customConfig, customRateLimit }),
         }
       );
-      if (!response.ok) {
-        const errBody = await parseApiResponse<unknown>(response).catch(() => null);
-        const message =
-          errBody && !errBody.success
-            ? errBody.error.message
-            : `Save failed: ${response.statusText}`;
-        setError(message);
-        setSaving(false);
-        return;
-      }
+      if (!response.ok) throw await apiErrorFromResponse(response);
       const parsed = await parseApiResponse<unknown>(response);
       const meta = parsed.success ? bindingMetaSchema.safeParse(parsed.meta) : undefined;
       const missing = meta?.success ? (meta.data.warnings?.missingEnvVars ?? []) : [];
@@ -535,14 +546,21 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Could not save capability config.');
+      save.report(err);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Dialog open={!!link} onOpenChange={onOpenChange}>
+    <Dialog
+      open={!!link}
+      onOpenChange={(open) => {
+        // Committed while the save is in flight: a late failure must land here.
+        if (!open && saving) return;
+        onOpenChange(open);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Configure {link?.capability.name}</DialogTitle>
@@ -609,7 +627,6 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
               placeholder="Leave blank to inherit"
             />
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
           {unavailableEnvVars.names.length > 0 && (
             <div
               role="status"
@@ -660,6 +677,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
           )}
         </div>
 
+        <SaveError failure={save.failure} />
         <DialogFooter>
           <Button
             type="button"

@@ -38,7 +38,11 @@ import {
   graderHelp,
   runHelp,
 } from '@/components/admin/orchestration/evaluations-foundations/help-text';
+import { SaveError } from '@/components/forms/form-error';
+import { APIClientError, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 // ─── Option types passed from the server page ───────────────────────────────
 
@@ -132,7 +136,11 @@ export function RunCreateForm({
   const [datasetId, setDatasetId] = React.useState(prefilledDatasetId || datasets[0]?.id || '');
   const [selectedMetrics, setSelectedMetrics] = React.useState<MetricSelection[]>([]);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  // The form's own checks and a refused queue, directly above Queue run (§124).
+  const save = useSaveFailure({
+    fallback: 'Could not queue the run. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [agentCapabilities, setAgentCapabilities] = React.useState<
     Array<{ slug: string; name: string }>
   >([]);
@@ -242,16 +250,16 @@ export function RunCreateForm({
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    setError(null);
+    save.clear();
 
-    if (!name.trim()) return setError('Give the run a name.');
-    if (subjectKind === 'agent' && !agentId) return setError('Pick an agent.');
-    if (subjectKind === 'workflow' && !workflowId) return setError('Pick a workflow.');
+    if (!name.trim()) return save.show('Give the run a name.');
+    if (subjectKind === 'agent' && !agentId) return save.show('Pick an agent.');
+    if (subjectKind === 'workflow' && !workflowId) return save.show('Pick a workflow.');
     if (subjectKind === 'workflow' && selectorKind === 'step_id' && !selectorStepId) {
-      return setError('Pick a step for the workflow output selector.');
+      return save.show('Pick a step for the workflow output selector.');
     }
-    if (!datasetId) return setError('Pick a dataset.');
-    if (selectedMetrics.length === 0) return setError('Pick at least one metric.');
+    if (!datasetId) return save.show('Pick a dataset.');
+    if (selectedMetrics.length === 0) return save.show('Pick at least one metric.');
 
     // Per-grader required-field check. The server-side Zod schemas would
     // reject these too, but the surfaced error is a raw Zod path string
@@ -262,13 +270,13 @@ export function RunCreateForm({
       const cfg = m.config;
       const toolSlug = typeof cfg.slug === 'string' ? cfg.slug.trim() : '';
       if (m.slug === 'tool_was_called' && toolSlug.length === 0) {
-        return setError(
+        return save.show(
           'Pick a tool slug for the "tool_was_called" grader (e.g. `search_knowledge_base`).'
         );
       }
       const pattern = typeof cfg.pattern === 'string' ? cfg.pattern.trim() : '';
       if (m.slug === 'regex' && pattern.length === 0) {
-        return setError('Set a pattern for the "regex" grader.');
+        return save.show('Set a pattern for the "regex" grader.');
       }
     }
 
@@ -301,15 +309,19 @@ export function RunCreateForm({
           ...(subjectOutputSelector ? { subjectOutputSelector } : {}),
         }),
       });
-      const payload = (await res.json()) as
-        { success: true; data: { id: string } } | { success: false; error: { message: string } };
-      if (!res.ok || !payload.success) {
-        setError(!payload.success ? payload.error.message : `Failed (${res.status})`);
-        return;
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      const payload = await parseApiResponse<{ id: string }>(res);
+      if (!payload.success) {
+        throw new APIClientError(
+          payload.error.message,
+          payload.error.code,
+          res.status,
+          payload.error.details
+        );
       }
       router.push(`/admin/orchestration/evaluations/runs/${payload.data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      save.report(err);
     } finally {
       setIsSubmitting(false);
     }
@@ -701,13 +713,9 @@ export function RunCreateForm({
         </CardContent>
       </Card>
 
-      {error ? (
-        <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
-          {error}
-        </div>
-      ) : null}
-
       <CostEstimateBanner estimate={estimate} />
+
+      <SaveError failure={save.failure} />
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-xs">

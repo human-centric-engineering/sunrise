@@ -11,14 +11,15 @@ was also amber, which doesn't read as a failure.
 
 ## The pieces
 
-| Piece                | Where                                                  | Job                                                                                                    |
-| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `readSaveError()`    | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
-| `applyFieldErrors()` | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
-| `isStaleSave()`      | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
-| `useSaveFailure()`   | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
-| `<SaveError>`        | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
-| `<StaleSaveNotice>`  | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
+| Piece                    | Where                                                  | Job                                                                                                    |
+| ------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `readSaveError()`        | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
+| `applyFieldErrors()`     | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
+| `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
+| `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
+| `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
+| `<SaveError>`            | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
+| `<StaleSaveNotice>`      | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
 `<FormError>` in the same file is unchanged and is **not** for a failed save:
 it is the inline box for a client-side message or an auth-flow code.
@@ -170,10 +171,32 @@ person can read it and try again or cancel. Close it only on success. Radix's
 `e.preventDefault()`. A dialog that closes and then shows the error elsewhere,
 or draws it behind its own overlay, loses it (owner ruling, 2026-10-28).
 
+While the action is in flight the dialog is committed to it: disable the
+action button **and** Cancel, and ignore the close Radix asks for (Escape, an
+outside click) by returning early from `onOpenChange` while pending. Otherwise
+a second click sends the request twice, and a failure arriving after the
+dialog closed is shown nowhere. Clear the dialog's failure **when it opens**
+(where the target is set), not only when it closes, so one row's failure never
+appears in the next row's dialog.
+
 A controlled dialog with no `DialogTrigger` returns no focus when it closes.
 One with a trigger hands focus back to it, after a failure shown outside the
 dialog has taken focus: prevent that with
 `onCloseAutoFocus={(e) => e.preventDefault()}` on that close.
+
+## A page that sends its own `fetch`
+
+`readSaveError()` reads an `APIClientError`; anything else gets the fallback.
+A save sent through `apiClient` throws one. A page that has to send its own
+`fetch` (a multipart upload, a stream) turns a failed response into the same
+error before reporting it:
+
+```ts
+const res = await fetch(url, { method: 'POST', body: formData });
+if (!res.ok) throw await apiErrorFromResponse(res);
+```
+
+Prefer moving a plain JSON save to `apiClient` over this.
 
 ## Recipe: a list's row actions
 
@@ -183,6 +206,16 @@ renders **one** `<SaveError>` directly above its table, fed by one
 brings itself into view and takes focus, so a failure on row 40 is not lost
 off-screen (owner ruling, 2026-10-28). An action confirmed in a dialog follows
 the dialog recipe instead.
+
+The box sits away from the row, so say which row: a second argument to
+`report` leads the server's message with it, as in
+``save.report(err, `Couldn't update "${agent.name}"`)``. A bulk action names
+the action (`Bulk deactivate failed`).
+
+A refresh after a save that succeeded is not part of the save. Re-read the
+list outside the save's `try`, so a failed refresh isn't reported as the
+save failing (a new key's plaintext is already on screen by then). A bulk
+action that fails part-way does refresh, so what it did delete goes.
 
 ## Finding the field to focus
 
@@ -266,9 +299,17 @@ boundaries, and `ErrorCard` are not save errors and keep their own display.
   default models, embedding model, widget appearance, MCP settings,
   evaluations, triggers, feature flags, users, members, support grants, org
   providers).
+- The admin lists and dialogs (t-960): users, invitations, members, flags,
+  support grants; agents, capabilities, providers and the setup wizard;
+  knowledge and MCP; evaluations, experiments, workflows, schedules,
+  executions, approvals, webhooks and triggers. Each list has one box above
+  its table; each confirm dialog keeps its failure inside and stays open.
 - `<StaleSaveNotice>`: webhooks table, workflow schedules tab, workflow
   builder.
 
-The admin lists and dialogs, `components/forms/` and the auth pages move onto
-it in §124's later tasks, which also add a check against hand-drawn
-save-error boxes.
+Not converted, by rule: load errors, test / run / preview / search actions
+(test buttons, the audit-models and rerun dialogs, the builder's run panel,
+the pairwise judge, LLM generation previews, knowledge search), the chat's
+messages (its approval card's approve and reject are converted), and org
+switches. `components/forms/` and the auth pages move onto it in t-950,
+which also adds a check against hand-drawn save-error boxes.

@@ -9,8 +9,8 @@
  *
  *   1. "Adjust budget" — deep-link to the agent edit page.
  *   2. "Pause agent"   — PATCH `/agents/:id` with `isActive: false`
- *      optimistically. On failure the row reverts and an inline
- *      error banner surfaces the reason.
+ *      optimistically. On failure the row reverts and the reason shows
+ *      in one `<SaveError>` above the list (§124).
  *
  * This component is interactive so it lives as a client island; the
  * banner on the dashboard stays a pure server component.
@@ -23,8 +23,10 @@ import { AlertCircle, AlertTriangle, Loader2, Pause } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
 import { cn } from '@/lib/utils';
 import type { BudgetAlert, GlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
@@ -37,11 +39,14 @@ export interface BudgetAlertsListProps {
 interface RowState {
   pausing: boolean;
   paused: boolean;
-  error: string | null;
 }
 
 export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
   const [state, setState] = React.useState<Record<string, RowState>>({});
+  const save = useSaveFailure({
+    fallback: 'Could not pause agent. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const hasAgentAlerts = alerts && alerts.length > 0;
   const hasGlobalCapAlert = globalCap?.exceeded === true;
@@ -61,11 +66,12 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
     );
   }
 
-  const handlePause = async (agentId: string) => {
+  const handlePause = async (agentId: string, name: string) => {
     // Optimistic: mark paused immediately.
+    save.clear();
     setState((prev) => ({
       ...prev,
-      [agentId]: { pausing: true, paused: true, error: null },
+      [agentId]: { pausing: true, paused: true },
     }));
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agentId), {
@@ -73,16 +79,16 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
       });
       setState((prev) => ({
         ...prev,
-        [agentId]: { pausing: false, paused: true, error: null },
+        [agentId]: { pausing: false, paused: true },
       }));
     } catch (err) {
-      const message =
-        err instanceof APIClientError ? err.message : 'Could not pause agent. Try again.';
       // Revert.
       setState((prev) => ({
         ...prev,
-        [agentId]: { pausing: false, paused: false, error: message },
+        [agentId]: { pausing: false, paused: false },
       }));
+      // One box above every alert, so it names the agent.
+      save.report(err, `Couldn't pause "${name}"`);
     }
   };
 
@@ -131,12 +137,12 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
             </Badge>
           </div>
         )}
+        <SaveError failure={save.failure} />
         <ul className="divide-y text-sm">
           {(alerts ?? []).map((alert) => {
             const rowState = state[alert.agentId] ?? {
               pausing: false,
               paused: false,
-              error: null,
             };
             return (
               <li key={alert.agentId} className="py-3">
@@ -178,7 +184,7 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
                       variant="outline"
                       size="sm"
                       disabled={rowState.pausing || rowState.paused}
-                      onClick={() => void handlePause(alert.agentId)}
+                      onClick={() => void handlePause(alert.agentId, alert.name)}
                     >
                       {rowState.pausing ? (
                         <>
@@ -194,12 +200,6 @@ export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
                     </Button>
                   </div>
                 </div>
-                {rowState.error && (
-                  <div className="mt-2 flex items-center gap-2 rounded-md bg-red-50 p-2 text-xs text-red-600 dark:bg-red-950/20 dark:text-red-400">
-                    <AlertCircle className="h-3 w-3 shrink-0" />
-                    {rowState.error}
-                  </div>
-                )}
               </li>
             );
           })}

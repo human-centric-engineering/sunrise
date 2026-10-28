@@ -43,6 +43,14 @@ describe('readSaveError', () => {
     }
   );
 
+  it.each(['', '   '])('uses the fallback when the server sent no words (%j)', (message) => {
+    const failure = readSaveError(new APIClientError(message, 'INTERNAL_ERROR', 500), {
+      fallback: 'Could not save.',
+    });
+
+    expect(failure.message).toBe('Could not save.');
+  });
+
   it('keeps a distinct message for a field even when another contains its text', () => {
     const failure = readSaveError(
       listError([

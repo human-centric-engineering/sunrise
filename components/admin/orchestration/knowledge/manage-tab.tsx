@@ -52,7 +52,10 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { z } from 'zod';
 
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   CSV_MAX_ROW_CHARS,
@@ -95,7 +98,10 @@ import { DocumentKeywordsModal } from '@/components/admin/orchestration/knowledg
 import { DocumentRenameModal } from '@/components/admin/orchestration/knowledge/document-rename-modal';
 import { DocumentTagsModal } from '@/components/admin/orchestration/knowledge/document-tags-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
-import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import type {
+  PdfPreviewData,
+  UploadOutcome,
+} from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
 import { PdfPreviewModal } from '@/components/admin/orchestration/knowledge/pdf-preview-modal';
 import { pdfPreviewFromStoredDocument } from '@/components/admin/orchestration/knowledge/stored-pdf-preview';
@@ -250,13 +256,31 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const [seeding, setSeeding] = useState(false);
   const readOnly = useSharedSettingsReadOnly();
-  const [seedError, setSeedError] = useState<string | null>(null);
   const [embedding, setEmbedding] = useState(false);
-  const [embedError, setEmbedError] = useState<string | null>(null);
+  // Load Patterns and Generate Embeddings share a row: whichever was pressed
+  // shows its failure directly above it.
+  const seedFailure = useSaveFailure({
+    fallback: 'Could not load the patterns. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const embedFailure = useSaveFailure({
+    fallback: 'Could not generate the embeddings. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearSeedFailure, report: reportSeedFailure } = seedFailure;
+  const { clear: clearEmbedFailure, report: reportEmbedFailure } = embedFailure;
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
-  const [rechunkError, setRechunkError] = useState<string | null>(null);
+  // A row's Rechunk or Delete failing shows above the table.
+  const rowFailure = useSaveFailure({
+    fallback: 'Could not update the document. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRowFailure, report: reportRowFailure } = rowFailure;
   const [uploadOpen, setUploadOpen] = useState(false);
+  // An upload or URL fetch in flight holds the upload dialog open, so its
+  // failure is shown in the dialog rather than nowhere.
+  const [uploadBusy, setUploadBusy] = useState(false);
   const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);
   const [viewKeywordsName, setViewKeywordsName] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -274,7 +298,6 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
   // Separate state so the Tags chip on a row opens the tag editor directly,
@@ -323,99 +346,86 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const handleSeed = useCallback(async () => {
     setSeeding(true);
-    setSeedError(null);
+    clearSeedFailure();
+    clearEmbedFailure();
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEED, { method: 'POST' });
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        setSeedError(
-          (raw.success ? raw.data?.error?.message : null) ?? `Load failed (${res.status})`
-        );
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       refreshAll();
       void fetchEmbeddingStatus();
       void fetchLastSeededAt();
-    } catch {
-      setSeedError('Network error — could not reach the server.');
+    } catch (err) {
+      reportSeedFailure(err);
     } finally {
       setSeeding(false);
     }
-  }, [refreshAll, fetchEmbeddingStatus, fetchLastSeededAt]);
+  }, [
+    refreshAll,
+    fetchEmbeddingStatus,
+    fetchLastSeededAt,
+    clearSeedFailure,
+    clearEmbedFailure,
+    reportSeedFailure,
+  ]);
 
   const handleEmbed = useCallback(async () => {
     setEmbedding(true);
-    setEmbedError(null);
+    clearSeedFailure();
+    clearEmbedFailure();
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBED, { method: 'POST' });
-      if (!res.ok) {
-        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-        setEmbedError(
-          (raw.success ? raw.data?.error?.message : null) ?? `Embedding failed (${res.status})`
-        );
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       void fetchEmbeddingStatus();
-    } catch {
-      setEmbedError('Network error — could not reach the server.');
+    } catch (err) {
+      reportEmbedFailure(err);
     } finally {
       setEmbedding(false);
     }
-  }, [fetchEmbeddingStatus]);
+  }, [fetchEmbeddingStatus, clearSeedFailure, clearEmbedFailure, reportEmbedFailure]);
 
   const handleRechunk = useCallback(
-    async (docId: string) => {
+    async (doc: { id: string; name: string }) => {
+      const docId = doc.id;
       setRechunkingId(docId);
-      setRechunkError(null);
+      clearRowFailure();
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRechunk(docId), {
           method: 'POST',
         });
-        if (!res.ok) {
-          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-          const msg =
-            (raw.success ? raw.data?.error?.message : null) ?? `Rechunk failed (${res.status})`;
-          setRechunkError(msg);
-          return;
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         refreshAll();
-      } catch {
-        setRechunkError('Network error — could not reach the server.');
+      } catch (err) {
+        reportRowFailure(err, `Couldn't rechunk "${doc.name}"`);
       } finally {
         setRechunkingId(null);
       }
     },
-    [refreshAll]
+    [refreshAll, clearRowFailure, reportRowFailure]
   );
 
   const handleDelete = useCallback(
-    async (docId: string) => {
+    async (doc: { id: string; name: string }) => {
+      const docId = doc.id;
       // A Review still loading for any row is dropped, not opened over the list.
       previewRequestRef.current += 1;
       setReviewingId(null);
       setDeletingId(docId);
-      setDeleteError(null);
+      clearRowFailure();
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId), {
           method: 'DELETE',
         });
-        if (!res.ok) {
-          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
-          setDeleteError(
-            (raw.success ? raw.data?.error?.message : null) ?? `Delete failed (${res.status})`
-          );
-          return;
-        }
+        if (!res.ok) throw await apiErrorFromResponse(res);
         refreshAll();
         void fetchEmbeddingStatus();
-      } catch {
-        setDeleteError('Network error — could not reach the server.');
+      } catch (err) {
+        reportRowFailure(err, `Couldn't delete "${doc.name}"`);
       } finally {
         setDeletingId(null);
         setDeleteConfirmId(null);
       }
     },
-    [refreshAll, fetchEmbeddingStatus]
+    [refreshAll, fetchEmbeddingStatus, clearRowFailure, reportRowFailure]
   );
 
   const handlePdfPreview = useCallback((data: PdfPreviewData) => {
@@ -466,10 +476,15 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     }
   }, []);
 
-  const handleUploadComplete = useCallback(() => {
-    setUploadOpen(false);
-    refreshAll();
-  }, [refreshAll]);
+  const handleUploadComplete = useCallback(
+    ({ refused }: UploadOutcome) => {
+      // Files the bulk upload refused are listed in the dialog: keep it open
+      // so they are seen, and refresh the list for the files that did land.
+      if (!refused) setUploadOpen(false);
+      refreshAll();
+    },
+    [refreshAll]
+  );
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
@@ -535,6 +550,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
             <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
             Generate embeddings to enable vector search (requires an embedding provider).
           </p>
+          <SaveError failure={seedFailure.failure ?? embedFailure.failure} />
           <div className="flex flex-wrap items-center gap-3">
             {readOnly ? (
               // Loading writes the shared settings' seeded timestamp, so it is
@@ -652,8 +668,6 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
               })}
             </p>
           )}
-          {seedError && <p className="text-destructive text-sm">{seedError}</p>}
-          {embedError && <p className="text-destructive text-sm">{embedError}</p>}
           {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
             <EmbeddingStatusBanner
               providerState={providerState}
@@ -804,9 +818,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           </div>
         ) : (
           <>
-            {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
-            {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
             {reviewError && <p className="text-destructive text-sm">{reviewError}</p>}
+            <SaveError failure={rowFailure.failure} />
             <div className={`overflow-x-auto rounded-lg border ${listLoading ? 'opacity-60' : ''}`}>
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
@@ -1216,7 +1229,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                       variant="ghost"
                                       size="sm"
                                       disabled={rechunkingId === doc.id}
-                                      onClick={() => void handleRechunk(doc.id)}
+                                      onClick={() => void handleRechunk(doc)}
                                     >
                                       <RefreshCw
                                         className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
@@ -1234,7 +1247,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                       variant="destructive"
                                       size="sm"
                                       disabled={deletingId === doc.id}
-                                      onClick={() => void handleDelete(doc.id)}
+                                      onClick={() => void handleDelete(doc)}
                                     >
                                       {deletingId === doc.id ? 'Deleting...' : 'Yes'}
                                     </Button>
@@ -1362,7 +1375,13 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           of this component) since it's already done. */}
       {!setupComplete && builtInPanel}
 
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+      <Dialog
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          if (!open && uploadBusy) return;
+          setUploadOpen(open);
+        }}
+      >
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1377,6 +1396,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           <DocumentUploadZone
             onUploadComplete={handleUploadComplete}
             onPdfPreview={handlePdfPreview}
+            onBusyChange={setUploadBusy}
           />
         </DialogContent>
       </Dialog>

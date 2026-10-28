@@ -506,16 +506,16 @@ describe('DiscoverModelsDialog', () => {
     });
 
     it('renders an inline error and stays on the review step when bulk POST fails', async () => {
-      // Submit error path — apiClient.post throws → setSubmitError is
-      // called and the error message renders in the review step.
-      // Without this test the catch arm of handleSubmit is dead code
-      // for coverage purposes.
-      const { apiClient } = await import('@/lib/api/client');
+      // Submit error path — apiClient.post throws an APIClientError and the
+      // server's message renders by the footer's buttons (§124).
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
         candidates: [makeCandidate()],
       });
-      vi.mocked(apiClient.post).mockRejectedValue(new Error('Database transaction failed'));
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Database transaction failed')
+      );
 
       const user = userEvent.setup();
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
@@ -534,7 +534,7 @@ describe('DiscoverModelsDialog', () => {
 
       // Inline error message renders; result step is not reached.
       await waitFor(() => {
-        expect(screen.getByText(/database transaction failed/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(/database transaction failed/i);
       });
       expect(screen.queryByText(/model added/i)).not.toBeInTheDocument();
     });

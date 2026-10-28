@@ -113,6 +113,7 @@ describe('WorkflowsTable', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
     mockFetch = vi.fn<typeof fetch>();
     global.fetch = mockFetch;
     mockFetch.mockResolvedValue(makeWorkflowsListResponse());
@@ -668,13 +669,7 @@ describe('WorkflowsTable', () => {
     }
 
     it('shows APIClientError message in dialog when delete fails with APIClientError', async () => {
-      // BUG: AlertDialogAction (Radix) triggers onOpenChange(false) synchronously when clicked,
-      // so setDeleteTarget(null) runs before handleDelete's async catch block sets deleteError.
-      // The dialog closes and its content is unmounted before the error text can render.
-      // Fix: prevent the dialog from closing on error (e.g. use a regular Button, not
-      // AlertDialogAction, or re-open the dialog after the error is caught).
-      //
-      // This test documents the intended behavior (error should appear) so the bug is visible.
+      // The dialog stays open on failure, with the refusal inside it (§124).
 
       // Arrange: delete rejects with an APIClientError — the component intends to use err.message
       const { apiClient, APIClientError } = await import('@/lib/api/client');
@@ -693,18 +688,13 @@ describe('WorkflowsTable', () => {
         expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
       });
 
-      // BUG: The following assertion fails because the dialog closes before deleteError renders.
-      // Uncomment once the source is fixed to keep the dialog open on error:
-      // await waitFor(() => {
-      //   expect(screen.getByText('Not found')).toBeInTheDocument();
-      // });
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Not found');
+      expect(screen.getByRole('alertdialog')).toContainElement(alert);
     });
 
     it('shows fallback error message in dialog when delete fails with a generic error', async () => {
-      // BUG: Same root cause as the APIClientError test above — the dialog is closed by
-      // AlertDialogAction before handleDelete's catch block can set deleteError.
-      // The generic fallback message "Delete failed. Try again in a moment." is set in state
-      // but the dialog is already unmounted so it is never shown to the user.
+      // A failure the server never wrote gets the fallback, inside the open dialog.
 
       // Arrange: delete rejects with a non-APIClientError
       const { apiClient } = await import('@/lib/api/client');
@@ -721,11 +711,9 @@ describe('WorkflowsTable', () => {
         expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
       });
 
-      // BUG: The following assertion fails because the dialog closes before deleteError renders.
-      // Uncomment once the source is fixed to keep the dialog open on error:
-      // await waitFor(() => {
-      //   expect(screen.getByText('Delete failed. Try again in a moment.')).toBeInTheDocument();
-      // });
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Delete failed. Try again in a moment.');
+      expect(screen.getByRole('alertdialog')).toContainElement(alert);
     });
   });
 

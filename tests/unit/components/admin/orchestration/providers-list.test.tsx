@@ -715,9 +715,10 @@ describe('ProvidersList', () => {
 
       await user.click(screen.getByRole('button', { name: /reset/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText('Upstream timeout')).toBeInTheDocument();
-      });
+      // The box sits above the grid, so it names the provider.
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Couldn\'t reset the circuit breaker on "Anthropic": Upstream timeout'
+      );
     });
 
     it('shows generic error banner when breaker reset fails with unknown error', async () => {
@@ -733,7 +734,10 @@ describe('ProvidersList', () => {
       await user.click(screen.getByRole('button', { name: /reset/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/couldn't reset the circuit breaker/i)).toBeInTheDocument();
+        // Nothing from the server: the context says it all.
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t reset the circuit breaker on "Anthropic". Try again.'
+        );
       });
     });
   });

@@ -97,6 +97,7 @@ function mockFetchServerError(message: string, status = 400): ReturnType<typeof 
 describe('DatasetUploadForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   afterEach(() => {
@@ -258,16 +259,16 @@ describe('DatasetUploadForm', () => {
       expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard
     });
 
-    it('shows the thrown error message when fetch itself rejects', async () => {
+    it('shows the fallback when fetch itself rejects (the browser text is not the server talking, §124)', async () => {
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network down')));
       const user = userEvent.setup();
       const { container } = render(<DatasetUploadForm />);
       await user.upload(getFileInput(container), makeFile('faq.csv'));
       await user.click(screen.getByRole('button', { name: /upload dataset/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText(/Network down/i)).toBeInTheDocument();
-      });
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Upload failed. Try again in a moment.'
+      );
     });
   });
 

@@ -55,8 +55,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { cn } from '@/lib/utils';
 import { describeTunableFields } from '@/components/admin/orchestration/platform-agent-fields';
 import {
@@ -209,7 +211,11 @@ export function AgentVersionHistoryTab({
   const [error, setError] = useState<string | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<VersionEntry | null>(null);
   const [restoring, setRestoring] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const restoreSave = useSaveFailure({
+    fallback: 'Restore failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearRestore, report: reportRestore } = restoreSave;
 
   // Expansion + snapshot cache. Keyed by version id so a successful
   // load is shared between consecutive rows: a row's "after"
@@ -243,7 +249,7 @@ export function AgentVersionHistoryTab({
   const handleRestore = useCallback(async () => {
     if (!restoreTarget) return;
     setRestoring(true);
-    setRestoreError(null);
+    clearRestore();
     try {
       await apiClient.post(
         API.ADMIN.ORCHESTRATION.agentVersionRestore(agentId, restoreTarget.id),
@@ -255,13 +261,11 @@ export function AgentVersionHistoryTab({
       void fetchVersions();
       onRestored?.();
     } catch (err) {
-      setRestoreError(
-        err instanceof APIClientError ? err.message : 'Restore failed. Try again in a moment.'
-      );
+      reportRestore(err);
     } finally {
       setRestoring(false);
     }
-  }, [restoreTarget, agentId, fetchVersions, onRestored]);
+  }, [restoreTarget, agentId, fetchVersions, onRestored, clearRestore, reportRestore]);
 
   /**
    * Fetch a single version's snapshot (idempotent — short-circuits
@@ -435,7 +439,10 @@ export function AgentVersionHistoryTab({
                         variant="ghost"
                         size="sm"
                         className="shrink-0"
-                        onClick={() => setRestoreTarget(v)}
+                        onClick={() => {
+                          clearRestore();
+                          setRestoreTarget(v);
+                        }}
                         title={
                           isPlatformAgent
                             ? `Restore this org's settings from version ${v.version}`
@@ -473,9 +480,11 @@ export function AgentVersionHistoryTab({
 
       <AlertDialog
         open={!!restoreTarget}
-        onOpenChange={() => {
+        onOpenChange={(open) => {
+          // Committed while the restore is in flight: a late failure must land here.
+          if (!open && restoring) return;
           setRestoreTarget(null);
-          setRestoreError(null);
+          clearRestore();
         }}
       >
         <AlertDialogContent>
@@ -526,16 +535,12 @@ export function AgentVersionHistoryTab({
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {restoreError && (
-            <p className="border-destructive/50 bg-destructive/5 text-destructive rounded border px-2 py-1.5 text-sm">
-              {restoreError}
-            </p>
-          )}
+          <SaveError failure={restoreSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               // Prevent Radix's default close-on-click: a failed restore must
-              // keep the dialog open so `restoreError` (rendered above) is
+              // keep the dialog open so its failure (rendered above) is
               // visible. handleRestore closes the dialog itself on success.
               onClick={(e) => {
                 e.preventDefault();

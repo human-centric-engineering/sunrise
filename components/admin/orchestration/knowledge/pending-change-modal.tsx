@@ -12,7 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { apiClient } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface PendingChangeRecord {
   id: string;
@@ -50,11 +52,25 @@ export function PendingChangeModal({
   const [record, setRecord] = useState<PendingChangeRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<'accept' | 'reject' | null>(null);
+  // The load error, shown in place of the diff. A failed Accept or Reject
+  // shows above the buttons instead, and the diff stays.
   const [error, setError] = useState<string | null>(null);
+  const acceptFailure = useSaveFailure({
+    fallback: 'Could not accept the change. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const rejectFailure = useSaveFailure({
+    fallback: 'Could not reject the change. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearAcceptFailure, report: reportAcceptFailure } = acceptFailure;
+  const { clear: clearRejectFailure, report: reportRejectFailure } = rejectFailure;
 
   const open = changeId !== null;
 
   useEffect(() => {
+    clearAcceptFailure();
+    clearRejectFailure();
     if (!open || !changeId) {
       setRecord(null);
       setError(null);
@@ -84,58 +100,72 @@ export function PendingChangeModal({
     return () => {
       cancelled = true;
     };
-  }, [open, changeId, documentId]);
+  }, [open, changeId, documentId, clearAcceptFailure, clearRejectFailure]);
 
   const accept = useCallback(async () => {
     if (!changeId) return;
     setActing('accept');
-    setError(null);
+    clearAcceptFailure();
+    clearRejectFailure();
     try {
       const res = await fetch(
         `/api/v1/admin/orchestration/knowledge/documents/${documentId}/cleanup/changes/${changeId}/accept`,
         { method: 'POST' }
       );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(body?.error?.message ?? `Accept failed (${res.status})`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       onResolved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Accept failed');
+      reportAcceptFailure(err);
     } finally {
       setActing(null);
     }
-  }, [changeId, documentId, onResolved, onClose]);
+  }, [
+    changeId,
+    documentId,
+    onResolved,
+    onClose,
+    clearAcceptFailure,
+    clearRejectFailure,
+    reportAcceptFailure,
+  ]);
 
   const reject = useCallback(async () => {
     if (!changeId) return;
     setActing('reject');
-    setError(null);
+    clearAcceptFailure();
+    clearRejectFailure();
     try {
       const res = await fetch(
         `/api/v1/admin/orchestration/knowledge/documents/${documentId}/cleanup/changes/${changeId}/reject`,
         { method: 'POST' }
       );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(body?.error?.message ?? `Reject failed (${res.status})`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       onResolved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reject failed');
+      reportRejectFailure(err);
     } finally {
       setActing(null);
     }
-  }, [changeId, documentId, onResolved, onClose]);
+  }, [
+    changeId,
+    documentId,
+    onResolved,
+    onClose,
+    clearAcceptFailure,
+    clearRejectFailure,
+    reportRejectFailure,
+  ]);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => (next ? null : onClose())}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while Accept or Reject runs: Escape waits for it.
+        if (!next && acting === null) onClose();
+      }}
+    >
       <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -169,6 +199,8 @@ export function PendingChangeModal({
             <TextDiffViewer before={record.beforeContent} after={record.afterContent} />
           </>
         ) : null}
+
+        <SaveError failure={acceptFailure.failure ?? rejectFailure.failure} />
 
         <div className="flex justify-end gap-2">
           <Button

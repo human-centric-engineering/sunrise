@@ -43,7 +43,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import {
   useExecutionLivePoll,
@@ -751,6 +753,14 @@ export function ExecutionDetailView({
     type: 'success' | 'error';
     message: ReactNode;
   } | null>(null);
+  // A refused cancel, approve or retry: shown directly above the action
+  // buttons, and brought into view when the retry was pressed in a trace row
+  // further down (§124). Each action names itself as the report's context.
+  const actionSave = useSaveFailure({ fallback: 'Try again.', fields: NO_SERVER_FIELDS });
+  const { clear: clearActionSave, report: reportAction } = actionSave;
+  // A refused rejection: shown inside its dialog, which stays open.
+  const rejectSave = useSaveFailure({ fallback: 'Rejection failed', fields: NO_SERVER_FIELDS });
+  const { clear: clearRejectSave, report: reportRejectSave } = rejectSave;
   // Supervisor panel auto-scroll + ring highlight after a (re-)review lands.
   // Without these, the success banner is the only feedback and the verdict
   // change happens well below the fold — operators routinely miss it.
@@ -802,23 +812,22 @@ export function ExecutionDetailView({
   const handleCancel = useCallback(async () => {
     setActionLoading(true);
     setActionResult(null);
+    clearActionSave();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionCancel(execution.id));
       setActionResult({ type: 'success', message: 'Execution cancelled.' });
       router.refresh();
     } catch (err) {
-      setActionResult({
-        type: 'error',
-        message: err instanceof APIClientError ? err.message : 'Cancel failed',
-      });
+      reportAction(err, 'Cancel failed');
     } finally {
       setActionLoading(false);
     }
-  }, [execution.id, router]);
+  }, [execution.id, router, clearActionSave, reportAction]);
 
   const handleApprove = useCallback(async () => {
     setActionLoading(true);
     setActionResult(null);
+    clearActionSave();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(execution.id), {
         body: {},
@@ -829,14 +838,11 @@ export function ExecutionDetailView({
       });
       router.refresh();
     } catch (err) {
-      setActionResult({
-        type: 'error',
-        message: err instanceof APIClientError ? err.message : 'Approval failed',
-      });
+      reportAction(err, 'Approval failed');
     } finally {
       setActionLoading(false);
     }
-  }, [execution.id, router]);
+  }, [execution.id, router, clearActionSave, reportAction]);
 
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -847,6 +853,8 @@ export function ExecutionDetailView({
   const handleReject = useCallback(async () => {
     setRejectLoading(true);
     setActionResult(null);
+    clearActionSave();
+    clearRejectSave();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionReject(execution.id), {
         body: { reason: rejectReason },
@@ -859,20 +867,18 @@ export function ExecutionDetailView({
       setRejectReason('');
       router.refresh();
     } catch (err) {
-      setActionResult({
-        type: 'error',
-        message: err instanceof APIClientError ? err.message : 'Rejection failed',
-      });
-      setRejectDialogOpen(false);
+      // The dialog stays open with the refusal inside it (§124).
+      reportRejectSave(err);
     } finally {
       setRejectLoading(false);
     }
-  }, [execution.id, rejectReason, router]);
+  }, [execution.id, rejectReason, router, clearActionSave, clearRejectSave, reportRejectSave]);
 
   const handleRetryStep = useCallback(
     async (stepId: string) => {
       setActionLoading(true);
       setActionResult(null);
+      clearActionSave();
       try {
         await apiClient.post(API.ADMIN.ORCHESTRATION.executionRetryStep(execution.id), {
           body: { stepId },
@@ -883,15 +889,12 @@ export function ExecutionDetailView({
         });
         router.refresh();
       } catch (err) {
-        setActionResult({
-          type: 'error',
-          message: err instanceof APIClientError ? err.message : 'Retry failed',
-        });
+        reportAction(err, 'Retry failed');
       } finally {
         setActionLoading(false);
       }
     },
-    [execution.id, router]
+    [execution.id, router, clearActionSave, reportAction]
   );
 
   // Retroactive supervisor review. Available on any terminal execution
@@ -902,6 +905,7 @@ export function ExecutionDetailView({
     setReviewDialogOpen(false);
     setActionLoading(true);
     setActionResult(null);
+    clearActionSave();
     // Capture the prior verdict BEFORE router.refresh() — once the refresh
     // lands, execution.supervisorVerdict holds the new value and we can no
     // longer show a before/after diff in the success banner.
@@ -959,6 +963,7 @@ export function ExecutionDetailView({
     execution.supervisorScore,
     router,
     scrollToSupervisor,
+    clearActionSave,
   ]);
 
   const canCancel = liveSnap.status === 'running' || liveSnap.status === 'paused_for_approval';
@@ -1032,6 +1037,8 @@ export function ExecutionDetailView({
         </div>
       )}
 
+      <SaveError failure={actionSave.failure} />
+
       {/* Action buttons */}
       {(canCancel || canApprove || (canRetry && failedStepId) || canReview || canRerun) && (
         <div className="flex flex-wrap gap-2">
@@ -1045,7 +1052,10 @@ export function ExecutionDetailView({
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => setRejectDialogOpen(true)}
+              onClick={() => {
+                clearRejectSave();
+                setRejectDialogOpen(true);
+              }}
               disabled={actionLoading}
             >
               <XCircle className="mr-2 h-4 w-4" />
@@ -1454,9 +1464,11 @@ export function ExecutionDetailView({
       <AlertDialog
         open={rejectDialogOpen}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the rejection runs: Escape and outside clicks wait for it.
+          if (!open && !rejectLoading) {
             setRejectDialogOpen(false);
             setRejectReason('');
+            clearRejectSave();
           }
         }}
       >
@@ -1485,6 +1497,7 @@ export function ExecutionDetailView({
               rows={3}
             />
           </div>
+          <SaveError failure={rejectSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={rejectLoading}>Cancel</AlertDialogCancel>
             <AlertDialogAction

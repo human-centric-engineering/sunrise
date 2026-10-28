@@ -20,7 +20,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle } from 'lucide-react';
 import {
   ReactFlowProvider,
   addEdge,
@@ -35,6 +34,8 @@ import type { AiWorkflowWithVersion } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { isStaleSave } from '@/lib/errors/save-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { SaveError } from '@/components/forms/form-error';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
@@ -222,7 +223,14 @@ function WorkflowBuilderInner({
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // A refused save, save-as-template or discard: shown under the toolbar
+  // holding those buttons (§124). A stale refusal goes to the notice instead.
+  const save = useSaveFailure({
+    fallback: 'Failed to save workflow. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  // Save as template and discard report into the same box, naming the action.
+  const { clear: clearSaveFailure, report: reportSaveFailure, show: showSaveFailure } = save;
 
   // Publish / draft state — populated from the workflow prop, kept in sync
   // by re-fetching on publish / discard.
@@ -536,10 +544,10 @@ function WorkflowBuilderInner({
     setCopiedFrom(pendingTemplate.copySource ?? null);
     setWorkflowName(pendingTemplate.name);
     setSelectedNodeId(null);
-    setSaveError(null);
+    clearSaveFailure();
     setTemplateDialogOpen(false);
     setPendingTemplate(null);
-  }, [pendingTemplate, setEdges, setNodes]);
+  }, [pendingTemplate, setEdges, setNodes, clearSaveFailure]);
 
   // ------------------------------------------------------------------
   // Save flow
@@ -552,11 +560,11 @@ function WorkflowBuilderInner({
   const performSave = useCallback(
     async (resolvedDetails: WorkflowDetails) => {
       if (nodes.length === 0) {
-        setSaveError('Add at least one step before saving.');
+        showSaveFailure('Add at least one step before saving.');
         return;
       }
       setSaving(true);
-      setSaveError(null);
+      clearSaveFailure();
       try {
         const savedWorkflow = await saveWorkflow({
           mode,
@@ -588,14 +596,8 @@ function WorkflowBuilderInner({
           setStale((n) => n + 1);
           return;
         }
-        const message =
-          err instanceof APIClientError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Failed to save workflow';
-        setSaveError(message);
-        logger.error('Workflow save failed', { error: message });
+        const failure = reportSaveFailure(err);
+        logger.error('Workflow save failed', { error: failure.message });
       } finally {
         setSaving(false);
       }
@@ -610,17 +612,20 @@ function WorkflowBuilderInner({
       copiedFrom,
       workflowName,
       schedule,
+      clearSaveFailure,
+      reportSaveFailure,
+      showSaveFailure,
     ]
   );
 
   const handleSave = useCallback(() => {
-    setSaveError(null);
+    clearSaveFailure();
     if (details) {
       void performSave(details);
     } else {
       setSaveDialogOpen(true);
     }
-  }, [details, performSave]);
+  }, [details, performSave, clearSaveFailure]);
 
   // ------------------------------------------------------------------
   // Execution flow
@@ -639,6 +644,7 @@ function WorkflowBuilderInner({
       )
     )
       return;
+    clearSaveFailure();
     setSavingAsTemplate(true);
     setSavedAsTemplate(false);
     try {
@@ -646,15 +652,11 @@ function WorkflowBuilderInner({
       setSavedAsTemplate(true);
       schedule(() => setSavedAsTemplate(false), 2500);
     } catch (err) {
-      setSaveError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save as template. Try again in a moment.'
-      );
+      reportSaveFailure(err, "Couldn't save as a template");
     } finally {
       setSavingAsTemplate(false);
     }
-  }, [workflow, schedule]);
+  }, [workflow, schedule, clearSaveFailure, reportSaveFailure]);
 
   const handleExecute = useCallback(() => {
     setExecutionDialogOpen(true);
@@ -760,6 +762,7 @@ function WorkflowBuilderInner({
     if (!window.confirm('Discard the in-progress draft? The published version is unchanged.')) {
       return;
     }
+    clearSaveFailure();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.workflowDiscardDraft(workflow.id), {
         options: { headers: { 'If-Match': definitionVersion ?? '' } },
@@ -788,8 +791,17 @@ function WorkflowBuilderInner({
         return;
       }
       logger.error('Workflow discard-draft failed', { err });
+      reportSaveFailure(err, "Couldn't discard the draft");
     }
-  }, [router, setEdges, setNodes, workflow, definitionVersion]);
+  }, [
+    router,
+    setEdges,
+    setNodes,
+    workflow,
+    definitionVersion,
+    clearSaveFailure,
+    reportSaveFailure,
+  ]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
@@ -894,13 +906,9 @@ function WorkflowBuilderInner({
         </div>
       )}
 
-      {saveError && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
-        >
-          <AlertCircle className="h-4 w-4" />
-          <span>{saveError}</span>
+      {save.failure && (
+        <div className="border-b px-4 py-2">
+          <SaveError failure={save.failure} />
         </div>
       )}
 

@@ -384,7 +384,9 @@ describe('ExperimentsList', () => {
       await user.click(screen.getByRole('button', { name: /^complete$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to complete experiment')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Couldn\'t complete "Formal vs Casual". Try again.'
+        );
       });
     });
   });
