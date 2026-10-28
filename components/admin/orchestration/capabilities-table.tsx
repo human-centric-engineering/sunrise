@@ -280,7 +280,8 @@ export function CapabilitiesTable({
         setCapabilities((prev) =>
           prev.map((c) => (c.id === cap.id ? { ...c, isActive: cap.isActive } : c))
         );
-        reportList(err);
+        // Reported above the table, so it names the row.
+        reportList(err, `Couldn't update "${cap.name}"`);
       }
     },
     [clearList, reportList]

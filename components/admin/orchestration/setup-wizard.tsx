@@ -619,7 +619,8 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       });
       onComplete();
     } catch (err) {
-      save.report(err);
+      // One box above every detected row, so it names the provider.
+      save.report(err, `Could not create the ${row.name} provider`);
     } finally {
       setSubmitting(false);
     }

@@ -89,7 +89,9 @@ describe('CapabilitiesTable — failed saves', () => {
     await user.click(screen.getAllByRole('switch')[0]);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('System capabilities cannot be disabled');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t update "Alpha Search": System capabilities cannot be disabled'
+    );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });

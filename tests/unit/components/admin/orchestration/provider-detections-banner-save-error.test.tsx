@@ -74,7 +74,9 @@ describe('ProviderDetectionsBanner — failed Configure', () => {
     await user.click(await screen.findByRole('button', { name: /^configure$/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('A provider with slug "anthropic" exists');
+    expect(alert).toHaveTextContent(
+      'Could not configure Anthropic: A provider with slug "anthropic" exists'
+    );
     expect(alert.nextElementSibling).toHaveTextContent('Anthropic');
     expect(alert).toHaveFocus();
   });
