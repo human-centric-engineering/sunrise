@@ -11,14 +11,15 @@ was also amber, which doesn't read as a failure.
 
 ## The pieces
 
-| Piece                | Where                                                  | Job                                                                                                    |
-| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `readSaveError()`    | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
-| `applyFieldErrors()` | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
-| `isStaleSave()`      | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
-| `useSaveFailure()`   | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
-| `<SaveError>`        | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
-| `<StaleSaveNotice>`  | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
+| Piece                    | Where                                                  | Job                                                                                                    |
+| ------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `readSaveError()`        | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
+| `applyFieldErrors()`     | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
+| `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
+| `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
+| `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
+| `<SaveError>`            | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
+| `<StaleSaveNotice>`      | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
 `<FormError>` in the same file is unchanged and is **not** for a failed save:
 it is the inline box for a client-side message or an auth-flow code.
@@ -174,6 +175,20 @@ A controlled dialog with no `DialogTrigger` returns no focus when it closes.
 One with a trigger hands focus back to it, after a failure shown outside the
 dialog has taken focus: prevent that with
 `onCloseAutoFocus={(e) => e.preventDefault()}` on that close.
+
+## A page that sends its own `fetch`
+
+`readSaveError()` reads an `APIClientError`; anything else gets the fallback.
+A save sent through `apiClient` throws one. A page that has to send its own
+`fetch` (a multipart upload, a stream) turns a failed response into the same
+error before reporting it:
+
+```ts
+const res = await fetch(url, { method: 'POST', body: formData });
+if (!res.ok) throw await apiErrorFromResponse(res);
+```
+
+Prefer moving a plain JSON save to `apiClient` over this.
 
 ## Recipe: a list's row actions
 

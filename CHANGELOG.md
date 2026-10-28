@@ -36,6 +36,10 @@ release process.
   `NO_SERVER_FIELDS` is its table for a page that places no field messages.
   Also **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only
   needs to know a save was refused as stale (§124).
+- **`apiErrorFromResponse()`** (`lib/api/client.ts`): the `APIClientError`
+  `apiClient` would have thrown for a failed response, for a caller that sends
+  its own `fetch` (a multipart upload, a stream), so its save error reads the
+  same way (§124).
 
 ### Changed
 

@@ -146,6 +146,28 @@ async function handleResponse<T>(response: Response): Promise<T> {
   throw new APIClientError(apiError.message, apiError.code, response.status, apiError.details);
 }
 
+/**
+ * The error `apiClient` would have thrown for a failed response, for a caller
+ * that sends its own `fetch` (a multipart upload, a stream). A page reporting
+ * a failed save then reads the server's code, message and field errors the
+ * same way whichever it used (`readSaveError()`, §124).
+ *
+ * @param response - A response that is not `ok`
+ */
+export async function apiErrorFromResponse(response: Response): Promise<APIClientError> {
+  try {
+    await handleResponse(response);
+  } catch (err) {
+    if (err instanceof APIClientError) return err;
+  }
+  // A non-ok status carrying a success envelope: say what came back.
+  return new APIClientError(
+    `Request failed: ${response.status} ${response.statusText}`.trim(),
+    'INVALID_RESPONSE',
+    response.status
+  );
+}
+
 /** Any `HeadersInit` as a plain record; a plain object keeps its keys' case. */
 function headerRecord(init: HeadersInit | undefined): Record<string, string> {
   if (!init) return {};

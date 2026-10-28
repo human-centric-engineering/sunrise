@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { APIClientError, apiClient } from '@/lib/api/client';
+import { APIClientError, apiClient, apiErrorFromResponse } from '@/lib/api/client';
 import type { APIResponse } from '@/types/api';
 
 describe('APIClientError', () => {
@@ -1072,5 +1072,59 @@ describe('apiClient.delete', () => {
 
     // Assert
     expect(result).toEqual(deletionResult);
+  });
+});
+
+describe('apiErrorFromResponse', () => {
+  function respond(body: string, status: number, statusText = ''): Response {
+    return new Response(body, {
+      status,
+      statusText,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  it("is the error apiClient raises: the server's code, message, status and details", async () => {
+    const err = await apiErrorFromResponse(
+      respond(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request body',
+            details: { errors: [{ path: 'name', message: 'Required' }] },
+          },
+        }),
+        400
+      )
+    );
+
+    expect(err).toBeInstanceOf(APIClientError);
+    expect(err).toMatchObject({
+      message: 'Invalid request body',
+      code: 'VALIDATION_ERROR',
+      status: 400,
+      details: { errors: [{ path: 'name', message: 'Required' }] },
+    });
+  });
+
+  it('reads a body that is not JSON as an invalid response', async () => {
+    const err = await apiErrorFromResponse(
+      new Response('<html>Bad gateway</html>', { status: 502, statusText: 'Bad Gateway' })
+    );
+
+    expect(err).toMatchObject({ code: 'INVALID_RESPONSE', status: 502 });
+  });
+
+  it('says what came back when a failing status carries a success envelope', async () => {
+    const err = await apiErrorFromResponse(
+      respond(JSON.stringify({ success: true, data: {} }), 500, 'Internal Server Error')
+    );
+
+    expect(err).toMatchObject({
+      message: 'Request failed: 500 Internal Server Error',
+      code: 'INVALID_RESPONSE',
+      status: 500,
+    });
   });
 });
