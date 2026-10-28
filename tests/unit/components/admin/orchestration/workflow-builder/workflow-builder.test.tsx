@@ -2120,6 +2120,13 @@ describe('WorkflowBuilder', () => {
       await waitFor(() =>
         expect(screen.queryByRole('button', { name: /^publish$/i })).not.toBeInTheDocument()
       );
+      // The closing dialog must not hand focus back to the Publish trigger:
+      // the person lands on the explanation and its Reload (§124). Radix
+      // returns focus on a timer after the dialog unmounts, so let it run.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+      expect(
+        screen.getByText(/This workflow changed since you opened it/i).closest('[role="alert"]')
+      ).toHaveFocus();
     });
 
     it('discards with the loaded version, and shows the reload prompt when refused', async () => {

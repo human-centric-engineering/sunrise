@@ -35,7 +35,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
+import { isStaleSave } from '@/lib/errors/save-error';
 import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
 import { API } from '@/lib/api/endpoints';
 
@@ -180,7 +181,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       // Awaited, so the switch stays disabled until the row's new version is in.
       await fetchSchedules();
     } catch (err) {
-      if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
+      if (isStaleSave(err)) {
         setStale((n) => n + 1);
         return;
       }

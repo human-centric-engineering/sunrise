@@ -34,6 +34,7 @@ import {
 import type { AiWorkflowWithVersion } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { isStaleSave } from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
@@ -126,11 +127,6 @@ function pickEditableDefinition(workflow: AiWorkflowWithVersion): unknown {
     return workflow.draftDefinition;
   }
   return workflow.publishedVersion?.snapshot ?? null;
-}
-
-/** A save, publish or discard refused because the workflow moved on (412, §122 t-900). */
-function isStale(err: unknown): boolean {
-  return err instanceof APIClientError && err.code === 'STALE_RECORD';
 }
 
 function initialState(
@@ -588,7 +584,7 @@ function WorkflowBuilderInner({
           router.refresh();
         }
       } catch (err) {
-        if (isStale(err)) {
+        if (isStaleSave(err)) {
           setStale((n) => n + 1);
           return;
         }
@@ -739,7 +735,7 @@ function WorkflowBuilderInner({
         schedule(() => setPublished(false), 2500);
         router.refresh();
       } catch (err) {
-        if (isStale(err)) {
+        if (isStaleSave(err)) {
           setPublishDialogOpen(false);
           setStale((n) => n + 1);
           return;
@@ -787,7 +783,7 @@ function WorkflowBuilderInner({
       setHasDraft(false);
       router.refresh();
     } catch (err) {
-      if (isStale(err)) {
+      if (isStaleSave(err)) {
         setStale((n) => n + 1);
         return;
       }

@@ -11,7 +11,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { APIClientError } from '@/lib/api/client';
-import { applyFieldErrors, readSaveError } from '@/lib/errors/save-error';
+import { applyFieldErrors, isStaleSave, readSaveError } from '@/lib/errors/save-error';
 
 /** `validateRequestBody`'s shape (`lib/api/validation.ts`). */
 function listError(errors: Array<{ path: string; message: string }>) {
@@ -236,5 +236,16 @@ describe('applyFieldErrors', () => {
       { type: 'server', message: 'Too many' },
       { shouldFocus: false }
     );
+  });
+});
+
+describe('isStaleSave', () => {
+  it('is true for a 412 STALE_RECORD', () => {
+    expect(isStaleSave(new APIClientError('Changed', 'STALE_RECORD', 412))).toBe(true);
+  });
+
+  it('is false for any other refusal, and for an error the API never sent', () => {
+    expect(isStaleSave(new APIClientError('Conflict', 'CONFLICT', 409))).toBe(false);
+    expect(isStaleSave(new Error('STALE_RECORD'))).toBe(false);
   });
 });

@@ -90,6 +90,15 @@ function tableField<TField extends string>(
   }
 }
 
+/**
+ * Whether a save was refused because the record changed since the page loaded
+ * it (412 `STALE_RECORD`, §122). For a page that only needs to know that, such
+ * as a list showing `<StaleSaveNotice>`; a form reads `readSaveError().stale`.
+ */
+export function isStaleSave(err: unknown): boolean {
+  return err instanceof APIClientError && err.code === ErrorCodes.STALE_RECORD;
+}
+
 function fieldCount(n: number): string {
   return n === 1 ? '1 field needs fixing.' : `${n} fields need fixing.`;
 }
@@ -137,7 +146,7 @@ export function readSaveError<TField extends string>(
   return {
     message,
     code: err.code,
-    stale: err.code === ErrorCodes.STALE_RECORD,
+    stale: isStaleSave(err),
     fields,
   };
 }

@@ -42,10 +42,13 @@ function Harness({
   next,
   stale,
   revealable = true,
+  keepTab = false,
 }: {
   next: () => SaveFailure;
   stale?: StaleSaveProps;
   revealable?: boolean;
+  /** A reveal that keeps the showing tab: it holds the earliest named field. */
+  keepTab?: boolean;
 }) {
   const [current, setCurrent] = useState<SaveFailure | null>(null);
   const [tab, setTab] = useState<'main' | 'advanced'>('main');
@@ -68,7 +71,9 @@ function Harness({
         <SaveError
           failure={current}
           stale={stale}
-          onRevealField={revealable ? () => setTab('advanced') : undefined}
+          onRevealField={
+            keepTab ? () => setTab('main') : revealable ? () => setTab('advanced') : undefined
+          }
         />
         <button type="submit">Save</button>
       </div>
@@ -160,6 +165,52 @@ describe('SaveError', () => {
     save();
 
     await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
+  });
+
+  it('hands the form every named field to reveal, in the order sent', async () => {
+    const reveal = vi.fn();
+    function Spy() {
+      return (
+        <form>
+          <SaveError
+            failure={failure({
+              fields: [
+                { field: 'webhookUrl', message: 'Must be https' },
+                { field: 'retries', message: 'Too many' },
+              ],
+            })}
+            onRevealField={reveal}
+          />
+        </form>
+      );
+    }
+    render(<Spy />);
+
+    await waitFor(() => expect(reveal).toHaveBeenCalledWith(['webhookUrl', 'retries']));
+  });
+
+  it('with errors on two tabs, focuses the first named field the revealed tab shows', async () => {
+    // `name` is on the showing tab, `webhookUrl` on the hidden one. They can't
+    // both be on the page, so the form keeps its earlier tab and focus goes
+    // to that tab's field rather than to the summary.
+    render(
+      <Harness
+        revealable={false}
+        next={() =>
+          failure({
+            fields: [
+              { field: 'webhookUrl', message: 'Must be https' },
+              { field: 'name', message: 'Required' },
+            ],
+          })
+        }
+        keepTab
+      />
+    );
+
+    save();
+
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveFocus());
   });
 
   it('focuses itself, not a later field, when an earlier named field is not on the page', async () => {

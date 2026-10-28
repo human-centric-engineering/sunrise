@@ -36,7 +36,7 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
 });
 
 function makeCapability(): AiCapability {
-  return {
+  const capability: Partial<AiCapability> = {
     id: 'cap-1',
     name: 'Existing Capability',
     slug: 'existing-capability',
@@ -53,12 +53,9 @@ function makeCapability(): AiCapability {
     requiresApproval: false,
     rateLimit: 10,
     isActive: true,
-    createdBy: 'system',
-    createdAt: new Date('2025-01-01'),
-    updatedAt: new Date('2025-01-01'),
-    deletedAt: null,
     metadata: {},
-  } as AiCapability;
+  };
+  return capability as AiCapability;
 }
 
 /** `handleAPIError`'s shape on a ZodError. */

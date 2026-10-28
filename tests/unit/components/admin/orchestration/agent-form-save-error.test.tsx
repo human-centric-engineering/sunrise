@@ -16,7 +16,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AgentForm } from '@/components/admin/orchestration/agent-form';
-import type { AiAgent } from '@/types/prisma';
+import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 vi.mock('next/navigation', async () => {
   const { createMockRouter } = await import('@/tests/types/mocks');
@@ -50,12 +50,12 @@ const PROVIDERS = [
     baseUrl: null,
     metadata: {},
     apiKeyPresent: true,
-  },
+  } as AiProviderConfig & { apiKeyPresent: boolean },
 ];
 const MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
 
 function makeAgent(): AiAgent {
-  return {
+  const agent: Partial<AiAgent> = {
     id: 'agent-1',
     name: 'Test Agent',
     slug: 'test-agent',
@@ -75,7 +75,6 @@ function makeAgent(): AiAgent {
     updatedAt: new Date('2025-01-01'),
     systemInstructionsHistory: [],
     metadata: {},
-    knowledgeCategories: [],
     topicBoundaries: [],
     brandVoiceInstructions: null,
     rateLimitRpm: null,
@@ -88,7 +87,8 @@ function makeAgent(): AiAgent {
     visibility: 'internal',
     deletedAt: null,
     fallbackProviders: [],
-  } as AiAgent;
+  };
+  return agent as AiAgent;
 }
 
 /** `validateRequestBody`'s shape, as the PATCH route sends it. */
