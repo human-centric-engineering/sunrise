@@ -66,6 +66,30 @@ describe('KnowledgeTagsTable — failed saves', () => {
     expect(alert).toHaveFocus();
   });
 
+  it('re-reads the list after a bulk delete that failed part-way, so deleted tags go', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    const second: KnowledgeTagListItem = {
+      ...UNUSED,
+      id: 'tag-second',
+      slug: 'second',
+      name: 'Second',
+    };
+    vi.mocked(apiClient.delete)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new APIClientError('Tag is locked', 'CONFLICT', 409));
+    // After the failure the server holds only the tag that could not go.
+    vi.mocked(apiClient.get).mockResolvedValue([second]);
+    const user = userEvent.setup();
+    render(<KnowledgeTagsTable initialTags={[UNUSED, second]} initialMeta={META} />);
+
+    await user.click(screen.getByRole('button', { name: /delete 2 unused tags/i }));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Tag is locked');
+    await waitFor(() => expect(screen.queryByText('Unused Tag')).not.toBeInTheDocument());
+    expect(screen.getByText('Second')).toBeInTheDocument();
+  });
+
   it('puts a field the server named under its input, focuses it, and keeps the dialog open', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.post).mockRejectedValue(

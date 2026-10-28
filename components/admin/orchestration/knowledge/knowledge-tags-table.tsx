@@ -758,6 +758,8 @@ function BulkDeleteUnusedButton({
       onRefresh();
     } catch (e) {
       onFailure(e);
+      // Tags deleted before the failure are gone: show the list as it is now.
+      onRefresh();
     } finally {
       setBusy(false);
     }

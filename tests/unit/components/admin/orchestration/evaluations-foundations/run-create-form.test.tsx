@@ -165,6 +165,7 @@ function mockFetchSuccess(runId = 'run-99'): ReturnType<typeof vi.fn> {
 describe('RunCreateForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
     mockSearchParamsGet.mockReset();
     mockSearchParamsGet.mockImplementation(() => null);
   });
@@ -702,9 +703,10 @@ describe('RunCreateForm', () => {
       await user.type(document.querySelector('#name') as HTMLInputElement, 'My Run');
       await user.click(screen.getByRole('checkbox', { name: /exact_match/i }));
       await user.click(screen.getByRole('button', { name: /queue run/i }));
-      await waitFor(() => {
-        expect(screen.getByText(/Network down/i)).toBeInTheDocument();
-      });
+      // The browser's text is not the server's: the fallback, by Queue run (§124).
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not queue the run. Try again in a moment.'
+      );
     });
   });
 

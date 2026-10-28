@@ -45,6 +45,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { logger } from '@/lib/logging';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { McpScope, ALL_MCP_SCOPES } from '@/types/mcp';
 import { apiKeyRowSchema, type ApiKeyRow } from '@/lib/validations/mcp';
@@ -93,6 +94,22 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     fields: NO_SERVER_FIELDS,
   });
 
+  /**
+   * Re-reads the list after a save. The save already happened, so a failed
+   * read is logged rather than reported as the save failing: the new key's
+   * plaintext is on screen by then.
+   */
+  async function refreshKeys() {
+    try {
+      const rawList = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
+        params: { page: 1, limit: 50 },
+      });
+      setKeys(z.array(apiKeyRowSchema).parse(rawList));
+    } catch (err) {
+      logger.error('mcp-keys-list: refresh after a save failed', err);
+    }
+  }
+
   async function handleCreate() {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
     setCreating(true);
@@ -109,12 +126,6 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
         body,
       });
       setShowPlaintext(data.plaintext);
-
-      // Refetch to get full row data
-      const rawList = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
-        params: { page: 1, limit: 50 },
-      });
-      setKeys(z.array(apiKeyRowSchema).parse(rawList));
       setNewKeyName('');
       setNewKeyScopes([McpScope.TOOLS_LIST, McpScope.TOOLS_EXECUTE]);
       setNewKeyExpiry('');
@@ -122,9 +133,12 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     } catch (err) {
       // A refused rate limit (§111 t-811) says what the limit is; it shows.
       createFailure.report(err);
+      return;
     } finally {
       setCreating(false);
     }
+    // Full row data for the new key.
+    await refreshKeys();
   }
 
   async function handleRevoke(keyId: string) {
@@ -148,17 +162,14 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
         API.ADMIN.ORCHESTRATION.mcpKeyRotate(keyId)
       );
       setRotatedPlaintext({ keyId, plaintext: data.plaintextKey });
-
-      // Refetch to update prefix
-      const rawList = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
-        params: { page: 1, limit: 50 },
-      });
-      setKeys(z.array(apiKeyRowSchema).parse(rawList));
     } catch (err) {
       listFailure.report(err);
+      return;
     } finally {
       setRotatingId(null);
     }
+    // The rotated key's new prefix.
+    await refreshKeys();
   }
 
   function toggleScope(scope: string) {

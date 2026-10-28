@@ -64,6 +64,26 @@ describe('McpKeysList — failed saves', () => {
     expect(alert).toHaveFocus();
   });
 
+  it('does not call a create failed when only the list refresh after it failed', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockResolvedValue({ plaintext: 'smcp_secret_once' });
+    vi.mocked(apiClient.get).mockRejectedValue(
+      new APIClientError('Service unavailable', 'INTERNAL_ERROR', 503)
+    );
+    const user = userEvent.setup();
+    render(<McpKeysList initialKeys={[]} />);
+
+    await user.click(screen.getByRole('button', { name: /create api key/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('textbox', { name: /name/i }), 'Cursor');
+    await user.click(within(dialog).getByRole('button', { name: /create key/i }));
+
+    // The key exists and its only copy is on screen: no failure over it.
+    expect(await within(dialog).findByText('smcp_secret_once')).toBeInTheDocument();
+    expect(apiClient.get).toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('keeps the revoke dialog open with the failure inside it', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(
