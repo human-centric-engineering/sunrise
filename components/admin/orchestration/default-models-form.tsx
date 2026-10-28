@@ -31,6 +31,7 @@ import {
   SharedSettingsSaveHint,
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
@@ -41,8 +42,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import type { SaveFailure } from '@/lib/errors/save-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import { formatAudioDefault, parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
@@ -118,6 +121,19 @@ const settingsFormSchema = z.object({
 });
 
 type SettingsFormData = z.input<typeof settingsFormSchema>;
+
+/**
+ * Server path → the slot that shows its message. The form sends the slots
+ * under `defaultModels`; any other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
+  'defaultModels.routing': 'routing',
+  'defaultModels.chat': 'chat',
+  'defaultModels.reasoning': 'reasoning',
+  'defaultModels.embeddings': 'embeddings',
+  'defaultModels.audio': 'audio',
+};
 
 /**
  * Task slots split for the wizard's Required / Optional view.
@@ -237,7 +253,6 @@ export function DefaultModelsForm({
 }: DefaultModelsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
 
   // The form's source of truth is `defaultModelsStored` — what the
@@ -285,6 +300,7 @@ export function DefaultModelsForm({
     handleSubmit,
     reset,
     setValue,
+    setError,
     formState: { errors, isDirty },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(settingsFormSchema),
@@ -294,6 +310,12 @@ export function DefaultModelsForm({
   React.useEffect(() => {
     reset(defaults);
   }, [defaults, reset]);
+
+  const save = useSaveFailure({
+    fallback: 'Could not save settings. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
 
   // Configured-provider gate. The form refuses to show dropdowns when
   // there are no providers — the operator can't pick a model that
@@ -470,7 +492,6 @@ export function DefaultModelsForm({
 
   const onSubmit = async (data: SettingsFormData) => {
     setSubmitting(true);
-    setError(null);
     try {
       // Wizard mode + pristine form → nothing to save, just advance.
       // The form is pre-filled with the existing settings, so a
@@ -499,18 +520,14 @@ export function DefaultModelsForm({
       setSavedAt(new Date());
       wizardMode?.onComplete();
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save settings. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
+    <form onSubmit={save.submit(handleSubmit(onSubmit))}>
       <Card data-testid="default-models-form">
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
@@ -520,32 +537,36 @@ export function DefaultModelsForm({
               <code>model</code> binding. Each task type can pick a different model.
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {savedAt && !isDirty && (
-              <span className="text-muted-foreground flex items-center gap-1 text-xs">
-                <Check className="h-3 w-3 text-emerald-500" />
-                Saved
-              </span>
-            )}
-            {/* Wizard mode owns its own Save & Continue button in the
-                card footer, so the header version would be duplicative
-                and confusing about which one advances the flow. */}
-            {!wizardMode && <SharedSettingsSaveHint />}
-            {!wizardMode && (
-              <Button type="submit" size="sm" disabled={readOnly || submitting || !isDirty}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving…
-                  </>
-                ) : (
-                  <>
-                    <Save className="mr-2 h-4 w-4" />
-                    Save changes
-                  </>
-                )}
-              </Button>
-            )}
+          {/* Outside the wizard, Save is here: its error sits under it. */}
+          <div className="flex max-w-sm shrink-0 flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              {savedAt && !isDirty && (
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <Check className="h-3 w-3 text-emerald-500" />
+                  Saved
+                </span>
+              )}
+              {/* Wizard mode owns its own Save & Continue button in the
+                  card footer, so the header version would be duplicative
+                  and confusing about which one advances the flow. */}
+              {!wizardMode && <SharedSettingsSaveHint />}
+              {!wizardMode && (
+                <Button type="submit" size="sm" disabled={readOnly || submitting || !isDirty}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Save className="mr-2 h-4 w-4" />
+                      Save changes
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+            {!wizardMode && <SaveError failure={save.failure} />}
           </div>
         </CardHeader>
 
@@ -555,12 +576,6 @@ export function DefaultModelsForm({
               <AlertCircle className="h-4 w-4 shrink-0" />
               Settings could not be loaded. The values below may not reflect the current
               configuration. Try refreshing the page.
-            </div>
-          )}
-          {error && (
-            <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              {error}
             </div>
           )}
 
@@ -601,6 +616,7 @@ export function DefaultModelsForm({
 
           {wizardMode && (
             <WizardFooter
+              failure={save.failure}
               submitting={submitting}
               isDirty={isDirty}
               chatPicked={!!stored.chat}
@@ -625,12 +641,14 @@ export function DefaultModelsForm({
  * persisted from a prior session or the env-detect auto-write).
  */
 function WizardFooter({
+  failure,
   submitting,
   isDirty,
   chatPicked,
   embeddingsPicked,
   hasAnyProvider,
 }: {
+  failure: SaveFailure<keyof SettingsFormData> | null;
   submitting: boolean;
   isDirty: boolean;
   chatPicked: boolean;
@@ -652,6 +670,7 @@ function WizardFooter({
           </span>
         </div>
       )}
+      <SaveError failure={failure} />
       <div className="flex justify-end">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? (

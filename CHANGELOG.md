@@ -25,9 +25,17 @@ release process.
   every new failure, or focus goes to the first field the server named. The
   helper reads both server field-error shapes (`validateRequestBody`'s
   `{ errors: [{ path, message }] }` and `handleAPIError`'s
-  `Record<path, string[]>`) through a typed server-path → field table. The
-  settings page and the event subscription form use it. See
-  `.context/ui/form-errors.md` (§124).
+  `Record<path, string[]>`) through a typed server-path → field table. A
+  tabbed form passes `onRevealField(fields)` to bring forward the tab holding
+  a rejected field. The settings page, the event subscription form and the
+  admin forms with a Save button use it. See `.context/ui/form-errors.md`
+  (§124).
+- **`useSaveFailure()`** (`lib/hooks/use-save-failure.ts`): owns a page's
+  failed save. It reads the error, puts field messages on a react-hook-form
+  form, and wraps submit so every press clears the last failure;
+  `NO_SERVER_FIELDS` is its table for a page that places no field messages.
+  Also **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only
+  needs to know a save was refused as stale (§124).
 
 ### Changed
 

@@ -31,13 +31,15 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { AlertCircle, Save, ArrowLeft } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { Save, ArrowLeft } from 'lucide-react';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
 import { getInitials } from '@/lib/utils/initials';
 import { USER_ROLES, DEFAULT_USER_ROLE, isUserRole, roleLabel } from '@/lib/auth/roles';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /**
  * Form validation schema
@@ -50,6 +52,16 @@ const userEditSchema = z.object({
 
 type UserEditFormData = z.infer<typeof userEditSchema>;
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof UserEditFormData>> = {
+  name: 'name',
+  role: 'role',
+};
+
 interface UserEditFormProps {
   user: AdminUser;
   currentUserId: string;
@@ -58,7 +70,6 @@ interface UserEditFormProps {
 export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const isCurrentUser = user.id === currentUserId;
@@ -67,6 +78,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     formState: { errors, isDirty },
   } = useForm<UserEditFormData>({
@@ -81,12 +93,17 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const currentRole = watch('role');
   const currentEmailVerified = watch('emailVerified');
 
   const onSubmit = async (data: UserEditFormData) => {
     setIsSubmitting(true);
-    setError(null);
     setSuccess(false);
 
     try {
@@ -97,11 +114,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
       // Refresh the page data
       router.refresh();
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     } finally {
       setIsSubmitting(false);
     }
@@ -153,16 +166,8 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
             <CardTitle>Edit User</CardTitle>
             <CardDescription>Update user information and permissions</CardDescription>
           </CardHeader>
-          <form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
+          <form onSubmit={save.submit(handleSubmit(onSubmit))}>
             <CardContent className="space-y-6">
-              {/* Error message */}
-              {error && (
-                <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-                  <AlertCircle className="h-4 w-4" />
-                  {error}
-                </div>
-              )}
-
               {/* Success message */}
               {success && (
                 <div className="rounded-md bg-green-50 p-3 text-sm text-green-600 dark:bg-green-950/20 dark:text-green-400">
@@ -189,7 +194,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                   }
                   disabled={isCurrentUser}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="role">
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
                   <SelectContent>
@@ -223,18 +228,22 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                 />
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end gap-2 border-t pt-6">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push(`/admin/users/${user.id}`)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!isDirty || isSubmitting}>
-                <Save className="mr-2 h-4 w-4" />
-                {isSubmitting ? 'Saving...' : 'Save Changes'}
-              </Button>
+            {/* The save error sits by Save, above the buttons */}
+            <CardFooter className="flex flex-col items-stretch gap-2 border-t pt-6">
+              <SaveError failure={save.failure} />
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => router.push(`/admin/users/${user.id}`)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!isDirty || isSubmitting}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isSubmitting ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
             </CardFooter>
           </form>
         </Card>

@@ -52,6 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { isStaleSave } from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
@@ -159,7 +160,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
       setWebhooks((prev) =>
         prev.map((w) => (w.id === wh.id ? { ...w, isActive: wh.isActive } : w))
       );
-      if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
+      if (isStaleSave(err)) {
         setStale((n) => n + 1);
         return;
       }

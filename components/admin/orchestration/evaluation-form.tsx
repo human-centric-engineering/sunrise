@@ -10,13 +10,13 @@
  * Pattern: raw react-hook-form + zodResolver, FieldHelp on every field.
  */
 
-import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 
+import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
@@ -29,8 +29,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,17 @@ const evaluationFormSchema = z.object({
 });
 
 type EvaluationFormData = z.infer<typeof evaluationFormSchema>;
+
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof EvaluationFormData>> = {
+  agentId: 'agentId',
+  title: 'title',
+  description: 'description',
+};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -57,11 +69,11 @@ export interface EvaluationFormProps {
 
 export function EvaluationForm({ agents }: EvaluationFormProps) {
   const router = useRouter();
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
+    setError,
     setValue,
     watch,
     formState: { errors, isSubmitting },
@@ -70,26 +82,27 @@ export function EvaluationForm({ agents }: EvaluationFormProps) {
     defaultValues: { agentId: '', title: '', description: '' },
   });
 
+  const save = useSaveFailure({
+    fallback: 'Failed to create evaluation. Please try again.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const agentId = watch('agentId');
 
   const onSubmit = async (data: EvaluationFormData) => {
-    setSubmitError(null);
     try {
       const created = await apiClient.post<{ id: string }>(API.ADMIN.ORCHESTRATION.EVALUATIONS, {
         body: data,
       });
       router.push(`/admin/orchestration/evaluations/${created.id}`);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setSubmitError(err.message);
-      } else {
-        setSubmitError('Failed to create evaluation. Please try again.');
-      }
+      save.report(err);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="max-w-xl space-y-6">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="max-w-xl space-y-6">
       {/* Agent */}
       <div className="space-y-2">
         <Label htmlFor="agentId">
@@ -146,23 +159,18 @@ export function EvaluationForm({ agents }: EvaluationFormProps) {
         )}
       </div>
 
-      {/* Error */}
-      {submitError && (
-        <div className="bg-destructive/5 text-destructive flex items-center gap-2 rounded-md px-4 py-3 text-sm">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {submitError}
-        </div>
-      )}
-
-      {/* Submit */}
-      <Button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        ) : (
-          <Plus className="mr-2 h-4 w-4" />
-        )}
-        Create Evaluation
-      </Button>
+      {/* Submit, with a failed save directly above it */}
+      <div className="space-y-2">
+        <SaveError failure={save.failure} />
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Plus className="mr-2 h-4 w-4" />
+          )}
+          Create Evaluation
+        </Button>
+      </div>
     </form>
   );
 }

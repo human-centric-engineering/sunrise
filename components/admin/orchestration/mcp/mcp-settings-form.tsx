@@ -20,10 +20,12 @@ import {
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { type McpSettingsResponse } from '@/lib/validations/mcp';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface McpSettingsFormProps {
   initialSettings: McpSettingsResponse | null;
@@ -39,15 +41,27 @@ const mcpSettingsFormSchema = z.object({
 type McpSettingsFormInput = z.input<typeof mcpSettingsFormSchema>;
 type McpSettingsFormData = z.output<typeof mcpSettingsFormSchema>;
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof McpSettingsFormInput>> = {
+  serverName: 'serverName',
+  serverVersion: 'serverVersion',
+  globalRateLimit: 'globalRateLimit',
+  auditRetentionDays: 'auditRetentionDays',
+};
+
 export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const schedule = useTimeout();
 
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isDirty, isSubmitting },
     reset,
   } = useForm<McpSettingsFormInput>({
@@ -60,25 +74,30 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'Could not save settings. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const onSubmit = async (data: McpSettingsFormData) => {
     setSaved(false);
-    setError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, { body: data });
       setSaved(true);
       reset(data);
       schedule(() => setSaved(false), 3000);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError('Could not save settings. Try again in a moment.');
-      }
+      save.report(err);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e)}>
+    <form
+      onSubmit={save.submit(async (e) => {
+        await handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e);
+      })}
+    >
       <Card>
         <CardHeader>
           <CardTitle>Server Configuration</CardTitle>
@@ -157,14 +176,15 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
             </div>
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <div className="flex items-center gap-3">
-            <SharedSettingsSaveHint />
-            <Button type="submit" disabled={readOnly || !isDirty || isSubmitting}>
-              {isSubmitting ? 'Saving...' : 'Save Settings'}
-            </Button>
-            {saved && <span className="text-sm text-green-600">Saved</span>}
+          <div className="space-y-2">
+            <SaveError failure={save.failure} />
+            <div className="flex items-center gap-3">
+              <SharedSettingsSaveHint />
+              <Button type="submit" disabled={readOnly || !isDirty || isSubmitting}>
+                {isSubmitting ? 'Saving...' : 'Save Settings'}
+              </Button>
+              {saved && <span className="text-sm text-green-600">Saved</span>}
+            </div>
           </div>
         </CardContent>
       </Card>

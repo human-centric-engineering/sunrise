@@ -15,8 +15,9 @@
  */
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, type BaseSyntheticEvent } from 'react';
 
+import { SaveError } from '@/components/forms/form-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -33,6 +34,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { logger } from '@/lib/logging';
 
 export interface WorkflowOption {
@@ -110,7 +112,8 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
   );
 
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // No field shows its own error, so every server message joins the summary.
+  const save = useSaveFailure({ fallback: 'Save failed', fields: NO_SERVER_FIELDS });
 
   const selectedWorkflow = workflows.find((w) => w.id === workflowId);
   const webhookUrl = selectedWorkflow
@@ -119,9 +122,8 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
   const adapterRegistered = enabledChannels.includes(channel);
   const channelNeedsConvAgent = CHANNEL_NEEDS_CONVERSATION_AGENT.has(channel);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+  async function handleSubmit(e?: BaseSyntheticEvent) {
+    e?.preventDefault();
     setSubmitting(true);
 
     const eventTypes = eventTypesRaw
@@ -158,25 +160,14 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
       router.refresh();
     } catch (err) {
       logger.error('trigger-form: submit failed', err);
-      setError(err instanceof Error ? err.message : 'Save failed');
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form
-      onSubmit={(e) => {
-        void handleSubmit(e);
-      }}
-      className="space-y-6"
-    >
-      {error && (
-        <div className="border-destructive bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
-          {error}
-        </div>
-      )}
-
+    <form onSubmit={save.submit(handleSubmit)} className="space-y-6">
       {/* Channel */}
       <div className="space-y-2">
         <Label htmlFor="channel">
@@ -374,17 +365,20 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
         <Switch id="isEnabled" checked={isEnabled} onCheckedChange={setIsEnabled} />
       </div>
 
-      <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => router.push('/admin/orchestration/triggers')}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create trigger'}
-        </Button>
+      <div className="space-y-2">
+        <SaveError failure={save.failure} />
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push('/admin/orchestration/triggers')}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create trigger'}
+          </Button>
+        </div>
       </div>
     </form>
   );

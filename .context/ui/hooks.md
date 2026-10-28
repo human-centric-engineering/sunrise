@@ -163,7 +163,20 @@ setSaved(true);
 schedule(() => setSaved(false), 2500);
 ```
 
+## `useSaveFailure({ fallback, fields?, setError? })`
+
+**File:** `lib/hooks/use-save-failure.ts`
+
+Owns a page's failed save for `<SaveError>`: `report(err)` reads what a save
+threw (and, given a react-hook-form `setError` and a field table, puts field
+messages under their fields), `show(message, fields?)` reports a failure the
+page found itself, `clear()` hides it, and `submit(handler)` wraps a form's
+submit so every press clears the last failure first. Each report is a new
+object, so the same message moves into view again. Full rules and recipes:
+[Form save errors](./form-errors.md).
+
 ## See also
 
 - [Setup Wizard](../admin/setup-wizard.md) — composes `useLocalStorage` and `useWizard` together
 - [Contextual help](./contextual-help.md)
+- [Form save errors](./form-errors.md) — `useSaveFailure` with `<SaveError>`

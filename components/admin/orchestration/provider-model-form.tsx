@@ -7,7 +7,7 @@
  * following the same pattern as provider-form.tsx and agent-form.tsx.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { FieldHelp } from '@/components/ui/field-help';
+import { SaveError } from '@/components/forms/form-error';
 import {
   Select,
   SelectContent,
@@ -35,6 +36,7 @@ import {
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { narrowParamProfile } from '@/lib/orchestration/llm/db-model-adapter';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   hasSplitPricing,
@@ -193,6 +195,24 @@ const modelFormSchema = z
 
 type ModelFormData = z.infer<typeof modelFormSchema>;
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`). The price and embedding fields are added
+ * only while their sections are on the page.
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof ModelFormData>> = {
+  providerSlug: 'providerSlug',
+  modelId: 'modelId',
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  capabilities: 'capabilities',
+  tierRole: 'tierRole',
+  deploymentProfiles: 'deploymentProfiles',
+  bestRole: 'bestRole',
+};
+
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -244,13 +264,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [slugEdited, setSlugEdited] = useState(false);
 
   const {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     formState: { errors },
   } = useForm<ModelFormData>({
@@ -312,6 +332,26 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
   const hasEmbedding = capabilities.includes('embedding');
   // Chat and reasoning models carry input/output prices (t-774).
   const hasPricing = hasSplitPricing(capabilities);
+  const serverFields = useMemo(
+    (): Partial<Record<string, keyof ModelFormData>> => ({
+      ...SERVER_FIELDS,
+      ...(hasPricing
+        ? {
+            inputCostPerMillionTokens: 'inputCostPerMillionTokens',
+            outputCostPerMillionTokens: 'outputCostPerMillionTokens',
+          }
+        : {}),
+      ...(hasEmbedding
+        ? { dimensions: 'dimensions', costPerMillionTokens: 'costPerMillionTokens' }
+        : {}),
+    }),
+    [hasPricing, hasEmbedding]
+  );
+  const save = useSaveFailure({
+    fallback: 'Something went wrong',
+    fields: serverFields,
+    setError,
+  });
   // Subset check: when the selection is non-empty and contains only
   // storage-only capabilities, render a clarifying note so operators
   // know the engine won't invoke this row at runtime.
@@ -337,7 +377,6 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
   async function onSubmit(data: ModelFormData) {
     setSubmitting(true);
-    setError(null);
     setSaved(false);
 
     // Zod's `.min(1)` already enforces "at least one capability"; the
@@ -419,29 +458,29 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
         router.push(`/admin/orchestration/provider-models/${created.id}?created=1`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
-      {/* Sticky action bar */}
-      <div className="bg-background sticky top-0 z-10 flex items-center justify-between border-b pb-4">
-        <div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
-          {saved && <p className="text-sm text-emerald-600">Saved</p>}
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+      {/* Sticky action bar, with the save error under it so it stays in view */}
+      <div className="bg-background sticky top-0 z-10 space-y-2 border-b pb-4">
+        <div className="flex items-center justify-between">
+          <div>{saved && <p className="text-sm text-emerald-600">Saved</p>}</div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/providers?tab=models">Cancel</Link>
+            </Button>
+            <SharedSettingsSaveHint />
+            <Button type="submit" disabled={readOnly || submitting || saved}>
+              {submitting ? 'Saving...' : isEdit ? 'Save changes' : 'Create model'}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/providers?tab=models">Cancel</Link>
-          </Button>
-          <SharedSettingsSaveHint />
-          <Button type="submit" disabled={readOnly || submitting || saved}>
-            {submitting ? 'Saving...' : isEdit ? 'Save changes' : 'Create model'}
-          </Button>
-        </div>
+        <SaveError failure={save.failure} />
       </div>
       <fieldset disabled={submitting} className="space-y-6">
         {/* Provider Slug & Model ID */}
@@ -524,7 +563,10 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               the orchestration engine does not invoke these capabilities at runtime.
             </FieldHelp>
           </Label>
+          {/* The field's id, and focusable, so a rejected set can take focus. */}
           <div
+            id="capabilities"
+            tabIndex={-1}
             className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3"
             role="group"
             aria-label="Model capabilities"
@@ -561,7 +603,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
         {/* Tier Role */}
         <div className="space-y-2">
-          <Label>
+          <Label htmlFor="tierRole">
             Tier Role{' '}
             <FieldHelp title="Tier roles">
               <p>
@@ -574,7 +616,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             defaultValue={model?.tierRole ?? 'thinking'}
             onValueChange={(v) => setValue('tierRole', v as ModelFormData['tierRole'])}
           >
-            <SelectTrigger>
+            <SelectTrigger id="tierRole">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -607,7 +649,14 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               </p>
             </FieldHelp>
           </Label>
-          <div className="space-y-2">
+          {/* The field's id, and focusable, so a rejected set can take focus. */}
+          <div
+            id="deploymentProfiles"
+            tabIndex={-1}
+            className="space-y-2"
+            role="group"
+            aria-label="Deployment profiles"
+          >
             {DEPLOYMENT_PROFILES.map((profile) => {
               const meta = DEPLOYMENT_PROFILE_META[profile];
               const checked = watch('deploymentProfiles')?.includes(profile) ?? false;

@@ -127,10 +127,13 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
   const idBySlug = new Map(known.map((row) => [row.slug, row.id]));
   const unknownProviders = body.approved.filter((slug) => !idBySlug.has(slug));
   if (unknownProviders.length > 0) {
-    return errorResponse(`No provider has the slug ${unknownProviders.join(', ')}`, {
+    const message = `No provider has the slug ${unknownProviders.join(', ')}`;
+    // A VALIDATION_ERROR's details are fields (lib/api/errors.ts), so the
+    // message goes in the list shape and the slugs ride beside it.
+    return errorResponse(message, {
       code: 'VALIDATION_ERROR',
       status: 400,
-      details: { unknownProviders },
+      details: { errors: [{ path: 'approved', message }], unknownProviders },
     });
   }
   // Every slug resolved (the 400 above), so this keeps them all, in order.

@@ -28,13 +28,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import {
   SupportLevelHelp,
   SUPPORT_GRANT_LEVEL_LABELS,
 } from '@/components/admin/support-access/support-level-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_SUPPORT_GRANT_LEVEL, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import {
   createSupportGrantSchema,
@@ -68,6 +69,15 @@ const grantFormSchema = createSupportGrantSchema.extend({
 
 type GrantFormData = z.infer<typeof grantFormSchema>;
 
+/**
+ * Server path → the field that shows its message. Only the reason renders
+ * `errors.x`; the level and duration selects render none, so their messages
+ * join the summary (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof GrantFormData>> = {
+  reason: 'reason',
+};
+
 export interface SupportGrantFormProps {
   orgId: string;
   /** An open grant exists, so sending this one replaces it. */
@@ -77,12 +87,12 @@ export interface SupportGrantFormProps {
 export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     reset,
     formState: { errors },
@@ -97,16 +107,20 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
   });
   const level = watch('level');
   const durationHours = watch('durationHours');
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred',
+    fields: SERVER_FIELDS,
+    setError,
+  });
 
   const onSubmit = async (data: GrantFormData) => {
     setSubmitting(true);
-    setError(null);
     try {
       await apiClient.post(API.ORGS.supportGrants(orgId), { body: data });
       reset();
       router.refresh();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'An unexpected error occurred');
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -122,11 +136,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form
-          onSubmit={(event) => void handleSubmit(onSubmit)(event)}
-          className="space-y-4"
-          noValidate
-        >
+        <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4" noValidate>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="grant-level" className="flex items-center gap-1">
@@ -207,11 +217,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
             {submitting ? 'Granting…' : replacesOpenGrant ? 'Replace grant' : 'Grant access'}
           </Button>
 
-          {error && (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
-          )}
+          <SaveError failure={save.failure} />
         </form>
       </CardContent>
     </Card>

@@ -445,7 +445,9 @@ id, so it survives a rename, and `slug` is `null` if the row was deleted. See
 for what it governs.
 
 **Error Responses**: `400 VALIDATION_ERROR` (an unknown provider slug, named
-in `details.unknownProviders`, or a malformed body) · `400 INSTALL_ORG_IMMUTABLE`
+in `details.unknownProviders`, with the message also as
+`details.errors: [{ path: 'approved', message }]` so a form reads it like any
+validation error; or a malformed body) · `400 INSTALL_ORG_IMMUTABLE`
 (a `PUT` naming the install org, which may use every provider) ·
 `404 ORG_NOT_FOUND` · `409 CONFLICT` (another write to the org's settings
 landed at the same time; nothing was written, so retry).

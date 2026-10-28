@@ -45,7 +45,9 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError, so the form reads a failed save as it would in the app.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     post: (...args: unknown[]) => mockPost(...args),
     patch: (...args: unknown[]) => mockPatch(...args),
@@ -324,7 +326,8 @@ describe('ProviderModelForm', () => {
   // ── Submit error ──────────────────────────────────────────────────────────
 
   it('shows error message when submit throws', async () => {
-    mockPatch.mockRejectedValue(new Error('Slug already taken'));
+    const { APIClientError } = await import('@/lib/api/client');
+    mockPatch.mockRejectedValue(new APIClientError('Slug already taken', 'CONFLICT', 409));
     const user = userEvent.setup();
     render(<ProviderModelForm model={makeModel()} />);
 

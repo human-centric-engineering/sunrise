@@ -37,8 +37,10 @@ import {
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { fieldLabels, fieldToTab } from '@/lib/orchestration/agents/agent-field-registry';
@@ -298,6 +300,41 @@ function firstErrorMessage(error: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`). A field shown only in some states is added
+ * in the form while it shows: a message put on a field that isn't on the page
+ * would show nowhere.
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof AgentFormData>> = {
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  retentionDays: 'retentionDays',
+  provider: 'provider',
+  model: 'model',
+  maxTokens: 'maxTokens',
+  monthlyBudgetUsd: 'monthlyBudgetUsd',
+  maxCostPerTurnUsd: 'maxCostPerTurnUsd',
+  rateLimitRpm: 'rateLimitRpm',
+  maxHistoryTokens: 'maxHistoryTokens',
+  maxHistoryMessages: 'maxHistoryMessages',
+  persona: 'persona',
+  systemInstructions: 'systemInstructions',
+  guardrails: 'guardrails',
+  brandVoiceInstructions: 'brandVoiceInstructions',
+};
+
+/** The tabs that hold form fields, in the order they are shown. */
+const FIELD_TABS = ['general', 'model', 'instructions'] as const;
+
+/** The first tab, in tab order, holding any of `fields`; undefined for none. */
+function tabHolding(fields: readonly string[]): string | undefined {
+  const tabs = fieldToTab();
+  return FIELD_TABS.find((t) => fields.some((f) => tabs[f]?.toLowerCase() === t));
+}
+
 /** An agent row's model parameters as the form holds them. */
 function toModelParamsValue(
   agent:
@@ -354,7 +391,7 @@ export function AgentForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState('general');
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
   /**
@@ -423,6 +460,7 @@ export function AgentForm({
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     reset,
     getValues,
@@ -478,6 +516,24 @@ export function AgentForm({
     },
   });
 
+  const currentRuntimePromptManaged = watch('runtimePromptManaged');
+  const currentRetrievalMode = watch('knowledgeRetrievalMode');
+  const serverFields = useMemo(
+    (): Partial<Record<string, keyof AgentFormData>> => ({
+      ...SERVER_FIELDS,
+      ...(currentRuntimePromptManaged ? { runtimePromptNote: 'runtimePromptNote' } : {}),
+      ...(currentRetrievalMode === 'keywords'
+        ? { knowledgeTriggerKeywords: 'knowledgeTriggerKeywords' }
+        : {}),
+    }),
+    [currentRuntimePromptManaged, currentRetrievalMode]
+  );
+  const save = useSaveFailure({
+    fallback: 'Could not save agent. Try again in a moment.',
+    fields: serverFields,
+    setError,
+  });
+
   const currentProvider = watch('provider');
   const currentModel = watch('model');
   const currentTemp = watch('temperature');
@@ -498,7 +554,6 @@ export function AgentForm({
   const currentPersonaMode = watch('personaMode');
   const currentVoiceMode = watch('voiceMode');
   const currentGuardrailsMode = watch('guardrailsMode');
-  const currentRuntimePromptManaged = watch('runtimePromptManaged');
 
   // Resolve the live effective prompt for the preview card on the
   // Instructions tab. Uses the same pure helper that the chat handler
@@ -681,18 +736,24 @@ export function AgentForm({
     }
 
     setSaved(false);
-    setError(
+    // The fields go to <SaveError> too, so it brings their tab forward and
+    // focuses the first, as it does for fields the server rejected.
+    save.show(
       byTab.size > 0
         ? `Cannot save — these fields need attention. ${[...byTab.entries()]
             .map(([tab, fields]) => `${tab}: ${fields.join(', ')}`)
             .join(' · ')}`
-        : 'Cannot save — some required fields are missing.'
+        : 'Cannot save — some required fields are missing.',
+      keys.flatMap((key) => {
+        const field = serverFields[key];
+        const message = field && firstErrorMessage(formErrors[field]);
+        return field && message ? [{ field, message }] : [];
+      })
     );
   };
 
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
-    setError(null);
     setSaved(false);
 
     // Transform comma-separated strings into arrays for the API and map the
@@ -776,9 +837,7 @@ export function AgentForm({
         router.push(`/admin/orchestration/agents/${created.id}`);
       }
     } catch (err) {
-      setError(
-        err instanceof APIClientError ? err.message : 'Could not save agent. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -787,75 +846,77 @@ export function AgentForm({
   const currentProviderId = providers?.find((p) => p.slug === currentProvider)?.id ?? null;
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit, onInvalid)(e)} className="space-y-6">
-      {/* Sticky action bar */}
-      <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">
-              {isEdit ? agent?.name : initialKind === 'judge' ? 'New judge agent' : 'New agent'}
-            </h1>
-            {isEdit && agent?.isSystem && (
-              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
-                <Shield className="h-3 w-3" />
-                System
-              </Badge>
-            )}
-            {(isEdit ? agent?.kind === 'judge' : initialKind === 'judge') && (
-              <Badge
-                variant="outline"
-                className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
-              >
-                <Scale className="h-3 w-3" />
-                Judge
-              </Badge>
+    <form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))} className="space-y-6">
+      {/* Sticky action bar, with the save error under it so it stays in view */}
+      <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-2 border-b px-2 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold">
+                {isEdit ? agent?.name : initialKind === 'judge' ? 'New judge agent' : 'New agent'}
+              </h1>
+              {isEdit && agent?.isSystem && (
+                <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                  <Shield className="h-3 w-3" />
+                  System
+                </Badge>
+              )}
+              {(isEdit ? agent?.kind === 'judge' : initialKind === 'judge') && (
+                <Badge
+                  variant="outline"
+                  className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
+                >
+                  <Scale className="h-3 w-3" />
+                  Judge
+                </Badge>
+              )}
+            </div>
+            {isEdit && <p className="text-muted-foreground font-mono text-xs">{agent?.slug}</p>}
+            {!isEdit && initialKind === 'judge' && (
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                The system instructions you write below ARE the rubric. The evaluation worker sends
+                the case as a structured user message; the judge responds with{' '}
+                <code className="bg-muted rounded px-1 text-[10px]">
+                  {'{"score": ..., "reasoning": "..."}'}
+                </code>{' '}
+                JSON.
+              </p>
             )}
           </div>
-          {isEdit && <p className="text-muted-foreground font-mono text-xs">{agent?.slug}</p>}
-          {!isEdit && initialKind === 'judge' && (
-            <p className="text-muted-foreground mt-0.5 text-xs">
-              The system instructions you write below ARE the rubric. The evaluation worker sends
-              the case as a structured user message; the judge responds with{' '}
-              <code className="bg-muted rounded px-1 text-[10px]">
-                {'{"score": ..., "reasoning": "..."}'}
-              </code>{' '}
-              JSON.
-            </p>
-          )}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/agents">Cancel</Link>
+            </Button>
+            <Button type="submit" disabled={submitting || saved}>
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : saved ? (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isEdit ? 'Save changes' : 'Create agent'}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/agents">Cancel</Link>
-          </Button>
-          <Button type="submit" disabled={submitting || saved}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : saved ? (
-              <>
-                <Check className="mr-2 h-4 w-4" />
-                Saved
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {isEdit ? 'Save changes' : 'Create agent'}
-              </>
-            )}
-          </Button>
-        </div>
+        <SaveError
+          failure={save.failure}
+          onRevealField={(fields) => {
+            const holding = tabHolding(fields);
+            if (holding) setTab(holding);
+          }}
+        />
       </div>
 
       {!isEdit && <CliAuthoringHint resource="agents" />}
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
 
       {/* Above the tabs: every tab has locked controls to explain. */}
       {isEdit && agent?.isSystem && (
@@ -878,7 +939,7 @@ export function AgentForm({
         </div>
       )}
 
-      <Tabs defaultValue="general" className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="w-full justify-start">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">Model</TabsTrigger>
@@ -2204,7 +2265,7 @@ export function AgentForm({
             </Select>
           </div>
 
-          {watch('knowledgeRetrievalMode') === 'keywords' && (
+          {currentRetrievalMode === 'keywords' && (
             <div className="grid gap-2">
               <Label htmlFor="knowledgeTriggerKeywords">
                 Trigger keywords{' '}
