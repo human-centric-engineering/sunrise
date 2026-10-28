@@ -7,6 +7,7 @@
  * sortable columns, and provider/tier/capability filters.
  */
 
+import { z } from 'zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState } from 'react';
@@ -147,6 +148,11 @@ export interface ModelRowWorkflowRef {
   name: string;
   slug: string;
 }
+
+/** The in-use refs a refused delete names in its `details` (external data). */
+const blockingRefsSchema = z.array(
+  z.object({ id: z.string(), name: z.string(), slug: z.string() })
+);
 
 export interface ModelRow {
   id: string;
@@ -377,12 +383,10 @@ export function ProviderModelsMatrix({
       // instead of just an opaque error message.
       if (err instanceof APIClientError) {
         if (err.status === 409) {
-          if (Array.isArray(err.details?.agents)) {
-            setDeleteBlockedAgents(err.details.agents as ModelRowAgentRef[]);
-          }
-          if (Array.isArray(err.details?.workflows)) {
-            setDeleteBlockedWorkflows(err.details.workflows as ModelRowWorkflowRef[]);
-          }
+          const agents = blockingRefsSchema.safeParse(err.details?.agents);
+          if (agents.success) setDeleteBlockedAgents(agents.data);
+          const workflows = blockingRefsSchema.safeParse(err.details?.workflows);
+          if (workflows.success) setDeleteBlockedWorkflows(workflows.data);
           const elsewhere = (key: string) => {
             const n = err.details?.[key];
             return typeof n === 'number' ? n : 0;
