@@ -190,7 +190,7 @@ describe('SaveError', () => {
   });
 
   it('follows a tab switch that lands after its first look, rather than losing focus', async () => {
-    // The form switches tabs a frame late, so the first look still finds
+    // The form switches tabs two frames late, so the first look still finds
     // `name` on the tab being left. Focus must end on the revealed field.
     function LateTabs() {
       const [current, setCurrent] = useState<SaveFailure | null>(null);
@@ -209,14 +209,17 @@ describe('SaveError', () => {
             );
           }}
         >
+          {/* Keyed, so the switch unmounts the old field as Radix's tabs do. */}
           {tab === 'main' ? (
-            <input aria-label="Name" name="name" />
+            <input key="name" aria-label="Name" name="name" />
           ) : (
-            <input aria-label="Webhook" name="webhookUrl" />
+            <input key="webhookUrl" aria-label="Webhook" name="webhookUrl" />
           )}
           <SaveError
             failure={current}
-            onRevealField={() => requestAnimationFrame(() => setTab('advanced'))}
+            onRevealField={() =>
+              requestAnimationFrame(() => requestAnimationFrame(() => setTab('advanced')))
+            }
           />
           <button type="submit">Save</button>
         </form>

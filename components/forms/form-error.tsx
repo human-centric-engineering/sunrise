@@ -175,14 +175,16 @@ export function SaveError<TField extends string>({
     onRevealField(names);
     // The revealed tab renders on a later commit; look again until it has.
     // A field found before that commit can be on the tab being left, so the
-    // look goes on until the field it focused is still there a frame later.
+    // look watches every frame, and finds another only if that one unmounts:
+    // focus the admin moved meanwhile stays where they put it.
     let frame = 0;
     let tries = 0;
     let focused: HTMLElement | null = null;
     const look = () => {
-      if (focused?.isConnected) return;
-      const revealed = firstPresent(root, names);
-      if (revealed && revealed !== focused && focusField(revealed)) focused = revealed;
+      if (!focused?.isConnected) {
+        const revealed = firstPresent(root, names);
+        focused = revealed && focusField(revealed) ? revealed : null;
+      }
       if (++tries < REVEAL_FRAMES) {
         frame = requestAnimationFrame(look);
       } else if (!focused?.isConnected) {
