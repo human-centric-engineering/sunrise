@@ -51,6 +51,10 @@ The server sends field errors in two shapes; `readSaveError()` reads both.
 | `validateRequestBody` / `validateQueryParams` | `{ errors: [{ path, message }] }` |
 | `handleAPIError` on a raw `ZodError`          | `Record<path, string[]>`          |
 
+Both come from a `VALIDATION_ERROR`, and only that code is read for fields:
+another error's `details` can be record-shaped metadata
+(`{ unknownIds: [...] }`), which is not fields.
+
 Only the first message per field is kept: one line under each field.
 
 **Server paths are not form field names.** A form declares a table from the
@@ -64,6 +68,12 @@ const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
   // a path missing here (escalationConfig.emailAddresses.0) joins the summary
 };
 ```
+
+**List only fields that render their error** (`errors.x?.message` under the
+control). A select or switch that renders none must stay out of the table, so
+its message reaches the summary; mapped, it would be set on the form and shown
+nowhere. An array element's path (`retryBackoffMs.1`) falls back to its
+array's entry, so the table lists the array once.
 
 Without a table, each server path is taken as the field name. That is for a
 plain-state form placing messages itself; a react-hook-form form always
@@ -148,8 +158,17 @@ Without `stale` props, a stale failure shows its message like any other.
 A page that shows the stale notice without a `<SaveError>` (a list whose row
 toggles are refused, the workflow builder's toolbar) mounts
 `<StaleSaveNotice>` with the same props. It is the same component, so it is
-red and moves too; mounting it is what counts as "appearing", so clear the
-flag when the next attempt starts.
+red and moves too. Mounting it is what counts as "appearing", so the page
+counts refusals and keys the notice on the count, which remounts it on each
+one without hiding it in between (another row's toggle succeeding must not
+take the reload prompt away):
+
+```tsx
+const [stale, setStale] = useState(0); // refused: setStale((n) => n + 1); reloaded: setStale(0)
+{
+  stale > 0 && <StaleSaveNotice key={stale} what="That schedule" onReload={reload} />;
+}
+```
 
 ## Out of scope
 
