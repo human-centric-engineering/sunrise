@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface Options {
   /** Whether the dialog is open. */
@@ -11,7 +11,7 @@ interface Options {
   onClose: () => void;
   /** What opening through the dialog's own trigger does. */
   onOpen?: () => void;
-  /** Clears the dialog's failure; called each time the dialog opens. */
+  /** Clears the dialog's failure; called each time the dialog opens or closes. */
   clear?: () => void;
 }
 
@@ -42,8 +42,8 @@ export interface CommittedDialog {
  * Cancel are disabled, and the close Radix asks for (Escape, an outside
  * click) is ignored. A second click can't send the request twice, and a
  * refusal can't arrive after the dialog closed and be shown nowhere. The
- * dialog's failure is cleared each time it opens, so one row's failure never
- * greets the next.
+ * dialog's failure is cleared when it closes, however it closes, so one row's
+ * failure never greets the next.
  *
  * @see .context/ui/form-errors.md
  */
@@ -60,27 +60,25 @@ export function useCommittedDialog({
   useEffect(() => {
     clearRef.current = clear;
   });
+  // Cleared as it closes, by whatever route (Cancel, Escape, the caller), so
+  // the next open renders with no failure: clearing only after an open lets
+  // the old one show, be announced and take focus first. Opening clears too.
   useEffect(() => {
-    if (open) clearRef.current?.();
+    clearRef.current?.();
   }, [open]);
 
-  const onOpenChange = useCallback(
-    (next: boolean) => {
+  return {
+    onOpenChange: (next: boolean) => {
       if (next) onOpen?.();
       else if (!pending) onClose();
     },
-    [pending, onOpen, onClose]
-  );
-
-  const actionProps = useCallback(
-    (options: ActionOptions = {}) => ({ disabled: pending || options.disabled === true }),
-    [pending]
-  );
-
-  const confirm = useCallback((e: { preventDefault: () => void }, run: () => unknown) => {
-    e.preventDefault();
-    void run();
-  }, []);
-
-  return { onOpenChange, cancelProps: { disabled: pending }, actionProps, confirm };
+    cancelProps: { disabled: pending },
+    actionProps: (options: ActionOptions = {}) => ({
+      disabled: pending || options.disabled === true,
+    }),
+    confirm: (e: { preventDefault: () => void }, run: () => unknown) => {
+      e.preventDefault();
+      void run();
+    },
+  };
 }

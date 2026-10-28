@@ -79,7 +79,6 @@ export function PublishDialog({
   const dialog = useCommittedDialog({
     open,
     pending: publishing,
-    onOpen: () => onOpenChange(true),
     onClose: () => onOpenChange(false),
   });
 

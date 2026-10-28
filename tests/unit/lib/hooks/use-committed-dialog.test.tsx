@@ -25,7 +25,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import { APIClientError } from '@/lib/api/client';
 import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 function setup(initial: { open: boolean; pending: boolean }) {
   const onClose = vi.fn();
@@ -65,21 +68,21 @@ describe('useCommittedDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('clears the failure each time the dialog opens, and not while it stays open', () => {
+  it('clears the failure as the dialog opens and as it closes, and not while it stays open', () => {
     const { rerender, clear } = setup({ open: false, pending: false });
-    expect(clear).not.toHaveBeenCalled();
+    const atMount = clear.mock.calls.length;
 
     rerender({ open: true, pending: false });
-    expect(clear).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(atMount + 1);
 
     // A save running and failing while open must not be cleared under it.
     rerender({ open: true, pending: true });
     rerender({ open: true, pending: false });
-    expect(clear).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(atMount + 1);
 
+    // Closed by any route, e.g. the caller clearing its target.
     rerender({ open: false, pending: false });
-    rerender({ open: true, pending: false });
-    expect(clear).toHaveBeenCalledTimes(2);
+    expect(clear).toHaveBeenCalledTimes(atMount + 2);
   });
 
   it('does not clear on every render when given a new clear each time', () => {
@@ -202,4 +205,80 @@ describe('useCommittedDialog in a real AlertDialog', () => {
 
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
   });
+
+  it('opens for the next row with no trace of the last row’s failure', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const user = userEvent.setup();
+    render(
+      <TwoRows
+        remove={() => Promise.reject(new APIClientError('Row A is locked', 'CONFLICT', 409))}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Delete A' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Row A is locked');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    scrollIntoView.mockClear();
+
+    await user.click(screen.getByRole('button', { name: 'Delete B' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    // Never rendered, so never announced, scrolled to or focused.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(dialog).toHaveTextContent('Delete B?');
+    expect(document.activeElement).not.toBe(document.body);
+  });
 });
+
+/** A list with a delete dialog per row, wired with the real save-error pieces. */
+function TwoRows({ remove }: { remove: (row: string) => Promise<void> }) {
+  const [target, setTarget] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const save = useSaveFailure({ fallback: 'Could not delete.', fields: NO_SERVER_FIELDS });
+  const dialog = useCommittedDialog({
+    open: target !== null,
+    pending,
+    onClose: () => setTarget(null),
+    clear: save.clear,
+  });
+  async function confirm() {
+    if (!target) return;
+    setPending(true);
+    try {
+      await remove(target);
+      setTarget(null);
+    } catch (err) {
+      save.report(err);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button onClick={() => setTarget('A')}>Delete A</button>
+      <button onClick={() => setTarget('B')}>Delete B</button>
+      <AlertDialog open={target !== null} onOpenChange={dialog.onOpenChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {target}?</AlertDialogTitle>
+            <AlertDialogDescription>It goes for good.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <SaveError failure={save.failure} />
+          <AlertDialogFooter>
+            <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              {...dialog.actionProps()}
+              onClick={(e) => dialog.confirm(e, confirm)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}

@@ -18,7 +18,7 @@ was also amber, which doesn't read as a failure.
 | `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
 | `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
 | `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
-| `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure each time it opens                          |
+| `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure as it opens and closes                      |
 | `<SaveError>`            | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
 | `<StaleSaveNotice>`      | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
@@ -176,8 +176,10 @@ While the action is in flight the dialog is committed to it: the action
 button **and** Cancel are disabled, and the close Radix asks for (Escape, an
 outside click) is ignored. Otherwise a second click sends the request twice,
 and a failure arriving after the dialog closed is shown nowhere. The dialog's
-failure is cleared **each time it opens**, so one row's failure never appears
-in the next row's dialog. `useCommittedDialog()` does all of it; a dialog that
+failure is cleared **as it closes**, however it closes, and again as it
+opens, so one row's failure never appears in the next row's dialog (clearing
+only after an open lets the old failure render, be announced and take focus
+first). `useCommittedDialog()` does all of it; a dialog that
 saves uses it rather than writing the guards out:
 
 ```tsx

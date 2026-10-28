@@ -145,7 +145,6 @@ export function PdfPreviewModal({
   const dialog = useCommittedDialog({
     open,
     pending: confirming || discarding,
-    onOpen: () => onOpenChange(true),
     onClose: () => onOpenChange(false),
     clear: () => {
       clearConfirmFailure();

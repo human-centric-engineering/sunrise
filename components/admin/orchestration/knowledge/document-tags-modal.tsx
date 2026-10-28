@@ -260,12 +260,18 @@ export function DocumentTagsModal({
     }
   }
 
+  // Switching document while open starts clean too: one document's failure
+  // never shows on the next (the dialog hook clears on open and close).
+  useEffect(() => {
+    clearSaveFailure();
+    clearCreateFailure();
+  }, [documentId, clearSaveFailure, clearCreateFailure]);
+
   // Committed while a save or a tag create is in flight; both failures are
-  // cleared each time it opens.
+  // cleared as it opens and closes.
   const dialog = useCommittedDialog({
     open,
     pending: saving || createBusy,
-    onOpen: () => onOpenChange(true),
     onClose: () => onOpenChange(false),
     clear: () => {
       clearSaveFailure();

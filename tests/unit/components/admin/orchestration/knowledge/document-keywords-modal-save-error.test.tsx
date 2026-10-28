@@ -111,4 +111,33 @@ describe('DocumentKeywordsModal — an enrich in flight', () => {
     await waitFor(() => expect(screen.getByText('bm25')).toBeInTheDocument());
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
+
+  it('clears a failed enrich when the document switches while the dialog stays open', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DocumentKeywordsModal
+        documentId="doc-1"
+        documentName="Guide A"
+        open
+        onOpenChange={vi.fn()}
+      />
+    );
+    const dialog = await screen.findByRole('dialog');
+    await screen.findByText('bm25');
+    await user.click(within(dialog).getByRole('button', { name: /re-enrich keywords/i }));
+    await user.click(within(dialog).getByRole('button', { name: /yes, overwrite/i }));
+    answerEnrich(json(503, { success: false, error: { code: 'NO_MODEL', message: 'Boom A' } }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    rerender(
+      <DocumentKeywordsModal
+        documentId="doc-2"
+        documentName="Guide B"
+        open
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument());
+  });
 });

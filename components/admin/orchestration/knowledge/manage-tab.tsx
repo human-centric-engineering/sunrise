@@ -286,7 +286,6 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   const uploadDialog = useCommittedDialog({
     open: uploadOpen,
     pending: uploadBusy,
-    onOpen: () => setUploadOpen(true),
     onClose: () => setUploadOpen(false),
   });
   const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);

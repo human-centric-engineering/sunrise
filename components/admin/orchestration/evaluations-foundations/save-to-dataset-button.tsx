@@ -182,7 +182,6 @@ export function SaveToDatasetButton({
   const dialog = useCommittedDialog({
     open,
     pending: submitting,
-    onOpen: () => setOpen(true),
     onClose: handleClose,
     clear: save.clear,
   });

@@ -135,6 +135,12 @@ export function DocumentKeywordsModal({
     }
   }, [documentId]);
 
+  // Switching document while open starts clean too: one document's failed
+  // enrich never shows on the next (the dialog hook clears on open and close).
+  useEffect(() => {
+    clearEnrichFailure();
+  }, [documentId, clearEnrichFailure]);
+
   useEffect(() => {
     if (open && documentId) {
       void fetchKeywords();
@@ -188,7 +194,6 @@ export function DocumentKeywordsModal({
   const dialog = useCommittedDialog({
     open,
     pending: enriching,
-    onOpen: () => onOpenChange(true),
     onClose: () => onOpenChange(false),
     clear: clearEnrichFailure,
   });

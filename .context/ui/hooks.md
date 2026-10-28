@@ -184,8 +184,7 @@ Locks a dialog while its save runs: `onOpenChange` ignores a close while
 `pending`, `cancelProps` and `actionProps({ disabled? })` disable Cancel and
 the action, and `confirm(e, run)` (the action's `onClick`) calls
 `preventDefault` so an `AlertDialogAction` doesn't close the dialog before the
-save answers. `clear`
-runs each time the dialog opens. Recipe: [Form save errors → a
+save answers. `clear` runs as the dialog opens and as it closes. Recipe: [Form save errors → a
 dialog](./form-errors.md).
 
 ## See also
