@@ -107,6 +107,14 @@ const EMBEDDING_STATUS_NO_CHUNKS = {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+/** The API's error envelope, as a real Response (§124 reads it with apiErrorFromResponse). */
+function errorResponse(status: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message } }),
+    { status, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
 describe('KnowledgeView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -189,11 +197,7 @@ describe('KnowledgeView', () => {
 
       mockFetch.mockImplementation((url: string) => {
         if (url.includes('/knowledge/seed')) {
-          return Promise.resolve({
-            ok: false,
-            status: 500,
-            json: () => Promise.resolve({ error: { message: 'Seed source missing' } }),
-          });
+          return Promise.resolve(errorResponse(500, 'Seed source missing'));
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
       });
@@ -207,16 +211,12 @@ describe('KnowledgeView', () => {
       });
     });
 
-    it('HTTP error with unparseable body: shows "Load failed (status)" fallback', async () => {
+    it('HTTP error with unparseable body: shows the fallback', async () => {
       const user = userEvent.setup();
 
       mockFetch.mockImplementation((url: string) => {
         if (url.includes('/knowledge/seed')) {
-          return Promise.resolve({
-            ok: false,
-            status: 503,
-            json: () => Promise.reject(new Error('not json')),
-          });
+          return Promise.resolve(new Response('Service Unavailable', { status: 503 }));
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
       });
@@ -226,7 +226,9 @@ describe('KnowledgeView', () => {
       await user.click(screen.getByRole('button', { name: /load agentic design patterns/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Load failed (503)')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not load the patterns. Try again.'
+        );
       });
     });
 
@@ -245,7 +247,9 @@ describe('KnowledgeView', () => {
       await user.click(screen.getByRole('button', { name: /load agentic design patterns/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not load the patterns. Try again.'
+        );
       });
     });
   });
@@ -308,11 +312,7 @@ describe('KnowledgeView', () => {
           });
         }
         if (url.includes('/embed')) {
-          return Promise.resolve({
-            ok: false,
-            status: 422,
-            json: () => Promise.resolve({ error: { message: 'Provider quota exceeded' } }),
-          });
+          return Promise.resolve(errorResponse(422, 'Provider quota exceeded'));
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
       });
@@ -330,7 +330,7 @@ describe('KnowledgeView', () => {
       });
     });
 
-    it('HTTP error with unparseable body: shows fallback message with status code', async () => {
+    it('HTTP error with unparseable body: shows the fallback', async () => {
       const user = userEvent.setup();
 
       mockFetch.mockImplementation((url: string) => {
@@ -341,11 +341,7 @@ describe('KnowledgeView', () => {
           });
         }
         if (url.includes('/embed')) {
-          return Promise.resolve({
-            ok: false,
-            status: 500,
-            json: () => Promise.reject(new Error('not json')),
-          });
+          return Promise.resolve(new Response('Internal Server Error', { status: 500 }));
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
       });
@@ -359,7 +355,9 @@ describe('KnowledgeView', () => {
       await user.click(getEmbedButton());
 
       await waitFor(() => {
-        expect(screen.getByText('Embedding failed (500)')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not generate the embeddings. Try again.'
+        );
       });
     });
 
@@ -388,7 +386,9 @@ describe('KnowledgeView', () => {
       await user.click(getEmbedButton());
 
       await waitFor(() => {
-        expect(screen.getByText('Network error — could not reach the server.')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not generate the embeddings. Try again.'
+        );
       });
     });
   });
