@@ -31,6 +31,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 export interface ImportAgentsDialogProps {
   open: boolean;
@@ -54,7 +55,6 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
     fallback: 'Import failed. Check the bundle shape and try again.',
     fields: NO_SERVER_FIELDS,
   });
-  const clearSave = save.clear;
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
@@ -63,10 +63,17 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
     if (open) {
       setFile(null);
       setConflictMode('skip');
-      clearSave();
       setResult(null);
     }
-  }, [open, clearSave]);
+  }, [open]);
+
+  // Committed while the import runs; an earlier failure never greets a reopen.
+  const dialog = useCommittedDialog({
+    open,
+    pending: submitting,
+    onClose: () => onOpenChange(false),
+    clear: save.clear,
+  });
 
   async function handleSubmit() {
     if (!file) {
@@ -105,14 +112,7 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while the import is in flight: a late failure must land here.
-        if (!next && submitting) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -253,11 +253,14 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
 
         <SaveError failure={save.failure} />
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
             {result ? 'Close' : 'Cancel'}
           </Button>
           {!result && (
-            <Button onClick={() => void handleSubmit()} disabled={submitting || !file}>
+            <Button
+              {...dialog.actionProps({ disabled: !file })}
+              onClick={(e) => dialog.confirm(e, handleSubmit)}
+            >
               {submitting ? 'Importing…' : 'Import'}
             </Button>
           )}

@@ -49,6 +49,7 @@ import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-ac
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { API } from '@/lib/api/endpoints';
 import { Input } from '@/components/ui/input';
 import {
@@ -402,19 +403,26 @@ export function ProviderModelsMatrix({
     }
   }, [deleteTarget, router, clearDelete, reportDelete]);
 
-  // Opening and closing both start clean, so one row's refusal (or its
-  // blocking refs) never shows in the next row's dialog.
+  // Opening and closing both drop the blocking refs, so one row's never show
+  // in the next row's dialog (the hook below clears its refusal on open).
   const resetDelete = useCallback(() => {
-    clearDelete();
     setDeleteBlockedAgents([]);
     setDeleteBlockedWorkflows([]);
     setDeleteBlockedElsewhere(0);
-  }, [clearDelete]);
+  }, []);
 
   const handleCancelDelete = useCallback(() => {
     setDeleteTarget(null);
     resetDelete();
   }, [resetDelete]);
+
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: deleting,
+    onClose: handleCancelDelete,
+    clear: clearDelete,
+  });
 
   const deleteBlocked =
     deleteBlockedAgents.length + deleteBlockedWorkflows.length + deleteBlockedElsewhere > 0;
@@ -1043,13 +1051,7 @@ export function ProviderModelsMatrix({
           /provider-models/[id] for editing. */}
       <DiscoverModelsDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
 
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && !deleting) handleCancelDelete();
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete model</AlertDialogTitle>
@@ -1129,17 +1131,12 @@ export function ProviderModelsMatrix({
           <SaveError failure={deleteBlocked ? null : deleteSave.failure} />
 
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Default closes the dialog; we want to keep it open if the
-                // 409 response surfaces a list of bound refs the operator
-                // needs to act on first.
-                e.preventDefault();
-                void handleConfirmDelete();
-              }}
+              // Stays open on a 409, whose bound refs the operator must act on first.
+              {...deleteDialog.actionProps({ disabled: deleteBlocked })}
+              onClick={(e) => deleteDialog.confirm(e, handleConfirmDelete)}
               className="bg-red-600 hover:bg-red-700"
-              disabled={deleting || deleteBlocked}
             >
               {deleting ? (
                 <>

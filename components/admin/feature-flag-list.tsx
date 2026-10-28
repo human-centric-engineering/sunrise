@@ -36,6 +36,7 @@ import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { SaveError } from '@/components/forms/form-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 interface FeatureFlagListProps {
   initialFlags: FeatureFlag[];
@@ -115,6 +116,14 @@ export function FeatureFlagList({
       setIsDeleting(false);
     }
   }, [deleteId, clearDelete, reportDelete]);
+
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteId,
+    pending: isDeleting,
+    onClose: () => setDeleteId(null),
+    clear: clearDelete,
+  });
 
   return (
     <div className="space-y-4">
@@ -208,10 +217,7 @@ export function FeatureFlagList({
                         variant="ghost"
                         size="icon"
                         className="text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                        onClick={() => {
-                          clearDelete();
-                          setDeleteId(flag.id);
-                        }}
+                        onClick={() => setDeleteId(flag.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                         <span className="sr-only">Delete {flag.name}</span>
@@ -226,17 +232,7 @@ export function FeatureFlagList({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog
-        open={!!deleteId}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && isDeleting) return;
-          if (!open) {
-            setDeleteId(null);
-            clearDelete();
-          }
-        }}
-      >
+      <AlertDialog open={!!deleteId} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Feature Flag</AlertDialogTitle>
@@ -247,15 +243,11 @@ export function FeatureFlagList({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void handleDelete();
-              }}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isDeleting}
             >
               {isDeleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>

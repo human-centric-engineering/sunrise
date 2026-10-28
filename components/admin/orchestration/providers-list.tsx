@@ -706,10 +706,7 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       </DropdownMenuItem>
                       {p.isActive && !readOnly && (
                         <DropdownMenuItem
-                          onSelect={() => {
-                            clearDelete();
-                            setDeleteTarget({ id: p.id, name: p.name, slug: p.slug });
-                          }}
+                          onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
                         >
                           <PowerOff className="mr-2 h-4 w-4" /> Deactivate
                         </DropdownMenuItem>
@@ -717,10 +714,9 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                       {!readOnly && (
                         <DropdownMenuItem
                           className="text-destructive"
-                          onSelect={() => {
-                            clearPermanent();
-                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug });
-                          }}
+                          onSelect={() =>
+                            setPermanentTarget({ id: p.id, name: p.name, slug: p.slug })
+                          }
                         >
                           <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
                         </DropdownMenuItem>
@@ -837,22 +833,18 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
       <DeleteProviderDialog
         target={deleteTarget}
         failure={deleteSave.failure}
+        clearFailure={clearDelete}
         isDeleting={deleting}
-        onCancel={() => {
-          setDeleteTarget(null);
-          clearDelete();
-        }}
+        onCancel={() => setDeleteTarget(null)}
         onConfirm={() => void confirmDelete()}
       />
 
       <PermanentDeleteProviderDialog
         target={permanentTarget}
         failure={permanentSave.failure}
+        clearFailure={clearPermanent}
         isDeleting={permanentDeleting}
-        onCancel={() => {
-          setPermanentTarget(null);
-          clearPermanent();
-        }}
+        onCancel={() => setPermanentTarget(null)}
         onConfirm={() => void confirmPermanentDelete()}
       />
 

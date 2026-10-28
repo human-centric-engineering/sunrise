@@ -32,6 +32,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { slugSchema } from '@/lib/validations/common';
 
 export interface DuplicateAgentDialogProps {
@@ -48,7 +49,6 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
     fallback: 'Could not duplicate agent. Try again in a moment.',
     fields: NO_SERVER_FIELDS,
   });
-  const clearSave = save.clear;
   const [submitting, setSubmitting] = useState(false);
 
   // Reset inputs each time a new source is selected.
@@ -56,9 +56,16 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
     if (source) {
       setName(`${source.name} (copy)`);
       setSlug(`${source.slug}-copy`.slice(0, 100));
-      clearSave();
     }
-  }, [source, clearSave]);
+  }, [source]);
+
+  // Committed while the duplicate runs; an earlier failure never greets a reopen.
+  const dialog = useCommittedDialog({
+    open: !!source,
+    pending: submitting,
+    onClose: () => onOpenChange(false),
+    clear: save.clear,
+  });
 
   async function handleSubmit() {
     if (!source) return;
@@ -88,14 +95,7 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
   }
 
   return (
-    <Dialog
-      open={!!source}
-      onOpenChange={(next) => {
-        // Committed while the duplicate is in flight: a late failure must land here.
-        if (!next && submitting) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={!!source} onOpenChange={dialog.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Duplicate agent</DialogTitle>
@@ -128,12 +128,12 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
 
         <SaveError failure={save.failure} />
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
             Cancel
           </Button>
           <Button
-            onClick={() => void handleSubmit()}
-            disabled={submitting || !name.trim() || !slug.trim()}
+            {...dialog.actionProps({ disabled: !name.trim() || !slug.trim() })}
+            onClick={(e) => dialog.confirm(e, handleSubmit)}
           >
             {submitting ? 'Duplicating…' : 'Duplicate'}
           </Button>

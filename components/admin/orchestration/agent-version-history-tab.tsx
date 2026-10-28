@@ -59,6 +59,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { cn } from '@/lib/utils';
 import { describeTunableFields } from '@/components/admin/orchestration/platform-agent-fields';
 import {
@@ -267,6 +268,14 @@ export function AgentVersionHistoryTab({
     }
   }, [restoreTarget, agentId, fetchVersions, onRestored, clearRestore, reportRestore]);
 
+  // Committed while the restore runs; a failure from one version never shows on the next.
+  const restoreDialog = useCommittedDialog({
+    open: !!restoreTarget,
+    pending: restoring,
+    onClose: () => setRestoreTarget(null),
+    clear: clearRestore,
+  });
+
   /**
    * Fetch a single version's snapshot (idempotent — short-circuits
    * if already cached or already loading).
@@ -439,10 +448,7 @@ export function AgentVersionHistoryTab({
                         variant="ghost"
                         size="sm"
                         className="shrink-0"
-                        onClick={() => {
-                          clearRestore();
-                          setRestoreTarget(v);
-                        }}
+                        onClick={() => setRestoreTarget(v)}
                         title={
                           isPlatformAgent
                             ? `Restore this org's settings from version ${v.version}`
@@ -478,15 +484,7 @@ export function AgentVersionHistoryTab({
         )}
       </CardContent>
 
-      <AlertDialog
-        open={!!restoreTarget}
-        onOpenChange={(open) => {
-          // Committed while the restore is in flight: a late failure must land here.
-          if (!open && restoring) return;
-          setRestoreTarget(null);
-          clearRestore();
-        }}
-      >
+      <AlertDialog open={!!restoreTarget} onOpenChange={restoreDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Restore to version {restoreTarget?.version}?</AlertDialogTitle>
@@ -537,16 +535,10 @@ export function AgentVersionHistoryTab({
           </AlertDialogHeader>
           <SaveError failure={restoreSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...restoreDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              // Prevent Radix's default close-on-click: a failed restore must
-              // keep the dialog open so its failure (rendered above) is
-              // visible. handleRestore closes the dialog itself on success.
-              onClick={(e) => {
-                e.preventDefault();
-                void handleRestore();
-              }}
-              disabled={restoring}
+              {...restoreDialog.actionProps()}
+              onClick={(e) => restoreDialog.confirm(e, handleRestore)}
             >
               {restoring ? 'Restoring…' : 'Restore'}
             </AlertDialogAction>

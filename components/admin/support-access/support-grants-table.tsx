@@ -42,6 +42,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import type { SupportGrantLevel } from '@/lib/tenancy/roles';
 
 /** One grant as `GET /api/v1/orgs/[id]/support-grants` returns it. */
@@ -98,6 +99,14 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
       setBusy(false);
     }
   };
+
+  // Committed while the revoke runs; a failure from one grant never shows on the next.
+  const revokeDialog = useCommittedDialog({
+    open: !!revoking,
+    pending: busy,
+    onClose: () => setRevoking(null),
+    clear: revokeSave.clear,
+  });
 
   return (
     <div className="space-y-3">
@@ -162,10 +171,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
                           variant="outline"
                           size="sm"
                           disabled={busy}
-                          onClick={() => {
-                            revokeSave.clear();
-                            setRevoking(grant);
-                          }}
+                          onClick={() => setRevoking(grant)}
                         >
                           Revoke
                         </Button>
@@ -179,17 +185,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
         </Table>
       </div>
 
-      <AlertDialog
-        open={!!revoking}
-        onOpenChange={(open) => {
-          // Committed while the revoke is in flight: a late failure must land here.
-          if (!open && busy) return;
-          if (!open) {
-            setRevoking(null);
-            revokeSave.clear();
-          }
-        }}
-      >
+      <AlertDialog open={!!revoking} onOpenChange={revokeDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke support access</AlertDialogTitle>
@@ -200,14 +196,14 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={revokeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...revokeDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={busy}
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                if (revoking) void revoke(revoking);
-              }}
+              {...revokeDialog.actionProps()}
+              onClick={(e) =>
+                revokeDialog.confirm(e, () => {
+                  if (revoking) void revoke(revoking);
+                })
+              }
             >
               Revoke
             </AlertDialogAction>
