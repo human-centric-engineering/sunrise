@@ -60,6 +60,7 @@ import { parsePaginationMeta } from '@/lib/validations/common';
 import { apiClient } from '@/lib/api/client';
 import { SaveError } from '@/components/forms/form-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
@@ -246,6 +247,14 @@ export function UserTable({
     }
   }, [deleteUserId, fetchUsers, meta.page, clearDelete, reportDelete]);
 
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteUserId,
+    pending: isDeleting,
+    onClose: () => setDeleteUserId(null),
+    clear: clearDelete,
+  });
+
   /**
    * Render sort icon
    */
@@ -397,10 +406,7 @@ export function UserTable({
                         {!user.erasureRequestedAt && (
                           <DropdownMenuItem
                             className="text-red-600"
-                            onClick={() => {
-                              clearDelete();
-                              setDeleteUserId(user.id);
-                            }}
+                            onClick={() => setDeleteUserId(user.id)}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
@@ -448,17 +454,7 @@ export function UserTable({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog
-        open={!!deleteUserId}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && isDeleting) return;
-          if (!open) {
-            setDeleteUserId(null);
-            clearDelete();
-          }
-        }}
-      >
+      <AlertDialog open={!!deleteUserId} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           {isPlatformAdmin(users.find((u) => u.id === deleteUserId)) ? (
             <>
@@ -483,15 +479,10 @@ export function UserTable({
               </AlertDialogHeader>
               <SaveError failure={deleteSave.failure} />
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
-                  onClick={(e) => {
-                    // Closes only on success, so a failure stays readable here.
-                    e.preventDefault();
-                    void handleDelete();
-                  }}
+                  {...deleteDialog.actionProps(handleDelete)}
                   className="bg-red-600 hover:bg-red-700"
-                  disabled={isDeleting}
                 >
                   {isDeleting ? 'Deleting...' : 'Delete'}
                 </AlertDialogAction>
