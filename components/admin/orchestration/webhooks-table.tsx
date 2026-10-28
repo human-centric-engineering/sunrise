@@ -92,7 +92,8 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   // A toggle refused because the row changed since the list loaded it.
-  const [stale, setStale] = useState(false);
+  // Counts refusals, so each one remounts the notice and brings it into view (§124).
+  const [stale, setStale] = useState(0);
   // Rows with a toggle in flight: a second click would carry the version from
   // before the first, and be refused as stale by the change it just made.
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
@@ -102,7 +103,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
     async (page: number) => {
       setLoading(true);
       setListError(null);
-      setStale(false);
+      setStale(0);
       try {
         const params = new URLSearchParams({ page: String(page), limit: String(meta.limit) });
         if (activeFilter !== 'all') params.set('isActive', activeFilter);
@@ -159,7 +160,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
         prev.map((w) => (w.id === wh.id ? { ...w, isActive: wh.isActive } : w))
       );
       if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
-        setStale(true);
+        setStale((n) => n + 1);
         return;
       }
       setListError(
@@ -207,8 +208,12 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           {listError}
         </div>
       )}
-      {stale && (
-        <StaleSaveNotice what="That subscription" onReload={() => void fetchPage(meta.page)} />
+      {stale > 0 && (
+        <StaleSaveNotice
+          key={stale}
+          what="That subscription"
+          onReload={() => void fetchPage(meta.page)}
+        />
       )}
 
       {/* Table */}

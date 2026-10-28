@@ -14,8 +14,8 @@ import * as React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save, Plus, X } from 'lucide-react';
-import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
+import { Check, Loader2, Save, Plus, X } from 'lucide-react';
+import { SaveError } from '@/components/forms/form-error';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -35,7 +35,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
+import { applyFieldErrors, readSaveError, type SaveFailure } from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -201,6 +202,32 @@ function guardModeToApi(v: string): string | null {
 }
 
 /**
+ * Server path → the field that shows its error, for the fields that render
+ * one. Every other path (the selects and switches, which render no message,
+ * and the escalation addresses, which live outside the form) joins the
+ * summary by Save.
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
+  globalMonthlyBudgetUsd: 'globalMonthlyBudgetUsd',
+  defaultMaxCostPerExecutionUsd: 'defaultMaxCostPerExecutionUsd',
+  defaultMaxCostPerTurnUsd: 'defaultMaxCostPerTurnUsd',
+  maxConversationsPerUser: 'maxConversationsPerUser',
+  maxMessagesPerConversation: 'maxMessagesPerConversation',
+  stuckExecutionThresholdMins: 'stuckExecutionThresholdMins',
+  webhookRetentionDays: 'webhookRetentionDays',
+  webhookDlqRetentionDays: 'webhookDlqRetentionDays',
+  costLogRetentionDays: 'costLogRetentionDays',
+  auditLogRetentionDays: 'auditLogRetentionDays',
+  executionRetentionDays: 'executionRetentionDays',
+  evaluationRetentionDays: 'evaluationRetentionDays',
+  defaultApprovalTimeoutMs: 'approvalTimeout',
+  'searchConfig.keywordBoostWeight': 'keywordBoostWeight',
+  'searchConfig.vectorWeight': 'vectorWeight',
+  'searchConfig.bm25Weight': 'bm25Weight',
+  'escalationConfig.webhookUrl': 'escalationWebhookUrl',
+};
+
+/**
  * The escalation config a save of these values sends: `null` when escalation
  * is off. Enabled with no recipients never reaches a save: the schema refuses it.
  */
@@ -222,7 +249,9 @@ export function SettingsForm({
   allowPrivateEscalationWebhook = false,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
-  const [error, setError] = React.useState<string | null>(null);
+  const [saveFailure, setSaveFailure] = React.useState<SaveFailure<keyof SettingsFormData> | null>(
+    null
+  );
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
@@ -234,8 +263,6 @@ export function SettingsForm({
   const [escalationVersion, setEscalationVersion] = React.useState(
     initialSettings.escalationVersion
   );
-  // The list changed since this page loaded it, and the save was refused.
-  const [escalationStale, setEscalationStale] = React.useState(false);
   // What the list was when this page loaded it, or last saved it (§122 t-899).
   // A save sends the list only when it differs: measured against this, not the
   // form's defaults, which a save does not move on.
@@ -366,6 +393,7 @@ export function SettingsForm({
     reset,
     watch,
     clearErrors,
+    setError,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(formSchema),
@@ -385,8 +413,6 @@ export function SettingsForm({
   // zodResolver already validates and transforms the data via settingsFormSchema,
   // so `values` here is the parsed output type (numbers/null, not strings).
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
-    setError(null);
-    setEscalationStale(false);
     const escalationConfig = escalationConfigFrom(
       values.escalationEnabled,
       escalationEmails,
@@ -469,31 +495,24 @@ export function SettingsForm({
       }
       setSavedAt(new Date());
     } catch (err) {
-      if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
-        setEscalationStale(true);
-        return;
-      }
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save settings. Try again in a moment.'
-      );
+      const failure = readSaveError(err, {
+        fallback: 'Could not save settings. Try again in a moment.',
+        fields: SERVER_FIELDS,
+      });
+      applyFieldErrors(failure, setError);
+      setSaveFailure(failure);
     }
   };
 
   return (
     <form
-      onSubmit={(e) => void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e)}
+      onSubmit={(e) => {
+        // Cleared on every press: one client validation blocks never reaches onSubmit.
+        setSaveFailure(null);
+        void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e);
+      }}
       className="max-w-3xl space-y-6"
     >
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
-      {escalationStale && <StaleSaveNotice what="The escalation list" />}
-
       {/* ── Safety ──────────────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
@@ -1363,27 +1382,31 @@ export function SettingsForm({
       </Card>
 
       {/* ── Submit ─────────────────────────────────────────────────────── */}
-      <div className="sticky bottom-4 flex items-center gap-3">
-        <SharedSettingsSaveHint />
-        <Button type="submit" disabled={readOnly || isSubmitting || !hasChanges}>
-          {isSubmitting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Saving…
-            </>
-          ) : (
-            <>
-              <Save className="mr-2 h-4 w-4" />
-              Save settings
-            </>
+      <div className="sticky bottom-4 space-y-2">
+        {/* Only the escalation list is versioned here, so a stale save is always it (§122). */}
+        <SaveError failure={saveFailure} stale={{ what: 'The escalation list' }} />
+        <div className="flex items-center gap-3">
+          <SharedSettingsSaveHint />
+          <Button type="submit" disabled={readOnly || isSubmitting || !hasChanges}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save className="mr-2 h-4 w-4" />
+                Save settings
+              </>
+            )}
+          </Button>
+          {savedAt && !hasChanges && (
+            <span className="text-muted-foreground flex items-center gap-1 text-sm">
+              <Check className="h-4 w-4 text-emerald-500" />
+              Saved
+            </span>
           )}
-        </Button>
-        {savedAt && !hasChanges && (
-          <span className="text-muted-foreground flex items-center gap-1 text-sm">
-            <Check className="h-4 w-4 text-emerald-500" />
-            Saved
-          </span>
-        )}
+        </div>
       </div>
     </form>
   );
