@@ -510,6 +510,57 @@ describe('SettingsForm', () => {
       });
     });
 
+    it('shows a failed save beside the sticky Save button, not at the top of the page (§124)', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Something broke'));
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const save = screen.getByRole('button', { name: /save settings/i });
+      await act(async () => {
+        fireEvent.submit(save.closest('form')!);
+      });
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Something broke');
+      expect(alert).toHaveClass('bg-red-50');
+      expect(save.closest('.sticky')).toContainElement(alert);
+      expect(alert).toHaveFocus();
+    });
+
+    it('puts fields the server rejected under those fields, mapping its paths to them (§124)', async () => {
+      // validateRequestBody's { errors: [{ path, message }] } shape
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        Object.assign(new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400), {
+          details: {
+            errors: [
+              { path: 'defaultApprovalTimeoutMs', message: 'Timeout is too long' },
+              { path: 'globalMonthlyBudgetUsd', message: 'Budget is over the install cap' },
+              { path: 'escalationConfig.emailAddresses.0', message: 'Not a deliverable address' },
+            ],
+          },
+        })
+      );
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const save = screen.getByRole('button', { name: /save settings/i });
+      await act(async () => {
+        fireEvent.submit(save.closest('form')!);
+      });
+
+      // Each mapped path lands under its own field, under the form's name for it
+      expect(await screen.findByText('Timeout is too long')).toBeInTheDocument();
+      expect(screen.getByText('Budget is over the install cap')).toBeInTheDocument();
+      // The list has no field in the form, so its message joins the summary
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('2 fields need fixing. Not a deliverable address');
+      expect(save.closest('.sticky')).toContainElement(alert);
+      // Focus goes to the first rejected field on the page (budget sits above the timeout)
+      await waitFor(() => expect(document.getElementById('globalMonthlyBudgetUsd')).toHaveFocus());
+    });
+
     it('displays generic error for non-API errors', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockRejectedValue(new Error('network failure'));
@@ -1042,6 +1093,12 @@ describe('SettingsForm', () => {
         expect(notice).toHaveTextContent(/nothing was saved/i);
         expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
         expect(screen.getByText('ops@example.com')).toBeInTheDocument();
+        // Red, beside Save, and focused (§124): the owner missed it at the top in amber
+        expect(notice).toHaveClass('bg-red-50');
+        expect(
+          screen.getByRole('button', { name: /save settings/i }).closest('.sticky')
+        ).toContainElement(notice);
+        expect(notice).toHaveFocus();
       });
     });
 

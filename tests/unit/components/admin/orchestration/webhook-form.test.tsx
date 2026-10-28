@@ -428,6 +428,12 @@ describe('WebhookForm', () => {
     const notice = await screen.findByRole('alert');
     expect(notice).toHaveTextContent(/this subscription changed since you opened it/i);
     expect(screen.getByDisplayValue('edited note')).toBeInTheDocument();
+    // Red, and beside the Save that was pressed (§124)
+    expect(notice).toHaveClass('bg-red-50');
+    expect(
+      screen.getByRole('button', { name: /save changes/i }).closest('.sticky')
+    ).toContainElement(notice);
+    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
   });
 
@@ -532,6 +538,37 @@ describe('WebhookForm', () => {
     });
     // Assert — no navigation occurred
     expect(pushMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+  });
+
+  it('puts a field the server rejected under that field, with the count beside Save (§124)', async () => {
+    // Arrange — handleAPIError's Record<path, string[]> shape
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      Object.assign(new APIClientError('Validation failed', 'VALIDATION_ERROR', 400), {
+        details: { url: ['Webhook URL resolves to a private address'] },
+      })
+    );
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    const url = screen.getByRole('textbox', { name: /endpoint url/i });
+    await user.type(url, 'https://example.com/hook');
+    await user.click(screen.getByTitle(/generate a random secret/i));
+    await user.click(screen.getAllByRole('checkbox')[0]);
+
+    // Act
+    const save = screen.getByRole('button', { name: /create subscription/i });
+    await user.click(save);
+
+    // Assert — the message is under the field, and focus moved to it
+    expect(
+      await screen.findByText('Webhook URL resolves to a private address')
+    ).toBeInTheDocument();
+    await waitFor(() => expect(url).toHaveFocus());
+    // Assert — the summary is in the sticky bar that holds Save, not below it
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('1 field needs fixing.');
+    expect(save.closest('.sticky')).toContainElement(alert);
   });
 
   it('surfaces fallback message for non-APIClientError on submit failure', async () => {
