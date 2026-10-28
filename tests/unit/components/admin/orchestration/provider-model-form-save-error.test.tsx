@@ -99,6 +99,21 @@ describe('ProviderModelForm — failed save', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.');
   });
 
+  it.each([
+    ['capabilities', 'group', 'Model capabilities'],
+    ['tierRole', 'combobox', 'Tier Role'],
+    ['deploymentProfiles', 'group', 'Deployment profiles'],
+  ])('focuses the %s control when the server rejects it', async (path, role, name) => {
+    await rejectWith([{ path, message: 'Not allowed here' }]);
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={MODEL} />);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(screen.getByRole(role, { name })).toHaveFocus());
+    expect(screen.getByText('Not allowed here')).toBeInTheDocument();
+  });
+
   it('keeps a message for a field in a hidden section in the summary', async () => {
     // A chat model shows no embedding fields: placed there, the message would be lost.
     await rejectWith([{ path: 'dimensions', message: 'Dimensions must be positive' }]);

@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/select';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_WIDGET_CONFIG, type WidgetConfig } from '@/lib/validations/orchestration';
 
 interface Props {
@@ -128,7 +128,7 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
   const [saving, setSaving] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   // No field shows its own error, so every server message joins the summary.
-  const save = useSaveFailure({ fallback: 'Failed to save appearance', fields: {} });
+  const save = useSaveFailure({ fallback: 'Failed to save appearance', fields: NO_SERVER_FIELDS });
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
   const endpoint = API.ADMIN.ORCHESTRATION.agentWidgetConfig(agentId);

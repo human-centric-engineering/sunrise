@@ -290,7 +290,10 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(res.status).toBe(400);
     expect((await json(res)).error).toMatchObject({
       code: 'VALIDATION_ERROR',
-      details: { unknownProviders: ['nope'] },
+      details: {
+        errors: [{ path: 'approved', message: 'No provider has the slug nope' }],
+        unknownProviders: ['nope'],
+      },
     });
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
     expect(mockLogAdminAction).not.toHaveBeenCalled();

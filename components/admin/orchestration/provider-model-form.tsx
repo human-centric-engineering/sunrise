@@ -563,7 +563,10 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               the orchestration engine does not invoke these capabilities at runtime.
             </FieldHelp>
           </Label>
+          {/* The field's id, and focusable, so a rejected set can take focus. */}
           <div
+            id="capabilities"
+            tabIndex={-1}
             className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3"
             role="group"
             aria-label="Model capabilities"
@@ -600,7 +603,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
         {/* Tier Role */}
         <div className="space-y-2">
-          <Label>
+          <Label htmlFor="tierRole">
             Tier Role{' '}
             <FieldHelp title="Tier roles">
               <p>
@@ -613,7 +616,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             defaultValue={model?.tierRole ?? 'thinking'}
             onValueChange={(v) => setValue('tierRole', v as ModelFormData['tierRole'])}
           >
-            <SelectTrigger>
+            <SelectTrigger id="tierRole">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -646,7 +649,14 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               </p>
             </FieldHelp>
           </Label>
-          <div className="space-y-2">
+          {/* The field's id, and focusable, so a rejected set can take focus. */}
+          <div
+            id="deploymentProfiles"
+            tabIndex={-1}
+            className="space-y-2"
+            role="group"
+            aria-label="Deployment profiles"
+          >
             {DEPLOYMENT_PROFILES.map((profile) => {
               const meta = DEPLOYMENT_PROFILE_META[profile];
               const checked = watch('deploymentProfiles')?.includes(profile) ?? false;

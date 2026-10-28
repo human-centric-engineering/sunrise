@@ -84,6 +84,24 @@ describe('OrgProvidersForm — failed save', () => {
     await waitFor(() => expect(alert).toHaveFocus());
   });
 
+  it('says which slug the server could not find, not just the slug', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    // What the PUT route sends when an approved provider was deleted meanwhile.
+    vi.mocked(apiClient.put).mockRejectedValue(
+      new APIClientError('No provider has the slug acme', 'VALIDATION_ERROR', 400, {
+        errors: [{ path: 'approved', message: 'No provider has the slug acme' }],
+        unknownProviders: ['acme'],
+      })
+    );
+    const user = userEvent.setup();
+    const save = renderForm();
+
+    await user.click(save);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('No provider has the slug acme');
+  });
+
   it('clears the last failure when Save is pressed again', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.put)

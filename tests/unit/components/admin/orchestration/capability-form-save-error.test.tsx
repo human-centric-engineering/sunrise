@@ -115,6 +115,20 @@ describe('CapabilityForm — failed save', () => {
     expect(screen.getByText('Must be at most 10000')).toBeInTheDocument();
   });
 
+  it('says a rejected field that is not showing by Save, so its message is not lost', async () => {
+    // The approval timeout shows only while approval is required, and this
+    // capability doesn't require it.
+    await rejectWith({ approvalTimeoutMs: ['Must be at most 3600000'] });
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Must be at most 3600000');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
   it('with errors on two tabs, brings forward the earlier one and focuses its field', async () => {
     await rejectWith({
       rateLimit: ['Must be at most 10000'],

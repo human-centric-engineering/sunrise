@@ -49,6 +49,12 @@ interface FormOptions<TField extends string> extends Options {
 }
 
 /**
+ * The field table for a page that places no field messages: every server
+ * message joins the summary by Save. One object, so `report` stays stable.
+ */
+export const NO_SERVER_FIELDS: Partial<Record<string, never>> = Object.freeze({});
+
+/**
  * Owns a page's failed save, so every page shows one the same way (§124):
  * each failure is a new object, which `<SaveError>` brings into view, and
  * every press of Save clears the last one.
@@ -67,8 +73,8 @@ export function useSaveFailure<TField extends string>(
   const fields = 'fields' in options ? options.fields : undefined;
   const setError = 'fields' in options ? options.setError : undefined;
 
-  // Stable while the form's options are: a module-level table and
-  // react-hook-form's `setError` are.
+  // Stable while the form's options are: a module-level or memoised table
+  // (`NO_SERVER_FIELDS` for none) and react-hook-form's `setError` are.
   const report = useCallback(
     (err: unknown) => {
       let next: SaveFailure<TField | string>;

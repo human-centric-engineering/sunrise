@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/select';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface ActiveEmbeddingModelOption {
   /** `AiProviderModel.id` — the FK value posted to /settings. */
@@ -79,7 +79,10 @@ export function ActiveEmbeddingModelForm({
   const [saved, setSaved] = React.useState<string | null>(initialActiveEmbeddingModelId);
   const [submitting, setSubmitting] = React.useState(false);
   // No field shows its own message, so every server message joins the summary.
-  const save = useSaveFailure({ fallback: 'Failed to save — please try again.', fields: {} });
+  const save = useSaveFailure({
+    fallback: 'Failed to save — please try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [needsReset, setNeedsReset] = React.useState(false);
 
   const dirty = selected !== (saved ?? UNSET_VALUE);

@@ -303,7 +303,9 @@ function firstErrorMessage(error: unknown): string | undefined {
 /**
  * Server path → the field that shows its message. Only fields that render
  * `errors.x` are listed; every other path joins the summary by Save
- * (`.context/ui/form-errors.md`).
+ * (`.context/ui/form-errors.md`). A field shown only in some states is added
+ * in the form while it shows: a message put on a field that isn't on the page
+ * would show nowhere.
  */
 const SERVER_FIELDS: Partial<Record<string, keyof AgentFormData>> = {
   name: 'name',
@@ -318,12 +320,10 @@ const SERVER_FIELDS: Partial<Record<string, keyof AgentFormData>> = {
   rateLimitRpm: 'rateLimitRpm',
   maxHistoryTokens: 'maxHistoryTokens',
   maxHistoryMessages: 'maxHistoryMessages',
-  runtimePromptNote: 'runtimePromptNote',
   persona: 'persona',
   systemInstructions: 'systemInstructions',
   guardrails: 'guardrails',
   brandVoiceInstructions: 'brandVoiceInstructions',
-  knowledgeTriggerKeywords: 'knowledgeTriggerKeywords',
 };
 
 /** The tabs that hold form fields, in the order they are shown. */
@@ -516,9 +516,21 @@ export function AgentForm({
     },
   });
 
+  const currentRuntimePromptManaged = watch('runtimePromptManaged');
+  const currentRetrievalMode = watch('knowledgeRetrievalMode');
+  const serverFields = useMemo(
+    (): Partial<Record<string, keyof AgentFormData>> => ({
+      ...SERVER_FIELDS,
+      ...(currentRuntimePromptManaged ? { runtimePromptNote: 'runtimePromptNote' } : {}),
+      ...(currentRetrievalMode === 'keywords'
+        ? { knowledgeTriggerKeywords: 'knowledgeTriggerKeywords' }
+        : {}),
+    }),
+    [currentRuntimePromptManaged, currentRetrievalMode]
+  );
   const save = useSaveFailure({
     fallback: 'Could not save agent. Try again in a moment.',
-    fields: SERVER_FIELDS,
+    fields: serverFields,
     setError,
   });
 
@@ -542,7 +554,6 @@ export function AgentForm({
   const currentPersonaMode = watch('personaMode');
   const currentVoiceMode = watch('voiceMode');
   const currentGuardrailsMode = watch('guardrailsMode');
-  const currentRuntimePromptManaged = watch('runtimePromptManaged');
 
   // Resolve the live effective prompt for the preview card on the
   // Instructions tab. Uses the same pure helper that the chat handler
@@ -734,7 +745,7 @@ export function AgentForm({
             .join(' · ')}`
         : 'Cannot save — some required fields are missing.',
       keys.flatMap((key) => {
-        const field = SERVER_FIELDS[key];
+        const field = serverFields[key];
         const message = field && firstErrorMessage(formErrors[field]);
         return field && message ? [{ field, message }] : [];
       })
@@ -2254,7 +2265,7 @@ export function AgentForm({
             </Select>
           </div>
 
-          {watch('knowledgeRetrievalMode') === 'keywords' && (
+          {currentRetrievalMode === 'keywords' && (
             <div className="grid gap-2">
               <Label htmlFor="knowledgeTriggerKeywords">
                 Trigger keywords{' '}

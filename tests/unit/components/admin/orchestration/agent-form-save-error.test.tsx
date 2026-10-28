@@ -170,6 +170,20 @@ describe('AgentForm — failed save', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('2 fields need fixing.');
   });
 
+  it('says a rejected field that is not showing by Save, so its message is not lost', async () => {
+    // Trigger keywords show only in keyword retrieval mode, which this agent
+    // is not in: put under the field, the message would show nowhere.
+    await rejectWith([{ path: 'knowledgeTriggerKeywords', message: 'At most 50 keywords' }]);
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('At most 50 keywords');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
   it('brings forward the tab of a field client validation blocked', async () => {
     const user = userEvent.setup();
     renderForm();

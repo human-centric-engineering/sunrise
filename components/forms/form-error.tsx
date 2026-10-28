@@ -174,15 +174,18 @@ export function SaveError<TField extends string>({
     // named field the revealed tab shows: the summary by Save says how many.
     onRevealField(names);
     // The revealed tab renders on a later commit; look again until it has.
+    // A field found before that commit can be on the tab being left, so the
+    // look goes on until the field it focused is still there a frame later.
     let frame = 0;
     let tries = 0;
+    let focused: HTMLElement | null = null;
     const look = () => {
+      if (focused?.isConnected) return;
       const revealed = firstPresent(root, names);
-      if (revealed) {
-        if (!focusField(revealed)) focusBox();
-      } else if (++tries < REVEAL_FRAMES) {
+      if (revealed && revealed !== focused && focusField(revealed)) focused = revealed;
+      if (++tries < REVEAL_FRAMES) {
         frame = requestAnimationFrame(look);
-      } else {
+      } else if (!focused?.isConnected) {
         focusBox();
       }
     };

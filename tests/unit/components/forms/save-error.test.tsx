@@ -189,6 +189,46 @@ describe('SaveError', () => {
     await waitFor(() => expect(reveal).toHaveBeenCalledWith(['webhookUrl', 'retries']));
   });
 
+  it('follows a tab switch that lands after its first look, rather than losing focus', async () => {
+    // The form switches tabs a frame late, so the first look still finds
+    // `name` on the tab being left. Focus must end on the revealed field.
+    function LateTabs() {
+      const [current, setCurrent] = useState<SaveFailure | null>(null);
+      const [tab, setTab] = useState<'main' | 'advanced'>('main');
+      return (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setCurrent(
+              failure({
+                fields: [
+                  { field: 'name', message: 'Required' },
+                  { field: 'webhookUrl', message: 'Must be https' },
+                ],
+              })
+            );
+          }}
+        >
+          {tab === 'main' ? (
+            <input aria-label="Name" name="name" />
+          ) : (
+            <input aria-label="Webhook" name="webhookUrl" />
+          )}
+          <SaveError
+            failure={current}
+            onRevealField={() => requestAnimationFrame(() => setTab('advanced'))}
+          />
+          <button type="submit">Save</button>
+        </form>
+      );
+    }
+    render(<LateTabs />);
+
+    save();
+
+    await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
+  });
+
   it('with errors on two tabs, focuses the first named field the revealed tab shows', async () => {
     // `name` is on the showing tab, `webhookUrl` on the hidden one. They can't
     // both be on the page, so the form keeps its earlier tab and focus goes

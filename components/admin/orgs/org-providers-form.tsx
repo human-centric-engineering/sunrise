@@ -26,7 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /** `GET /api/v1/admin/orgs/[id]/providers`, as the route reports it. */
 export interface OrgProviderPolicyView {
@@ -77,7 +77,7 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
   // request body", and the field messages say which code was wrong.
   const saveFailure = useSaveFailure({
     fallback: 'Could not save the approved providers',
-    fields: {},
+    fields: NO_SERVER_FIELDS,
   });
 
   if (policy.unrestricted) {

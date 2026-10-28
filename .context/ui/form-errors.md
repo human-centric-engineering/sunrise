@@ -57,7 +57,10 @@ The server sends field errors in two shapes; `readSaveError()` reads both.
 
 Both come from a `VALIDATION_ERROR`, and only that code is read for fields:
 another error's `details` can be record-shaped metadata
-(`{ unknownIds: [...] }`), which is not fields.
+(`{ unknownIds: [...] }`), which is not fields. A route that answers
+`VALIDATION_ERROR` with metadata of its own sends it beside the list shape,
+which wins (`{ errors: [...], unknownProviders: [...] }` from the org
+providers `PUT`); bare, it would be read as a field named `unknownProviders`.
 
 Every distinct message for a field is kept, joined, under that field: when
 several paths land on one field (each element of an array), each problem is
@@ -78,8 +81,15 @@ const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
 **List only fields that render their error** (`errors.x?.message` under the
 control). A select or switch that renders none must stay out of the table, so
 its message reaches the summary; mapped, it would be set on the form and shown
-nowhere. An array element's path (`retryBackoffMs.1`) falls back to its
-array's entry, so the table lists the array once.
+nowhere. The same goes for a field the form shows only in some states (the
+agent form's trigger keywords, the capability form's approval timeout): add
+it to a memoised table only while it shows. An array element's path
+(`retryBackoffMs.1`) falls back to its array's entry, so the table lists the
+array once.
+
+Every mapped field needs a `name` or `id` on the page equal to its field name,
+or focus can't reach it: a Select's trigger takes the `id`, and a checkbox
+group takes it on its `role="group"` wrapper with `tabIndex={-1}`.
 
 Without a table, each server path is taken as the field name. That is for a
 plain-state form placing messages itself; a react-hook-form form always
@@ -142,9 +152,11 @@ split it: the load error keeps its own display.
 
 ## Recipe: a plain-state form
 
-`useSaveFailure({ fallback, fields: {} })`: with an empty table every server
-message joins the summary by Save, which is right for a form that renders no
-message under its controls. A plain form that does place messages passes a
+`useSaveFailure({ fallback, fields: NO_SERVER_FIELDS })`: with an empty table
+every server message joins the summary by Save, which is right for a form that
+renders no message under its controls. Use the exported constant, not an
+inline `{}`: a new table each render gives `save.report` a new identity each
+render. A plain form that does place messages passes a
 table (or none, to take server paths as field names), and renders each
 `save.failure.fields` entry under its field. Call `save.clear()` first thing in
 the Save handler when there is no `<form onSubmit>` to wrap.

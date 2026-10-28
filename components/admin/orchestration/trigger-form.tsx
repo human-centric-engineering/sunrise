@@ -34,7 +34,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { logger } from '@/lib/logging';
 
 export interface WorkflowOption {
@@ -113,7 +113,7 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
 
   const [submitting, setSubmitting] = useState(false);
   // No field shows its own error, so every server message joins the summary.
-  const save = useSaveFailure({ fallback: 'Save failed', fields: {} });
+  const save = useSaveFailure({ fallback: 'Save failed', fields: NO_SERVER_FIELDS });
 
   const selectedWorkflow = workflows.find((w) => w.id === workflowId);
   const webhookUrl = selectedWorkflow

@@ -185,18 +185,11 @@ export interface CapabilityFormProps {
 }
 
 /**
- * Derive a capability slug from a display name.
- *
- * Underscore-separated, unlike slugs elsewhere in the admin: a capability slug
- * is also the tool name advertised to the LLM (#509), and every built-in uses
- * the underscore convention tool names conventionally take
- * (`search_knowledge_base`). Hyphens remain valid — `capabilitySlugSchema`
- * accepts both — this only picks the default.
- */
-/**
  * Server path → the field that shows its message. Only fields that render
  * `errors.x` are listed; every other path joins the summary by Save
- * (`.context/ui/form-errors.md`).
+ * (`.context/ui/form-errors.md`). The approval timeout shows only while
+ * approval is required, so the form adds it then: a message put on a field
+ * that isn't on the page would show nowhere.
  */
 const SERVER_FIELDS: Partial<Record<string, keyof CapabilityFormData>> = {
   name: 'name',
@@ -204,14 +197,13 @@ const SERVER_FIELDS: Partial<Record<string, keyof CapabilityFormData>> = {
   description: 'description',
   category: 'category',
   executionHandler: 'executionHandler',
-  approvalTimeoutMs: 'approvalTimeoutMs',
   rateLimit: 'rateLimit',
 };
 
 /** The tabs, in the order they are shown. */
 const FIELD_TABS = ['basic', 'function', 'execution', 'safety'] as const;
 
-/** The tab holding each field in {@link SERVER_FIELDS}. */
+/** The tab holding each field a save error can name. */
 const TAB_OF: Partial<Record<string, (typeof FIELD_TABS)[number]>> = {
   name: 'basic',
   slug: 'basic',
@@ -222,6 +214,15 @@ const TAB_OF: Partial<Record<string, (typeof FIELD_TABS)[number]>> = {
   rateLimit: 'safety',
 };
 
+/**
+ * Derive a capability slug from a display name.
+ *
+ * Underscore-separated, unlike slugs elsewhere in the admin: a capability slug
+ * is also the tool name advertised to the LLM (#509), and every built-in uses
+ * the underscore convention tool names conventionally take
+ * (`search_knowledge_base`). Hyphens remain valid — `capabilitySlugSchema`
+ * accepts both — this only picks the default.
+ */
 function toSlug(value: string): string {
   return (
     value
@@ -626,9 +627,17 @@ export function CapabilityForm({
     },
   });
 
+  const currentRequiresApproval = watch('requiresApproval');
+  const serverFields = useMemo(
+    (): Partial<Record<string, keyof CapabilityFormData>> =>
+      currentRequiresApproval
+        ? { ...SERVER_FIELDS, approvalTimeoutMs: 'approvalTimeoutMs' }
+        : SERVER_FIELDS,
+    [currentRequiresApproval]
+  );
   const save = useSaveFailure({
     fallback: 'Could not save capability. Try again in a moment.',
-    fields: SERVER_FIELDS,
+    fields: serverFields,
     setError,
   });
 
@@ -636,7 +645,6 @@ export function CapabilityForm({
   const currentSlug = watch('slug');
   const currentExecutionType = watch('executionType');
   const currentIsActive = watch('isActive');
-  const currentRequiresApproval = watch('requiresApproval');
   const currentCategory = watch('category');
 
   // Auto-slug from name until user edits slug.
@@ -911,7 +919,7 @@ export function CapabilityForm({
    */
   const onInvalid = (formErrors: FieldErrors<CapabilityFormData>) => {
     const named = Object.keys(formErrors).flatMap((key) => {
-      const field = SERVER_FIELDS[key];
+      const field = serverFields[key];
       const message = field && formErrors[field]?.message;
       return field && message ? [{ field, message }] : [];
     });
