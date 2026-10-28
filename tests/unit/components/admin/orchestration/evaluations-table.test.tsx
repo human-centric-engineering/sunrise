@@ -533,4 +533,233 @@ describe('EvaluationsTable', () => {
       });
     });
   });
+
+  // ── Row fallbacks and status badge ─────────────────────────────────────────
+
+  describe('row rendering fallbacks', () => {
+    it('renders an em-dash agent and 0 logs for a row with no agent and no log count', () => {
+      render(
+        <EvaluationsTable
+          initialEvaluations={[
+            {
+              id: 'ev-9',
+              title: 'Orphan Eval',
+              status: 'draft',
+              agent: null,
+              createdAt: '2025-01-03T00:00:00.000Z',
+            },
+          ]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      const cells = within(screen.getByText('Orphan Eval').closest('tr')!).getAllByRole('cell');
+      expect(cells[1]).toHaveTextContent('—');
+      expect(cells[3]).toHaveTextContent('0');
+    });
+
+    it('renders an in-progress session as "In Progress" with its own badge style', () => {
+      render(
+        <EvaluationsTable
+          initialEvaluations={[
+            { ...MOCK_EVALUATIONS[0], id: 'ev-ip', title: 'Running', status: 'in_progress' },
+            { ...MOCK_EVALUATIONS[1], id: 'ev-done', title: 'Finished', status: 'completed' },
+            { ...MOCK_EVALUATIONS[0], id: 'ev-arch', title: 'Old', status: 'archived' },
+          ]}
+          initialMeta={{ ...MOCK_META, total: 3 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      const inProgress = screen.getByText('In Progress');
+      const completed = screen.getByText('Completed');
+      const archived = screen.getByText('Archived');
+      // in_progress is the secondary style: distinct from completed (primary)
+      // and from archived (plain outline).
+      expect(inProgress.className).toContain('bg-secondary');
+      expect(completed.className).toContain('bg-primary');
+      expect(archived.className).not.toContain('bg-secondary');
+      expect(archived.className).not.toContain('bg-primary');
+    });
+  });
+
+  // ── List reload ────────────────────────────────────────────────────────────
+
+  describe('list reload', () => {
+    const TWO_PAGES: PaginationMeta = { page: 1, limit: 25, total: 40, totalPages: 2 };
+    const LOAD_ERROR = 'Could not load evaluations. Try refreshing the page.';
+
+    it('shows the load error and keeps the existing rows when the response is not OK', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue(new Response('boom', { status: 500 }));
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={TWO_PAGES}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      expect(await screen.findByText(LOAD_ERROR)).toBeInTheDocument();
+      expect(screen.getByText('Tone Check')).toBeInTheDocument();
+      expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+      // The failed attempt is over: the pager is usable again.
+      expect(screen.getByRole('button', { name: /^next/i })).toBeEnabled();
+    });
+
+    it('shows the load error and keeps the existing rows when the body reports failure', async () => {
+      const user = userEvent.setup();
+      vi.mocked(parseApiResponse).mockResolvedValue({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: 'nope' },
+      });
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={TWO_PAGES}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      expect(await screen.findByText(LOAD_ERROR)).toBeInTheDocument();
+      expect(screen.getByText('Tone Check')).toBeInTheDocument();
+      expect(screen.getByText('Safety Audit')).toBeInTheDocument();
+    });
+
+    it('clears the load error on the next successful reload', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={TWO_PAGES}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+      await screen.findByText(LOAD_ERROR);
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      await waitFor(() => expect(screen.queryByText(LOAD_ERROR)).not.toBeInTheDocument());
+    });
+
+    it('swaps in the new rows but keeps the old pager when the response has no valid meta', async () => {
+      const user = userEvent.setup();
+      vi.mocked(parseApiResponse).mockResolvedValue({
+        success: true,
+        data: [{ ...MOCK_EVALUATIONS[1], id: 'ev-new', title: 'Fresh Row' }],
+      });
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={TWO_PAGES}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      expect(await screen.findByText('Fresh Row')).toBeInTheDocument();
+      expect(screen.queryByText('Tone Check')).not.toBeInTheDocument();
+      expect(screen.getByText('Page 1 of 2 (40 total)')).toBeInTheDocument();
+    });
+
+    it('updates the pager from the response meta when it is valid', async () => {
+      const user = userEvent.setup();
+      vi.mocked(parseApiResponse).mockResolvedValue({
+        success: true,
+        data: MOCK_EVALUATIONS,
+        meta: { page: 2, limit: 25, total: 40, totalPages: 2 },
+      });
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={TWO_PAGES}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      expect(await screen.findByText('Page 2 of 2 (40 total)')).toBeInTheDocument();
+    });
+
+    it('Previous on page 2 requests page 1', async () => {
+      const user = userEvent.setup();
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={{ page: 2, limit: 25, total: 40, totalPages: 2 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /previous/i }));
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+      const url = new URL(toUrlString(mockFetch.mock.calls[0][0]), 'http://localhost');
+      expect(url.searchParams.get('page')).toBe('1');
+      expect(url.searchParams.get('limit')).toBe('25');
+    });
+
+    it('shows "Loading…" in an empty table and disables both pager buttons while a reload is in flight', async () => {
+      const user = userEvent.setup();
+      let finish!: (r: Response) => void;
+      mockFetch.mockReturnValue(
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        })
+      );
+      render(
+        <EvaluationsTable
+          initialEvaluations={[]}
+          initialMeta={{ page: 2, limit: 25, total: 60, totalPages: 3 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+      expect(screen.getByText('No evaluations found.')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^next/i }));
+
+      expect(await screen.findByText('Loading…')).toBeInTheDocument();
+      expect(screen.queryByText('No evaluations found.')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^next/i })).toBeDisabled();
+
+      await act(async () => {
+        finish(jsonResponse({ success: true, data: [], meta: MOCK_META }));
+      });
+      await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
+    });
+  });
+
+  // ── Archive dialog dismissal ───────────────────────────────────────────────
+
+  describe('archive dialog dismissal', () => {
+    it('Cancel closes the dialog without archiving and keeps the row', async () => {
+      const user = userEvent.setup();
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={MOCK_META}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      await user.click(screen.getAllByRole('button', { name: /actions/i })[0]);
+      await user.click(await screen.findByRole('menuitem', { name: /archive/i }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(mockFetch.mock.calls.some((c) => c[1]?.method === 'PATCH')).toBe(false); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(screen.getByText('Tone Check')).toBeInTheDocument();
+    });
+  });
 });

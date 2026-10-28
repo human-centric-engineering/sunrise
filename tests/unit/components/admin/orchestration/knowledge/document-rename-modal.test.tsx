@@ -134,4 +134,91 @@ describe('DocumentRenameModal', () => {
     expect(alert).toHaveFocus();
     expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
   });
+
+  it('Cancel closes the dialog without saving', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), ' edit');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it('Enter in the input saves the trimmed name when the name changed', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    const input = screen.getByLabelText('Name');
+    await user.clear(input);
+    await user.type(input, ' Renamed {Enter}');
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/documents/doc-1'),
+        { body: { name: 'Renamed' } }
+      );
+    });
+    await waitFor(() => expect(props.onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('Enter does nothing while the name is unchanged', async () => {
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), '{Enter}');
+
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('Enter does not start a second save while one is in flight', async () => {
+    let finish!: (v: unknown) => void;
+    vi.mocked(apiClient.patch).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    renderModal();
+
+    const input = screen.getByLabelText('Name');
+    await user.type(input, ' v2{Enter}');
+    await screen.findByRole('button', { name: /saving/i });
+    await user.type(input, '{Enter}');
+
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+    finish({ id: 'doc-1' });
+  });
+
+  it('starts empty for a document with no name, and saves what is typed', async () => {
+    const user = userEvent.setup();
+    renderModal({ documentName: null });
+
+    const input = screen.getByLabelText('Name');
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+
+    await user.type(input, 'Fresh name');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(expect.any(String), {
+        body: { name: 'Fresh name' },
+      });
+    });
+  });
+
+  it('does not PATCH when there is no document id, even with a changed name', async () => {
+    const user = userEvent.setup();
+    const props = renderModal({ documentId: null });
+
+    await user.type(screen.getByLabelText('Name'), ' edit');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    expect(props.onSaved).not.toHaveBeenCalled();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
 });

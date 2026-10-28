@@ -468,4 +468,114 @@ describe('PendingChangeModal', () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ── Load edge cases ───────────────────────────────────────────────────────────
+
+  it('shows "Pending change not found" and no diff when the GET resolves without a change', async () => {
+    mockApiClientGet.mockResolvedValue({});
+
+    render(<PendingChangeModal {...BASE_PROPS} changeId={CHANGE_ID} />);
+
+    expect(await screen.findByText('Pending change not found')).toBeInTheDocument();
+    expect(screen.queryByTestId('text-diff')).not.toBeInTheDocument();
+    // With nothing to act on, both actions stay disabled.
+    expect(screen.getByRole('button', { name: /Accept/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Reject/i })).toBeDisabled();
+  });
+
+  it('shows a generic load error when the GET rejects with a non-Error value', async () => {
+    mockApiClientGet.mockRejectedValue('boom');
+
+    render(<PendingChangeModal {...BASE_PROPS} changeId={CHANGE_ID} />);
+
+    expect(await screen.findByText('Failed to load pending change')).toBeInTheDocument();
+    expect(screen.queryByText('boom')).not.toBeInTheDocument();
+  });
+
+  it('labels a section rewrite with no marker as "Section rewrite: ?"', async () => {
+    mockApiClientGet.mockResolvedValue(
+      makeChangeResponse(
+        makePendingChange({ source: 'rewrite_section_with_llm', sectionMarker: null })
+      )
+    );
+
+    render(<PendingChangeModal {...BASE_PROPS} changeId={CHANGE_ID} />);
+
+    expect(await screen.findByText(/Section rewrite: \?/)).toBeInTheDocument();
+  });
+
+  // ── Superseded loads ──────────────────────────────────────────────────────────
+
+  describe('when the change id switches while an earlier load is in flight', () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('ignores the stale proposal and keeps loading until the current one arrives', async () => {
+      const first = deferred<{ change: PendingChangeRecord }>();
+      const second = deferred<{ change: PendingChangeRecord }>();
+      mockApiClientGet.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+      const { rerender } = render(<PendingChangeModal {...BASE_PROPS} changeId="change-1" />);
+      rerender(<PendingChangeModal {...BASE_PROPS} changeId="change-2" />);
+
+      first.resolve(makeChangeResponse(makePendingChange({ instructions: 'STALE instructions' })));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // The stale answer neither renders nor ends the current load.
+      expect(screen.queryByText(/STALE instructions/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Loading…/)).toBeInTheDocument();
+
+      second.resolve(
+        makeChangeResponse(makePendingChange({ instructions: 'CURRENT instructions' }))
+      );
+      expect(await screen.findByText(/CURRENT instructions/)).toBeInTheDocument();
+      expect(screen.queryByText(/STALE instructions/)).not.toBeInTheDocument();
+    });
+
+    it('does not show the stale load failure over the current proposal', async () => {
+      const first = deferred<{ change: PendingChangeRecord }>();
+      const second = deferred<{ change: PendingChangeRecord }>();
+      mockApiClientGet.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+      const { rerender } = render(<PendingChangeModal {...BASE_PROPS} changeId="change-1" />);
+      rerender(<PendingChangeModal {...BASE_PROPS} changeId="change-2" />);
+
+      first.reject(new Error('STALE failure'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      second.resolve(
+        makeChangeResponse(makePendingChange({ instructions: 'CURRENT instructions' }))
+      );
+      expect(await screen.findByText(/CURRENT instructions/)).toBeInTheDocument();
+      expect(screen.queryByText('STALE failure')).not.toBeInTheDocument();
+    });
+
+    it('discards a stale response that carries no change without raising an error', async () => {
+      const first = deferred<Record<string, never>>();
+      const second = deferred<{ change: PendingChangeRecord }>();
+      mockApiClientGet.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+      const { rerender } = render(<PendingChangeModal {...BASE_PROPS} changeId="change-1" />);
+      rerender(<PendingChangeModal {...BASE_PROPS} changeId="change-2" />);
+
+      first.resolve({});
+      await Promise.resolve();
+      await Promise.resolve();
+
+      second.resolve(
+        makeChangeResponse(makePendingChange({ instructions: 'CURRENT instructions' }))
+      );
+      expect(await screen.findByText(/CURRENT instructions/)).toBeInTheDocument();
+      expect(screen.queryByText('Pending change not found')).not.toBeInTheDocument();
+    });
+  });
 });

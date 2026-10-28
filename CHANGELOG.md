@@ -27,9 +27,10 @@ release process.
   `{ errors: [{ path, message }] }` and `handleAPIError`'s
   `Record<path, string[]>`) through a typed server-path → field table. A
   tabbed form passes `onRevealField(fields)` to bring forward the tab holding
-  a rejected field. The settings page, the event subscription form and the
-  admin forms with a Save button use it. See `.context/ui/form-errors.md`
-  (§124).
+  a rejected field. The settings page, the event subscription form, the
+  admin forms with a Save button, and the admin lists and confirm dialogs
+  (one box above each list; a dialog keeps its failure inside and stays open)
+  use it. See `.context/ui/form-errors.md` (§124).
 - **`useSaveFailure()`** (`lib/hooks/use-save-failure.ts`): owns a page's
   failed save. It reads the error, puts field messages on a react-hook-form
   form, and wraps submit so every press clears the last failure;
