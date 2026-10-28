@@ -34,9 +34,8 @@ release process.
   failed save. It reads the error, puts field messages on a react-hook-form
   form, and wraps submit so every press clears the last failure;
   `NO_SERVER_FIELDS` is its table for a page that places no field messages.
-  Also
-  **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only needs
-  to know a save was refused as stale (§124).
+  Also **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only
+  needs to know a save was refused as stale (§124).
 
 ### Changed
 
