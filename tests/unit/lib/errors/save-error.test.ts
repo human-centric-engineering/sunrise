@@ -123,6 +123,41 @@ describe('readSaveError', () => {
     expect(failure.message).toBe('This changed since you opened it.');
   });
 
+  it("places an array element's error on its array's field", () => {
+    const failure = readSaveError(
+      listError([
+        { path: 'retryBackoffMs.1', message: 'Too big' },
+        { path: 'escalationConfig.emailAddresses.0', message: 'Invalid email' },
+      ]),
+      { fallback: 'x', fields: { retryBackoffMs: 'retryBackoffSeconds' } }
+    );
+
+    expect(failure.fields).toEqual([{ field: 'retryBackoffSeconds', message: 'Too big' }]);
+    // An array the table does not list still falls to the summary
+    expect(failure.message).toBe('1 field needs fixing. Invalid email');
+  });
+
+  it('never resolves a path to an inherited property of the table', () => {
+    const failure = readSaveError(recordError({ constructor: ['Bad'], toString: ['Worse'] }), {
+      fallback: 'x',
+      fields: { url: 'url' },
+    });
+
+    expect(failure.fields).toEqual([]);
+    expect(failure.message).toBe('Bad Worse');
+  });
+
+  it('reads no fields from the details of an error that is not a validation failure', () => {
+    // A record-shaped detail that is metadata, not fields
+    const failure = readSaveError(
+      new APIClientError('Unknown agents', 'NOT_FOUND', 404, { unknownIds: ['a1', 'a2'] }),
+      { fallback: 'x', fields: { url: 'url' } }
+    );
+
+    expect(failure.fields).toEqual([]);
+    expect(failure.message).toBe('Unknown agents');
+  });
+
   it('ignores details in neither shape', () => {
     const failure = readSaveError(
       new APIClientError('Conflict', 'CONFLICT', 409, { existingId: 'abc' }),

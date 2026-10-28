@@ -202,13 +202,12 @@ function guardModeToApi(v: string): string | null {
 }
 
 /**
- * Server path → the field that shows its error. Paths not listed (escalation
- * email addresses, which live outside the form) join the summary by Save.
+ * Server path → the field that shows its error, for the fields that render
+ * one. Every other path (the selects and switches, which render no message,
+ * and the escalation addresses, which live outside the form) joins the
+ * summary by Save.
  */
 const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
-  inputGuardMode: 'inputGuardMode',
-  outputGuardMode: 'outputGuardMode',
-  citationGuardMode: 'citationGuardMode',
   globalMonthlyBudgetUsd: 'globalMonthlyBudgetUsd',
   defaultMaxCostPerExecutionUsd: 'defaultMaxCostPerExecutionUsd',
   defaultMaxCostPerTurnUsd: 'defaultMaxCostPerTurnUsd',
@@ -222,15 +221,9 @@ const SERVER_FIELDS: Partial<Record<string, keyof SettingsFormData>> = {
   executionRetentionDays: 'executionRetentionDays',
   evaluationRetentionDays: 'evaluationRetentionDays',
   defaultApprovalTimeoutMs: 'approvalTimeout',
-  approvalDefaultAction: 'approvalDefaultAction',
-  voiceInputGloballyEnabled: 'voiceInputGloballyEnabled',
-  imageInputGloballyEnabled: 'imageInputGloballyEnabled',
-  documentInputGloballyEnabled: 'documentInputGloballyEnabled',
   'searchConfig.keywordBoostWeight': 'keywordBoostWeight',
   'searchConfig.vectorWeight': 'vectorWeight',
-  'searchConfig.hybridEnabled': 'hybridEnabled',
   'searchConfig.bm25Weight': 'bm25Weight',
-  'escalationConfig.notifyOnPriority': 'escalationPriorityFilter',
   'escalationConfig.webhookUrl': 'escalationWebhookUrl',
 };
 

@@ -281,6 +281,31 @@ describe('WebhooksTable', () => {
     expect(screen.queryByText(/could not update webhook/i)).not.toBeInTheDocument();
   });
 
+  it('brings the stale notice back into focus on a second refusal (§124)', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(
+      new APIClientError('This changed since you opened it.', 'STALE_RECORD', 412)
+    );
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+    const switches = screen.getAllByRole('switch');
+
+    await user.click(switches[0]);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+
+    // The admin moves on to another row, which is refused too
+    await user.click(switches[1]);
+
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+  });
+
   // ── New tests ────────────────────────────────────────────────────────────────
 
   it('shows first 3 event badges and an overflow +2 badge for a webhook with 5 events', () => {

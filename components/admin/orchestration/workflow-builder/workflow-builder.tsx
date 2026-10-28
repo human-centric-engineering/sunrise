@@ -248,7 +248,8 @@ function WorkflowBuilderInner({
   const [definitionVersion, setDefinitionVersion] = useState<string | undefined>(
     workflow?.definitionVersion
   );
-  const [stale, setStale] = useState(false);
+  // Counts refusals, so each one remounts the notice and brings it into view (§124).
+  const [stale, setStale] = useState(0);
   // The custom template the canvas was loaded from, until the next save: its
   // addresses are the template's, not typed here, so the save names it and
   // is refused if the template moved on (an erasure, say) since it loaded.
@@ -588,7 +589,7 @@ function WorkflowBuilderInner({
         }
       } catch (err) {
         if (isStale(err)) {
-          setStale(true);
+          setStale((n) => n + 1);
           return;
         }
         const message =
@@ -702,7 +703,7 @@ function WorkflowBuilderInner({
         // does not hold would let the next save write that over it.
         setDefinitionVersion(fresh.definitionVersion);
         // The canvas is current again, so the reload prompt no longer applies.
-        setStale(false);
+        setStale(0);
       }
       // A rollback creates a new published version and clears the draft —
       // sync the toolbar pill to match.
@@ -740,7 +741,7 @@ function WorkflowBuilderInner({
       } catch (err) {
         if (isStale(err)) {
           setPublishDialogOpen(false);
-          setStale(true);
+          setStale((n) => n + 1);
           return;
         }
         const message =
@@ -781,13 +782,13 @@ function WorkflowBuilderInner({
         // As after a rollback: the version only with the canvas it describes.
         setDefinitionVersion(fresh.definitionVersion);
         // The canvas is current again, so the reload prompt no longer applies.
-        setStale(false);
+        setStale(0);
       }
       setHasDraft(false);
       router.refresh();
     } catch (err) {
       if (isStale(err)) {
-        setStale(true);
+        setStale((n) => n + 1);
         return;
       }
       logger.error('Workflow discard-draft failed', { err });
@@ -885,9 +886,10 @@ function WorkflowBuilderInner({
         </div>
       )}
 
-      {stale && (
+      {stale > 0 && (
         <div className="border-b px-4 py-2">
           <StaleSaveNotice
+            key={stale}
             what={
               copiedFrom ? 'This workflow, or the template it was started from,' : 'This workflow'
             }

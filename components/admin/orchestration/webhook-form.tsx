@@ -142,17 +142,17 @@ const editWebhookSchema = refineChannelFields(z.object({ ...commonFields, ...des
 
 type WebhookFormData = z.infer<typeof createWebhookSchema>;
 
-/** Server path → the field that shows its error; anything else joins the summary by Save. */
+/**
+ * Server path → the field that shows its error, for the fields that render
+ * one; every other path joins the summary by Save.
+ */
 const SERVER_FIELDS: Partial<Record<string, keyof WebhookFormData>> = {
-  channel: 'channel',
   url: 'url',
   secret: 'secret',
   emailAddress: 'emailAddress',
   events: 'events',
   agentIds: 'agentIds',
   workflowIds: 'workflowIds',
-  description: 'description',
-  isActive: 'isActive',
   maxAttempts: 'maxAttempts',
   retryBackoffMs: 'retryBackoffSeconds',
 };

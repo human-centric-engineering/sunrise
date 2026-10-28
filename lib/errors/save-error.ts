@@ -39,9 +39,11 @@ export interface ReadSaveErrorOptions<TField extends string> {
   fallback: string;
   /**
    * Server path (`searchConfig.bm25Weight`) → the form field that shows it.
-   * A path missing from the table has its message join the summary instead,
-   * so nothing the server said is lost. Without a table, each server path is
-   * taken as the field name (for a plain-state form placing messages itself).
+   * List only fields that render their error: a path missing from the table
+   * has its message join the summary instead, so nothing the server said is
+   * lost. An array element's path (`retryBackoffMs.1`) falls back to its
+   * array's entry. Without a table, each server path is taken as the field
+   * name (for a plain-state form placing messages itself).
    */
   fields?: Partial<Record<string, TField>>;
 }
@@ -51,8 +53,13 @@ const listShape = z.object({
 });
 const recordShape = z.record(z.string(), z.array(z.string()));
 
-/** Both server shapes, flattened to `[path, message]` in the order sent. */
-function serverFieldErrors(details: unknown): Array<[string, string]> {
+/**
+ * Both server shapes, flattened to `[path, message]` in the order sent. Only a
+ * validation failure carries field errors: other errors may send details of
+ * the record shape that are not fields (`{ unknownIds: ['a1'] }`).
+ */
+function serverFieldErrors(code: string | undefined, details: unknown): Array<[string, string]> {
+  if (code !== ErrorCodes.VALIDATION_ERROR) return [];
   const list = listShape.safeParse(details);
   if (list.success) return list.data.errors.map((e) => [e.path, e.message]);
   const record = recordShape.safeParse(details);
@@ -62,6 +69,18 @@ function serverFieldErrors(details: unknown): Array<[string, string]> {
     );
   }
   return [];
+}
+
+/** The table's field for a path, or for the array holding it (`events.0` → `events`). */
+function tableField<TField extends string>(
+  table: Partial<Record<string, TField>>,
+  path: string
+): TField | undefined {
+  for (let p = path; ; p = p.replace(/\.\d+$/, '')) {
+    // Own keys only: `constructor` must not resolve to Object's.
+    if (Object.hasOwn(table, p)) return table[p];
+    if (!/\.\d+$/.test(p)) return undefined;
+  }
 }
 
 function fieldCount(n: number): string {
@@ -83,8 +102,8 @@ export function readSaveError<TField extends string>(
 
   const fields: Array<{ field: TField | string; message: string }> = [];
   const unplaced: string[] = [];
-  for (const [path, message] of serverFieldErrors(err.details)) {
-    const field = options.fields ? options.fields[path] : path;
+  for (const [path, message] of serverFieldErrors(err.code, err.details)) {
+    const field = options.fields ? tableField(options.fields, path) : path;
     if (field === undefined || field === '') {
       if (!unplaced.includes(message)) unplaced.push(message);
     } else if (!fields.some((f) => f.field === field)) {

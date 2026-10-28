@@ -80,7 +80,8 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // A toggle refused because the schedule changed since the tab loaded it.
-  const [stale, setStale] = useState(false);
+  // Counts refusals, so each one remounts the notice and brings it into view (§124).
+  const [stale, setStale] = useState(0);
   // Schedules with a toggle in flight: a second click before the list reloads
   // would carry the version from before the first, and be refused.
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
@@ -100,7 +101,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
   const fetchSchedules = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setStale(false);
+    setStale(0);
     try {
       const body = await apiClient.get<{ schedules: Schedule[] }>(
         API.ADMIN.ORCHESTRATION.workflowSchedules(workflowId)
@@ -180,7 +181,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       await fetchSchedules();
     } catch (err) {
       if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
-        setStale(true);
+        setStale((n) => n + 1);
         return;
       }
       // Otherwise silent — the UI still shows the old state
@@ -234,7 +235,9 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
           {error}
         </div>
       )}
-      {stale && <StaleSaveNotice what="That schedule" onReload={() => void fetchSchedules()} />}
+      {stale > 0 && (
+        <StaleSaveNotice key={stale} what="That schedule" onReload={() => void fetchSchedules()} />
+      )}
 
       {schedules.length === 0 ? (
         <div className="rounded-md border p-6 text-center text-sm">

@@ -561,6 +561,27 @@ describe('SettingsForm', () => {
       await waitFor(() => expect(document.getElementById('globalMonthlyBudgetUsd')).toHaveFocus());
     });
 
+    it("says a rejected select's message by Save, since the select shows none of its own (§124)", async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        Object.assign(new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400), {
+          details: { errors: [{ path: 'inputGuardMode', message: 'Unknown guard mode' }] },
+        })
+      );
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const save = screen.getByRole('button', { name: /save settings/i });
+      await act(async () => {
+        fireEvent.submit(save.closest('form')!);
+      });
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Unknown guard mode');
+      expect(alert).not.toHaveTextContent(/field needs fixing/);
+      await waitFor(() => expect(alert).toHaveFocus());
+    });
+
     it('displays generic error for non-API errors', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockRejectedValue(new Error('network failure'));
