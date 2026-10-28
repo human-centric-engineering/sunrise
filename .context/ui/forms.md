@@ -9,11 +9,16 @@ Sunrise includes specialized form components for common UI patterns like error d
 | Component          | Purpose                           | File                                      |
 | ------------------ | --------------------------------- | ----------------------------------------- |
 | `FormError`        | Display validation error messages | `components/forms/form-error.tsx`         |
+| `SaveError`        | Show a failed save beside Save    | `components/forms/form-error.tsx`         |
 | `PasswordStrength` | Visual password strength meter    | `components/forms/password-strength.tsx`  |
 | `AvatarUpload`     | Avatar upload with drag-and-drop  | `components/forms/avatar-upload.tsx`      |
 | `AvatarCropDialog` | Image cropping modal              | `components/forms/avatar-crop-dialog.tsx` |
 
 ## FormError
+
+> A failed **save** is not shown with `FormError`: use `SaveError`, which sits
+> by the Save button and brings itself into view. See
+> [`form-errors.md`](./form-errors.md).
 
 Displays validation error messages with an icon, colored background, and border. Supports both direct messages and error code mapping.
 

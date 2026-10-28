@@ -16,6 +16,28 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`<SaveError>`** (`components/forms/form-error.tsx`) and **`readSaveError()`
+  / `applyFieldErrors()`** (`lib/errors/save-error.ts`): the one way a form
+  shows a save the server refused. The form places it beside the Save button
+  that was pressed; it is red, announced, and brought into view and focused on
+  every new failure, or focus goes to the first field the server named. The
+  helper reads both server field-error shapes (`validateRequestBody`'s
+  `{ errors: [{ path, message }] }` and `handleAPIError`'s
+  `Record<path, string[]>`) through a typed server-path → field table. The
+  settings page and the event subscription form use it. See
+  `.context/ui/form-errors.md` (§124).
+
+### Changed
+
+- **`StaleSaveNotice` is now red and moves into view** — it is the stale
+  variant of `<SaveError>`, with the same props, Reload and Copy my changes.
+  `StaleSaveNoticeProps` is now an alias of `StaleSaveProps` from
+  `components/forms/form-error.tsx`. **Forks:** a page rendering it gets the
+  new look and focus behaviour with no change; a test asserting its amber
+  classes needs updating (§124).
+
 ## [0.16.0] — 2026-10-27
 
 > **Alpha release.** Twenty-second tagged Sunrise release. **MINOR bump**. It
