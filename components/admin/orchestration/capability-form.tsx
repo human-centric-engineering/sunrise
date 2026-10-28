@@ -32,7 +32,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Info, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
+import { Check, Info, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
+import type { FieldErrors } from 'react-hook-form';
+
+import { SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,7 +57,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
@@ -189,6 +193,35 @@ export interface CapabilityFormProps {
  * (`search_knowledge_base`). Hyphens remain valid — `capabilitySlugSchema`
  * accepts both — this only picks the default.
  */
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof CapabilityFormData>> = {
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  category: 'category',
+  executionHandler: 'executionHandler',
+  approvalTimeoutMs: 'approvalTimeoutMs',
+  rateLimit: 'rateLimit',
+};
+
+/** The tabs, in the order they are shown. */
+const FIELD_TABS = ['basic', 'function', 'execution', 'safety'] as const;
+
+/** The tab holding each field in {@link SERVER_FIELDS}. */
+const TAB_OF: Partial<Record<string, (typeof FIELD_TABS)[number]>> = {
+  name: 'basic',
+  slug: 'basic',
+  description: 'basic',
+  category: 'basic',
+  executionHandler: 'execution',
+  approvalTimeoutMs: 'safety',
+  rateLimit: 'safety',
+};
+
 function toSlug(value: string): string {
   return (
     value
@@ -467,7 +500,7 @@ export function CapabilityForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState('basic');
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
   // Category "new" mode — when the admin picks "+ New category".
@@ -572,6 +605,7 @@ export function CapabilityForm({
   const {
     register,
     handleSubmit,
+    setError,
     setValue,
     watch,
     reset,
@@ -590,6 +624,12 @@ export function CapabilityForm({
       rateLimit: capability?.rateLimit ?? undefined,
       isActive: capability?.isActive ?? true,
     },
+  });
+
+  const save = useSaveFailure({
+    fallback: 'Could not save capability. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
   });
 
   const currentName = watch('name');
@@ -864,6 +904,27 @@ export function CapabilityForm({
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   };
 
+  /**
+   * Client validation blocked the save. A field it blocked can be on a tab
+   * that isn't showing, so it goes to <SaveError> like a server rejection,
+   * which brings that tab forward.
+   */
+  const onInvalid = (formErrors: FieldErrors<CapabilityFormData>) => {
+    const named = Object.keys(formErrors).flatMap((key) => {
+      const field = SERVER_FIELDS[key];
+      const message = field && formErrors[field]?.message;
+      return field && message ? [{ field, message }] : [];
+    });
+    save.show(
+      named.length === 0
+        ? 'Some fields need fixing.'
+        : named.length === 1
+          ? '1 field needs fixing.'
+          : `${named.length} fields need fixing.`,
+      named
+    );
+  };
+
   const onSubmit = async (data: CapabilityFormData) => {
     // Land a pending JSON parse first, and use its RESULT — `setParsedFn` will
     // not have taken effect by the next line. Without this, saving inside the
@@ -871,17 +932,17 @@ export function CapabilityForm({
     // let the timer write the unsaved JSON back into state.
     const flushed = flushPendingJson();
     if (flushed && !flushed.ok) {
-      setError(`Function definition JSON is not valid: ${flushed.message}`);
+      save.show(`Function definition JSON is not valid: ${flushed.message}`);
       return;
     }
     const effectiveFn = flushed?.ok ? flushed.value : parsedFn;
 
     if (!effectiveFn?.name) {
-      setError('Function definition requires at least a function name.');
+      save.show('Function definition requires at least a function name.');
       return;
     }
     if (execConfigError) {
-      setError('Execution config is not valid JSON. Fix the editor first.');
+      save.show('Execution config is not valid JSON. Fix the editor first.');
       return;
     }
     // Gate on the FLUSH, not on `jsonError`. That state is a stale closure
@@ -891,11 +952,11 @@ export function CapabilityForm({
     // pending parse that failed already returned above; only a pre-existing
     // error with nothing pending can still block.
     if (!flushed && jsonError) {
-      setError('Function definition JSON is not valid. Fix the editor first.');
+      save.show('Function definition JSON is not valid. Fix the editor first.');
       return;
     }
     if (metadataError) {
-      setError('Metadata is not valid JSON. Fix the editor first.');
+      save.show('Metadata is not valid JSON. Fix the editor first.');
       return;
     }
     // The API refuses a definition whose `name` differs from the slug (#509).
@@ -904,7 +965,7 @@ export function CapabilityForm({
     // the display name, which regenerates the slug underneath it. Say so here
     // rather than letting a bare 400 come back from the server.
     if (effectiveFn.name !== data.slug) {
-      setError(
+      save.show(
         `The function name must match the slug. The Function tab says "${effectiveFn.name}", ` +
           `the slug is "${data.slug}" — a capability is looked up by the name the AI emits, ` +
           `so the two cannot differ.`
@@ -913,7 +974,6 @@ export function CapabilityForm({
     }
 
     setSubmitting(true);
-    setError(null);
     setSaved(false);
     try {
       const payload = {
@@ -970,11 +1030,7 @@ export function CapabilityForm({
         router.push(`/admin/orchestration/capabilities/${created.id}`);
       }
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save capability. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -992,64 +1048,68 @@ export function CapabilityForm({
   })();
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
-      {/* Sticky action bar */}
-      <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">
-              {isEdit ? capability?.name : 'New capability'}
-            </h1>
-            {isEdit && capability?.isSystem && (
-              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
-                <Shield className="h-3 w-3" />
-                System
-                <FieldHelp title="System capability">
-                  System capabilities are seeded from code and cannot be deleted or deactivated.
-                  Four fields are owned by the seed and are refused if you change them: slug,
-                  function definition, execution type and execution handler. Everything else — name,
-                  description, category, rate limit, approval and execution config — is yours to
-                  edit and is never overwritten by a deployment.
-                </FieldHelp>
-              </Badge>
+    <form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))} className="space-y-6">
+      {/* Sticky action bar, with the save error under it so it stays in view */}
+      <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-2 border-b px-2 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold">
+                {isEdit ? capability?.name : 'New capability'}
+              </h1>
+              {isEdit && capability?.isSystem && (
+                <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                  <Shield className="h-3 w-3" />
+                  System
+                  <FieldHelp title="System capability">
+                    System capabilities are seeded from code and cannot be deleted or deactivated.
+                    Four fields are owned by the seed and are refused if you change them: slug,
+                    function definition, execution type and execution handler. Everything else —
+                    name, description, category, rate limit, approval and execution config — is
+                    yours to edit and is never overwritten by a deployment.
+                  </FieldHelp>
+                </Badge>
+              )}
+            </div>
+            {isEdit && (
+              <p className="text-muted-foreground font-mono text-xs">{capability?.slug}</p>
             )}
           </div>
-          {isEdit && <p className="text-muted-foreground font-mono text-xs">{capability?.slug}</p>}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/capabilities">Cancel</Link>
+            </Button>
+            <SharedSettingsSaveHint />
+            <Button type="submit" disabled={readOnly || submitting || saved}>
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : saved ? (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isEdit ? 'Save changes' : 'Create capability'}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/capabilities">Cancel</Link>
-          </Button>
-          <SharedSettingsSaveHint />
-          <Button type="submit" disabled={readOnly || submitting || saved}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : saved ? (
-              <>
-                <Check className="mr-2 h-4 w-4" />
-                Saved
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {isEdit ? 'Save changes' : 'Create capability'}
-              </>
-            )}
-          </Button>
-        </div>
+        <SaveError
+          failure={save.failure}
+          onRevealField={(fields) => {
+            const holding = FIELD_TABS.find((t) => fields.some((f) => TAB_OF[f] === t));
+            if (holding) setTab(holding);
+          }}
+        />
       </div>
 
       {!isEdit && <CliAuthoringHint resource="capabilities" />}
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
 
       {isEdit && capability?.isSystem && (
         <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300">
@@ -1064,7 +1124,7 @@ export function CapabilityForm({
         </div>
       )}
 
-      <Tabs defaultValue="basic" className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="w-full justify-start">
           <TabsTrigger value="basic">Basic</TabsTrigger>
           <TabsTrigger
