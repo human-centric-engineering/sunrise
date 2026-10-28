@@ -22,20 +22,22 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
+import { Check, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
   SharedSettingsSaveHint,
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { agentProfileFormSchema } from '@/lib/validations/orchestration';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 
 export interface AgentProfileRow {
@@ -60,6 +62,20 @@ interface Props {
   profile?: AgentProfileRow;
 }
 
+/**
+ * Server path → the field that shows its message. Every field renders
+ * `errors.x`; any other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof FormData>> = {
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  persona: 'persona',
+  brandVoiceInstructions: 'brandVoiceInstructions',
+  guardrails: 'guardrails',
+};
+
 function deriveSlug(name: string): string {
   return name
     .toLowerCase()
@@ -79,13 +95,13 @@ export function AgentProfileForm({ mode, profile }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
   const {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     formState: { errors },
   } = useForm<FormData>({
@@ -99,6 +115,12 @@ export function AgentProfileForm({ mode, profile }: Props) {
       brandVoiceInstructions: profile?.brandVoiceInstructions ?? '',
       guardrails: profile?.guardrails ?? '',
     },
+  });
+
+  const save = useSaveFailure({
+    fallback: 'Could not save the profile. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
   });
 
   const nameValue = watch('name');
@@ -115,7 +137,6 @@ export function AgentProfileForm({ mode, profile }: Props) {
 
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
-    setError(null);
     setSaved(false);
 
     // Trim and normalise empty strings to null for nullable text fields.
@@ -148,57 +169,52 @@ export function AgentProfileForm({ mode, profile }: Props) {
         router.push(`/admin/orchestration/agent-profiles/${created.id}`);
       }
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save the profile. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
-      <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
-        <div>
-          <h1 className="text-xl font-semibold">{isEdit ? profile?.name : 'New agent profile'}</h1>
-          {isEdit && profile?.slug && (
-            <p className="text-muted-foreground font-mono text-xs">{profile.slug}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/agent-profiles">Cancel</Link>
-          </Button>
-          <SharedSettingsSaveHint />
-          <Button type="submit" disabled={readOnly || submitting || saved}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : saved ? (
-              <>
-                <Check className="mr-2 h-4 w-4" />
-                Saved
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {isEdit ? 'Save changes' : 'Create profile'}
-              </>
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+      {/* Sticky action bar, with the save error under it so it stays in view */}
+      <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-2 border-b px-2 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">
+              {isEdit ? profile?.name : 'New agent profile'}
+            </h1>
+            {isEdit && profile?.slug && (
+              <p className="text-muted-foreground font-mono text-xs">{profile.slug}</p>
             )}
-          </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/agent-profiles">Cancel</Link>
+            </Button>
+            <SharedSettingsSaveHint />
+            <Button type="submit" disabled={readOnly || submitting || saved}>
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : saved ? (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isEdit ? 'Save changes' : 'Create profile'}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
+        <SaveError failure={save.failure} />
       </div>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>

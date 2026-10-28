@@ -31,19 +31,21 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, ChevronDown, ChevronRight, Loader2, Save, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, Save, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
   SharedSettingsSaveHint,
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiProviderConfig } from '@/types/prisma';
@@ -389,6 +391,22 @@ const providerFormSchema = z.object({
 
 type ProviderFormData = z.infer<typeof providerFormSchema>;
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`). Base URL and API key env var are added per
+ * flavor, only while their fields are on the page.
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof ProviderFormData>> = {
+  name: 'name',
+  slug: 'slug',
+  timeoutMs: 'timeoutMs',
+  maxRetries: 'maxRetries',
+};
+
+/** Fields inside the collapsible Advanced section. */
+const ADVANCED_FIELDS: readonly string[] = ['timeoutMs', 'maxRetries'];
+
 export type ProviderRowWithStatus = AiProviderConfig & {
   apiKeyPresent?: boolean;
   timeoutMs?: number | null;
@@ -445,7 +463,6 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
   const [apiKeyPresent, setApiKeyPresent] = useState<boolean | null>(
     provider?.apiKeyPresent ?? null
@@ -458,6 +475,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
     setValue,
     watch,
     reset,
+    setError,
     formState: { errors },
   } = useForm<ProviderFormData>({
     resolver: zodResolver(providerFormSchema),
@@ -480,6 +498,20 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
     () => FLAVORS.find((f) => f.id === currentFlavor) ?? FLAVORS[0],
     [currentFlavor]
   );
+
+  const serverFields = useMemo(
+    (): Partial<Record<string, keyof ProviderFormData>> => ({
+      ...SERVER_FIELDS,
+      ...(flavorMeta.showBaseUrl ? { baseUrl: 'baseUrl' } : {}),
+      ...(flavorMeta.showApiKeyEnvVar ? { apiKeyEnvVar: 'apiKeyEnvVar' } : {}),
+    }),
+    [flavorMeta]
+  );
+  const save = useSaveFailure({
+    fallback: 'Could not save provider. Try again in a moment.',
+    fields: serverFields,
+    setError,
+  });
 
   // Auto-fill slug from name in create mode until the user edits the slug.
   useEffect(() => {
@@ -508,7 +540,6 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
 
   const onSubmit = async (data: ProviderFormData) => {
     setSubmitting(true);
-    setError(null);
     setSaved(false);
     try {
       const meta = FLAVORS.find((f) => f.id === data.flavor);
@@ -578,56 +609,53 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         router.push(`/admin/orchestration/providers/${created.id}`);
       }
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save provider. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
-      {/* Sticky action bar */}
-      <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
-        <div>
-          <h1 className="text-xl font-semibold">{isEdit ? provider?.name : 'New provider'}</h1>
-          {isEdit && <p className="text-muted-foreground font-mono text-xs">{provider?.slug}</p>}
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+      {/* Sticky action bar, with the save error under it so it stays in view */}
+      <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-2 border-b px-2 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">{isEdit ? provider?.name : 'New provider'}</h1>
+            {isEdit && <p className="text-muted-foreground font-mono text-xs">{provider?.slug}</p>}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/providers">Cancel</Link>
+            </Button>
+            <SharedSettingsSaveHint />
+            <Button type="submit" disabled={readOnly || submitting || saved}>
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : saved ? (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isEdit ? 'Save changes' : 'Create provider'}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/providers">Cancel</Link>
-          </Button>
-          <SharedSettingsSaveHint />
-          <Button type="submit" disabled={readOnly || submitting || saved}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : saved ? (
-              <>
-                <Check className="mr-2 h-4 w-4" />
-                Saved
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {isEdit ? 'Save changes' : 'Create provider'}
-              </>
-            )}
-          </Button>
-        </div>
+        <SaveError
+          failure={save.failure}
+          onRevealField={(fields) => {
+            if (fields.some((f) => ADVANCED_FIELDS.includes(f))) setAdvancedOpen(true);
+          }}
+        />
       </div>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
 
       {/* Flavor selector */}
       <div>

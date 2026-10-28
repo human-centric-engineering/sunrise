@@ -20,13 +20,14 @@
  */
 
 import * as React from 'react';
-import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
+import { Check, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
   SharedSettingsSaveHint,
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
@@ -37,8 +38,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface ActiveEmbeddingModelOption {
   /** `AiProviderModel.id` — the FK value posted to /settings. */
@@ -76,7 +78,8 @@ export function ActiveEmbeddingModelForm({
   );
   const [saved, setSaved] = React.useState<string | null>(initialActiveEmbeddingModelId);
   const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  // No field shows its own message, so every server message joins the summary.
+  const save = useSaveFailure({ fallback: 'Failed to save — please try again.', fields: {} });
   const [needsReset, setNeedsReset] = React.useState(false);
 
   const dirty = selected !== (saved ?? UNSET_VALUE);
@@ -91,8 +94,8 @@ export function ActiveEmbeddingModelForm({
   // 1536; we can't introspect it client-side, so be conservative and
   // surface the notice on every successful change.
   async function handleSave(): Promise<void> {
+    save.clear();
     setSubmitting(true);
-    setError(null);
     try {
       const payload = selected === UNSET_VALUE ? null : selected;
       await apiClient.patch(API.ADMIN.ORCHESTRATION.SETTINGS, {
@@ -102,13 +105,7 @@ export function ActiveEmbeddingModelForm({
       setSaved(payload);
       setNeedsReset(dimChanged);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Failed to save — please try again.');
-      }
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -167,13 +164,6 @@ export function ActiveEmbeddingModelForm({
           )}
         </div>
 
-        {error && (
-          <p className="text-destructive flex items-center gap-2 text-sm" role="alert">
-            <AlertCircle className="h-4 w-4" />
-            {error}
-          </p>
-        )}
-
         {needsReset && !dirty && (
           <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
             <p className="font-medium">Saved — but the vector columns aren&rsquo;t resized yet.</p>
@@ -185,31 +175,34 @@ export function ActiveEmbeddingModelForm({
           </div>
         )}
 
-        <div className="flex items-center gap-2">
-          <SharedSettingsSaveHint />
-          <Button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={readOnly || !dirty || submitting}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Save
-              </>
+        <div className="space-y-2">
+          <SaveError failure={save.failure} />
+          <div className="flex items-center gap-2">
+            <SharedSettingsSaveHint />
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={readOnly || !dirty || submitting}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save
+                </>
+              )}
+            </Button>
+            {!dirty && !save.failure && !needsReset && saved !== null && (
+              <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                <Check className="h-3 w-3" />
+                Saved
+              </span>
             )}
-          </Button>
-          {!dirty && !error && !needsReset && saved !== null && (
-            <span className="text-muted-foreground flex items-center gap-1 text-xs">
-              <Check className="h-3 w-3" />
-              Saved
-            </span>
-          )}
+          </div>
         </div>
       </CardContent>
     </Card>

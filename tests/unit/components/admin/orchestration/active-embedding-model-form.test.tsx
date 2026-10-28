@@ -363,7 +363,8 @@ describe('ActiveEmbeddingModelForm', () => {
       expect(screen.queryByText(/Saved — but the vector columns aren/i)).not.toBeInTheDocument();
     });
 
-    it('renders generic Error.message inside role="alert" when a non-API error is thrown', async () => {
+    it('renders the fallback, not the thrown text, inside role="alert" when a non-API error is thrown', async () => {
+      // A thrown Error is a bug or the browser's own text, not the server's (§124).
       mockedPatch.mockRejectedValueOnce(new Error('Network timeout'));
 
       const user = userEvent.setup();
@@ -374,7 +375,8 @@ describe('ActiveEmbeddingModelForm', () => {
 
       await waitFor(() => {
         const alert = screen.getByRole('alert');
-        expect(alert).toHaveTextContent('Network timeout');
+        expect(alert).toHaveTextContent('Failed to save — please try again.');
+        expect(alert).not.toHaveTextContent('Network timeout');
       });
     });
 

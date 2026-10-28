@@ -14,6 +14,7 @@
 import * as React from 'react';
 import { Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 
+import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,7 @@ import {
 } from '@/components/ui/select';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_WIDGET_CONFIG, type WidgetConfig } from '@/lib/validations/orchestration';
 
 interface Props {
@@ -124,7 +126,9 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
   const [form, setForm] = React.useState<FormState>(DEFAULT_WIDGET_CONFIG);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  // No field shows its own error, so every server message joins the summary.
+  const save = useSaveFailure({ fallback: 'Failed to save appearance', fields: {} });
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
   const endpoint = API.ADMIN.ORCHESTRATION.agentWidgetConfig(agentId);
@@ -142,7 +146,7 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof APIClientError ? err.message : 'Failed to load appearance');
+          setLoadError(err instanceof APIClientError ? err.message : 'Failed to load appearance');
         }
       })
       .finally(() => {
@@ -187,7 +191,8 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
   function reset(): void {
     setForm(DEFAULT_WIDGET_CONFIG);
     setSavedAt(null);
-    setError(null);
+    setLoadError(null);
+    save.clear();
   }
 
   function validate(): string | null {
@@ -205,20 +210,21 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
     return null;
   }
 
-  async function save(): Promise<void> {
+  async function saveAppearance(): Promise<void> {
+    save.clear();
+    setLoadError(null);
     const err = validate();
     if (err) {
-      setError(err);
+      save.show(err);
       return;
     }
     setSaving(true);
-    setError(null);
     try {
       const data = await apiClient.patch<{ config: WidgetConfig }>(endpoint, { body: form });
       setForm(data.config);
       setSavedAt(Date.now());
     } catch (e) {
-      setError(e instanceof APIClientError ? e.message : 'Failed to save appearance');
+      save.report(e);
     } finally {
       setSaving(false);
     }
@@ -247,9 +253,9 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {error && (
+        {loadError && (
           <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-            {error}
+            {loadError}
           </p>
         )}
 
@@ -450,10 +456,11 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
             </div>
             <div className="bg-muted/30 flex flex-col gap-2 rounded-md border p-4">
               <p className="text-muted-foreground mb-1 text-xs tracking-wide uppercase">Save</p>
+              <SaveError failure={save.failure} />
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void save()}
+                onClick={() => void saveAppearance()}
                 disabled={saving}
                 className="w-full"
               >
