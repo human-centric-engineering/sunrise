@@ -28,10 +28,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_ORG_ROLE, isOrgRole, ORG_ROLES } from '@/lib/tenancy/roles';
 import { inviteOrgMemberSchema } from '@/lib/validations/tenancy';
 
@@ -40,6 +41,16 @@ import { inviteOrgMemberSchema } from '@/lib/validations/tenancy';
 const inviteFormSchema = inviteOrgMemberSchema.extend({ orgRole: z.enum(ORG_ROLES) });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
+
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; the role select renders none, so its message joins
+ * the summary (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof InviteFormData>> = {
+  name: 'name',
+  email: 'email',
+};
 
 interface OrgInvitationResponse {
   message: string;
@@ -54,7 +65,6 @@ export interface MemberInviteFormProps {
 export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
   // Who the API said already has a pending invitation. "Send it again"
   // re-sends that invitation by name and email, with no role, so the API keeps
@@ -65,6 +75,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     reset,
     formState: { errors },
@@ -74,13 +85,18 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
     defaultValues: { name: '', email: '', orgRole: DEFAULT_ORG_ROLE },
   });
   const orgRole = watch('orgRole');
+  // One failure for both sends: "Send it again" is a save of the same form.
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred',
+    fields: SERVER_FIELDS,
+    setError,
+  });
 
   const send = async (
     data: Pick<InviteFormData, 'name' | 'email'> & Partial<InviteFormData>,
     resend: boolean
   ) => {
     setSubmitting(true);
-    setError(null);
     try {
       const response = await apiClient.post<OrgInvitationResponse>(API.ORGS.invitations(orgId), {
         body: data,
@@ -97,7 +113,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
     } catch (err) {
       setResult(null);
       setPending(null);
-      setError(err instanceof APIClientError ? err.message : 'An unexpected error occurred');
+      save.report(err);
     } finally {
       setSubmitting(false);
     }
@@ -114,65 +130,64 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
       </CardHeader>
       <CardContent>
         <form
-          onSubmit={(event) => void handleSubmit((data) => send(data, false))(event)}
-          className="grid gap-4 md:grid-cols-[1fr_1fr_12rem_auto] md:items-end"
+          onSubmit={save.submit(handleSubmit((data) => send(data, false)))}
+          className="space-y-4"
           noValidate
         >
-          <div className="space-y-2">
-            <Label htmlFor="invite-name">Name</Label>
-            <Input id="invite-name" autoComplete="off" {...register('name')} />
-            <FormError message={errors.name?.message} />
+          <div className="grid gap-4 md:grid-cols-[1fr_1fr_12rem_auto] md:items-end">
+            <div className="space-y-2">
+              <Label htmlFor="invite-name">Name</Label>
+              <Input id="invite-name" autoComplete="off" {...register('name')} />
+              <FormError message={errors.name?.message} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="invite-email" className="flex items-center gap-1">
+                Email{' '}
+                <FieldHelp title="Who can be invited">
+                  <p>
+                    Anyone without an account here. The invitation link works for 7 days, and only
+                    for this email address.
+                  </p>
+                  <p className="mt-2">
+                    If the person already has an account, ask a platform admin to add them to this
+                    organisation.
+                  </p>
+                </FieldHelp>
+              </Label>
+              <Input id="invite-email" type="email" autoComplete="off" {...register('email')} />
+              <FormError message={errors.email?.message} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="invite-role" className="flex items-center gap-1">
+                Role <OrgRoleHelp />
+              </Label>
+              <Select
+                value={orgRole}
+                onValueChange={(value) =>
+                  setValue('orgRole', inviteFormSchema.shape.orgRole.parse(value))
+                }
+              >
+                <SelectTrigger id="invite-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORG_ROLES.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {ORG_ROLE_LABELS[role]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="submit" disabled={submitting}>
+              <Send className="mr-2 h-4 w-4" />
+              {submitting ? 'Sending…' : 'Send invitation'}
+            </Button>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="invite-email" className="flex items-center gap-1">
-              Email{' '}
-              <FieldHelp title="Who can be invited">
-                <p>
-                  Anyone without an account here. The invitation link works for 7 days, and only for
-                  this email address.
-                </p>
-                <p className="mt-2">
-                  If the person already has an account, ask a platform admin to add them to this
-                  organisation.
-                </p>
-              </FieldHelp>
-            </Label>
-            <Input id="invite-email" type="email" autoComplete="off" {...register('email')} />
-            <FormError message={errors.email?.message} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="invite-role" className="flex items-center gap-1">
-              Role <OrgRoleHelp />
-            </Label>
-            <Select
-              value={orgRole}
-              onValueChange={(value) =>
-                setValue('orgRole', inviteFormSchema.shape.orgRole.parse(value))
-              }
-            >
-              <SelectTrigger id="invite-role">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ORG_ROLES.map((role) => (
-                  <SelectItem key={role} value={role}>
-                    {ORG_ROLE_LABELS[role]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button type="submit" disabled={submitting}>
-            <Send className="mr-2 h-4 w-4" />
-            {submitting ? 'Sending…' : 'Send invitation'}
-          </Button>
-        </form>
 
-        {error && (
-          <p role="alert" className="text-destructive mt-4 text-sm">
-            {error}
-          </p>
-        )}
+          {/* Under Send, and above "Send it again" when that is offered */}
+          <SaveError failure={save.failure} />
+        </form>
 
         {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
@@ -187,7 +202,10 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
               variant="outline"
               size="sm"
               disabled={submitting}
-              onClick={() => void send(pending, true)}
+              onClick={() => {
+                save.clear();
+                void send(pending, true);
+              }}
             >
               Send it again
             </Button>

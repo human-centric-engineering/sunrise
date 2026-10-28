@@ -27,9 +27,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { AlertCircle, Save } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { Save } from 'lucide-react';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import type { FeatureFlag } from '@/types/prisma';
 
 /**
@@ -50,6 +52,16 @@ const featureFlagSchema = z.object({
 
 type FeatureFlagFormData = z.infer<typeof featureFlagSchema>;
 
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Save
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof FeatureFlagFormData>> = {
+  name: 'name',
+  description: 'description',
+};
+
 interface FeatureFlagFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,13 +73,13 @@ interface FeatureFlagFormProps {
 export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: FeatureFlagFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const isEditMode = !!flag;
 
   const {
     register,
     handleSubmit,
+    setError,
     setValue,
     watch,
     reset,
@@ -81,6 +93,13 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+  const clearSaveFailure = save.clear;
+
   // Populate form when editing an existing flag
   useEffect(() => {
     if (flag && open) {
@@ -90,15 +109,14 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
     } else if (!open) {
       // Reset form when dialog closes
       reset();
-      setError(null);
+      clearSaveFailure();
     }
-  }, [flag, open, setValue, reset]);
+  }, [flag, open, setValue, reset, clearSaveFailure]);
 
   const currentEnabled = watch('enabled');
 
   const onSubmit = async (data: FeatureFlagFormData) => {
     setIsSubmitting(true);
-    setError(null);
 
     try {
       let savedFlag: FeatureFlag;
@@ -122,11 +140,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
       onSuccess(savedFlag);
       onOpenChange(false);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     } finally {
       setIsSubmitting(false);
     }
@@ -134,7 +148,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
 
   const handleClose = () => {
     reset();
-    setError(null);
+    save.clear();
     onOpenChange(false);
   };
 
@@ -157,16 +171,8 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
               : 'Create a new feature flag to control feature availability.'}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
-          <div className="grid gap-4 py-4">
-            {/* Error message */}
-            {error && (
-              <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {error}
-              </div>
-            )}
-
+        <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+          <div className="grid gap-4 pt-4">
             {/* Name field */}
             <div className="grid gap-2">
               <Label htmlFor="name">Name</Label>
@@ -220,6 +226,8 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
               />
             </div>
           </div>
+          {/* Directly above the footer's Save. */}
+          <SaveError failure={save.failure} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={handleClose}>
               Cancel

@@ -16,16 +16,17 @@
  */
 
 import { useState } from 'react';
-import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
+import { SaveError } from '@/components/forms/form-error';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /** `GET /api/v1/admin/orgs/[id]/providers`, as the route reports it. */
 export interface OrgProviderPolicyView {
@@ -52,23 +53,6 @@ export interface OrgProvidersFormProps {
   providers: OrgProviderOption[];
 }
 
-/** A 400's per-field messages, as `validateRequestBody` reports them. */
-const fieldErrorsSchema = z.object({
-  errors: z.array(z.object({ path: z.string(), message: z.string() })),
-});
-
-/**
- * What a failed save says. A validation error's top-level message is only
- * "Invalid request body"; the field messages say which code was wrong and what
- * a valid one looks like, so they are shown instead when present.
- */
-function describeSaveError(err: unknown): string {
-  if (!(err instanceof APIClientError)) return 'Could not save the approved providers';
-  const parsed = fieldErrorsSchema.safeParse(err.details);
-  if (!parsed.success || parsed.data.errors.length === 0) return err.message;
-  return [...new Set(parsed.data.errors.map((issue) => issue.message))].join(' ');
-}
-
 /** `"eu, us"` → `["eu", "us"]`; the API upper-cases and validates each code. */
 function parseJurisdictions(text: string): string[] {
   return text
@@ -88,7 +72,13 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // No field shows its own message, so every one the server sends joins the
+  // summary by Save: a validation error's top-level message is only "Invalid
+  // request body", and the field messages say which code was wrong.
+  const saveFailure = useSaveFailure({
+    fallback: 'Could not save the approved providers',
+    fields: {},
+  });
 
   if (policy.unrestricted) {
     return (
@@ -125,9 +115,9 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
   };
 
   const save = async () => {
+    saveFailure.clear();
     setSaving(true);
     setSaved(false);
-    setError(null);
     try {
       const updated = await apiClient.put<OrgProviderPolicyView>(API.ADMIN.orgProviders(orgId), {
         body: {
@@ -144,7 +134,7 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
       setJurisdictionText((updated.jurisdictions ?? []).join(', '));
       setSaved(true);
     } catch (err) {
-      setError(describeSaveError(err));
+      saveFailure.report(err);
     } finally {
       setSaving(false);
     }
@@ -262,16 +252,14 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
         )}
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button onClick={() => void save()} disabled={saving}>
-          {saving ? 'Saving…' : 'Save approved providers'}
-        </Button>
-        {saved && <span className="text-sm text-green-600">Saved</span>}
-        {error && (
-          <span role="alert" className="text-destructive text-sm">
-            {error}
-          </span>
-        )}
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <Button onClick={() => void save()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save approved providers'}
+          </Button>
+          {saved && <span className="text-sm text-green-600">Saved</span>}
+        </div>
+        <SaveError failure={saveFailure.failure} />
       </div>
     </div>
   );

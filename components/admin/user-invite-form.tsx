@@ -30,11 +30,12 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { FormError } from '@/components/forms/form-error';
-import { AlertCircle, Send, ArrowLeft, CheckCircle, Copy, ExternalLink } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { FormError, SaveError } from '@/components/forms/form-error';
+import { Send, ArrowLeft, CheckCircle, Copy, ExternalLink } from 'lucide-react';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { USER_ROLES, DEFAULT_USER_ROLE, isUserRole, roleLabel } from '@/lib/auth/roles';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /**
  * Form validation schema
@@ -47,6 +48,17 @@ const inviteFormSchema = z.object({
 });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
+
+/**
+ * Server path → the field that shows its message. Only fields that render
+ * `errors.x` are listed; every other path joins the summary by Send
+ * (`.context/ui/form-errors.md`).
+ */
+const SERVER_FIELDS: Partial<Record<string, keyof InviteFormData>> = {
+  name: 'name',
+  email: 'email',
+  role: 'role',
+};
 
 interface InvitationResponse {
   message: string;
@@ -64,7 +76,6 @@ interface InvitationResponse {
 export function UserInviteForm() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [invitation, setInvitation] = useState<InvitationResponse | null>(null);
   const { copied, copy } = useCopyToClipboard();
 
@@ -72,6 +83,7 @@ export function UserInviteForm() {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     reset,
     formState: { errors },
@@ -85,12 +97,17 @@ export function UserInviteForm() {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const currentRole = watch('role');
 
   const onSubmit = async (data: InviteFormData) => {
     try {
       setIsLoading(true);
-      setError(null);
       setInvitation(null);
 
       const response = await apiClient.post<InvitationResponse>(API.USERS.INVITE, {
@@ -98,11 +115,7 @@ export function UserInviteForm() {
       });
       setInvitation(response);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     } finally {
       setIsLoading(false);
     }
@@ -116,7 +129,7 @@ export function UserInviteForm() {
 
   const handleInviteAnother = () => {
     setInvitation(null);
-    setError(null);
+    save.clear();
     reset();
   };
 
@@ -222,16 +235,8 @@ export function UserInviteForm() {
             account.
           </CardDescription>
         </CardHeader>
-        <form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
+        <form onSubmit={save.submit(handleSubmit(onSubmit))}>
           <CardContent className="space-y-6">
-            {/* Error message */}
-            {error && (
-              <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {error}
-              </div>
-            )}
-
             {/* Name field */}
             <div className="space-y-2">
               <Label htmlFor="name">Name</Label>
@@ -269,7 +274,7 @@ export function UserInviteForm() {
                 }
                 disabled={isLoading}
               >
-                <SelectTrigger>
+                <SelectTrigger id="role">
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
@@ -287,19 +292,23 @@ export function UserInviteForm() {
               <FormError message={errors.role?.message} />
             </div>
           </CardContent>
-          <CardFooter className="flex justify-end gap-2 border-t pt-6">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push('/admin/users')}
-              disabled={isLoading}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              <Send className="mr-2 h-4 w-4" />
-              {isLoading ? 'Sending...' : 'Send Invitation'}
-            </Button>
+          {/* The save error sits by Send, above the buttons */}
+          <CardFooter className="flex flex-col items-stretch gap-2 border-t pt-6">
+            <SaveError failure={save.failure} />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push('/admin/users')}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                <Send className="mr-2 h-4 w-4" />
+                {isLoading ? 'Sending...' : 'Send Invitation'}
+              </Button>
+            </div>
           </CardFooter>
         </form>
       </Card>
