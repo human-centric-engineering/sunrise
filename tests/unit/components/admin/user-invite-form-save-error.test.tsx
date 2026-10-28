@@ -73,4 +73,31 @@ describe('UserInviteForm — failed save', () => {
     expect(screen.getByText('That domain does not accept mail')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.');
   });
+
+  it('sends the role picked and focuses the role select when the server rejects it', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400, {
+        errors: [{ path: 'role', message: 'You cannot invite an admin' }],
+      })
+    );
+    const user = userEvent.setup();
+    render(<UserInviteForm />);
+    await user.type(screen.getByLabelText('Name'), 'New Person');
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    const role = screen.getByRole('combobox', { name: 'Role' });
+    role.focus();
+    await user.keyboard('{Enter}');
+    await user.click(await screen.findByRole('option', { name: 'Admin' }));
+
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ body: expect.objectContaining({ role: 'ADMIN' }) })
+    );
+    // The trigger carries the field name as its id, so focus can reach it.
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Role' })).toHaveFocus());
+    expect(screen.getByText('You cannot invite an admin')).toBeInTheDocument();
+  });
 });
