@@ -16,18 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import {
-  AlertCircle,
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-  Loader2,
-  Mail,
-  Save,
-  KeyRound,
-  Webhook,
-} from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, Loader2, Mail, Save, KeyRound, Webhook } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -36,11 +25,12 @@ import { Label } from '@/components/ui/label';
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
+import { applyFieldErrors, readSaveError, type SaveFailure } from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
 import { useTimeout } from '@/lib/hooks/use-timeout';
-import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
+import { SaveError } from '@/components/forms/form-error';
 import {
   WEBHOOK_EVENT_TYPES,
   WEBHOOK_MAX_ATTEMPTS_MIN,
@@ -152,6 +142,21 @@ const editWebhookSchema = refineChannelFields(z.object({ ...commonFields, ...des
 
 type WebhookFormData = z.infer<typeof createWebhookSchema>;
 
+/** Server path → the field that shows its error; anything else joins the summary by Save. */
+const SERVER_FIELDS: Partial<Record<string, keyof WebhookFormData>> = {
+  channel: 'channel',
+  url: 'url',
+  secret: 'secret',
+  emailAddress: 'emailAddress',
+  events: 'events',
+  agentIds: 'agentIds',
+  workflowIds: 'workflowIds',
+  description: 'description',
+  isActive: 'isActive',
+  maxAttempts: 'maxAttempts',
+  retryBackoffMs: 'retryBackoffSeconds',
+};
+
 function parseBackoffSeconds(input: string): number[] {
   return input
     .split(/[\s,]+/)
@@ -197,9 +202,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // The subscription changed since this page loaded it, and the save was refused.
-  const [stale, setStale] = useState(false);
+  const [saveFailure, setSaveFailure] = useState<SaveFailure<keyof WebhookFormData> | null>(null);
   const [secretRevealed, setSecretRevealed] = useState(false);
   // Briefly latched to give the copy button a "✓ Copied" affordance.
   const [secretCopied, setSecretCopied] = useState(false);
@@ -213,6 +216,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     formState: { errors },
   } = useForm<WebhookFormData>({
@@ -367,8 +371,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
 
   const onSubmit = async (data: WebhookFormData) => {
     setSubmitting(true);
-    setError(null);
-    setStale(false);
+    setSaveFailure(null);
     try {
       // Convert the seconds-string the form uses into the ms-array the API expects.
       const retryBackoffMs = parseBackoffSeconds(data.retryBackoffSeconds).map((s) => s * 1000);
@@ -408,15 +411,12 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         router.push('/admin/orchestration/event-subscriptions');
       }
     } catch (err) {
-      if (err instanceof APIClientError && err.code === 'STALE_RECORD') {
-        setStale(true);
-        return;
-      }
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not save subscription. Try again in a moment.'
-      );
+      const failure = readSaveError(err, {
+        fallback: 'Could not save subscription. Try again in a moment.',
+        fields: SERVER_FIELDS,
+      });
+      applyFieldErrors(failure, setError);
+      setSaveFailure(failure);
     } finally {
       setSubmitting(false);
     }
@@ -425,37 +425,32 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   return (
     <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="max-w-2xl space-y-6">
       {/* Sticky action bar */}
-      <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
-        <h1 className="text-xl font-semibold">
-          {isEdit ? 'Edit subscription' : 'New event subscription'}
-        </h1>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/event-subscriptions">Cancel</Link>
-          </Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {isEdit ? 'Save changes' : 'Create subscription'}
-              </>
-            )}
-          </Button>
+      <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-3 border-b px-2 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">
+            {isEdit ? 'Edit subscription' : 'New event subscription'}
+          </h1>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/orchestration/event-subscriptions">Cancel</Link>
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  {isEdit ? 'Save changes' : 'Create subscription'}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
+        <SaveError failure={saveFailure} stale={{ what: 'This subscription' }} />
       </div>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
-      {stale && <StaleSaveNotice what="This subscription" />}
 
       {/* Channel selector */}
       <div className="grid gap-2">
