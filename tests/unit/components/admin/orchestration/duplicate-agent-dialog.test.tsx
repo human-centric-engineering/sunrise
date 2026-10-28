@@ -144,6 +144,23 @@ describe('DuplicateAgentDialog', () => {
 
   // ── Happy path ────────────────────────────────────────────────────────────
 
+  it('refuses a malformed slug by its button, without sending it', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    const user = userEvent.setup();
+    render(<DuplicateAgentDialog source={SOURCE_AGENT} onOpenChange={vi.fn()} />);
+
+    const slugInput = screen.getByLabelText(/new slug/i);
+    await user.clear(slugInput);
+    await user.type(slugInput, 'Not A Slug!');
+    const dupBtn = screen.getByRole('button', { name: /^duplicate$/i });
+    await user.click(dupBtn);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/slug must be lowercase alphanumeric/i);
+    expect(alert.nextElementSibling).toContainElement(dupBtn);
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
   it('POSTs to clone endpoint with name and slug, navigates to new agent', async () => {
     // Arrange
     const { apiClient } = await import('@/lib/api/client');
