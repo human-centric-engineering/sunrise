@@ -135,6 +135,23 @@ describe('DocumentRenameModal', () => {
     expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it('marks the name invalid after a refusal, and clears both once the name is edited', async () => {
+    vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Name already exists'));
+    const user = userEvent.setup();
+    renderModal();
+    const input = screen.getByLabelText('Name');
+
+    await user.type(input, ' edit');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await screen.findByRole('alert');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await user.type(input, 'ed');
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid');
+  });
+
   it('Cancel closes the dialog without saving', async () => {
     const user = userEvent.setup();
     const props = renderModal();

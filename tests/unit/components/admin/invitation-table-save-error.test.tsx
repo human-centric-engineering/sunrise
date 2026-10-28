@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { InvitationTable } from '@/components/admin/invitation-table';
@@ -37,6 +37,16 @@ const invitations: InvitationListItem[] = [
   },
 ];
 const meta: PaginationMeta = { page: 1, limit: 20, total: 1, totalPages: 1 };
+const twoInvitations: InvitationListItem[] = [
+  ...invitations,
+  { ...invitations[0], email: 'bob@example.com', name: 'Bob Smith' },
+];
+
+async function openDelete(user: ReturnType<typeof userEvent.setup>, row: number) {
+  await user.click(screen.getAllByRole('button', { name: /open menu/i })[row]);
+  await user.click(screen.getByRole('menuitem', { name: /delete/i }));
+  return screen.findByRole('alertdialog');
+}
 
 describe('InvitationTable — failed saves', () => {
   beforeEach(() => {
@@ -56,7 +66,9 @@ describe('InvitationTable — failed saves', () => {
     await user.click(screen.getByRole('menuitem', { name: /resend/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Email service is not configured');
+    expect(alert).toHaveTextContent(
+      'Couldn\'t resend the invitation to "alice@example.com": Email service is not configured'
+    );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });
@@ -78,5 +90,52 @@ describe('InvitationTable — failed saves', () => {
     expect(alert).toHaveTextContent('Invitation not found');
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     expect(alert).toHaveFocus();
+  });
+
+  it('is committed to a delete in flight: no second request, no Cancel, no Escape', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<InvitationTable initialInvitations={invitations} initialMeta={meta} />);
+
+    const dialog = await openDelete(user, 0);
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: 'Deleting...' });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard('{Escape}');
+
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it("never shows one row's failed delete in the next row's dialog", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let reject: (err: unknown) => void = () => {};
+    vi.mocked(apiClient.delete).mockReturnValue(
+      new Promise((_, rej) => {
+        reject = rej;
+      })
+    );
+    vi.mocked(apiClient.get).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(
+      <InvitationTable initialInvitations={twoInvitations} initialMeta={{ ...meta, total: 2 }} />
+    );
+
+    const first = await openDelete(user, 0);
+    await user.click(within(first).getByRole('button', { name: /^delete$/i }));
+    // An attempt to leave while the request is in flight, then it fails.
+    await user.keyboard('{Escape}');
+    await act(async () => reject(new APIClientError('Invitation not found', 'NOT_FOUND', 404)));
+    // Leave the dialog if it is still open (it should be: it ignored the Escape).
+    const open = screen.queryByRole('alertdialog');
+    if (open) await user.click(within(open).getByRole('button', { name: 'Cancel' }));
+
+    const dialog = await openDelete(user, 1);
+    expect(dialog).toHaveTextContent('bob@example.com');
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

@@ -238,7 +238,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
       <div className="font-medium">Action requires your approval</div>
       <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{pendingApproval.prompt}</p>
 
-      {state.kind === 'idle' && (
+      {state.kind === 'idle' && !sending && (
         <div className="mt-3 flex gap-2">
           <Button
             type="button"
@@ -298,6 +298,8 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
       <AlertDialog
         open={approveOpen}
         onOpenChange={(open) => {
+          // Committed while the decision is in flight: a refusal lands here.
+          if (!open && sending !== null) return;
           setApproveOpen(open);
           clearApproveSave();
         }}
@@ -350,6 +352,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
       <AlertDialog
         open={rejectOpen}
         onOpenChange={(open) => {
+          if (!open && sending !== null) return;
           setRejectOpen(open);
           clearRejectSave();
         }}

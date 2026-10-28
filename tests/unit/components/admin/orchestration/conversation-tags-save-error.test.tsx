@@ -39,7 +39,10 @@ describe('ConversationTags — failed save', () => {
     await user.click(screen.getByRole('button', { name: 'Remove tag billing' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Tags must be 50 characters or fewer');
+    // Says the tags snapped back, as well as why.
+    expect(alert).toHaveTextContent(
+      'Failed to save tags — reverted to last saved state: Tags must be 50 characters or fewer'
+    );
     expect(alert.nextElementSibling).toHaveTextContent('billing');
     expect(alert).toHaveFocus();
   });

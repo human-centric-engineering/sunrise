@@ -110,6 +110,8 @@ export function DocumentRenameModal({
             maxLength={MAX_NAME_LENGTH}
             onChange={(e) => {
               setName(e.target.value);
+              // A refusal was about the name it was given; editing answers it.
+              failure.clear();
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && dirty && !saving) {
@@ -118,6 +120,7 @@ export function DocumentRenameModal({
               }
             }}
             placeholder="Document name"
+            aria-invalid={failure.failure ? true : undefined}
           />
         </div>
 

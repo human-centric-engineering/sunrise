@@ -37,7 +37,7 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
   const [saving, setSaving] = useState(false);
   // A refused save rolls the tags back and shows above them (§124).
   const save = useSaveFailure({
-    fallback: 'Failed to save tags — reverted to last saved state.',
+    fallback: 'Failed to save tags.',
     fields: NO_SERVER_FIELDS,
   });
 
@@ -51,7 +51,8 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
       setCommittedTags(updatedTags);
     } catch (err) {
       setTags(committedTags);
-      save.report(err);
+      // The tag just added or removed snaps back, so say why with the reason.
+      save.report(err, 'Failed to save tags — reverted to last saved state');
     } finally {
       setSaving(false);
     }

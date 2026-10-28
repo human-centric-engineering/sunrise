@@ -66,6 +66,33 @@ describe('ApprovalCard — refused decision', () => {
     expect(onResolved).not.toHaveBeenCalled();
   });
 
+  it('stays open through Escape while the decision is in flight, so a refusal is still seen', async () => {
+    let answer: (r: Response) => void = () => undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () => new Promise<Response>((resolve) => (answer = resolve))
+    );
+    const user = userEvent.setup();
+    render(<ApprovalCard pendingApproval={PENDING} onResolved={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /approve action/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await user.keyboard('{Escape}');
+
+    expect(dialog).toBeInTheDocument();
+    // Nothing to press behind it while the decision is out.
+    expect(screen.queryByRole('button', { name: /reject action/i })).not.toBeInTheDocument();
+
+    answer(
+      new Response(
+        JSON.stringify({ success: false, error: { code: 'CONFLICT', message: 'Already decided' } }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Already decided');
+    expect(dialog).toContainElement(screen.getByRole('alert'));
+  });
+
   it('keeps the reject dialog open with the refusal inside it', async () => {
     refuse('Reject token expired');
     const user = userEvent.setup();
