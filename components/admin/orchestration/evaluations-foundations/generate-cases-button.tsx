@@ -108,7 +108,10 @@ export function GenerateCasesButton({
   }
 
   function handleOpen(next: boolean): void {
-    if (!next) reset();
+    // Committed while the cases are being saved: a refusal lands here.
+    if (!next && committing) return;
+    if (next) commitSave.clear();
+    else reset();
     setOpen(next);
   }
 

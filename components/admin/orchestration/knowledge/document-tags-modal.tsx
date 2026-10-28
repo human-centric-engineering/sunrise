@@ -283,7 +283,14 @@ export function DocumentTagsModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while a save or a tag create is in flight.
+        if (!next && (saving || createBusy)) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-h-[85vh] w-full max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-start gap-2">

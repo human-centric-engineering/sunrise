@@ -788,4 +788,23 @@ describe('DocumentTagsModal', () => {
       expect(apiClient.post).not.toHaveBeenCalled();
     });
   });
+
+  describe('while a save is in flight', () => {
+    it('ignores Escape, so a refusal lands in the open dialog', async () => {
+      setupDefaultGetMocks({ allTags: [TAG_A], tagIds: [] });
+      vi.mocked(apiClient.patch).mockImplementation(() => new Promise(() => undefined));
+      const onOpenChange = vi.fn();
+      const user = userEvent.setup();
+      await act(async () => {
+        render(<DocumentTagsModal {...BASE_PROPS} onOpenChange={onOpenChange} />);
+      });
+      await waitFor(() => screen.getByText('Sales'));
+
+      await user.click(screen.getByRole('checkbox', { name: /apply tag sales/i }));
+      await user.click(screen.getByRole('button', { name: /save tags/i }));
+      await user.keyboard('{Escape}');
+
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+  });
 });

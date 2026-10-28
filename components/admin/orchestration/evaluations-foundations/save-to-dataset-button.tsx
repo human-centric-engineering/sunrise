@@ -169,6 +169,11 @@ export function SaveToDatasetButton({
     }
   }
 
+  function openDialog(): void {
+    save.clear();
+    setOpen(true);
+  }
+
   function handleClose(): void {
     setOpen(false);
     // Reset success/error on close so the modal opens fresh next time.
@@ -180,11 +185,18 @@ export function SaveToDatasetButton({
 
   return (
     <>
-      <Button size={size} variant="outline" onClick={() => setOpen(true)}>
+      <Button size={size} variant="outline" onClick={openDialog}>
         <Bookmark className="mr-1.5 h-3.5 w-3.5" aria-hidden />
         {label}
       </Button>
-      <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : handleClose())}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          // Committed while saving: a refusal lands here, not in a closed dialog.
+          if (o) openDialog();
+          else if (!submitting) handleClose();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Save to dataset</DialogTitle>

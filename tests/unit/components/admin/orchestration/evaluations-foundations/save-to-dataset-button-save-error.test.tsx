@@ -65,4 +65,36 @@ describe('SaveToDatasetButton — refused capture', () => {
     expect(alert.nextElementSibling).toContainElement(save);
     await waitFor(() => expect(alert).toHaveFocus());
   });
+
+  it('stays open through Escape while saving, and a refusal never reaches the next open', async () => {
+    let answer: (r: Response) => void = () => undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          json({ success: true, data: [{ id: 'ds-1', name: 'FAQ', caseCount: 3 }] })
+        )
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)))
+    );
+    const user = userEvent.setup();
+    render(<SaveToDatasetButton source={{ kind: 'conversation_turn', messageId: 'm-1' }} />);
+
+    await user.click(screen.getByRole('button', { name: /Save to dataset/i }));
+    await screen.findByText(/FAQ/);
+    await user.click(screen.getByRole('button', { name: /^Save$/i }));
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    answer(json({ success: false, error: { code: 'CONFLICT', message: 'Already there' } }, 409));
+    const alert = await screen.findByRole('alert');
+    expect(screen.getByRole('dialog')).toContainElement(alert);
+
+    // Closed after reading it, then opened again: it starts clean.
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /Save to dataset/i }));
+    await screen.findByRole('dialog');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

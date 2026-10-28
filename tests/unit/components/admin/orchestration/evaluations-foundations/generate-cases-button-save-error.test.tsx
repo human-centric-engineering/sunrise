@@ -83,4 +83,34 @@ describe('GenerateCasesButton — refused save', () => {
     expect(alert.nextElementSibling).toContainElement(save);
     await waitFor(() => expect(alert).toHaveFocus());
   });
+
+  it('stays open through Escape while the cases are being saved, so a refusal is still seen', async () => {
+    let answer: (r: Response) => void = () => undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(json(PREVIEW))
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)))
+    );
+    const user = userEvent.setup();
+    render(
+      <GenerateCasesButton
+        datasetId="ds-1"
+        agents={[{ id: 'a-1', name: 'Bot Alpha', slug: 'bot-alpha' }]}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Generate cases/i }));
+    await user.click(screen.getByRole('button', { name: /^Generate$/i }));
+    await user.click(await screen.findByRole('button', { name: /Save 1 case/i }));
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    answer(json({ success: false, error: { code: 'CONFLICT', message: 'Too many cases' } }, 409));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Too many cases');
+    expect(screen.getByRole('dialog')).toContainElement(alert);
+  });
 });
