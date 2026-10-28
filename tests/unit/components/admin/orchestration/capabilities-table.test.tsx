@@ -1197,8 +1197,9 @@ describe('CapabilitiesTable', () => {
     expect(firstSwitch).toBeChecked();
     await user.click(firstSwitch);
 
+    // Names the row, since the box sits above the table.
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not update the capability. Try again.'
+      'Couldn\'t update "Alpha Search". Try again.'
     );
     expect(screen.getAllByRole('switch')[0]).toBeChecked();
   });
