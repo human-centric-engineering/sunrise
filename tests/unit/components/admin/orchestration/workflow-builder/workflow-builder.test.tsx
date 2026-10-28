@@ -1322,7 +1322,7 @@ describe('WorkflowBuilder', () => {
   });
 
   describe('performSave: Error instance branch', () => {
-    it('shows err.message for standard Error (not APIClientError) rejections', async () => {
+    it('shows the fallback for a standard Error (not APIClientError): a thrown bug is not the server talking (§124)', async () => {
       // Exercises the middle branch of the catch ternary:
       //   err instanceof APIClientError → false; err instanceof Error → true
       const user = userEvent.setup();
@@ -1335,7 +1335,7 @@ describe('WorkflowBuilder', () => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
       });
       // The Error's message is used directly (not the generic "Failed to save workflow")
-      expect(screen.getByRole('alert').textContent).toContain('Disk quota exceeded');
+      expect(screen.getByRole('alert').textContent).toContain('Failed to save workflow');
     });
   });
 

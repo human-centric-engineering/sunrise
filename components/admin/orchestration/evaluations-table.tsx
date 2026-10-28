@@ -50,8 +50,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
@@ -214,24 +217,36 @@ export function EvaluationsTable({
     [fetchEvaluations]
   );
 
-  const handleArchive = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(id), {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'archived' }),
-      });
-      if (res.ok) {
-        // Remove from list or refresh
+  // A refused archive: shown inside its dialog, which stays open (§124).
+  const archiveSave = useSaveFailure({
+    fallback: 'Failed to archive evaluation.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearArchiveSave, report: reportArchiveSave } = archiveSave;
+  const [archiving, setArchiving] = useState(false);
+
+  const handleArchive = useCallback(
+    async (id: string) => {
+      clearArchiveSave();
+      setArchiving(true);
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(id), {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'archived' }),
+        });
+        if (!res.ok) throw await apiErrorFromResponse(res);
         setEvaluations((prev) => prev.filter((ev) => ev.id !== id));
+        setArchiveTarget(null);
+      } catch (err) {
+        reportArchiveSave(err);
+      } finally {
+        setArchiving(false);
       }
-    } catch {
-      setListError('Failed to archive evaluation.');
-    } finally {
-      setArchiveTarget(null);
-    }
-  }, []);
+    },
+    [clearArchiveSave, reportArchiveSave]
+  );
 
   return (
     <div className="space-y-4">
@@ -408,7 +423,14 @@ export function EvaluationsTable({
       </div>
 
       {/* Archive confirmation dialog */}
-      <AlertDialog open={!!archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(null)}>
+      <AlertDialog
+        open={!!archiveTarget}
+        onOpenChange={(open) => {
+          if (open) return;
+          setArchiveTarget(null);
+          clearArchiveSave();
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Archive evaluation?</AlertDialogTitle>
@@ -417,9 +439,17 @@ export function EvaluationsTable({
               using the &ldquo;Archived&rdquo; status filter.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SaveError failure={archiveSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => archiveTarget && void handleArchive(archiveTarget)}>
+            <AlertDialogAction
+              disabled={archiving}
+              onClick={(e) => {
+                // Closes only on success, so a refusal can be read inside it.
+                e.preventDefault();
+                if (archiveTarget) void handleArchive(archiveTarget);
+              }}
+            >
               Archive
             </AlertDialogAction>
           </AlertDialogFooter>

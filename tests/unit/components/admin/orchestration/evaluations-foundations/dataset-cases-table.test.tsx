@@ -66,6 +66,7 @@ function mockFetchSuccess(): ReturnType<typeof vi.fn> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -217,9 +218,9 @@ describe('DatasetCasesTable', () => {
   });
 
   it('surfaces a network error inline when fetch rejects', async () => {
-    // catch-block coverage on line 157: when the fetch promise rejects
-    // (e.g. offline / DNS failure / aborted), the error message must be
-    // surfaced in the dialog rather than silently swallowed.
+    // When the fetch promise rejects (e.g. offline / DNS failure / aborted),
+    // the failure must be surfaced in the dialog rather than silently
+    // swallowed. The browser's text is not the server's: the fallback shows (§124).
     const fetchMock = vi.fn().mockRejectedValue(new Error('Network unreachable'));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -232,7 +233,9 @@ describe('DatasetCasesTable', () => {
     await user.type(inputArea, 'new');
     await user.click(screen.getByRole('button', { name: /^Save$/ }));
 
-    expect(await screen.findByText(/Network unreachable/)).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save the case. Try again in a moment.'
+    );
     // Dialog stays open so the user can retry.
     expect(screen.getByText(/Edit case 0/)).toBeInTheDocument();
   });

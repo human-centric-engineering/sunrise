@@ -51,8 +51,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { isStaleSave } from '@/lib/errors/save-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
@@ -99,6 +101,17 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   // before the first, and be refused as stale by the change it just made.
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<WebhookListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // A row toggle the server refused (not stale): shown above the table (§124).
+  const rowSave = useSaveFailure({
+    fallback: 'Could not update webhook. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  // A delete the server refused: shown inside its dialog, which stays open.
+  const deleteSave = useSaveFailure({
+    fallback: 'Could not delete webhook. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const fetchPage = useCallback(
     async (page: number) => {
@@ -130,53 +143,52 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    setListError(null);
+    deleteSave.clear();
+    setDeleting(true);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.webhookById(deleteTarget.id));
+      setDeleteTarget(null);
       void fetchPage(meta.page);
     } catch (err) {
-      setListError(
-        err instanceof APIClientError
-          ? `Delete failed: ${err.message}`
-          : 'Could not delete webhook. Try again.'
-      );
+      deleteSave.report(err);
     } finally {
-      setDeleteTarget(null);
+      setDeleting(false);
     }
   };
 
-  const handleToggleActive = useCallback(async (wh: WebhookListItem, nextActive: boolean) => {
-    setToggling((prev) => new Set(prev).add(wh.id));
-    setWebhooks((prev) => prev.map((w) => (w.id === wh.id ? { ...w, isActive: nextActive } : w)));
-    try {
-      const saved = await apiClient.patch<{ version: string }>(
-        API.ADMIN.ORCHESTRATION.webhookById(wh.id),
-        { body: { isActive: nextActive }, options: { headers: { 'If-Match': wh.version } } }
-      );
-      setWebhooks((prev) =>
-        prev.map((w) => (w.id === wh.id ? { ...w, version: saved.version } : w))
-      );
-    } catch (err) {
-      setWebhooks((prev) =>
-        prev.map((w) => (w.id === wh.id ? { ...w, isActive: wh.isActive } : w))
-      );
-      if (isStaleSave(err)) {
-        setStale((n) => n + 1);
-        return;
+  const { clear: clearRowSave, report: reportRowSave } = rowSave;
+  const handleToggleActive = useCallback(
+    async (wh: WebhookListItem, nextActive: boolean) => {
+      clearRowSave();
+      setToggling((prev) => new Set(prev).add(wh.id));
+      setWebhooks((prev) => prev.map((w) => (w.id === wh.id ? { ...w, isActive: nextActive } : w)));
+      try {
+        const saved = await apiClient.patch<{ version: string }>(
+          API.ADMIN.ORCHESTRATION.webhookById(wh.id),
+          { body: { isActive: nextActive }, options: { headers: { 'If-Match': wh.version } } }
+        );
+        setWebhooks((prev) =>
+          prev.map((w) => (w.id === wh.id ? { ...w, version: saved.version } : w))
+        );
+      } catch (err) {
+        setWebhooks((prev) =>
+          prev.map((w) => (w.id === wh.id ? { ...w, isActive: wh.isActive } : w))
+        );
+        if (isStaleSave(err)) {
+          setStale((n) => n + 1);
+          return;
+        }
+        reportRowSave(err);
+      } finally {
+        setToggling((prev) => {
+          const next = new Set(prev);
+          next.delete(wh.id);
+          return next;
+        });
       }
-      setListError(
-        err instanceof APIClientError
-          ? `Could not update webhook: ${err.message}`
-          : 'Could not update webhook. Try again.'
-      );
-    } finally {
-      setToggling((prev) => {
-        const next = new Set(prev);
-        next.delete(wh.id);
-        return next;
-      });
-    }
-  }, []);
+    },
+    [clearRowSave, reportRowSave]
+  );
 
   const truncateUrl = (url: string, max = 50) => (url.length > max ? url.slice(0, max) + '…' : url);
 
@@ -216,6 +228,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           onReload={() => void fetchPage(meta.page)}
         />
       )}
+      <SaveError failure={rowSave.failure} />
 
       {/* Table */}
       <div className="rounded-md border">
@@ -362,7 +375,14 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
       )}
 
       {/* Delete confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (open) return;
+          setDeleteTarget(null);
+          deleteSave.clear();
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete subscription?</AlertDialogTitle>
@@ -373,10 +393,16 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
               prunes it.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => void handleDelete()}
+              onClick={(e) => {
+                // Stays open on failure, so the error inside it can be read (§124).
+                e.preventDefault();
+                void handleDelete();
+              }}
+              disabled={deleting}
               className="bg-red-600 hover:bg-red-700"
             >
               Delete

@@ -68,6 +68,7 @@ const CAPTURE_OK = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -192,8 +193,8 @@ describe('SaveToDatasetButton — error handling', () => {
     });
   });
 
-  it('surfaces the status code when the capture response is not-ok but success-shaped', async () => {
-    // Branch: !res.ok but payload.success is truthy — falls through to `Failed (${res.status})`
+  it('surfaces a failure when the capture response is not-ok but success-shaped', async () => {
+    // Branch: !res.ok but payload.success is truthy — still a failed save
     mockFetchSequence([
       DATASETS_PAYLOAD,
       {
@@ -210,14 +211,15 @@ describe('SaveToDatasetButton — error handling', () => {
     });
     await user.click(screen.getByRole('button', { name: /^Save$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Failed \(503\)/i)).toBeInTheDocument();
-    });
+    // No server message to show: the fallback, by Save (§124).
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save to the dataset. Try again in a moment.'
+    );
     // Dialog stays open so user can retry or cancel
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
   });
 
-  it('surfaces a network error from the capture fetch', async () => {
+  it('surfaces a failure when the capture fetch throws', async () => {
     // Branch: catch block in handleSave — fetch throws
     const fetchMock = vi.fn();
     fetchMock
@@ -238,9 +240,10 @@ describe('SaveToDatasetButton — error handling', () => {
     });
     await user.click(screen.getByRole('button', { name: /^Save$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Network timeout/i)).toBeInTheDocument();
-    });
+    // The browser's text is not the server's: the fallback, by Save (§124).
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save to the dataset. Try again in a moment.'
+    );
     // After catch, submitting resets so the Save button is not spinning
     expect(screen.getByRole('button', { name: /^Save$/i })).not.toBeDisabled();
   });

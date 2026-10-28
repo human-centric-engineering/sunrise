@@ -48,18 +48,15 @@ import {
   type PreviewResult,
   type ProposedCase,
 } from '@/components/admin/orchestration/evaluations-foundations/case-review-step';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface AgentOption {
   id: string;
   name: string;
   slug: string;
-}
-
-interface CommitResult {
-  datasetId: string;
-  appendedCount: number;
-  newCaseCount: number;
 }
 
 interface GenerateCasesButtonProps {
@@ -92,7 +89,13 @@ export function GenerateCasesButton({
 
   const [generating, setGenerating] = React.useState(false);
   const [committing, setCommitting] = React.useState(false);
+  // A failed generate (an LLM preview, nothing saved) keeps its own box.
   const [error, setError] = React.useState<string | null>(null);
+  // A refused save of the accepted cases: above the footer holding Save (§124).
+  const commitSave = useSaveFailure({
+    fallback: 'Could not save the cases. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [preview, setPreview] = React.useState<PreviewResult | null>(null);
   const [selectedIndices, setSelectedIndices] = React.useState<Set<number>>(new Set());
 
@@ -100,6 +103,7 @@ export function GenerateCasesButton({
     setStep('configure');
     setPreview(null);
     setError(null);
+    commitSave.clear();
     setSelectedIndices(new Set());
   }
 
@@ -154,30 +158,26 @@ export function GenerateCasesButton({
 
   async function handleCommit(): Promise<void> {
     if (!preview) return;
+    commitSave.clear();
     const accepted = preview.cases.filter((_, i) => selectedIndices.has(i));
     if (accepted.length === 0) {
-      setError('Select at least one case to save.');
+      commitSave.show('Select at least one case to save.');
       return;
     }
     setCommitting(true);
-    setError(null);
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.evalDatasetGenerateCasesCommit(datasetId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cases: accepted }),
       });
-      const payload = (await res.json()) as ApiSuccess<CommitResult> | ApiError;
-      if (!res.ok || !payload.success) {
-        setError(!payload.success ? payload.error.message : `Failed (${res.status})`);
-        return;
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       // Refresh the server-rendered dataset page so the new caseCount
       // + content hash + first-N case list reflect the synth.
       router.refresh();
       handleOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      commitSave.report(err);
     } finally {
       setCommitting(false);
     }
@@ -235,6 +235,7 @@ export function GenerateCasesButton({
               {error}
             </div>
           ) : null}
+          <SaveError failure={commitSave.failure} />
 
           <DialogFooter>
             {step === 'configure' ? (

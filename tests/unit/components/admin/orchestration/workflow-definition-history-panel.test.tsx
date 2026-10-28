@@ -140,6 +140,7 @@ function makeEmptyListResponse() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe('WorkflowDefinitionHistoryPanel', () => {

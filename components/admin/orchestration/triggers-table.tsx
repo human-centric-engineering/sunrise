@@ -16,8 +16,10 @@ import { useRouter } from 'next/navigation';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { logger } from '@/lib/logging';
 
 export interface TriggerWorkflow {
@@ -48,6 +50,11 @@ interface Props {
 export function TriggersTable({ triggers, enabledChannels }: Props) {
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // A row delete the server refused: shown above the table (§124).
+  const save = useSaveFailure({
+    fallback: 'Could not delete the trigger. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   if (triggers.length === 0) {
     return (
@@ -140,108 +147,112 @@ export function TriggersTable({ triggers, enabledChannels }: Props) {
     ) {
       return;
     }
+    save.clear();
     setDeletingId(id);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.triggerById(id));
       router.refresh();
     } catch (err) {
       logger.error('triggers-table: delete failed', err);
-      alert(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`);
+      save.report(err);
     } finally {
       setDeletingId(null);
     }
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-muted-foreground text-xs tracking-wide uppercase">
-          <tr>
-            <th className="px-4 py-3 text-left font-medium">Channel</th>
-            <th className="px-4 py-3 text-left font-medium">Name</th>
-            <th className="px-4 py-3 text-left font-medium">Workflow</th>
-            <th className="px-4 py-3 text-left font-medium">Webhook URL</th>
-            <th className="px-4 py-3 text-left font-medium">Status</th>
-            <th className="px-4 py-3 text-left font-medium">Last fired</th>
-            <th className="px-4 py-3 text-right font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {triggers.map((t) => {
-            const adapterRegistered = enabledChannels.includes(t.channel);
-            const webhookPath = `/api/v1/inbound/${t.channel}/${t.workflow.slug}`;
-            return (
-              <tr key={t.id} className="hover:bg-muted/30">
-                <td className="px-4 py-3">
-                  <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
-                    {t.channel}
-                  </code>
-                  {!adapterRegistered && (
-                    <div className="mt-1">
-                      <Badge variant="destructive" className="text-[10px]">
-                        adapter not registered
-                      </Badge>
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3 font-medium">{t.name}</td>
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/admin/orchestration/workflows/${t.workflowId}`}
-                    className="text-primary hover:underline"
-                  >
-                    {t.workflow.name}
-                  </Link>
-                  {!t.workflow.isActive && (
-                    <Badge variant="outline" className="ml-2 text-[10px]">
-                      inactive
-                    </Badge>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <code className="bg-muted block max-w-xs truncate rounded px-1.5 py-0.5 font-mono text-xs">
-                    {webhookPath}
-                  </code>
-                </td>
-                <td className="px-4 py-3">
-                  {t.isEnabled ? (
-                    <Badge variant="default">enabled</Badge>
-                  ) : (
-                    <Badge variant="secondary">disabled</Badge>
-                  )}
-                  {t.hasSigningSecret && (
-                    <div className="mt-1">
-                      <Badge variant="outline" className="text-[10px]">
-                        per-trigger secret
-                      </Badge>
-                    </div>
-                  )}
-                </td>
-                <td className="text-muted-foreground px-4 py-3 text-xs">
-                  {t.lastFiredAt ? new Date(t.lastFiredAt).toLocaleString() : '—'}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    <Button asChild variant="ghost" size="sm">
-                      <Link href={`/admin/orchestration/triggers/${t.id}`}>Edit</Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={deletingId === t.id}
-                      onClick={() => {
-                        void handleDelete(t.id, t.name);
-                      }}
+    <div className="space-y-4">
+      <SaveError failure={save.failure} />
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-muted-foreground text-xs tracking-wide uppercase">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium">Channel</th>
+              <th className="px-4 py-3 text-left font-medium">Name</th>
+              <th className="px-4 py-3 text-left font-medium">Workflow</th>
+              <th className="px-4 py-3 text-left font-medium">Webhook URL</th>
+              <th className="px-4 py-3 text-left font-medium">Status</th>
+              <th className="px-4 py-3 text-left font-medium">Last fired</th>
+              <th className="px-4 py-3 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {triggers.map((t) => {
+              const adapterRegistered = enabledChannels.includes(t.channel);
+              const webhookPath = `/api/v1/inbound/${t.channel}/${t.workflow.slug}`;
+              return (
+                <tr key={t.id} className="hover:bg-muted/30">
+                  <td className="px-4 py-3">
+                    <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                      {t.channel}
+                    </code>
+                    {!adapterRegistered && (
+                      <div className="mt-1">
+                        <Badge variant="destructive" className="text-[10px]">
+                          adapter not registered
+                        </Badge>
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium">{t.name}</td>
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/admin/orchestration/workflows/${t.workflowId}`}
+                      className="text-primary hover:underline"
                     >
-                      {deletingId === t.id ? 'Deleting…' : 'Delete'}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                      {t.workflow.name}
+                    </Link>
+                    {!t.workflow.isActive && (
+                      <Badge variant="outline" className="ml-2 text-[10px]">
+                        inactive
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <code className="bg-muted block max-w-xs truncate rounded px-1.5 py-0.5 font-mono text-xs">
+                      {webhookPath}
+                    </code>
+                  </td>
+                  <td className="px-4 py-3">
+                    {t.isEnabled ? (
+                      <Badge variant="default">enabled</Badge>
+                    ) : (
+                      <Badge variant="secondary">disabled</Badge>
+                    )}
+                    {t.hasSigningSecret && (
+                      <div className="mt-1">
+                        <Badge variant="outline" className="text-[10px]">
+                          per-trigger secret
+                        </Badge>
+                      </div>
+                    )}
+                  </td>
+                  <td className="text-muted-foreground px-4 py-3 text-xs">
+                    {t.lastFiredAt ? new Date(t.lastFiredAt).toLocaleString() : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button asChild variant="ghost" size="sm">
+                        <Link href={`/admin/orchestration/triggers/${t.id}`}>Edit</Link>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={deletingId === t.id}
+                        onClick={() => {
+                          void handleDelete(t.id, t.name);
+                        }}
+                      >
+                        {deletingId === t.id ? 'Deleting…' : 'Delete'}
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -27,8 +27,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -72,7 +74,11 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState<string | null>(null);
-  const [retryError, setRetryError] = useState<string | null>(null);
+  // A refused row retry: shown in the one box above the table (§124).
+  const retrySave = useSaveFailure({
+    fallback: 'Retry failed. Please try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const fetchDeliveries = useCallback(
     async (page: number) => {
@@ -109,16 +115,12 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
 
   const handleRetry = async (deliveryId: string) => {
     setRetrying(deliveryId);
-    setRetryError(null);
+    retrySave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId));
       void fetchDeliveries(meta.page);
     } catch (err) {
-      setRetryError(
-        err instanceof APIClientError
-          ? `Retry failed: ${err.message}`
-          : 'Retry failed. Please try again.'
-      );
+      retrySave.report(err);
     } finally {
       setRetrying(null);
     }
@@ -142,7 +144,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
         </Select>
       </div>
 
-      {retryError && <p className="text-destructive text-sm">{retryError}</p>}
+      <SaveError failure={retrySave.failure} />
 
       <div className="rounded-md border">
         <Table>

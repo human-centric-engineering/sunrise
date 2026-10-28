@@ -33,7 +33,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface DatasetCaseRow {
   id: string;
@@ -46,9 +49,6 @@ interface DatasetCasesTableProps {
   datasetId: string;
   initialCases: DatasetCaseRow[];
 }
-
-type ApiSuccess<T> = { success: true; data: T };
-type ApiError = { success: false; error: { message: string } };
 
 interface PatchCaseResult {
   case: {
@@ -83,31 +83,35 @@ export function DatasetCasesTable({
   const [inputDraft, setInputDraft] = React.useState('');
   const [expectedDraft, setExpectedDraft] = React.useState('');
   const [saving, setSaving] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  // A refused edit: shown above the dialog's footer; the dialog stays open (§124).
+  const save = useSaveFailure({
+    fallback: 'Could not save the case. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   function openEdit(row: DatasetCaseRow): void {
     setEditing(row);
     setInputDraft(stringInputOrEmpty(row.input));
     setExpectedDraft(row.expectedOutput ?? '');
-    setError(null);
+    save.clear();
   }
 
   function closeEdit(): void {
     if (saving) return;
     setEditing(null);
-    setError(null);
+    save.clear();
   }
 
   async function handleSave(): Promise<void> {
     if (!editing) return;
+    save.clear();
     const inputIsObject = typeof editing.input !== 'string';
     if (!inputIsObject && inputDraft.trim().length === 0) {
-      setError('Input cannot be empty.');
+      save.show('Input cannot be empty.');
       return;
     }
 
     setSaving(true);
-    setError(null);
     try {
       const patch: Record<string, unknown> = {};
       // Object inputs (workflow subjects) are read-only in the dialog —
@@ -124,27 +128,18 @@ export function DatasetCasesTable({
         return;
       }
 
-      const res = await fetch(
+      const result = await apiClient.patch<PatchCaseResult>(
         API.ADMIN.ORCHESTRATION.evalDatasetCaseByPosition(datasetId, editing.position),
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patch),
-        }
+        { body: patch }
       );
-      const payload = (await res.json()) as ApiSuccess<PatchCaseResult> | ApiError;
-      if (!res.ok || !payload.success) {
-        setError(!payload.success ? payload.error.message : `Failed (${res.status})`);
-        return;
-      }
 
       setCases((prev) =>
         prev.map((c) =>
           c.position === editing.position
             ? {
                 ...c,
-                input: payload.data.case.input,
-                expectedOutput: payload.data.case.expectedOutput,
+                input: result.case.input,
+                expectedOutput: result.case.expectedOutput,
               }
             : c
         )
@@ -154,7 +149,7 @@ export function DatasetCasesTable({
       // + updatedAt timestamps stay accurate.
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      save.report(err);
     } finally {
       setSaving(false);
     }
@@ -247,11 +242,7 @@ export function DatasetCasesTable({
             </div>
           </div>
 
-          {error ? (
-            <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
-              {error}
-            </div>
-          ) : null}
+          <SaveError failure={save.failure} />
 
           <DialogFooter>
             <Button variant="ghost" onClick={closeEdit} disabled={saving}>

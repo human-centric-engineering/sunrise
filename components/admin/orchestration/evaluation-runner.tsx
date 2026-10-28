@@ -54,7 +54,10 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat-events';
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
@@ -194,6 +197,20 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
 
   // Archive state
   const [isArchiving, setIsArchiving] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  // A refused manual save of the annotations, shown beside its Save button,
+  // and a refused archive, shown inside its dialog (§124).
+  const annotationSave = useSaveFailure({
+    fallback: 'Could not save annotations. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const archiveSave = useSaveFailure({
+    fallback: 'Could not archive the evaluation. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearAnnotationSave, report: reportAnnotationSave } = annotationSave;
+  const { clear: clearArchiveSave, report: reportArchiveSave } = archiveSave;
 
   // Refs
   const abortRef = useRef<AbortController | null>(null);
@@ -422,23 +439,32 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
 
   // ─── Annotations ────────────────────────────────────────────────────────
 
-  /** Persist current annotations to server — uses ref to always get latest state. */
-  const persistAnnotations = useCallback(async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(evaluation.id), {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadata: serializeAnnotations(annotationsRef.current) }),
-      });
-      if (res.ok) setLastSaved(new Date());
-    } catch {
-      // Silent — auto-save is best-effort
-    } finally {
-      setSaving(false);
-    }
-  }, [evaluation.id]);
+  /**
+   * Persist current annotations to server — uses ref to always get latest state.
+   * The debounced auto-save is best-effort and silent; a press of Save reports
+   * a refusal beside the button.
+   */
+  const persistAnnotations = useCallback(
+    async (manual = false) => {
+      if (manual) clearAnnotationSave();
+      setSaving(true);
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(evaluation.id), {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata: serializeAnnotations(annotationsRef.current) }),
+        });
+        if (!res.ok) throw await apiErrorFromResponse(res);
+        setLastSaved(new Date());
+      } catch (err) {
+        if (manual) reportAnnotationSave(err);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [evaluation.id, clearAnnotationSave, reportAnnotationSave]
+  );
 
   const updateAnnotation = useCallback(
     (msgIdx: number, update: Partial<Annotation>) => {
@@ -461,12 +487,13 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   /** Manual save triggered by button click */
   const handleManualSave = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    void persistAnnotations();
+    void persistAnnotations(true);
   }, [persistAnnotations]);
 
   // ─── Archive ────────────────────────────────────────────────────────────
 
   const handleArchive = useCallback(async () => {
+    clearArchiveSave();
     setIsArchiving(true);
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(evaluation.id), {
@@ -475,13 +502,16 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'archived' }),
       });
-      if (res.ok) setCurrentStatus('archived');
-    } catch {
-      // Non-critical — user can retry
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      setArchiveOpen(false);
+      setCurrentStatus('archived');
+    } catch (err) {
+      // The dialog stays open with the refusal inside it.
+      reportArchiveSave(err);
     } finally {
       setIsArchiving(false);
     }
-  }, [evaluation.id]);
+  }, [evaluation.id, clearArchiveSave, reportArchiveSave]);
 
   // ─── Complete ───────────────────────────────────────────────────────────
 
@@ -808,7 +838,13 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     <div className="space-y-4">
       {/* Action bar */}
       <div className="flex items-center justify-end gap-2">
-        <AlertDialog>
+        <AlertDialog
+          open={archiveOpen}
+          onOpenChange={(open) => {
+            setArchiveOpen(open);
+            clearArchiveSave();
+          }}
+        >
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={isArchiving}>
               <Archive className="mr-2 h-4 w-4" />
@@ -823,9 +859,19 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                 using the &ldquo;Archived&rdquo; status filter.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <SaveError failure={archiveSave.failure} />
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void handleArchive()}>Archive</AlertDialogAction>
+              <AlertDialogAction
+                disabled={isArchiving}
+                onClick={(e) => {
+                  // Closes only on success, so a refusal can be read inside it.
+                  e.preventDefault();
+                  void handleArchive();
+                }}
+              >
+                Archive
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -933,6 +979,11 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             </Button>
           </div>
+          {annotationSave.failure && (
+            <div className="border-b px-4 py-2">
+              <SaveError failure={annotationSave.failure} />
+            </div>
+          )}
 
           {/* Annotation limit warning */}
           {showLimitWarning && (

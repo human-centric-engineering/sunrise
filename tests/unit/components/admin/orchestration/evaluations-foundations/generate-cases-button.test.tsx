@@ -86,6 +86,7 @@ function mockFetchSequence(responses: FetchMock[]): ReturnType<typeof vi.fn> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -293,8 +294,8 @@ describe('GenerateCasesButton — commit', () => {
     expect(screen.getByRole('button', { name: /Save 2 cases/i })).toBeInTheDocument();
   });
 
-  it('surfaces the HTTP status when commit returns not-ok but with a success-shaped body', async () => {
-    // Branch: !res.ok but payload.success truthy → `Failed (${res.status})`
+  it('surfaces a failure when commit returns not-ok but with a success-shaped body', async () => {
+    // Branch: !res.ok but payload.success truthy — still a failed save
     mockFetchSequence([
       PREVIEW_PAYLOAD,
       {
@@ -313,12 +314,13 @@ describe('GenerateCasesButton — commit', () => {
 
     await user.click(screen.getByRole('button', { name: /Save 2 cases/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Failed \(503\)/i)).toBeInTheDocument();
-    });
+    // No server message to show: the fallback, by Save (§124).
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save the cases. Try again in a moment.'
+    );
   });
 
-  it('surfaces a network error thrown during commit', async () => {
+  it('surfaces a failure when the commit fetch throws', async () => {
     // Branch: catch block in handleCommit
     const fetchMock = vi.fn();
     fetchMock
@@ -341,9 +343,10 @@ describe('GenerateCasesButton — commit', () => {
 
     await user.click(screen.getByRole('button', { name: /Save 2 cases/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Connection reset/i)).toBeInTheDocument();
-    });
+    // The browser's text is not the server's: the fallback, by Save (§124).
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save the cases. Try again in a moment.'
+    );
     // committing resets to false after catch
     expect(screen.getByRole('button', { name: /Save 2 cases/i })).not.toBeDisabled();
     expect(mockRefresh).not.toHaveBeenCalled();

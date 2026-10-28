@@ -45,8 +45,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { readSaveError } from '@/lib/errors/save-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -96,7 +99,20 @@ export function WebhookDlqTable({
   const [until, setUntil] = useState('');
   const [loading, setLoading] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // A refused row retry or bulk replay: shown in the one box above the table (§124).
+  // It names the action, since retry and bulk replay share it.
+  const actionSave = useSaveFailure({ fallback: 'Please try again.', fields: NO_SERVER_FIELDS });
+  const reportAction = (what: string, err: unknown) => {
+    const { message } = readSaveError(err, { fallback: '', fields: NO_SERVER_FIELDS });
+    actionSave.show(message ? `${what} failed: ${message}` : `${what} failed. Please try again.`);
+  };
+  // The row whose discard dialog is open. A refused discard shows inside it,
+  // and it stays open.
+  const [discardId, setDiscardId] = useState<string | null>(null);
+  const discardSave = useSaveFailure({
+    fallback: 'Delete failed. Please try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const fetchPage = useCallback(
     async (page: number) => {
@@ -134,16 +150,12 @@ export function WebhookDlqTable({
 
   const handleRetry = async (deliveryId: string) => {
     setActionId(deliveryId);
-    setActionError(null);
+    actionSave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId));
       void fetchPage(meta.page);
     } catch (err) {
-      setActionError(
-        err instanceof APIClientError
-          ? `Retry failed: ${err.message}`
-          : 'Retry failed. Please try again.'
-      );
+      reportAction('Retry', err);
     } finally {
       setActionId(null);
     }
@@ -151,7 +163,7 @@ export function WebhookDlqTable({
 
   const handleBulkReplay = async () => {
     setActionId('bulk');
-    setActionError(null);
+    actionSave.clear();
     try {
       const body: Record<string, unknown> = {};
       if (subscriptionFilter !== 'all') {
@@ -164,7 +176,7 @@ export function WebhookDlqTable({
         // would only skip it, and say nothing.
         body.deliveryIds = deliveries.filter((d) => d.subscription).map((d) => d.id);
         if ((body.deliveryIds as string[]).length === 0) {
-          setActionError(
+          actionSave.show(
             deliveries.length > 0
               ? 'Nothing to replay on this page: every row’s subscription was deleted.'
               : 'Nothing to replay on this page.'
@@ -176,11 +188,7 @@ export function WebhookDlqTable({
       await apiClient.post(API.ADMIN.ORCHESTRATION.WEBHOOK_DLQ_REPLAY, { body });
       void fetchPage(meta.page);
     } catch (err) {
-      setActionError(
-        err instanceof APIClientError
-          ? `Bulk replay failed: ${err.message}`
-          : 'Bulk replay failed. Please try again.'
-      );
+      reportAction('Bulk replay', err);
     } finally {
       setActionId(null);
     }
@@ -188,16 +196,13 @@ export function WebhookDlqTable({
 
   const handleDelete = async (deliveryId: string) => {
     setActionId(deliveryId);
-    setActionError(null);
+    discardSave.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.deliveryById(deliveryId));
+      setDiscardId(null);
       void fetchPage(meta.page);
     } catch (err) {
-      setActionError(
-        err instanceof APIClientError
-          ? `Delete failed: ${err.message}`
-          : 'Delete failed. Please try again.'
-      );
+      discardSave.report(err);
     } finally {
       setActionId(null);
     }
@@ -274,7 +279,7 @@ export function WebhookDlqTable({
         </Button>
       </div>
 
-      {actionError && <p className="text-destructive text-sm">{actionError}</p>}
+      <SaveError failure={actionSave.failure} />
 
       <div className="rounded-md border">
         <Table>
@@ -355,7 +360,13 @@ export function WebhookDlqTable({
                           <RotateCcw className="h-4 w-4" />
                         )}
                       </Button>
-                      <AlertDialog>
+                      <AlertDialog
+                        open={discardId === d.id}
+                        onOpenChange={(open) => {
+                          setDiscardId(open ? d.id : null);
+                          discardSave.clear();
+                        }}
+                      >
                         <AlertDialogTrigger asChild>
                           <Button
                             variant="ghost"
@@ -375,9 +386,17 @@ export function WebhookDlqTable({
                               handled by the retention sweep.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
+                          <SaveError failure={discardSave.failure} />
                           <AlertDialogFooter>
                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => void handleDelete(d.id)}>
+                            <AlertDialogAction
+                              disabled={actionId === d.id}
+                              onClick={(e) => {
+                                // Closes only on success, so a refusal can be read inside it.
+                                e.preventDefault();
+                                void handleDelete(d.id);
+                              }}
+                            >
                               Delete
                             </AlertDialogAction>
                           </AlertDialogFooter>

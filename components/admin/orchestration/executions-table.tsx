@@ -62,8 +62,11 @@ import {
 } from '@/components/ui/table';
 import { Tip } from '@/components/ui/tooltip';
 import { LeaseInspectorDialog } from '@/components/admin/orchestration/lease-inspector-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -130,7 +133,11 @@ export function ExecutionsTable({
   const [leaseInspectorId, setLeaseInspectorId] = useState<string | null>(null);
   const [forceFailTarget, setForceFailTarget] = useState<ExecutionListItem | null>(null);
   const [forceFailReason, setForceFailReason] = useState('');
-  const [forceFailError, setForceFailError] = useState<string | null>(null);
+  const forceFailSave = useSaveFailure({
+    fallback: 'Force-fail failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearForceFailSave, report: reportForceFailSave } = forceFailSave;
   const [forceFailSubmitting, setForceFailSubmitting] = useState(false);
 
   const stuckThresholdMs = Math.max(1, stuckThresholdMins) * 60_000;
@@ -240,7 +247,7 @@ export function ExecutionsTable({
   const handleForceFailConfirm = useCallback(async () => {
     if (!forceFailTarget) return;
     setForceFailSubmitting(true);
-    setForceFailError(null);
+    clearForceFailSave();
     try {
       const reason = forceFailReason.trim();
       const res = await fetch(API.ADMIN.ORCHESTRATION.executionForceFail(forceFailTarget.id), {
@@ -249,32 +256,23 @@ export function ExecutionsTable({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reason ? { reason } : {}),
       });
-      if (!res.ok) {
-        // Surface the server's error message from the shared
-        // `{ success:false, error: { message } }` envelope when present;
-        // otherwise fall back to the HTTP status. JSON parse failures
-        // are intentionally swallowed to the same fallback so a malformed
-        // body never replaces a meaningful status code.
-        const parsed: unknown = await res.json().catch(() => null);
-        let message = `HTTP ${res.status}`;
-        if (parsed && typeof parsed === 'object' && 'error' in parsed) {
-          const err = (parsed as { error?: unknown }).error;
-          if (err && typeof err === 'object' && 'message' in err) {
-            const m = (err as { message?: unknown }).message;
-            if (typeof m === 'string' && m.length > 0) message = m;
-          }
-        }
-        throw new Error(message);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       setForceFailTarget(null);
       setForceFailReason('');
       void fetchExecutions(meta.page);
     } catch (err) {
-      setForceFailError(err instanceof Error ? err.message : 'Force-fail failed');
+      reportForceFailSave(err);
     } finally {
       setForceFailSubmitting(false);
     }
-  }, [fetchExecutions, forceFailReason, forceFailTarget, meta.page]);
+  }, [
+    fetchExecutions,
+    forceFailReason,
+    forceFailTarget,
+    meta.page,
+    clearForceFailSave,
+    reportForceFailSave,
+  ]);
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {
@@ -473,7 +471,7 @@ export function ExecutionsTable({
                                   if (!canForceFail) return;
                                   setForceFailTarget(ex);
                                   setForceFailReason('');
-                                  setForceFailError(null);
+                                  clearForceFailSave();
                                 }}
                                 className="text-red-600 focus:text-red-700"
                               >
@@ -504,7 +502,7 @@ export function ExecutionsTable({
           if (!next && !forceFailSubmitting) {
             setForceFailTarget(null);
             setForceFailReason('');
-            setForceFailError(null);
+            clearForceFailSave();
           }
         }}
       >
@@ -531,7 +529,7 @@ export function ExecutionsTable({
               disabled={forceFailSubmitting}
             />
           </div>
-          {forceFailError && <p className="text-destructive text-sm">{forceFailError}</p>}
+          <SaveError failure={forceFailSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={forceFailSubmitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
