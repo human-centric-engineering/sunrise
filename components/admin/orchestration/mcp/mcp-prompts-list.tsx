@@ -119,6 +119,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
     fields: NO_SERVER_FIELDS,
   });
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const removeFailure = useSaveFailure({
     fallback: 'Could not remove the prompt. Try again.',
     fields: NO_SERVER_FIELDS,
@@ -143,13 +144,14 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
   const [previewPrompt, setPreviewPrompt] = useState<PromptRow | null>(null);
   const [previewArgs, setPreviewArgs] = useState<Record<string, string>>({});
 
-  async function handleToggle(id: string, isEnabled: boolean): Promise<void> {
+  async function handleToggle(prompt: PromptRow, isEnabled: boolean): Promise<void> {
+    const id = prompt.id;
     listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpPromptById(id), { body: { isEnabled } });
       setPrompts((prev) => prev.map((p) => (p.id === id ? { ...p, isEnabled } : p)));
     } catch (err) {
-      listFailure.report(err);
+      listFailure.report(err, `Couldn't ${isEnabled ? 'enable' : 'disable'} "${prompt.name}"`);
     }
   }
 
@@ -224,6 +226,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
   }
 
   async function handleRemove(id: string): Promise<void> {
+    setRemoving(true);
     removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpPromptById(id));
@@ -231,6 +234,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       setRemoveId(null);
     } catch (err) {
       removeFailure.report(err);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -445,7 +450,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                   <TableCell>
                     <Switch
                       checked={prompt.isEnabled}
-                      onCheckedChange={(checked) => void handleToggle(prompt.id, checked)}
+                      onCheckedChange={(checked) => void handleToggle(prompt, checked)}
                       disabled={readOnly}
                       aria-label={`Enable ${prompt.name}`}
                     />
@@ -473,6 +478,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                         <AlertDialog
                           open={removeId === prompt.id}
                           onOpenChange={(open) => {
+                            // Committed while the remove runs: Escape waits for it.
+                            if (!open && removing) return;
                             removeFailure.clear();
                             setRemoveId(open ? prompt.id : null);
                           }}
@@ -494,8 +501,9 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                             </AlertDialogHeader>
                             <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
                               <AlertDialogAction
+                                disabled={removing}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 onClick={(e) => {
                                   // Closes only on success, so a failure stays readable here.

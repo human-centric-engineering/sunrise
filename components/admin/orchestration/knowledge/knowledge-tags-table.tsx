@@ -221,7 +221,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
           <BulkDeleteUnusedButton
             tags={tags}
             onStart={listFailure.clear}
-            onFailure={listFailure.report}
+            onFailure={(err) => listFailure.report(err, "Couldn't delete the unused tags")}
             onRefresh={() => void refresh()}
           />
           <Button onClick={() => setDialog({ kind: 'create' })}>New tag</Button>
@@ -310,6 +310,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                deleteFailure.clear();
                                 setDialog({ kind: 'delete', tag, phase: 'initial' });
                               }}
                               aria-label={`Delete ${tag.name}`}
@@ -649,7 +650,8 @@ function DeleteDialog({
     <Dialog
       open
       onOpenChange={(o) => {
-        if (!o) onClose();
+        // Committed while the delete runs: Escape waits for it.
+        if (!o && !busy) onClose();
       }}
     >
       <DialogContent>

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
@@ -46,6 +46,27 @@ const VERSIONS = {
   nextCursor: null,
 };
 
+// Two earlier versions, so two rows can each open the dialog.
+const THREE_VERSIONS = {
+  ...VERSIONS,
+  versions: [
+    { ...VERSIONS.versions[0], id: 'wfv-3', version: 3 },
+    { ...VERSIONS.versions[0], id: 'wfv-2', version: 2 },
+    VERSIONS.versions[1],
+  ],
+  publishedVersionId: 'wfv-3',
+};
+
+/** Opens the history and row `index`'s rollback dialog. */
+async function openRollback(user: ReturnType<typeof userEvent.setup>, index: number) {
+  if (!screen.queryAllByRole('button', { name: /^rollback$/i }).length) {
+    await user.click(screen.getByRole('button', { name: /definition history/i }));
+  }
+  const rows = await screen.findAllByRole('button', { name: /^rollback$/i });
+  await user.click(rows[index]);
+  return screen.findByRole('alertdialog');
+}
+
 describe('WorkflowDefinitionHistoryPanel — failed rollback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -73,5 +94,57 @@ describe('WorkflowDefinitionHistoryPanel — failed rollback', () => {
     expect(dialog).toContainElement(alert);
     expect(alert.nextElementSibling).toContainElement(confirm);
     await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it('commits the dialog to a rollback in flight: both buttons disabled, a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(VERSIONS);
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.post).mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(undefined)))
+    );
+    const user = userEvent.setup();
+    render(<WorkflowDefinitionHistoryPanel workflowId="wf-1" />);
+
+    const dialog = await openRollback(user, 0);
+    await user.click(within(dialog).getByRole('button', { name: /^rollback$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: /rolling back/i });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(pending);
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late failure in row A's dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(THREE_VERSIONS);
+    let refuse: () => void = () => {};
+    vi.mocked(apiClient.post).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          refuse = () => reject(new APIClientError('v2 snapshot is invalid', 'CONFLICT', 409));
+        })
+    );
+    const user = userEvent.setup();
+    render(<WorkflowDefinitionHistoryPanel workflowId="wf-1" />);
+
+    let dialog = await openRollback(user, 0);
+    await user.click(within(dialog).getByRole('button', { name: /^rollback$/i }));
+    // Escape while the rollback runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    refuse();
+
+    dialog = screen.getByRole('alertdialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('v2 snapshot is invalid');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await openRollback(user, 1);
+    expect(screen.queryByText(/v2 snapshot is invalid/)).not.toBeInTheDocument();
   });
 });

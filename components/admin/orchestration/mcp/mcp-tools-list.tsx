@@ -133,6 +133,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     fields: NO_SERVER_FIELDS,
   });
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const removeFailure = useSaveFailure({
     fallback: 'Could not remove the tool. Try again.',
     fields: NO_SERVER_FIELDS,
@@ -141,7 +142,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
   const exposedCapabilityIds = new Set(tools.map((t) => t.capabilityId));
   const availableCapabilities = capabilities.filter((c) => !exposedCapabilityIds.has(c.id));
 
-  async function handleToggle(toolId: string, isEnabled: boolean) {
+  async function handleToggle(tool: ExposedToolRow, isEnabled: boolean) {
+    const toolId = tool.id;
     listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
@@ -149,7 +151,10 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       });
       setTools((prev) => prev.map((t) => (t.id === toolId ? { ...t, isEnabled } : t)));
     } catch (err) {
-      listFailure.report(err);
+      listFailure.report(
+        err,
+        `Couldn't ${isEnabled ? 'enable' : 'disable'} "${tool.capability.name}"`
+      );
     }
   }
 
@@ -172,6 +177,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
   }
 
   async function handleRemove(toolId: string) {
+    setRemoving(true);
     removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpToolById(toolId));
@@ -179,6 +185,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       setRemoveId(null);
     } catch (err) {
       removeFailure.report(err);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -530,7 +538,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                   <TableCell>
                     <Switch
                       checked={tool.isEnabled}
-                      onCheckedChange={(checked) => void handleToggle(tool.id, checked)}
+                      onCheckedChange={(checked) => void handleToggle(tool, checked)}
                       disabled={readOnly}
                       aria-label={`Enable ${tool.capability.name}`}
                     />
@@ -551,6 +559,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                         <AlertDialog
                           open={removeId === tool.id}
                           onOpenChange={(open) => {
+                            // Committed while the remove runs: Escape waits for it.
+                            if (!open && removing) return;
                             removeFailure.clear();
                             setRemoveId(open ? tool.id : null);
                           }}
@@ -570,8 +580,9 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                             </AlertDialogHeader>
                             <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
                               <AlertDialogAction
+                                disabled={removing}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 onClick={(e) => {
                                   // Closes only on success, so a failure stays readable here.

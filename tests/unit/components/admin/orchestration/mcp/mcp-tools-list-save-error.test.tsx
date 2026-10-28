@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { McpToolsList } from '@/components/admin/orchestration/mcp/mcp-tools-list';
@@ -106,8 +106,66 @@ describe('McpToolsList — failed saves', () => {
     await user.click(screen.getByRole('switch', { name: /enable send email/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Toggle refused');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent('Couldn\'t disable "Send Email": Toggle refused');
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
+  });
+
+  it('commits the remove dialog while it runs: both buttons disabled, a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(undefined)))
+    );
+    const user = userEvent.setup();
+    render(<McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY]} />);
+
+    await user.click(screen.getByRole('button', { name: /^Remove$/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    const remove = within(dialog).getByRole('button', { name: /^Remove$/i });
+    await user.click(remove);
+
+    expect(remove).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^Cancel$/i })).toBeDisabled();
+    await user.click(remove);
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late remove failure in row A's dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () =>
+        new Promise((_, reject) => (fail = () => reject(new APIClientError('Boom A', 'X', 500))))
+    );
+    const other = {
+      ...TOOL,
+      id: 'tool-2',
+      capabilityId: 'cap-2',
+      capability: { ...CAPABILITY, id: 'cap-2', name: 'Look Up Order', slug: 'look_up' },
+    };
+    const user = userEvent.setup();
+    render(<McpToolsList initialTools={[TOOL, other]} capabilities={[CAPABILITY]} />);
+
+    await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[0]);
+    let dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Remove$/i }));
+    // Escape while the remove runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    fail();
+
+    dialog = screen.getByRole('alertdialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^Cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[1]);
+    dialog = await screen.findByRole('alertdialog');
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

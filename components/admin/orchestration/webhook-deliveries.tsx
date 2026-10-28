@@ -113,14 +113,19 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
-  const handleRetry = async (deliveryId: string) => {
+  const handleRetry = async (delivery: Delivery) => {
+    const deliveryId = delivery.id;
     setRetrying(deliveryId);
     retrySave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId));
       void fetchDeliveries(meta.page);
     } catch (err) {
-      retrySave.report(err);
+      // Deliveries have no name: the row is its event and when it was sent.
+      retrySave.report(
+        err,
+        `Couldn't retry the "${formatEventLabel(delivery.eventType)}" delivery of ${new Date(delivery.createdAt).toLocaleString()}`
+      );
     } finally {
       setRetrying(null);
     }
@@ -193,7 +198,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
                         variant="ghost"
                         size="icon"
                         disabled={retrying === d.id}
-                        onClick={() => void handleRetry(d.id)}
+                        onClick={() => void handleRetry(d)}
                         title="Retry delivery"
                       >
                         {retrying === d.id ? (

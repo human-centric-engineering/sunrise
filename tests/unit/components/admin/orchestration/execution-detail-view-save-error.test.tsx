@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import {
@@ -114,5 +114,81 @@ describe('ExecutionDetailView — refused actions', () => {
     expect(alert).toHaveTextContent('Execution is no longer awaiting approval');
     expect(dialog).toBeInTheDocument();
     expect(dialog).toContainElement(alert);
+  });
+
+  it("reports a stale retry through the hook: the action leads the server's message", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('The execution changed since you loaded it', 'STALE_RECORD', 412)
+    );
+    const user = userEvent.setup();
+    render(
+      <ExecutionDetailView
+        execution={{ ...execution('failed'), errorMessage: 'LLM timeout' }}
+        trace={[
+          {
+            stepId: 'step-fail-1',
+            stepType: 'llm_call',
+            label: 'Draft',
+            status: 'failed',
+            output: null,
+            error: 'LLM timeout',
+            tokensUsed: 0,
+            costUsd: 0,
+            startedAt: '2025-01-01T10:00:00.000Z',
+            durationMs: 10,
+          },
+        ]}
+      />
+    );
+
+    const retry = screen.getByRole('button', { name: /retry failed step/i });
+    await user.click(retry);
+
+    // The same wording every other hook-reported action gets, not a hand-built copy.
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('alert')
+          .some(
+            (el) => el.textContent === 'Retry failed: The execution changed since you loaded it'
+          )
+      ).toBe(true)
+    );
+  });
+
+  it('commits the reject dialog while the rejection runs, and opens clean afterwards', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.post).mockImplementation(
+      () =>
+        new Promise(
+          (_r, reject) => (fail = () => reject(new APIClientError('Late refusal', 'CONFLICT', 409)))
+        )
+    );
+    const user = userEvent.setup();
+    render(<ExecutionDetailView execution={execution('paused_for_approval')} trace={[]} />);
+
+    await user.click(screen.getByRole('button', { name: /^reject$/i }));
+    let dialog = await screen.findByRole('alertdialog');
+    await user.type(screen.getByPlaceholderText(/compliance requirements/i), 'No');
+    const confirm = within(dialog).getAllByRole('button', { name: /^reject$/i })[0];
+    await user.click(confirm);
+    expect(confirm).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(confirm);
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+
+    // Escape while it runs is ignored: the late refusal lands inside the open dialog.
+    await user.keyboard('{Escape}');
+    fail();
+    dialog = screen.getByRole('alertdialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late refusal');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^reject$/i }));
+    await screen.findByRole('alertdialog');
+    expect(screen.queryByText('Late refusal')).not.toBeInTheDocument();
   });
 });

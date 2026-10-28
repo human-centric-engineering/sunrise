@@ -178,7 +178,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           setStale((n) => n + 1);
           return;
         }
-        reportRowSave(err);
+        reportRowSave(err, `Couldn't update "${wh.url}"`);
       } finally {
         setToggling((prev) => {
           const next = new Set(prev);
@@ -332,7 +332,10 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => setDeleteTarget(wh)}
+                          onClick={() => {
+                            deleteSave.clear();
+                            setDeleteTarget(wh);
+                          }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -378,7 +381,8 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (open) return;
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (open || deleting) return;
           setDeleteTarget(null);
           deleteSave.clear();
         }}
@@ -395,7 +399,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Stays open on failure, so the error inside it can be read (§124).

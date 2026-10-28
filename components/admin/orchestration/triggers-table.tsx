@@ -154,7 +154,7 @@ export function TriggersTable({ triggers, enabledChannels }: Props) {
       router.refresh();
     } catch (err) {
       logger.error('triggers-table: delete failed', err);
-      save.report(err);
+      save.report(err, `Couldn't delete "${name}"`);
     } finally {
       setDeletingId(null);
     }

@@ -33,7 +33,7 @@ import {
 import type { AiWorkflowWithVersion } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
-import { isStaleSave, readSaveError } from '@/lib/errors/save-error';
+import { isStaleSave } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { SaveError } from '@/components/forms/form-error';
 import { API } from '@/lib/api/endpoints';
@@ -229,13 +229,8 @@ function WorkflowBuilderInner({
     fallback: 'Failed to save workflow. Try again in a moment.',
     fields: NO_SERVER_FIELDS,
   });
+  // Save as template and discard report into the same box, naming the action.
   const { clear: clearSaveFailure, report: reportSaveFailure, show: showSaveFailure } = save;
-  // The same box for an action with its own fallback (save as template, discard).
-  const reportActionFailure = useCallback(
-    (err: unknown, fallback: string) =>
-      showSaveFailure(readSaveError(err, { fallback, fields: NO_SERVER_FIELDS }).message),
-    [showSaveFailure]
-  );
 
   // Publish / draft state — populated from the workflow prop, kept in sync
   // by re-fetching on publish / discard.
@@ -657,11 +652,11 @@ function WorkflowBuilderInner({
       setSavedAsTemplate(true);
       schedule(() => setSavedAsTemplate(false), 2500);
     } catch (err) {
-      reportActionFailure(err, 'Could not save as template. Try again in a moment.');
+      reportSaveFailure(err, "Couldn't save as a template");
     } finally {
       setSavingAsTemplate(false);
     }
-  }, [workflow, schedule, clearSaveFailure, reportActionFailure]);
+  }, [workflow, schedule, clearSaveFailure, reportSaveFailure]);
 
   const handleExecute = useCallback(() => {
     setExecutionDialogOpen(true);
@@ -796,7 +791,7 @@ function WorkflowBuilderInner({
         return;
       }
       logger.error('Workflow discard-draft failed', { err });
-      reportActionFailure(err, 'Could not discard the draft. Try again in a moment.');
+      reportSaveFailure(err, "Couldn't discard the draft");
     }
   }, [
     router,
@@ -805,7 +800,7 @@ function WorkflowBuilderInner({
     workflow,
     definitionVersion,
     clearSaveFailure,
-    reportActionFailure,
+    reportSaveFailure,
   ]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;

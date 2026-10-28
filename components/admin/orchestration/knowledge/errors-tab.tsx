@@ -98,14 +98,15 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
   }, [fetchFailed]);
 
   const handleRetry = useCallback(
-    async (docId: string) => {
+    async (doc: KnowledgeDocument) => {
+      const docId = doc.id;
       setRetryingId(docId);
       clearRetryFailure();
       try {
         await apiClient.post(API.ADMIN.ORCHESTRATION.knowledgeDocumentRetry(docId));
         setDocuments((prev) => prev.filter((d) => d.id !== docId));
       } catch (err) {
-        reportRetryFailure(err);
+        reportRetryFailure(err, `Couldn't retry "${doc.name}"`);
       } finally {
         setRetryingId(null);
       }
@@ -212,7 +213,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
                   variant="outline"
                   size="sm"
                   disabled={retryingId === doc.id}
-                  onClick={() => void handleRetry(doc.id)}
+                  onClick={() => void handleRetry(doc)}
                 >
                   <RotateCcw
                     className={`mr-1.5 h-3.5 w-3.5 ${retryingId === doc.id ? 'animate-spin' : ''}`}
@@ -230,7 +231,13 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
       </div>
 
       {/* Delete confirmation modal */}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && openDelete(null)}>
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (!open && !deleting) openDelete(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete document?</DialogTitle>
@@ -242,7 +249,9 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
           <SaveError failure={deleteFailure.failure} />
           <DialogFooter>
             <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
+              <Button variant="outline" disabled={deleting}>
+                Cancel
+              </Button>
             </DialogClose>
             <Button variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
               {deleting ? 'Deleting...' : 'Delete'}

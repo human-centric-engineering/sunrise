@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ExperimentsList } from '@/components/admin/orchestration/experiments/experiments-list';
@@ -24,10 +24,10 @@ vi.mock('@/lib/api/client', async (importOriginal) => ({
 
 const AGENT = { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' };
 
-function experiment(status: string) {
+function experiment(status: string, id = 'exp-1', name = 'Formal vs Casual') {
   return {
-    id: 'exp-1',
-    name: 'Formal vs Casual',
+    id,
+    name,
     description: null,
     status,
     agentId: AGENT.id,
@@ -59,7 +59,10 @@ describe('ExperimentsList — failed save', () => {
     await user.click(await screen.findByRole('button', { name: /^complete$/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Variants have no scores yet');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent(
+      'Couldn\'t complete "Formal vs Casual": Variants have no scores yet'
+    );
     expect(alert.compareDocumentPosition(screen.getByRole('table'))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
@@ -83,5 +86,64 @@ describe('ExperimentsList — failed save', () => {
     expect(alert).toHaveTextContent('Experiment is running');
     expect(dialog).toBeInTheDocument();
     expect(dialog).toContainElement(alert);
+  });
+
+  it('disables Delete and Cancel while the delete runs, and a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([experiment('draft')]);
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () => new Promise((r) => (answer = () => r(undefined)))
+    );
+    const user = userEvent.setup();
+    render(<ExperimentsList />);
+
+    await user.click(await screen.findByRole('button', { name: /delete experiment/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: /deleting/i });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(pending);
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+  });
+
+  it("keeps row A's late failure in its own dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([
+      experiment('draft'),
+      experiment('draft', 'exp-2', 'Short vs Long'),
+    ]);
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () =>
+        new Promise(
+          (_r, reject) => (fail = () => reject(new APIClientError('Boom A', 'CONFLICT', 409)))
+        )
+    );
+    const user = userEvent.setup();
+    render(<ExperimentsList />);
+
+    await user.click((await screen.findAllByRole('button', { name: /delete experiment/i }))[0]);
+    let dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+    // Escape while the delete runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    fail();
+
+    dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText('Formal vs Casual')).toBeInTheDocument();
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: /delete experiment/i })[1]);
+    dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Short vs Long')).toBeInTheDocument();
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

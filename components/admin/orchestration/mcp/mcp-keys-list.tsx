@@ -85,6 +85,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     fields: NO_SERVER_FIELDS,
   });
   const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState(false);
   const revokeFailure = useSaveFailure({
     fallback: 'Could not revoke the key. Try again.',
     fields: NO_SERVER_FIELDS,
@@ -142,6 +143,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
   }
 
   async function handleRevoke(keyId: string) {
+    setRevoking(true);
     revokeFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpKeyById(keyId), {
@@ -151,10 +153,13 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setRevokeId(null);
     } catch (err) {
       revokeFailure.report(err);
+    } finally {
+      setRevoking(false);
     }
   }
 
-  async function handleRotate(keyId: string) {
+  async function handleRotate(key: ApiKeyRow) {
+    const keyId = key.id;
     setRotatingId(keyId);
     listFailure.clear();
     try {
@@ -163,7 +168,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       );
       setRotatedPlaintext({ keyId, plaintext: data.plaintextKey });
     } catch (err) {
-      listFailure.report(err);
+      listFailure.report(err, `Couldn't rotate "${key.name}"`);
       return;
     } finally {
       setRotatingId(null);
@@ -452,7 +457,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => void handleRotate(key.id)}
+                              onClick={() => void handleRotate(key)}
                               disabled={rotatingId === key.id}
                               className="text-xs"
                             >
@@ -461,6 +466,8 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                             <AlertDialog
                               open={revokeId === key.id}
                               onOpenChange={(open) => {
+                                // Committed while the revoke runs: Escape waits for it.
+                                if (!open && revoking) return;
                                 revokeFailure.clear();
                                 setRevokeId(open ? key.id : null);
                               }}
@@ -484,8 +491,9 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                                 </AlertDialogHeader>
                                 <SaveError failure={revokeFailure.failure} />
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogCancel disabled={revoking}>Cancel</AlertDialogCancel>
                                   <AlertDialogAction
+                                    disabled={revoking}
                                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                     onClick={(e) => {
                                       // Closes only on success, so a failure stays readable here.

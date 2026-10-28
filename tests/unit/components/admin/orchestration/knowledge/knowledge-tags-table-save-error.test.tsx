@@ -61,7 +61,8 @@ describe('KnowledgeTagsTable — failed saves', () => {
     await user.click(screen.getByRole('button', { name: /confirm/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Tag is locked');
+    // A bulk action names the action.
+    expect(alert).toHaveTextContent("Couldn't delete the unused tags: Tag is locked");
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });
@@ -132,5 +133,59 @@ describe('KnowledgeTagsTable — failed saves', () => {
       within(dialog).getByRole('button', { name: /^delete$/i })
     );
     expect(alert).toHaveFocus();
+  });
+
+  it('commits the delete dialog while it runs: both buttons disabled, a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(undefined)))
+    );
+    const user = userEvent.setup();
+    render(<KnowledgeTagsTable initialTags={[UNUSED]} initialMeta={META} />);
+
+    await user.click(screen.getByRole('button', { name: /delete unused tag/i }));
+    const dialog = screen.getByRole('dialog');
+    const del = within(dialog).getByRole('button', { name: /^delete$/i });
+    await user.click(del);
+
+    expect(del).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(del);
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late delete failure in row A's dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () =>
+        new Promise((_, reject) => (fail = () => reject(new APIClientError('Boom A', 'X', 500))))
+    );
+    const other = { ...UNUSED, id: 'tag-other', slug: 'other', name: 'Other Tag' };
+    const user = userEvent.setup();
+    render(<KnowledgeTagsTable initialTags={[UNUSED, other]} initialMeta={META} />);
+
+    await user.click(screen.getByRole('button', { name: /delete unused tag/i }));
+    let dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+    // Escape while the delete runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    fail();
+
+    dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Unused Tag/)).toBeInTheDocument();
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /delete other tag/i }));
+    dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Other Tag/)).toBeInTheDocument();
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

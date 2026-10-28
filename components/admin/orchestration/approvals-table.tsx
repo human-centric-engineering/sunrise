@@ -657,7 +657,8 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
       <AlertDialog
         open={approveTarget !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the approval runs: Escape and outside clicks wait for it.
+          if (!open && !approveLoading) {
             setApproveTarget(null);
             setApproveNotes('');
             setApprovePayload(null);
@@ -716,7 +717,8 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
       <AlertDialog
         open={rejectTarget !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the rejection runs: Escape and outside clicks wait for it.
+          if (!open && !rejectLoading) {
             setRejectTarget(null);
             setRejectReason('');
             clearRejectSave();

@@ -120,11 +120,14 @@ describe('WorkflowBuilder — failed discard', () => {
     await user.click(screen.getByRole('button', { name: /discard draft/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Workflow has no published version to fall back to');
+    // The box serves save, save as template and discard, so it names the action.
+    expect(alert).toHaveTextContent(
+      "Couldn't discard the draft: Workflow has no published version to fall back to"
+    );
     await waitFor(() => expect(alert).toHaveFocus());
   });
 
-  it('gives a discard that failed without a server message its own fallback', async () => {
+  it('words a discard the server said nothing about as the hook does: the action, then "Try again."', async () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.post).mockRejectedValue(new TypeError('Failed to fetch'));
     const user = userEvent.setup();
@@ -133,7 +136,7 @@ describe('WorkflowBuilder — failed discard', () => {
     await user.click(screen.getByRole('button', { name: /discard draft/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not discard the draft. Try again in a moment.'
+      /^Couldn't discard the draft\. Try again\.$/
     );
   });
 });

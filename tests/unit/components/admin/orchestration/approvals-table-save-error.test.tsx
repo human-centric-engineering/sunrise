@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ApprovalsTable } from '@/components/admin/orchestration/approvals-table';
@@ -84,5 +84,65 @@ describe('ApprovalsTable — failed approve / reject', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Reject is not allowed for this step');
     expect(dialog).toContainElement(alert);
+  });
+
+  describe('while the decision is in flight', () => {
+    const SECOND: ExecutionListItem = {
+      ...APPROVAL,
+      id: 'exec-002',
+      workflow: { id: 'wf-2', name: 'Refund Review' },
+    };
+    const META_2 = { ...META, total: 2 };
+    const posts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+
+    it("disables both buttons, sends once, and keeps row A's late failure out of row B's dialog", async () => {
+      let answer: (res: Response) => void = () => {};
+      fetchMock.mockImplementation(() => new Promise<Response>((r) => (answer = r)));
+      const user = userEvent.setup();
+      render(<ApprovalsTable initialApprovals={[APPROVAL, SECOND]} initialMeta={META_2} />);
+
+      await user.click(screen.getAllByRole('button', { name: /^approve$/i })[0]);
+      let dialog = await screen.findByRole('alertdialog');
+      const confirm = within(dialog).getByRole('button', { name: /approve/i });
+      await user.click(confirm);
+
+      expect(confirm).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+      await user.click(confirm);
+      expect(posts()).toHaveLength(1);
+
+      // Escape while it runs is ignored: the dialog waits for the answer.
+      await user.keyboard('{Escape}');
+      answer(errorResponse('Boom A'));
+      dialog = screen.getByRole('alertdialog');
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+      await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      await user.click(screen.getAllByRole('button', { name: /^approve$/i })[1]);
+      await screen.findByRole('alertdialog');
+      expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
+    });
+
+    it('ignores Escape while a rejection runs, so its late failure is shown', async () => {
+      let answer: (res: Response) => void = () => {};
+      fetchMock.mockImplementation(() => new Promise<Response>((r) => (answer = r)));
+      const user = userEvent.setup();
+      render(<ApprovalsTable initialApprovals={[APPROVAL]} initialMeta={META} />);
+
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.type(screen.getByPlaceholderText(/compliance requirements/i), 'No');
+      const confirm = within(dialog).getByRole('button', { name: /reject/i });
+      await user.click(confirm);
+      expect(confirm).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+
+      await user.keyboard('{Escape}');
+      answer(errorResponse('Late reject refusal'));
+      expect(await within(screen.getByRole('alertdialog')).findByRole('alert')).toHaveTextContent(
+        'Late reject refusal'
+      );
+    });
   });
 });

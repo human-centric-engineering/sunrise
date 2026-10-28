@@ -82,7 +82,10 @@ describe('ErrorsTab — failed row actions', () => {
     await user.click(screen.getAllByRole('button', { name: /^retry$/i })[1]);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Document is already processing');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent(
+      'Couldn\'t retry "Failed Report B": Document is already processing'
+    );
     // Directly above the list holding the rows.
     expect(alert.nextElementSibling).toContainElement(screen.getByText('Failed Report A'));
     expect(alert).toHaveFocus();
@@ -130,5 +133,67 @@ describe('ErrorsTab — failed row actions', () => {
     await user.click(screen.getAllByRole('button', { name: /^delete$/i })[0]);
     dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('commits the dialog to a delete in flight: both buttons disabled, a second click sends nothing', async () => {
+    let answer: (res: Response) => void = () => {};
+    mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return new Promise<Response>((r) => (answer = r));
+      return Promise.resolve(
+        json(200, { success: true, data: [failedDoc('doc-1', 'Failed Report A')] })
+      );
+    });
+    const user = userEvent.setup();
+    render(<ErrorsTab />);
+
+    await screen.findByText('Failed Report A');
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: /deleting/i });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(pending);
+    const deletes = () => mockFetch.mock.calls.filter(([, init]) => init?.method === 'DELETE');
+    expect(deletes()).toHaveLength(1);
+
+    answer(json(200, { success: true, data: null }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it("keeps row A's late failure in row A's dialog, never in row B's", async () => {
+    let answer: (res: Response) => void = () => {};
+    mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return new Promise<Response>((r) => (answer = r));
+      return Promise.resolve(
+        json(200, {
+          success: true,
+          data: [failedDoc('doc-1', 'Failed Report A'), failedDoc('doc-2', 'Failed Report B')],
+        })
+      );
+    });
+    const user = userEvent.setup();
+    render(<ErrorsTab />);
+
+    await screen.findByText('Failed Report A');
+    await user.click(screen.getAllByRole('button', { name: /^delete$/i })[0]);
+    let dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+    // Escape while the delete runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    answer(json(500, { success: false, error: { code: 'INTERNAL_ERROR', message: 'Boom A' } }));
+
+    dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Failed Report A')).toBeInTheDocument();
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: /^delete$/i })[1]);
+    dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Failed Report B')).toBeInTheDocument();
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

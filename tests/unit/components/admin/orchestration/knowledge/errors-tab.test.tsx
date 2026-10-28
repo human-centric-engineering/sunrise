@@ -384,7 +384,7 @@ describe('ErrorsTab', () => {
     await user.click(screen.getAllByRole('button', { name: /retry/i })[0]);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not retry the document. Try again.'
+      'Couldn\'t retry "Failed Report A". Try again.'
     );
   });
 

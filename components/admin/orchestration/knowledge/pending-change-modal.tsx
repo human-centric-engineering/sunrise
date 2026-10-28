@@ -159,7 +159,13 @@ export function PendingChangeModal({
   ]);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => (next ? null : onClose())}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while Accept or Reject runs: Escape waits for it.
+        if (!next && acting === null) onClose();
+      }}
+    >
       <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

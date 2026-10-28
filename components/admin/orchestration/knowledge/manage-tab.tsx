@@ -378,7 +378,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   }, [fetchEmbeddingStatus, clearSeedFailure, clearEmbedFailure, reportEmbedFailure]);
 
   const handleRechunk = useCallback(
-    async (docId: string) => {
+    async (doc: { id: string; name: string }) => {
+      const docId = doc.id;
       setRechunkingId(docId);
       clearRowFailure();
       try {
@@ -388,7 +389,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
         if (!res.ok) throw await apiErrorFromResponse(res);
         refreshAll();
       } catch (err) {
-        reportRowFailure(err);
+        reportRowFailure(err, `Couldn't rechunk "${doc.name}"`);
       } finally {
         setRechunkingId(null);
       }
@@ -397,7 +398,8 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   );
 
   const handleDelete = useCallback(
-    async (docId: string) => {
+    async (doc: { id: string; name: string }) => {
+      const docId = doc.id;
       // A Review still loading for any row is dropped, not opened over the list.
       previewRequestRef.current += 1;
       setReviewingId(null);
@@ -411,7 +413,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
         refreshAll();
         void fetchEmbeddingStatus();
       } catch (err) {
-        reportRowFailure(err);
+        reportRowFailure(err, `Couldn't delete "${doc.name}"`);
       } finally {
         setDeletingId(null);
         setDeleteConfirmId(null);
@@ -1216,7 +1218,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                       variant="ghost"
                                       size="sm"
                                       disabled={rechunkingId === doc.id}
-                                      onClick={() => void handleRechunk(doc.id)}
+                                      onClick={() => void handleRechunk(doc)}
                                     >
                                       <RefreshCw
                                         className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
@@ -1234,7 +1236,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                                       variant="destructive"
                                       size="sm"
                                       disabled={deletingId === doc.id}
-                                      onClick={() => void handleDelete(doc.id)}
+                                      onClick={() => void handleDelete(doc)}
                                     >
                                       {deletingId === doc.id ? 'Deleting...' : 'Yes'}
                                     </Button>

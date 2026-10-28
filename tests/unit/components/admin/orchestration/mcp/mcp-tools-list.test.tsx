@@ -192,7 +192,7 @@ describe('McpToolsList', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(
-          'Could not update the tools. Try again.'
+          'Couldn\'t disable "Send Email". Try again.'
         );
       });
     });

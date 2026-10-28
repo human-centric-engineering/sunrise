@@ -68,7 +68,8 @@ describe('TriggersTable — failed delete', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Trigger is in use');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent('Couldn\'t delete "SMS intake": Trigger is in use');
     expect(alert.compareDocumentPosition(screen.getByRole('table'))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );

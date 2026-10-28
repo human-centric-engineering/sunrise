@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { McpResourcesList } from '@/components/admin/orchestration/mcp/mcp-resources-list';
@@ -130,8 +130,64 @@ describe('McpResourcesList — failed saves', () => {
     await user.click(screen.getByRole('switch', { name: /Enable Knowledge Search/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Toggle refused');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent('Couldn\'t disable "Knowledge Search": Toggle refused');
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
+  });
+
+  it('commits the remove dialog while it runs: both buttons disabled, a second click sends nothing', async () => {
+    let answer: (res: Response) => void = () => {};
+    mockFetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+    const user = userEvent.setup();
+    render(<McpResourcesList initialResources={[RESOURCE]} />);
+
+    await user.click(screen.getByRole('button', { name: /^Remove$/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    const remove = within(dialog).getByRole('button', { name: /^Remove$/i });
+    await user.click(remove);
+
+    expect(remove).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^Cancel$/i })).toBeDisabled();
+    await user.click(remove);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    answer(
+      new Response(JSON.stringify({ success: true, data: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late remove failure in row A's dialog, never in row B's", async () => {
+    let answer: (res: Response) => void = () => {};
+    mockFetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+    const other = { ...RESOURCE, id: 'r-2', name: 'Other Resource', uri: 'sunrise://other' };
+    const user = userEvent.setup();
+    render(<McpResourcesList initialResources={[RESOURCE, other]} />);
+
+    await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[0]);
+    let dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Remove$/i }));
+    // Escape while the remove runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    answer(
+      new Response(
+        JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Boom A' } }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+
+    dialog = screen.getByRole('alertdialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^Cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[1]);
+    await screen.findByRole('alertdialog');
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

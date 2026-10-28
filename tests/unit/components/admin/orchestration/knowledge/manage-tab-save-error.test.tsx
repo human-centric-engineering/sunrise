@@ -89,7 +89,7 @@ describe('ManageTab — failed actions', () => {
     await user.click(rechunk!);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Document is processing');
+    expect(alert).toHaveTextContent('Couldn\'t rechunk "My Custom Doc": Document is processing');
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });
@@ -106,7 +106,7 @@ describe('ManageTab — failed actions', () => {
     await user.click(await screen.findByRole('button', { name: /^yes$/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Not allowed');
+    expect(alert).toHaveTextContent('Couldn\'t delete "My Custom Doc": Not allowed');
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });

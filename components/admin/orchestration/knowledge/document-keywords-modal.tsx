@@ -135,6 +135,9 @@ export function DocumentKeywordsModal({
   }, [documentId]);
 
   useEffect(() => {
+    // Opening (or switching document) starts clean: one document's failed
+    // enrich never shows on the next.
+    clearEnrichFailure();
     if (open && documentId) {
       void fetchKeywords();
     }
@@ -144,7 +147,6 @@ export function DocumentKeywordsModal({
       setFilter('');
       setConfirmEnrich(false);
       setEnrichResult(null);
-      clearEnrichFailure();
     }
   }, [open, documentId, fetchKeywords, clearEnrichFailure]);
 
@@ -184,7 +186,14 @@ export function DocumentKeywordsModal({
   }, [documentId, fetchKeywords, onEnriched, clearEnrichFailure, reportEnrichFailure]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the enrich runs: Escape waits for it.
+        if (!next && enriching) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -299,7 +308,7 @@ export function DocumentKeywordsModal({
             </span>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={enriching}>
                 Close
               </Button>
               <Button onClick={() => setConfirmEnrich(true)} disabled={enriching}>

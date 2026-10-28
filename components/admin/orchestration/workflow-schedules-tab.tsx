@@ -202,7 +202,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
         setStale((n) => n + 1);
         return;
       }
-      rowSave.report(err);
+      rowSave.report(err, `Couldn't update "${schedule.name}"`);
     } finally {
       setToggling((prev) => {
         const next = new Set(prev);
@@ -305,7 +305,10 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setDeleteTarget(s)}
+                  onClick={() => {
+                    deleteSave.clear();
+                    setDeleteTarget(s);
+                  }}
                   title="Delete schedule"
                 >
                   <Trash2 className="h-4 w-4 text-red-500" />
@@ -401,7 +404,8 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (open) return;
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (open || deleting) return;
           setDeleteTarget(null);
           deleteSave.clear();
         }}
@@ -416,7 +420,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a refusal can be read inside it (§124).

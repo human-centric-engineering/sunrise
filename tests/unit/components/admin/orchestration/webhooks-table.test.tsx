@@ -679,7 +679,9 @@ describe('WebhooksTable', () => {
     expect(switches[0]).toHaveAttribute('aria-checked', 'true');
     await user.click(switches[0]);
 
-    expect(await screen.findByText('Could not update webhook. Try again.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Couldn\'t update "https://example.com/hooks/sunrise". Try again.')
+    ).toBeInTheDocument();
     await waitFor(() => expect(switches[0]).toHaveAttribute('aria-checked', 'true'));
   });
 

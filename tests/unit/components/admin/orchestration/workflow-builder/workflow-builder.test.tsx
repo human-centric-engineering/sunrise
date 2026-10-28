@@ -975,7 +975,9 @@ describe('WorkflowBuilder', () => {
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
       });
-      expect(screen.getByRole('alert').textContent).toContain('Could not save as template');
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /^Couldn't save as a template\. Try again\.$/
+      );
     });
   });
 

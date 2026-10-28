@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('next/navigation', () => ({
@@ -87,5 +87,103 @@ describe('EvaluationRunner — refused save', () => {
     expect(alert).toHaveTextContent('Evaluation is being completed');
     expect(dialog).toBeInTheDocument();
     expect(dialog).toContainElement(alert);
+  });
+
+  it('disables Archive and Cancel while the archive runs, and a second click sends nothing', async () => {
+    let answer: (res: Response) => void = () => {};
+    const fetchMock = vi.fn((_url: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'PATCH'
+        ? new Promise<Response>((r) => (answer = r))
+        : Promise.resolve(
+            new Response(JSON.stringify({ success: true, data: { logs: [] } }), { status: 200 })
+          )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<EvaluationRunner evaluation={EVALUATION} />);
+
+    await user.click(screen.getByRole('button', { name: /^archive$/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: /^archive$/i });
+    await user.click(confirm);
+
+    expect(confirm).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(confirm);
+    const patches = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
+    expect(patches()).toHaveLength(1);
+
+    // Escape while it runs is ignored: a late refusal lands inside the open dialog.
+    await user.keyboard('{Escape}');
+    answer(
+      new Response(
+        JSON.stringify({ success: false, error: { code: 'CONFLICT', message: 'Late refusal' } }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    const alert = await within(screen.getByRole('alertdialog')).findByRole('alert');
+    expect(alert).toHaveTextContent('Late refusal');
+
+    // Closed and opened again, the dialog starts clean.
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: /^cancel$/i })
+    );
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^archive$/i }));
+    await screen.findByRole('alertdialog');
+    expect(screen.queryByText('Late refusal')).not.toBeInTheDocument();
+  });
+
+  it('clears a refused manual save once a later auto-save succeeds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let refuse = true;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === 'PATCH') {
+            return refuse
+              ? new Response(
+                  JSON.stringify({
+                    success: false,
+                    error: { code: 'CONFLICT', message: 'Could not save just now' },
+                  }),
+                  { status: 409, headers: { 'Content-Type': 'application/json' } }
+                )
+              : new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                logs: [
+                  { sequenceNumber: 1, eventType: 'user_input', content: 'Q?' },
+                  { sequenceNumber: 2, eventType: 'ai_response', content: 'A.' },
+                ],
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        })
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<EvaluationRunner evaluation={EVALUATION} />);
+      await screen.findAllByText('A.');
+
+      await user.click(screen.getByTitle('Save annotations'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not save just now');
+
+      // An edit schedules the debounced auto-save, which now succeeds.
+      refuse = false;
+      await user.click(screen.getAllByText('You')[0].closest('button')!);
+      await user.click(await screen.findByRole('button', { name: 'Expected' }));
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

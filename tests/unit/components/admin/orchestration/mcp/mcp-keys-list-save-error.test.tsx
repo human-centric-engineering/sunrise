@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { McpKeysList } from '@/components/admin/orchestration/mcp/mcp-keys-list';
@@ -116,8 +116,60 @@ describe('McpKeysList — failed saves', () => {
     await user.click(screen.getByRole('button', { name: /^rotate$/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Rotation is rate limited');
+    // The box sits away from the row, so it names the row.
+    expect(alert).toHaveTextContent('Couldn\'t rotate "Claude Desktop": Rotation is rate limited');
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
+  });
+
+  it('commits the revoke dialog while it runs: both buttons disabled, a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.patch).mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(undefined)))
+    );
+    const user = userEvent.setup();
+    render(<McpKeysList initialKeys={[KEY]} />);
+
+    await user.click(screen.getByRole('button', { name: /^Revoke$/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    const revoke = within(dialog).getByRole('button', { name: /^Revoke$/i });
+    await user.click(revoke);
+
+    expect(revoke).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^Cancel$/i })).toBeDisabled();
+    await user.click(revoke);
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late revoke failure in row A's dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.patch).mockImplementation(
+      () =>
+        new Promise((_, reject) => (fail = () => reject(new APIClientError('Boom A', 'X', 500))))
+    );
+    const user = userEvent.setup();
+    render(<McpKeysList initialKeys={[KEY, { ...KEY, id: 'key-2', name: 'Cursor' }]} />);
+
+    await user.click(screen.getAllByRole('button', { name: /^Revoke$/i })[0]);
+    let dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Revoke$/i }));
+    // Escape while the revoke runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    fail();
+
+    dialog = screen.getByRole('alertdialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Boom A');
+
+    await user.click(within(dialog).getByRole('button', { name: /^Cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: /^Revoke$/i })[1]);
+    await screen.findByRole('alertdialog');
+    expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
 });

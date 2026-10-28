@@ -858,7 +858,9 @@ describe('KnowledgeTagsTable', () => {
       await user.click(screen.getByRole('button', { name: /confirm/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Delete failed')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          "Couldn't delete the unused tags: Delete failed"
+        );
       });
     });
 
@@ -872,9 +874,7 @@ describe('KnowledgeTagsTable', () => {
       await user.click(screen.getByRole('button', { name: /confirm/i }));
 
       await waitFor(() => {
-        expect(
-          screen.getByText('Could not delete the unused tags. Try again.')
-        ).toBeInTheDocument();
+        expect(screen.getByText("Couldn't delete the unused tags. Try again.")).toBeInTheDocument();
       });
     });
 

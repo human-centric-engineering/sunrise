@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
@@ -48,8 +48,28 @@ const WORKFLOW = {
 
 const META = { page: 1, limit: 25, total: 1, totalPages: 1 };
 
-function renderTable() {
-  render(<WorkflowsTable initialWorkflows={[WORKFLOW]} initialMeta={META} />);
+const WORKFLOW_B = {
+  ...WORKFLOW,
+  id: 'wf-2',
+  name: 'Beta Flow',
+  slug: 'beta-flow',
+  createdAt: new Date('2024-12-01T00:00:00Z'),
+} as unknown as AiWorkflowListItem;
+
+function renderTable(workflows: AiWorkflowListItem[] = [WORKFLOW]) {
+  render(
+    <WorkflowsTable
+      initialWorkflows={workflows}
+      initialMeta={{ ...META, total: workflows.length }}
+    />
+  );
+}
+
+/** Opens row `index`'s delete dialog from its actions menu. */
+async function openDelete(user: ReturnType<typeof userEvent.setup>, index: number) {
+  await user.click(screen.getAllByRole('button', { name: /row actions/i })[index]);
+  await user.click(await screen.findByRole('menuitem', { name: /delete/i }));
+  return screen.findByRole('alertdialog');
 }
 
 describe('WorkflowsTable — failed save', () => {
@@ -105,5 +125,74 @@ describe('WorkflowsTable — failed save', () => {
     expect(alert).toHaveTextContent('Workflow has running executions');
     expect(dialog).toBeInTheDocument();
     expect(dialog).toContainElement(alert);
+  });
+
+  it('words a duplicate the server said nothing about as the hook does: the context, then "Try again."', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockRejectedValue(
+      new APIClientError('Failed to fetch', 'NETWORK_ERROR', 0)
+    );
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole('button', { name: /row actions/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /duplicate/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /^Couldn't duplicate "Alpha Flow"\. Try again\.$/
+    );
+  });
+
+  it('commits the dialog to a delete in flight: both buttons disabled, a second click sends nothing', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let answer: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(undefined)))
+    );
+    const user = userEvent.setup();
+    renderTable();
+
+    const dialog = await openDelete(user, 0);
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+    const pending = within(dialog).getByRole('button', { name: /deleting/i });
+    expect(pending).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.click(pending);
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(apiClient.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps row A's late failure in row A's dialog, never in row B's", async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let refuse: () => void = () => {};
+    vi.mocked(apiClient.delete).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          refuse = () => reject(new APIClientError('Alpha is busy', 'CONFLICT', 409));
+        })
+    );
+    const user = userEvent.setup();
+    renderTable([WORKFLOW, WORKFLOW_B]);
+
+    let dialog = await openDelete(user, 0);
+    expect(dialog).toHaveTextContent('Alpha Flow');
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+    // Escape while the delete runs is ignored: the dialog waits for the answer.
+    await user.keyboard('{Escape}');
+    refuse();
+
+    dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Alpha Flow');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Alpha is busy');
+
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    dialog = await openDelete(user, 1);
+    expect(dialog).toHaveTextContent('Beta Flow');
+    expect(screen.queryByText(/Alpha is busy/)).not.toBeInTheDocument();
   });
 });

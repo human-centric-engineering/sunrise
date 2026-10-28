@@ -380,7 +380,12 @@ export function EvaluationsTable({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setArchiveTarget(ev.id)}>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              clearArchiveSave();
+                              setArchiveTarget(ev.id);
+                            }}
+                          >
                             <Archive className="mr-2 h-4 w-4" />
                             Archive
                           </DropdownMenuItem>
@@ -426,7 +431,8 @@ export function EvaluationsTable({
       <AlertDialog
         open={!!archiveTarget}
         onOpenChange={(open) => {
-          if (open) return;
+          // Committed while the archive runs: Escape and outside clicks wait for it.
+          if (open || archiving) return;
           setArchiveTarget(null);
           clearArchiveSave();
         }}
@@ -441,7 +447,7 @@ export function EvaluationsTable({
           </AlertDialogHeader>
           <SaveError failure={archiveSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={archiving}
               onClick={(e) => {

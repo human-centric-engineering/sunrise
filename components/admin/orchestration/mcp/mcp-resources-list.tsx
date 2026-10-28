@@ -136,6 +136,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     fields: NO_SERVER_FIELDS,
   });
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const removeFailure = useSaveFailure({
     fallback: 'Could not remove the resource. Try again.',
     fields: NO_SERVER_FIELDS,
@@ -219,7 +220,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     }
   }
 
-  async function handleToggle(resourceId: string, isEnabled: boolean) {
+  async function handleToggle(resource: ResourceRow, isEnabled: boolean) {
+    const resourceId = resource.id;
     listFailure.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
@@ -227,7 +229,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       });
       setResources((prev) => prev.map((r) => (r.id === resourceId ? { ...r, isEnabled } : r)));
     } catch (err) {
-      listFailure.report(err);
+      listFailure.report(err, `Couldn't ${isEnabled ? 'enable' : 'disable'} "${resource.name}"`);
     }
   }
 
@@ -251,6 +253,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
   }
 
   async function handleRemove(resourceId: string) {
+    setRemoving(true);
     removeFailure.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId));
@@ -258,6 +261,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       setRemoveId(null);
     } catch (err) {
       removeFailure.report(err);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -571,7 +576,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                   <TableCell>
                     <Switch
                       checked={resource.isEnabled}
-                      onCheckedChange={(checked) => void handleToggle(resource.id, checked)}
+                      onCheckedChange={(checked) => void handleToggle(resource, checked)}
                       disabled={readOnly}
                       aria-label={`Enable ${resource.name}`}
                     />
@@ -590,6 +595,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                       <AlertDialog
                         open={removeId === resource.id}
                         onOpenChange={(open) => {
+                          // Committed while the remove runs: Escape waits for it.
+                          if (!open && removing) return;
                           removeFailure.clear();
                           setRemoveId(open ? resource.id : null);
                         }}
@@ -609,8 +616,9 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                           </AlertDialogHeader>
                           <SaveError failure={removeFailure.failure} />
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
                             <AlertDialogAction
+                              disabled={removing}
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                               onClick={(e) => {
                                 // Closes only on success, so a failure stays readable here.

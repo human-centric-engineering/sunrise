@@ -48,7 +48,6 @@ import {
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { readSaveError } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
@@ -84,6 +83,11 @@ export interface WebhookDlqTableProps {
   subscriptions: { id: string; url: string; description: string | null }[];
 }
 
+/** What a row is called: its subscription's description, else where it went. */
+function deliveryLabel(d: DlqDelivery): string {
+  return d.subscription?.description ?? d.destination ?? 'Subscription';
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function WebhookDlqTable({
@@ -100,12 +104,8 @@ export function WebhookDlqTable({
   const [loading, setLoading] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   // A refused row retry or bulk replay: shown in the one box above the table (§124).
-  // It names the action, since retry and bulk replay share it.
-  const actionSave = useSaveFailure({ fallback: 'Please try again.', fields: NO_SERVER_FIELDS });
-  const reportAction = (what: string, err: unknown) => {
-    const { message } = readSaveError(err, { fallback: '', fields: NO_SERVER_FIELDS });
-    actionSave.show(message ? `${what} failed: ${message}` : `${what} failed. Please try again.`);
-  };
+  // It names the row retried, or the bulk replay, since they share it.
+  const actionSave = useSaveFailure({ fallback: 'Try again.', fields: NO_SERVER_FIELDS });
   // The row whose discard dialog is open. A refused discard shows inside it,
   // and it stays open.
   const [discardId, setDiscardId] = useState<string | null>(null);
@@ -148,14 +148,15 @@ export function WebhookDlqTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscriptionFilter, eventFilter, since, until]);
 
-  const handleRetry = async (deliveryId: string) => {
+  const handleRetry = async (delivery: DlqDelivery) => {
+    const deliveryId = delivery.id;
     setActionId(deliveryId);
     actionSave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId));
       void fetchPage(meta.page);
     } catch (err) {
-      reportAction('Retry', err);
+      actionSave.report(err, `Couldn't retry the delivery to "${deliveryLabel(delivery)}"`);
     } finally {
       setActionId(null);
     }
@@ -188,7 +189,7 @@ export function WebhookDlqTable({
       await apiClient.post(API.ADMIN.ORCHESTRATION.WEBHOOK_DLQ_REPLAY, { body });
       void fetchPage(meta.page);
     } catch (err) {
-      reportAction('Bulk replay', err);
+      actionSave.report(err, 'Bulk replay failed');
     } finally {
       setActionId(null);
     }
@@ -314,7 +315,7 @@ export function WebhookDlqTable({
                         className="hover:underline"
                       >
                         <span className="block max-w-[220px] truncate text-sm">
-                          {d.subscription.description ?? d.destination ?? 'Subscription'}
+                          {deliveryLabel(d)}
                         </span>
                         <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
                           {d.destination ?? 'Destination not recorded'}
@@ -347,7 +348,7 @@ export function WebhookDlqTable({
                         variant="ghost"
                         size="icon"
                         disabled={actionId === d.id || !d.subscription}
-                        onClick={() => void handleRetry(d.id)}
+                        onClick={() => void handleRetry(d)}
                         title={
                           d.subscription
                             ? 'Retry delivery'
@@ -363,6 +364,8 @@ export function WebhookDlqTable({
                       <AlertDialog
                         open={discardId === d.id}
                         onOpenChange={(open) => {
+                          // Committed while the discard runs: Escape and outside clicks wait for it.
+                          if (!open && actionId === d.id) return;
                           setDiscardId(open ? d.id : null);
                           discardSave.clear();
                         }}
@@ -388,7 +391,9 @@ export function WebhookDlqTable({
                           </AlertDialogHeader>
                           <SaveError failure={discardSave.failure} />
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel disabled={actionId === d.id}>
+                              Cancel
+                            </AlertDialogCancel>
                             <AlertDialogAction
                               disabled={actionId === d.id}
                               onClick={(e) => {

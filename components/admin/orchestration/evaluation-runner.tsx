@@ -457,6 +457,8 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
         });
         if (!res.ok) throw await apiErrorFromResponse(res);
         setLastSaved(new Date());
+        // Saved now, so an earlier refused manual save no longer stands.
+        clearAnnotationSave();
       } catch (err) {
         if (manual) reportAnnotationSave(err);
       } finally {
@@ -841,6 +843,8 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
         <AlertDialog
           open={archiveOpen}
           onOpenChange={(open) => {
+            // Committed while the archive runs: Escape and outside clicks wait for it.
+            if (!open && isArchiving) return;
             setArchiveOpen(open);
             clearArchiveSave();
           }}
@@ -861,7 +865,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
             </AlertDialogHeader>
             <SaveError failure={archiveSave.failure} />
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={isArchiving}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 disabled={isArchiving}
                 onClick={(e) => {

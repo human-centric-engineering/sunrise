@@ -206,7 +206,10 @@ export function WorkflowDefinitionHistoryPanel({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setRevertTarget(entry)}
+                      onClick={() => {
+                        clearRevertSave();
+                        setRevertTarget(entry);
+                      }}
                     >
                       <RotateCcw className="mr-1 h-3 w-3" />
                       Rollback
@@ -249,7 +252,8 @@ export function WorkflowDefinitionHistoryPanel({
       <AlertDialog
         open={!!revertTarget}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the rollback runs: Escape and outside clicks wait for it.
+          if (!open && !reverting) {
             setRevertTarget(null);
             clearRevertSave();
           }

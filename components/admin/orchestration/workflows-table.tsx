@@ -68,7 +68,6 @@ import {
 } from '@/components/ui/table';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { readSaveError } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -107,14 +106,8 @@ export function WorkflowsTable({
   // naming the workflow, since the box can be far from its row.
   const rowSave = useSaveFailure({ fallback: 'Try again.', fields: NO_SERVER_FIELDS });
   const { clear: clearDeleteSave, report: reportDeleteSave } = deleteSave;
-  const { clear: clearRowSave, show: showRowSave } = rowSave;
-  const reportRowSave = useCallback(
-    (what: string, err: unknown) => {
-      const { message } = readSaveError(err, { fallback: 'Try again.', fields: NO_SERVER_FIELDS });
-      showRowSave(`Couldn't ${what}: ${message}`);
-    },
-    [showRowSave]
-  );
+  const { clear: clearRowSave, show: showRowSave, report: reportRowSave } = rowSave;
+  const [deleting, setDeleting] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -216,7 +209,7 @@ export function WorkflowsTable({
         setWorkflows((prev) =>
           prev.map((w) => (w.id === workflow.id ? { ...w, isActive: workflow.isActive } : w))
         );
-        reportRowSave(`update "${workflow.name}"`, err);
+        reportRowSave(err, `Couldn't update "${workflow.name}"`);
       }
     },
     [clearRowSave, reportRowSave]
@@ -224,7 +217,7 @@ export function WorkflowsTable({
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
-    setIsLoading(true);
+    setDeleting(true);
     clearDeleteSave();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.workflowById(deleteTarget.id));
@@ -233,7 +226,7 @@ export function WorkflowsTable({
     } catch (err) {
       reportDeleteSave(err);
     } finally {
-      setIsLoading(false);
+      setDeleting(false);
     }
   }, [deleteTarget, fetchWorkflows, meta.page, clearDeleteSave, reportDeleteSave]);
 
@@ -277,7 +270,7 @@ export function WorkflowsTable({
         });
         router.push(`/admin/orchestration/workflows/${created.id}`);
       } catch (err) {
-        reportRowSave(`duplicate "${workflow.name}"`, err);
+        reportRowSave(err, `Couldn't duplicate "${workflow.name}"`);
       } finally {
         setIsLoading(false);
       }
@@ -518,7 +511,10 @@ export function WorkflowsTable({
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-red-600"
-                              onClick={() => setDeleteTarget(workflow)}
+                              onClick={() => {
+                                clearDeleteSave();
+                                setDeleteTarget(workflow);
+                              }}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
                               Delete
@@ -568,9 +564,10 @@ export function WorkflowsTable({
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (open) return;
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (open || deleting) return;
           setDeleteTarget(null);
-          deleteSave.clear();
+          clearDeleteSave();
         }}
       >
         <AlertDialogContent>
@@ -584,7 +581,7 @@ export function WorkflowsTable({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a refusal can be read inside it (§124).
@@ -592,9 +589,9 @@ export function WorkflowsTable({
                 void handleDelete();
               }}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isLoading}
+              disabled={deleting}
             >
-              {isLoading ? 'Deleting…' : 'Delete'}
+              {deleting ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

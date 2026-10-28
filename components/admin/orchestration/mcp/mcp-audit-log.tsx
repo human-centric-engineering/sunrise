@@ -249,6 +249,8 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
         <AlertDialog
           open={purgeOpen}
           onOpenChange={(next) => {
+            // Committed while the purge runs: Escape waits for it.
+            if (!next && purging) return;
             purgeFailure.clear();
             setPurgeOpen(next);
           }}

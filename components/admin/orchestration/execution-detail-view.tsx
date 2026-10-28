@@ -45,7 +45,6 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
-import { readSaveError } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import {
@@ -756,14 +755,9 @@ export function ExecutionDetailView({
   } | null>(null);
   // A refused cancel, approve or retry: shown directly above the action
   // buttons, and brought into view when the retry was pressed in a trace row
-  // further down (§124). Each action names its own fallback.
+  // further down (§124). Each action names itself as the report's context.
   const actionSave = useSaveFailure({ fallback: 'Try again.', fields: NO_SERVER_FIELDS });
-  const { clear: clearActionSave, show: showActionSave } = actionSave;
-  const reportAction = useCallback(
-    (err: unknown, fallback: string) =>
-      showActionSave(readSaveError(err, { fallback, fields: NO_SERVER_FIELDS }).message),
-    [showActionSave]
-  );
+  const { clear: clearActionSave, report: reportAction } = actionSave;
   // A refused rejection: shown inside its dialog, which stays open.
   const rejectSave = useSaveFailure({ fallback: 'Rejection failed', fields: NO_SERVER_FIELDS });
   const { clear: clearRejectSave, report: reportRejectSave } = rejectSave;
@@ -1058,7 +1052,10 @@ export function ExecutionDetailView({
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => setRejectDialogOpen(true)}
+              onClick={() => {
+                clearRejectSave();
+                setRejectDialogOpen(true);
+              }}
               disabled={actionLoading}
             >
               <XCircle className="mr-2 h-4 w-4" />
@@ -1467,7 +1464,8 @@ export function ExecutionDetailView({
       <AlertDialog
         open={rejectDialogOpen}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the rejection runs: Escape and outside clicks wait for it.
+          if (!open && !rejectLoading) {
             setRejectDialogOpen(false);
             setRejectReason('');
             clearRejectSave();

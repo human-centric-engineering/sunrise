@@ -813,7 +813,9 @@ describe('ManageTab', () => {
     await user.click(screen.getByRole('button', { name: /^yes$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Not allowed')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Couldn\'t delete "My Custom Doc": Not allowed'
+      );
     });
   });
 
@@ -838,7 +840,7 @@ describe('ManageTab', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Could not update the document. Try again.'
+        'Couldn\'t delete "My Custom Doc". Try again.'
       );
     });
   });
@@ -867,7 +869,9 @@ describe('ManageTab', () => {
     await user.click(getRechunkActionButton());
 
     await waitFor(() => {
-      expect(screen.getByText('Document is processing')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Couldn\'t rechunk "My Custom Doc": Document is processing'
+      );
     });
   });
 
@@ -886,7 +890,7 @@ describe('ManageTab', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Could not update the document. Try again.'
+        'Couldn\'t rechunk "My Custom Doc". Try again.'
       );
     });
   });
@@ -1381,7 +1385,7 @@ describe('ManageTab', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Could not update the document. Try again.'
+        'Couldn\'t rechunk "My Custom Doc". Try again.'
       );
     });
   });
@@ -1412,7 +1416,7 @@ describe('ManageTab', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Could not update the document. Try again.'
+        'Couldn\'t delete "My Custom Doc". Try again.'
       );
     });
   });

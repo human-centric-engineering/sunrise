@@ -292,7 +292,9 @@ describe('WebhookDlqTable', () => {
       await user.click(await screen.findByTitle('Retry delivery'));
 
       await waitFor(() => {
-        expect(screen.getByText(/Retry failed: Upstream gone/i)).toBeInTheDocument();
+        expect(
+          screen.getByText('Couldn\'t retry the delivery to "Slack relay": Upstream gone')
+        ).toBeInTheDocument();
       });
     });
 
@@ -313,7 +315,9 @@ describe('WebhookDlqTable', () => {
       await user.click(await screen.findByTitle('Retry delivery'));
 
       await waitFor(() => {
-        expect(screen.getByText('Retry failed. Please try again.')).toBeInTheDocument();
+        expect(
+          screen.getByText('Couldn\'t retry the delivery to "Slack relay". Try again.')
+        ).toBeInTheDocument();
       });
     });
 
@@ -537,7 +541,7 @@ describe('WebhookDlqTable', () => {
       await user.click(screen.getByRole('button', { name: /bulk replay/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('Bulk replay failed. Please try again.')).toBeInTheDocument();
+        expect(screen.getByText('Bulk replay failed. Try again.')).toBeInTheDocument();
       });
     });
   });

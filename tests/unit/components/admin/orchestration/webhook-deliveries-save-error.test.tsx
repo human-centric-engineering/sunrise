@@ -62,7 +62,10 @@ describe('WebhookDeliveries — failed retry', () => {
     await user.click(await screen.findByTitle('Retry delivery'));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Subscription is inactive');
+    // The box sits away from the row, so it names the row: its event and when.
+    expect(alert).toHaveTextContent(
+      `Couldn't retry the "Workflow Failed" delivery of ${new Date(DELIVERY.createdAt).toLocaleString()}: Subscription is inactive`
+    );
     expect(alert.compareDocumentPosition(screen.getByRole('table'))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );

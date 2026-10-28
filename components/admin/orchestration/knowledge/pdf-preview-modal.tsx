@@ -150,7 +150,14 @@ export function PdfPreviewModal({
   const wantsCleanup = data.runCleanup;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while Confirm or Discard runs: Escape waits for it.
+        if (!next && (confirming || discarding)) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -250,7 +257,7 @@ export function PdfPreviewModal({
           >
             {discarding ? 'Discarding...' : 'Discard'}
           </Button>
-          <Button onClick={() => void handleConfirm()} disabled={confirming}>
+          <Button onClick={() => void handleConfirm()} disabled={confirming || discarding}>
             {wantsCleanup ? (
               <Sparkles className="mr-1.5 h-4 w-4" />
             ) : (

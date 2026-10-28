@@ -375,14 +375,15 @@ export function ExperimentsList(): React.ReactElement {
     }
   }
 
-  async function handleComplete(id: string): Promise<void> {
+  async function handleComplete(exp: Experiment): Promise<void> {
+    const id = exp.id;
     rowSave.clear();
     setCompletingId(id);
     try {
       await apiClient.patch(`${ENDPOINT}/${id}`, { body: { status: 'completed' } });
       await fetchExperiments();
     } catch (err) {
-      rowSave.report(err);
+      rowSave.report(err, `Couldn't complete "${exp.name}"`);
     } finally {
       setCompletingId(null);
     }
@@ -556,7 +557,7 @@ export function ExperimentsList(): React.ReactElement {
                           variant="outline"
                           size="sm"
                           disabled={completingId === exp.id}
-                          onClick={() => void handleComplete(exp.id)}
+                          onClick={() => void handleComplete(exp)}
                         >
                           {completingId === exp.id ? (
                             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -572,7 +573,10 @@ export function ExperimentsList(): React.ReactElement {
                           size="sm"
                           aria-label="Delete experiment"
                           disabled={deletingId === exp.id}
-                          onClick={() => setDeleteTarget(exp)}
+                          onClick={() => {
+                            deleteSave.clear();
+                            setDeleteTarget(exp);
+                          }}
                         >
                           {deletingId === exp.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -594,7 +598,8 @@ export function ExperimentsList(): React.ReactElement {
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (open) return;
+          // Committed while the delete runs: Escape and outside clicks wait for it.
+          if (open || deletingId) return;
           setDeleteTarget(null);
           deleteSave.clear();
         }}
@@ -609,7 +614,7 @@ export function ExperimentsList(): React.ReactElement {
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Closes only on success, so a refusal can be read inside it (§124).
