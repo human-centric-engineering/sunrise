@@ -89,7 +89,12 @@ export function useSaveFailure<TField extends string>(
       } else {
         next = readSaveError(err, { fallback });
       }
-      if (context) next = { ...next, message: `${context}: ${next.message}` };
+      if (context) {
+        // With nothing from the server, the context says it all: the page's
+        // fallback would repeat it ("Couldn't update "X": Could not update…").
+        const said = next.message === fallback ? 'Try again.' : null;
+        next = { ...next, message: said ? `${context}. ${said}` : `${context}: ${next.message}` };
+      }
       setFailure(next);
       return next;
     },
