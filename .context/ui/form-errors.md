@@ -193,13 +193,17 @@ const dialog = useCommittedDialog({
   <SaveError failure={deleteSave.failure} />
   <AlertDialogFooter>
     <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
-    <AlertDialogAction {...dialog.actionProps(handleDelete)}>Delete</AlertDialogAction>
+    <AlertDialogAction {...dialog.actionProps()} onClick={(e) => dialog.confirm(e, handleDelete)}>
+      Delete
+    </AlertDialogAction>
   </AlertDialogFooter>
 </AlertDialog>;
 ```
 
-`actionProps(run, { disabled })` adds the action's own reasons to be disabled
-(an empty required reason). A dialog that opens through its own
+`actionProps({ disabled })` adds the action's own reasons to be disabled (an
+empty required reason). `confirm(e, run)` takes the action at click time, not
+during render, so an action that reads a ref passes the React Compiler's
+`react-hooks/refs` rule. A dialog that opens through its own
 `DialogTrigger` passes `onOpen`. The save closes the dialog itself on
 success.
 

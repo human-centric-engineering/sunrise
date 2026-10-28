@@ -181,9 +181,10 @@ object, so the same message moves into view again. Full rules and recipes:
 **File:** `lib/hooks/use-committed-dialog.ts`
 
 Locks a dialog while its save runs: `onOpenChange` ignores a close while
-`pending`, `cancelProps` and `actionProps(run, { disabled? })` disable Cancel
-and the action, and `actionProps`' click calls `preventDefault` so an
-`AlertDialogAction` doesn't close the dialog before the save answers. `clear`
+`pending`, `cancelProps` and `actionProps({ disabled? })` disable Cancel and
+the action, and `confirm(e, run)` (the action's `onClick`) calls
+`preventDefault` so an `AlertDialogAction` doesn't close the dialog before the
+save answers. `clear`
 runs each time the dialog opens. Recipe: [Form save errors → a
 dialog](./form-errors.md).
 

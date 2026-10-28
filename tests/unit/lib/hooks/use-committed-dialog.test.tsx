@@ -104,13 +104,13 @@ describe('useCommittedDialog', () => {
   it('disables Cancel and the action while the save runs, and the action keeps its own reasons', () => {
     const { result, rerender } = setup({ open: true, pending: false });
     expect(result.current.cancelProps.disabled).toBe(false);
-    expect(result.current.actionProps(vi.fn()).disabled).toBe(false);
-    expect(result.current.actionProps(vi.fn(), { disabled: true }).disabled).toBe(true);
+    expect(result.current.actionProps().disabled).toBe(false);
+    expect(result.current.actionProps({ disabled: true }).disabled).toBe(true);
 
     rerender({ open: true, pending: true });
 
     expect(result.current.cancelProps.disabled).toBe(true);
-    expect(result.current.actionProps(vi.fn()).disabled).toBe(true);
+    expect(result.current.actionProps().disabled).toBe(true);
   });
 
   it('runs the action without letting the click close the dialog', () => {
@@ -118,7 +118,7 @@ describe('useCommittedDialog', () => {
     const run = vi.fn();
     const preventDefault = vi.fn();
 
-    result.current.actionProps(run).onClick({ preventDefault });
+    result.current.confirm({ preventDefault }, run);
 
     expect(preventDefault).toHaveBeenCalled();
     expect(run).toHaveBeenCalledTimes(1);
@@ -157,7 +157,9 @@ function DeleteDialog({ remove }: { remove: () => Promise<void> }) {
         {failed && <p role="alert">Delete failed</p>}
         <AlertDialogFooter>
           <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
-          <AlertDialogAction {...dialog.actionProps(confirm)}>Delete</AlertDialogAction>
+          <AlertDialogAction {...dialog.actionProps()} onClick={(e) => dialog.confirm(e, confirm)}>
+            Delete
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

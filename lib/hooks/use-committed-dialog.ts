@@ -25,15 +25,16 @@ export interface CommittedDialog {
   onOpenChange: (open: boolean) => void;
   /** Spread on Cancel (and any other way out): disabled while the save runs. */
   cancelProps: { disabled: boolean };
+  /** Spread on the button that saves: disabled while the save runs, or for its own reasons. */
+  actionProps: (options?: ActionOptions) => { disabled: boolean };
   /**
-   * Spread on the button that saves. Its click doesn't close the dialog
-   * (`AlertDialogAction` would), so a refusal is read inside it; the dialog
-   * closes when the save succeeds and the caller closes it.
+   * The saving button's click: `onClick={(e) => dialog.confirm(e, handleDelete)}`.
+   * It keeps the dialog open (`AlertDialogAction` would close it), so a
+   * refusal is read inside; the caller closes it when the save succeeds. It
+   * takes the action at click time, not during render, so an action that
+   * reads a ref is fine.
    */
-  actionProps: (
-    run: () => unknown,
-    options?: ActionOptions
-  ) => { disabled: boolean; onClick: (e: { preventDefault: () => void }) => void };
+  confirm: (e: { preventDefault: () => void }, run: () => unknown) => void;
 }
 
 /**
@@ -72,15 +73,14 @@ export function useCommittedDialog({
   );
 
   const actionProps = useCallback(
-    (run: () => unknown, options: ActionOptions = {}) => ({
-      disabled: pending || options.disabled === true,
-      onClick: (e: { preventDefault: () => void }) => {
-        e.preventDefault();
-        void run();
-      },
-    }),
+    (options: ActionOptions = {}) => ({ disabled: pending || options.disabled === true }),
     [pending]
   );
 
-  return { onOpenChange, cancelProps: { disabled: pending }, actionProps };
+  const confirm = useCallback((e: { preventDefault: () => void }, run: () => unknown) => {
+    e.preventDefault();
+    void run();
+  }, []);
+
+  return { onOpenChange, cancelProps: { disabled: pending }, actionProps, confirm };
 }

@@ -481,7 +481,8 @@ export function UserTable({
               <AlertDialogFooter>
                 <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
-                  {...deleteDialog.actionProps(handleDelete)}
+                  {...deleteDialog.actionProps()}
+                  onClick={(e) => deleteDialog.confirm(e, handleDelete)}
                   className="bg-red-600 hover:bg-red-700"
                 >
                   {isDeleting ? 'Deleting...' : 'Delete'}
