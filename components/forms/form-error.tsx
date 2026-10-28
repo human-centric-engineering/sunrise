@@ -96,26 +96,36 @@ export interface SaveErrorProps<TField extends string> {
   onRevealField?: (field: TField) => void;
 }
 
-/** The first of `names` in page order, among the form controls inside `root`. */
+/**
+ * The first of `names` in page order inside `root`, matched on `name` or `id`,
+ * or null unless every one of them is there: with any missing, the first in
+ * page order is unknown, and focusing a later one would skip an earlier error.
+ */
 function firstField(root: ParentNode, names: readonly string[]): HTMLElement | null {
-  const found = Array.from(root.querySelectorAll<HTMLElement>('[name], [id]')).filter((el) => {
-    const name = el.getAttribute('name') ?? el.id;
-    return names.includes(name);
-  });
-  return found[0] ?? null; // querySelectorAll returns document order
+  const found = Array.from(root.querySelectorAll<HTMLElement>('[name], [id]')).filter(
+    (el) => names.includes(el.getAttribute('name') ?? '') || names.includes(el.id)
+  );
+  const matched = new Set(
+    found.flatMap((el) => [el.getAttribute('name') ?? '', el.id]).filter((n) => names.includes(n))
+  );
+  return names.every((n) => matched.has(n)) ? (found[0] ?? null) : null; // document order
 }
 
-function focusField(el: HTMLElement) {
+/** Focuses a field, reporting whether it took focus (a disabled one does not). */
+function focusField(el: HTMLElement): boolean {
   el.focus({ preventScroll: true });
+  if (document.activeElement !== el) return false;
   el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  return true;
 }
 
 /**
  * The one way a form shows a failed save (§124): red, announced, placed by the
  * form beside the Save button that was pressed, and brought into view and
- * focused whenever a new failure appears. When the server named fields, focus
- * goes to the first of them on the page instead, since that is what needs
- * fixing; this summary stays by Save saying how many.
+ * focused whenever a new failure appears. When the server named fields and all
+ * of them are on the page, focus goes to the first of them instead, since that
+ * is what needs fixing; this summary stays by Save saying how many. Otherwise,
+ * or when that field cannot take focus, the summary takes it.
  *
  * It decides nothing about placement: the form puts it where its Save is.
  *
@@ -140,15 +150,17 @@ export function SaveError<TField extends string>({
 
     const root = box.closest('form') ?? document;
     const onPage = firstField(root, names);
-    if (onPage) return focusField(onPage);
+    if (onPage) {
+      if (!focusField(onPage)) focusBox();
+      return;
+    }
     if (!onRevealField) return focusBox();
 
     onRevealField(failure.fields[0].field);
     // The revealed tab renders on the next commit; look again after it.
     const frame = requestAnimationFrame(() => {
       const revealed = firstField(root, names);
-      if (revealed) focusField(revealed);
-      else focusBox();
+      if (!revealed || !focusField(revealed)) focusBox();
     });
     return () => cancelAnimationFrame(frame);
     // Moves on a new failure only; a parent re-rendering with a new

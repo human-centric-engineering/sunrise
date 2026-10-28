@@ -371,7 +371,6 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
 
   const onSubmit = async (data: WebhookFormData) => {
     setSubmitting(true);
-    setSaveFailure(null);
     try {
       // Convert the seconds-string the form uses into the ms-array the API expects.
       const retryBackoffMs = parseBackoffSeconds(data.retryBackoffSeconds).map((s) => s * 1000);
@@ -423,7 +422,14 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="max-w-2xl space-y-6">
+    <form
+      onSubmit={(e) => {
+        // Cleared on every press: one client validation blocks never reaches onSubmit.
+        setSaveFailure(null);
+        void handleSubmit(onSubmit)(e);
+      }}
+      className="max-w-2xl space-y-6"
+    >
       {/* Sticky action bar */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-3 border-b px-2 py-3 backdrop-blur">
         <div className="flex items-center justify-between">

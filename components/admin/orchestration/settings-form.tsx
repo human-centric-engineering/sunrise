@@ -413,7 +413,6 @@ export function SettingsForm({
   // zodResolver already validates and transforms the data via settingsFormSchema,
   // so `values` here is the parsed output type (numbers/null, not strings).
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
-    setSaveFailure(null);
     const escalationConfig = escalationConfigFrom(
       values.escalationEnabled,
       escalationEmails,
@@ -507,7 +506,11 @@ export function SettingsForm({
 
   return (
     <form
-      onSubmit={(e) => void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e)}
+      onSubmit={(e) => {
+        // Cleared on every press: one client validation blocks never reaches onSubmit.
+        setSaveFailure(null);
+        void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e);
+      }}
       className="max-w-3xl space-y-6"
     >
       {/* ── Safety ──────────────────────────────────────────────────────── */}

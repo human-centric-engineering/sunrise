@@ -162,6 +162,35 @@ describe('SaveError', () => {
     await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
   });
 
+  it('focuses itself, not a later field, when an earlier named field is not on the page', async () => {
+    render(
+      <Harness
+        revealable={false}
+        next={() =>
+          failure({
+            fields: [
+              { field: 'webhookUrl', message: 'Must be https' },
+              { field: 'budget', message: 'Too high' },
+            ],
+          })
+        }
+      />
+    );
+
+    save();
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+  });
+
+  it('focuses itself when the named field cannot take focus', async () => {
+    render(<Harness next={() => failure({ fields: [{ field: 'name', message: 'Required' }] })} />);
+    screen.getByLabelText<HTMLInputElement>('Name').disabled = true;
+
+    save();
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+  });
+
   it('focuses itself when a named field cannot be found or revealed', async () => {
     render(
       <Harness

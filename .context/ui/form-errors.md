@@ -31,12 +31,14 @@ it is the inline box for a client-side message or an auth-flow code.
 3. **Every new failure moves.** Each failure is a new object from
    `readSaveError()`, and each one brings the error into view and takes focus,
    so a second refusal with the same message still moves. Clear it
-   (`setSaveFailure(null)`) when a save starts.
+   (`setSaveFailure(null)`) on every press of Save, in the `<form onSubmit>`
+   wrapper: a press that client validation blocks never reaches the submit
+   handler, and an old summary must not sit beside the new client errors.
 4. **Named fields get the focus.** When the server named fields, their
    messages go under those fields, the summary by Save says how many
    (`"2 fields need fixing."`), and focus moves to the first of them **in page
-   order** (not the order the server sent). Without named fields the error box
-   itself takes focus.
+   order** (not the order the server sent). Without named fields, or when the
+   first can't be found or take focus, the error box itself takes focus.
 5. **Nothing the server said is lost.** A path the form has no field for joins
    the summary text instead.
 6. **No toast.** The app has no toast system, and the stale notice needs room
@@ -55,7 +57,9 @@ Both come from a `VALIDATION_ERROR`, and only that code is read for fields:
 another error's `details` can be record-shaped metadata
 (`{ unknownIds: [...] }`), which is not fields.
 
-Only the first message per field is kept: one line under each field.
+Every distinct message for a field is kept, joined, under that field: when
+several paths land on one field (each element of an array), each problem is
+said at once rather than costing another save.
 
 **Server paths are not form field names.** A form declares a table from the
 server path to the field that shows it. The table is typed to the form's own
@@ -89,7 +93,6 @@ const { setError, ... } = useForm<FormData>(...);
 const [saveFailure, setSaveFailure] = useState<SaveFailure<keyof FormData> | null>(null);
 
 const onSubmit = async (values: FormData) => {
-  setSaveFailure(null);
   try {
     await apiClient.patch(url, { body: values });
   } catch (err) {
@@ -101,6 +104,13 @@ const onSubmit = async (values: FormData) => {
     setSaveFailure(failure);
   }
 };
+
+<form
+  onSubmit={(e) => {
+    setSaveFailure(null); // every press, including one client validation blocks
+    void handleSubmit(onSubmit)(e);
+  }}
+>
 
 // beside Save:
 <div className="sticky bottom-4 space-y-2">
@@ -125,9 +135,15 @@ field. Pass the same failure to `<SaveError>`.
 element whose `name`, or failing that `id`, is a named field. So **a field
 can only receive focus if its control carries the field name as `name` or
 `id`**. `register()` sets `name`; a `Controller`-driven control (a Select, a
-Switch) needs an `id` equal to its field name. When no named field
-is found, the error box takes focus instead: nothing is lost, the person just
-lands on the summary.
+Switch) needs an `id` equal to its field name. A control with neither (a
+checkbox group, a multi-select with its own id) still shows its message under
+itself, but focus then goes to the summary.
+
+Focus goes to a field only when **every** named field is on the page: with
+one missing, the first in page order is unknown, and focusing a later field
+would skip an earlier error. It also has to take focus (a disabled input
+doesn't). Otherwise the error box takes focus: nothing is lost, the person
+just lands on the summary.
 
 ## A field on a hidden tab
 
@@ -138,9 +154,9 @@ tabbed form passes `onRevealField`:
 <SaveError failure={saveFailure} onRevealField={(field) => setTab(tabOf(field))} />
 ```
 
-When none of the named fields is on the page, `<SaveError>` calls it with the
-first named field, then looks again on the next frame and focuses what the
-reveal brought forward. Without `onRevealField`, the error box takes focus.
+When a named field is not on the page, `<SaveError>` calls it with the first
+named field, then looks again on the next frame and focuses what the reveal
+brought forward. Without `onRevealField`, the error box takes focus.
 
 ## The stale variant
 

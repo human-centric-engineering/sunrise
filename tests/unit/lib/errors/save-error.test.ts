@@ -70,9 +70,9 @@ describe('readSaveError', () => {
       { fallback: 'Could not save.', fields: { url: 'url', maxAttempts: 'maxAttempts' } }
     );
 
-    // First message per field: one line under each field, not a list.
+    // Every distinct problem with a field is said under it.
     expect(failure.fields).toEqual([
-      { field: 'url', message: 'Must be a public URL' },
+      { field: 'url', message: 'Must be a public URL Must be https' },
       { field: 'maxAttempts', message: 'Too many' },
     ]);
     expect(failure.message).toBe('2 fields need fixing.');
@@ -121,6 +121,24 @@ describe('readSaveError', () => {
 
     expect(failure.stale).toBe(true);
     expect(failure.message).toBe('This changed since you opened it.');
+  });
+
+  it('says every problem with one field when several paths land on it', () => {
+    const failure = readSaveError(
+      listError([
+        { path: 'retryBackoffMs.0', message: 'Must be at least 1 second.' },
+        { path: 'retryBackoffMs.3', message: 'Must be at most 1 hour.' },
+        { path: 'retryBackoffMs.4', message: 'Must be at most 1 hour.' },
+      ]),
+      { fallback: 'x', fields: { retryBackoffMs: 'retryBackoffSeconds' } }
+    );
+
+    expect(failure.fields).toEqual([
+      {
+        field: 'retryBackoffSeconds',
+        message: 'Must be at least 1 second. Must be at most 1 hour.',
+      },
+    ]);
   });
 
   it("places an array element's error on its array's field", () => {

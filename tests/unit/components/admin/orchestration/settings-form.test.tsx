@@ -510,6 +510,30 @@ describe('SettingsForm', () => {
       });
     });
 
+    it('drops an old server error when the next press is stopped by client validation (§124)', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Something broke'));
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const save = screen.getByRole('button', { name: /save settings/i });
+      await act(async () => {
+        fireEvent.submit(save.closest('form')!);
+      });
+      expect(await screen.findByRole('alert')).toHaveTextContent('Something broke');
+
+      // Now a value the form itself refuses, so the press never reaches the server
+      fireEvent.change(document.getElementById('globalMonthlyBudgetUsd')!, {
+        target: { value: '-5' },
+      });
+      await act(async () => {
+        fireEvent.submit(save.closest('form')!);
+      });
+
+      await waitFor(() => expect(screen.queryByText('Something broke')).not.toBeInTheDocument());
+      expect(apiClient.patch).toHaveBeenCalledTimes(1);
+    });
+
     it('shows a failed save beside the sticky Save button, not at the top of the page (§124)', async () => {
       const { apiClient, APIClientError } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Something broke'));

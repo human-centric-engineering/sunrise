@@ -30,7 +30,7 @@ export interface SaveFailure<TField extends string = string> {
   code?: string;
   /** Refused because the record changed since the page loaded it (412 `STALE_RECORD`). */
   stale: boolean;
-  /** Form field → its first message, for each field the server named, in the order sent. */
+  /** Form field → its messages, joined, for each field the server named, in the order sent. */
   fields: Array<{ field: TField; message: string }>;
 }
 
@@ -106,8 +106,12 @@ export function readSaveError<TField extends string>(
     const field = options.fields ? tableField(options.fields, path) : path;
     if (field === undefined || field === '') {
       if (!unplaced.includes(message)) unplaced.push(message);
-    } else if (!fields.some((f) => f.field === field)) {
-      fields.push({ field, message });
+    } else {
+      // Several paths can land on one field (each element of an array): say
+      // every distinct problem there, or each costs the admin another save.
+      const placed = fields.find((f) => f.field === field);
+      if (!placed) fields.push({ field, message });
+      else if (!placed.message.includes(message)) placed.message += ` ${message}`;
     }
   }
 
