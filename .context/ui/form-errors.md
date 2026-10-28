@@ -83,8 +83,14 @@ Without a table, each server path is taken as the field name. That is for a
 plain-state form placing messages itself; a react-hook-form form always
 passes a table, and the types refuse it otherwise.
 
-A non-API error (a network failure, a bug that threw) gets the form's
-`fallback` message.
+An error the server never wrote gets the form's `fallback` message: a thrown
+bug, and the network failures and non-JSON responses `apiClient` raises as
+`NETWORK_ERROR` / `INVALID_RESPONSE`, whose own text ("Failed to fetch") is the
+browser's.
+
+Keep a path out of the table when the server's message wouldn't make sense
+under the field: the webhook form's `retryBackoffMs` messages are in
+milliseconds, and its field takes seconds.
 
 ## Recipe: a react-hook-form form
 

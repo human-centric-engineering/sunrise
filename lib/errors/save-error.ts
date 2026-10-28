@@ -35,7 +35,11 @@ export interface SaveFailure<TField extends string = string> {
 }
 
 export interface ReadSaveErrorOptions<TField extends string> {
-  /** Shown when the error is not from the API (network failure, a thrown bug). */
+  /**
+   * Shown when the server never answered with an error of its own: a network
+   * failure or a non-JSON response (which `apiClient` raises as `NETWORK_ERROR`
+   * / `INVALID_RESPONSE` with the browser's text), or a thrown bug.
+   */
   fallback: string;
   /**
    * Server path (`searchConfig.bm25Weight`) → the form field that shows it.
@@ -47,6 +51,9 @@ export interface ReadSaveErrorOptions<TField extends string> {
    */
   fields?: Partial<Record<string, TField>>;
 }
+
+/** Codes `apiClient` raises itself, whose message is the browser's, not the server's. */
+const CLIENT_SIDE_CODES = new Set(['NETWORK_ERROR', 'INVALID_RESPONSE']);
 
 const listShape = z.object({
   errors: z.array(z.object({ path: z.string(), message: z.string() })),
@@ -96,12 +103,13 @@ export function readSaveError<TField extends string>(
   err: unknown,
   options: ReadSaveErrorOptions<TField>
 ): SaveFailure<TField | string> {
-  if (!(err instanceof APIClientError)) {
+  if (!(err instanceof APIClientError) || CLIENT_SIDE_CODES.has(err.code ?? '')) {
     return { message: options.fallback, stale: false, fields: [] };
   }
 
   const fields: Array<{ field: TField | string; message: string }> = [];
   const unplaced: string[] = [];
+  const messagesFor = new Map<TField | string, string[]>();
   for (const [path, message] of serverFieldErrors(err.code, err.details)) {
     const field = options.fields ? tableField(options.fields, path) : path;
     if (field === undefined || field === '') {
@@ -109,9 +117,15 @@ export function readSaveError<TField extends string>(
     } else {
       // Several paths can land on one field (each element of an array): say
       // every distinct problem there, or each costs the admin another save.
-      const placed = fields.find((f) => f.field === field);
-      if (!placed) fields.push({ field, message });
-      else if (!placed.message.includes(message)) placed.message += ` ${message}`;
+      const said = messagesFor.get(field);
+      if (!said) {
+        messagesFor.set(field, [message]);
+        fields.push({ field, message });
+      } else if (!said.includes(message)) {
+        said.push(message);
+        const placed = fields.find((f) => f.field === field);
+        if (placed) placed.message = said.join(' ');
+      }
     }
   }
 

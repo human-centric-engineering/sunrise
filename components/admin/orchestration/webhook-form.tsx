@@ -144,7 +144,9 @@ type WebhookFormData = z.infer<typeof createWebhookSchema>;
 
 /**
  * Server path → the field that shows its error, for the fields that render
- * one; every other path joins the summary by Save.
+ * one; every other path joins the summary by Save. `retryBackoffMs` stays
+ * out: its messages are in milliseconds, and under the seconds field they
+ * would read as wrong advice.
  */
 const SERVER_FIELDS: Partial<Record<string, keyof WebhookFormData>> = {
   url: 'url',
@@ -154,7 +156,6 @@ const SERVER_FIELDS: Partial<Record<string, keyof WebhookFormData>> = {
   agentIds: 'agentIds',
   workflowIds: 'workflowIds',
   maxAttempts: 'maxAttempts',
-  retryBackoffMs: 'retryBackoffSeconds',
 };
 
 function parseBackoffSeconds(input: string): number[] {

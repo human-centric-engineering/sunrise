@@ -32,6 +32,29 @@ describe('readSaveError', () => {
     expect(failure).toEqual({ message: 'Could not save.', stale: false, fields: [] });
   });
 
+  it.each(['NETWORK_ERROR', 'INVALID_RESPONSE'])(
+    "uses the fallback for apiClient's own %s, not the browser's text",
+    (code) => {
+      const failure = readSaveError(new APIClientError('Failed to fetch', code), {
+        fallback: 'Could not save.',
+      });
+
+      expect(failure.message).toBe('Could not save.');
+    }
+  );
+
+  it('keeps a distinct message for a field even when another contains its text', () => {
+    const failure = readSaveError(
+      listError([
+        { path: 'emails.0', message: 'Invalid email address' },
+        { path: 'emails.1', message: 'Invalid' },
+      ]),
+      { fallback: 'x', fields: { emails: 'emails' } }
+    );
+
+    expect(failure.fields).toEqual([{ field: 'emails', message: 'Invalid email address Invalid' }]);
+  });
+
   it("shows the server's message when it names no fields", () => {
     const failure = readSaveError(new APIClientError('Budget too high', 'VALIDATION_ERROR', 400), {
       fallback: 'Could not save.',

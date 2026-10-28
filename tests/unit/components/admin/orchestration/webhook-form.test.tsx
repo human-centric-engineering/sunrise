@@ -540,6 +540,31 @@ describe('WebhookForm', () => {
     expect(pushMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
+  it('says a millisecond backoff error by Save, not under the seconds field (§124)', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      Object.assign(new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400), {
+        details: { errors: [{ path: 'retryBackoffMs.1', message: 'Must be at most 86400000' }] },
+      })
+    );
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    await user.type(
+      screen.getByRole('textbox', { name: /endpoint url/i }),
+      'https://example.com/hook'
+    );
+    await user.click(screen.getByTitle(/generate a random secret/i));
+    await user.click(screen.getAllByRole('checkbox')[0]);
+    await user.click(screen.getByRole('button', { name: /create subscription/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Must be at most 86400000');
+    expect(alert).not.toHaveTextContent(/field needs fixing/);
+    // Shown once: in the summary, not repeated under the backoff input
+    expect(screen.getAllByText(/must be at most 86400000/i)).toHaveLength(1);
+  });
+
   it('puts a field the server rejected under that field, with the count beside Save (§124)', async () => {
     // Arrange — handleAPIError's Record<path, string[]> shape
     const { apiClient, APIClientError } = await import('@/lib/api/client');
