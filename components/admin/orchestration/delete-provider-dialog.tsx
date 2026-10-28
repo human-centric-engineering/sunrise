@@ -49,9 +49,8 @@ export function DeleteProviderDialog({
   return (
     <AlertDialog
       open={!!target}
-      onOpenChange={(open) => {
-        if (!open) onCancel();
-      }}
+      // No trigger opens it, so it only ever asks to close (Escape, Cancel).
+      onOpenChange={() => onCancel()}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
