@@ -45,7 +45,9 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { Input } from '@/components/ui/input';
 import {
@@ -343,11 +345,15 @@ export function ProviderModelsMatrix({
   const [sortAsc, setSortAsc] = useState(true);
 
   // Row deletion state. `target` doubles as the open flag for the
-  // confirmation dialog. `error` surfaces 409 in-use responses or
-  // network failures.
+  // confirmation dialog. `deleteSave` holds a refused delete, shown above
+  // the dialog's buttons unless the in-use lists already explain it.
   const [deleteTarget, setDeleteTarget] = useState<ModelRow | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSave = useSaveFailure({
+    fallback: "Couldn't delete the model. Try again.",
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const [deleteBlockedAgents, setDeleteBlockedAgents] = useState<ModelRowAgentRef[]>([]);
   const [deleteBlockedWorkflows, setDeleteBlockedWorkflows] = useState<ModelRowWorkflowRef[]>([]);
   // Agents and workflows in other orgs still using the model: counted by the
@@ -357,7 +363,7 @@ export function ProviderModelsMatrix({
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerModelById(deleteTarget.id));
       setDeleteTarget(null);
@@ -385,22 +391,20 @@ export function ProviderModelsMatrix({
             elsewhere('otherOrgAgentCount') + elsewhere('otherOrgWorkflowCount')
           );
         }
-        setDeleteError(err.message);
-      } else {
-        setDeleteError(err instanceof Error ? err.message : "Couldn't delete the model.");
       }
+      reportDelete(err);
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, router]);
+  }, [deleteTarget, router, clearDelete, reportDelete]);
 
   const handleCancelDelete = useCallback(() => {
     setDeleteTarget(null);
-    setDeleteError(null);
+    clearDelete();
     setDeleteBlockedAgents([]);
     setDeleteBlockedWorkflows([]);
     setDeleteBlockedElsewhere(0);
-  }, []);
+  }, [clearDelete]);
 
   const deleteBlocked =
     deleteBlockedAgents.length + deleteBlockedWorkflows.length + deleteBlockedElsewhere > 0;
@@ -1108,9 +1112,7 @@ export function ProviderModelsMatrix({
             </p>
           )}
 
-          {deleteError && !deleteBlocked && (
-            <p className="text-destructive text-sm">{deleteError}</p>
-          )}
+          <SaveError failure={deleteBlocked ? null : deleteSave.failure} />
 
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

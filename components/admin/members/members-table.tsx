@@ -42,8 +42,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ClientDate } from '@/components/ui/client-date';
 import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { isOrgRole, ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
 
 export interface OrgMember {
@@ -63,41 +65,49 @@ export interface MembersTableProps {
 export function MembersTable({ orgId, members, currentUserId }: MembersTableProps) {
   const router = useRouter();
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<OrgMember | null>(null);
+  // A role change reports above the table; the remove dialog has its own.
+  const listSave = useSaveFailure({
+    fallback: 'Could not change the role. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const removeSave = useSaveFailure({
+    fallback: 'Could not remove the member. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
 
-  const run = async (userId: string, action: () => Promise<unknown>) => {
-    setBusyUserId(userId);
-    setError(null);
+  const changeRole = async (member: OrgMember, role: string) => {
+    if (!isOrgRole(role) || role === member.role) return;
+    setBusyUserId(member.id);
+    listSave.clear();
     try {
-      await action();
+      await apiClient.patch(API.ORGS.member(orgId, member.id), { body: { role } });
       router.refresh();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'An unexpected error occurred');
+      listSave.report(err);
     } finally {
       setBusyUserId(null);
     }
   };
 
-  const changeRole = (member: OrgMember, role: string) => {
-    if (!isOrgRole(role) || role === member.role) return;
-    void run(member.id, () =>
-      apiClient.patch(API.ORGS.member(orgId, member.id), { body: { role } })
-    );
-  };
-
-  const remove = (member: OrgMember) => {
-    setRemoving(null);
-    void run(member.id, () => apiClient.delete(API.ORGS.member(orgId, member.id)));
+  // The dialog stays open on failure, with the refusal above its buttons.
+  const remove = async (member: OrgMember) => {
+    setBusyUserId(member.id);
+    removeSave.clear();
+    try {
+      await apiClient.delete(API.ORGS.member(orgId, member.id));
+      setRemoving(null);
+      router.refresh();
+    } catch (err) {
+      removeSave.report(err);
+    } finally {
+      setBusyUserId(null);
+    }
   };
 
   return (
     <div className="space-y-3">
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
+      <SaveError failure={listSave.failure} />
 
       <div className="rounded-md border">
         <Table>
@@ -137,7 +147,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                     <Select
                       value={member.role}
                       disabled={busyUserId === member.id}
-                      onValueChange={(role) => changeRole(member, role)}
+                      onValueChange={(role) => void changeRole(member, role)}
                     >
                       <SelectTrigger
                         className="h-8 w-32"
@@ -175,7 +185,15 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
         </Table>
       </div>
 
-      <AlertDialog open={!!removing} onOpenChange={(open) => !open && setRemoving(null)}>
+      <AlertDialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRemoving(null);
+            removeSave.clear();
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove member</AlertDialogTitle>
@@ -185,9 +203,17 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                 : `${removing?.name || removing?.email} will lose access to this organisation and be signed out of it. Their account and their access to other organisations are not affected.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SaveError failure={removeSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => removing && remove(removing)}>
+            <AlertDialogAction
+              disabled={!!removing && busyUserId === removing.id}
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                if (removing) void remove(removing);
+              }}
+            >
               Remove
             </AlertDialogAction>
           </AlertDialogFooter>

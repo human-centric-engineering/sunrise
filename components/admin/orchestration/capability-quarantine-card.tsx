@@ -50,8 +50,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
@@ -149,7 +151,16 @@ function ActiveView({
   const [mode, setMode] = React.useState<QuarantineMode>('quarantined-soft');
   const [reason, setReason] = React.useState('');
   const [expiresAt, setExpiresAt] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
+  // What the form finds wrong on Quarantine shows beside that button; a
+  // refused submit shows in the confirm dialog, which stays open (§124).
+  const check = useSaveFailure({
+    fallback: 'Could not quarantine the capability. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const submitSave = useSaveFailure({
+    fallback: 'Failed to quarantine capability. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
@@ -170,16 +181,17 @@ function ActiveView({
   function openConfirm(): void {
     const err = validate();
     if (err) {
-      setError(err);
+      check.show(err);
       return;
     }
-    setError(null);
+    check.clear();
+    submitSave.clear();
     setConfirmOpen(true);
   }
 
   async function submit(): Promise<void> {
     setSaving(true);
-    setError(null);
+    submitSave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.capabilityQuarantine(capabilityId), {
         body: {
@@ -193,9 +205,8 @@ function ActiveView({
       // threading new state up through the parent server component.
       window.location.reload();
     } catch (e) {
-      setError(e instanceof APIClientError ? e.message : 'Failed to quarantine capability');
+      submitSave.report(e);
       setSaving(false);
-      setConfirmOpen(false);
     }
   }
 
@@ -244,12 +255,6 @@ function ActiveView({
       </CardHeader>
       {expanded && (
         <CardContent id="quarantine-active-body" className="space-y-4">
-          {error && (
-            <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-              {error}
-            </p>
-          )}
-
           <div className="space-y-1">
             <Label htmlFor="quarantine-mode" className="flex items-center gap-1 text-xs">
               Mode
@@ -326,6 +331,7 @@ function ActiveView({
             />
           </div>
 
+          <SaveError failure={check.failure} />
           <div className="flex items-center justify-between gap-2">
             {affectedAgents === null ? (
               <p className="text-muted-foreground text-xs">
@@ -401,9 +407,17 @@ function ActiveView({
               />
             </div>
           )}
+          <SaveError failure={submitSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void submit()} disabled={saving}>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                void submit();
+              }}
+              disabled={saving}
+            >
               {saving ? 'Quarantining…' : 'Confirm quarantine'}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -432,7 +446,10 @@ function QuarantinedView({
   otherOrgAffectedCount: number;
 }): React.ReactElement {
   const [lifting, setLifting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const liftSave = useSaveFailure({
+    fallback: 'Failed to lift quarantine. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   // Snapshot 'now' once per mount so the expiry-has-passed check is a
   // pure render. React 19's react-hooks/purity rule disallows Date.now()
   // mid-render; useState lazy init is allowed.
@@ -445,12 +462,12 @@ function QuarantinedView({
 
   async function lift(): Promise<void> {
     setLifting(true);
-    setError(null);
+    liftSave.clear();
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.capabilityUnquarantine(capabilityId), {});
       window.location.reload();
     } catch (e) {
-      setError(e instanceof APIClientError ? e.message : 'Failed to lift quarantine');
+      liftSave.report(e);
       setLifting(false);
     }
   }
@@ -467,12 +484,6 @@ function QuarantinedView({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {error && (
-          <p className="text-red-600 dark:text-red-400" role="alert">
-            {error}
-          </p>
-        )}
-
         {attributionLine && (
           <p className="text-muted-foreground text-xs" aria-label="Audit attribution">
             {attributionLine}
@@ -508,6 +519,7 @@ function QuarantinedView({
           />
         )}
 
+        {!readOnly && <SaveError failure={liftSave.failure} />}
         {!readOnly && (
           <Button
             type="button"

@@ -14,8 +14,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tip } from '@/components/ui/tooltip';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 const MAX_TAGS = 20;
 
@@ -33,19 +35,23 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
   const [adding, setAdding] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // A refused save rolls the tags back and shows above them (§124).
+  const save = useSaveFailure({
+    fallback: 'Failed to save tags — reverted to last saved state.',
+    fields: NO_SERVER_FIELDS,
+  });
 
   const saveTags = async (updatedTags: string[]) => {
     setSaving(true);
-    setErrorMessage(null);
+    save.clear();
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.conversationById(conversationId), {
         body: { tags: updatedTags },
       });
       setCommittedTags(updatedTags);
-    } catch {
+    } catch (err) {
       setTags(committedTags);
-      setErrorMessage('Failed to save tags — reverted to last saved state.');
+      save.report(err);
     } finally {
       setSaving(false);
     }
@@ -69,6 +75,7 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
 
   return (
     <div className="flex flex-col gap-1">
+      <SaveError failure={save.failure} />
       <div className="flex flex-wrap items-center gap-1.5">
         {tags.map((tag) => (
           <Badge key={tag} variant="secondary" className="gap-1 pr-1">
@@ -133,11 +140,6 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
           </Button>
         )}
       </div>
-      {errorMessage && (
-        <p className="text-destructive text-xs" role="alert">
-          {errorMessage}
-        </p>
-      )}
     </div>
   );
 }

@@ -165,7 +165,7 @@ describe('MembersTable', () => {
     await user.selectOptions(screen.getAllByTestId('role-select')[1], 'ADMIN');
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('An unexpected error occurred');
+    expect(alert).toHaveTextContent('Could not change the role. Try again.');
     expect(alert).not.toHaveTextContent('boom');
   });
 

@@ -721,7 +721,7 @@ describe('AgentInviteTokensTab', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/failed to revoke token/i)).toBeInTheDocument();
+        expect(screen.getByText(/could not revoke the token/i)).toBeInTheDocument();
       });
     });
   });

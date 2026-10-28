@@ -383,7 +383,7 @@ describe('AgentsTable', () => {
 
       // Assert: error banner visible
       await waitFor(() => {
-        expect(screen.getByText(/couldn't update/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Not allowed');
       });
 
       // Assert: switch reverted to original state
@@ -1243,7 +1243,7 @@ describe('AgentsTable', () => {
       await user.click(screen.getByRole('button', { name: /^activate$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/bulk activate failed/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Forbidden');
       });
     });
 

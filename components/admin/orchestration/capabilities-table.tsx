@@ -66,7 +66,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { DeleteCapabilityDialog } from '@/components/admin/orchestration/delete-capability-dialog';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -140,7 +142,19 @@ export function CapabilitiesTable({
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isLoading, setIsLoading] = useState(false);
+  // Load failures only; a refused toggle goes to `listSave` above the table,
+  // a refused delete to the delete dialog (§124).
   const [listError, setListError] = useState<string | null>(null);
+  const listSave = useSaveFailure({
+    fallback: 'Could not update the capability. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const deleteSave = useSaveFailure({
+    fallback: 'Could not delete the capability. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearList, report: reportList } = listSave;
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const [deleteTarget, setDeleteTarget] = useState<AiCapabilityListItem | null>(null);
   const [showOnlyQuarantined, setShowOnlyQuarantined] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -252,45 +266,42 @@ export function CapabilitiesTable({
     [fetchCapabilities]
   );
 
-  const handleToggleStatus = useCallback(async (cap: AiCapabilityListItem, nextActive: boolean) => {
-    setCapabilities((prev) =>
-      prev.map((c) => (c.id === cap.id ? { ...c, isActive: nextActive } : c))
-    );
-    try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.capabilityById(cap.id), {
-        body: { isActive: nextActive },
-      });
-    } catch (err) {
+  const handleToggleStatus = useCallback(
+    async (cap: AiCapabilityListItem, nextActive: boolean) => {
+      clearList();
       setCapabilities((prev) =>
-        prev.map((c) => (c.id === cap.id ? { ...c, isActive: cap.isActive } : c))
+        prev.map((c) => (c.id === cap.id ? { ...c, isActive: nextActive } : c))
       );
-      setListError(
-        err instanceof APIClientError
-          ? `Couldn't update "${cap.name}": ${err.message}`
-          : `Couldn't update "${cap.name}". Try again.`
-      );
-    }
-  }, []);
+      try {
+        await apiClient.patch(API.ADMIN.ORCHESTRATION.capabilityById(cap.id), {
+          body: { isActive: nextActive },
+        });
+      } catch (err) {
+        setCapabilities((prev) =>
+          prev.map((c) => (c.id === cap.id ? { ...c, isActive: cap.isActive } : c))
+        );
+        reportList(err);
+      }
+    },
+    [clearList, reportList]
+  );
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     const target = deleteTarget;
     setIsLoading(true);
-    setListError(null);
-    setDeleteTarget(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.capabilityById(target.id));
+      setDeleteTarget(null);
       void fetchCapabilities(meta.page);
     } catch (err) {
-      setListError(
-        err instanceof APIClientError
-          ? `Couldn't delete "${target.name}": ${err.message}`
-          : `Couldn't delete "${target.name}". Try again.`
-      );
+      // The dialog stays open with the failure above its buttons.
+      reportDelete(err);
     } finally {
       setIsLoading(false);
     }
-  }, [deleteTarget, fetchCapabilities, meta.page]);
+  }, [deleteTarget, fetchCapabilities, meta.page, clearDelete, reportDelete]);
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
@@ -362,6 +373,8 @@ export function CapabilitiesTable({
           {listError}
         </div>
       )}
+
+      <SaveError failure={listSave.failure} />
 
       {/* Table */}
       <div className="rounded-md border">
@@ -614,10 +627,11 @@ export function CapabilitiesTable({
         target={deleteTarget}
         usedBy={deleteTarget?._agents ?? []}
         otherOrgAgentCount={deleteTarget?._otherOrgAgentCount ?? 0}
-        error={null}
+        failure={deleteSave.failure}
         isDeleting={isLoading}
         onCancel={() => {
           setDeleteTarget(null);
+          clearDelete();
         }}
         onConfirm={() => void handleDelete()}
       />

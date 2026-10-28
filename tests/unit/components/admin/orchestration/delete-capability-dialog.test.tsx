@@ -5,7 +5,7 @@
  *
  * Test Coverage:
  * - Happy-path delete: onConfirm callback fires and dialog can be closed
- * - Error message surfaces when parent passes an error string
+ * - The failure surfaces when the parent passes one
  * - When usedBy agents > 0, warning list renders showing agent names before confirm
  *
  * The component is purely presentational — it receives callbacks and data
@@ -56,7 +56,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -75,7 +75,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}
@@ -97,7 +97,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={onCancel}
           onConfirm={vi.fn()}
@@ -116,7 +116,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={null}
           usedBy={[]}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -130,12 +130,16 @@ describe('DeleteCapabilityDialog', () => {
   // ── Error state ────────────────────────────────────────────────────────────
 
   describe('error display', () => {
-    it('surfaces inline error message when error prop is set', () => {
+    it('surfaces the failure when the failure prop is set', () => {
       render(
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error="This capability is locked and cannot be deleted."
+          failure={{
+            message: 'This capability is locked and cannot be deleted.',
+            stale: false,
+            fields: [],
+          }}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -147,12 +151,12 @@ describe('DeleteCapabilityDialog', () => {
       ).toBeInTheDocument();
     });
 
-    it('dialog remains open (target still set) when error is present', () => {
+    it('dialog remains open (target still set) when a failure is present', () => {
       render(
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error="Delete failed"
+          failure={{ message: 'Delete failed', stale: false, fields: [] }}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -174,7 +178,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={AGENTS_USING}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -198,7 +202,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={[]}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -216,7 +220,7 @@ describe('DeleteCapabilityDialog', () => {
         <DeleteCapabilityDialog
           target={TARGET}
           usedBy={AGENTS_USING}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}
@@ -240,7 +244,7 @@ describe('DeleteCapabilityDialog', () => {
           target={TARGET}
           usedBy={AGENTS_USING}
           otherOrgAgentCount={3}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -258,7 +262,7 @@ describe('DeleteCapabilityDialog', () => {
           target={TARGET}
           usedBy={[]}
           otherOrgAgentCount={1}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -276,7 +280,7 @@ describe('DeleteCapabilityDialog', () => {
           target={TARGET}
           usedBy={[]}
           otherOrgAgentCount={0}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -299,7 +303,7 @@ describe('DeleteCapabilityDialog', () => {
         target={TARGET}
         usedBy={many}
         otherOrgAgentCount={3}
-        error={null}
+        failure={null}
         isDeleting={false}
         onCancel={vi.fn()}
         onConfirm={vi.fn()}

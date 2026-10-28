@@ -6,6 +6,9 @@
  * Inline AlertDialog for soft-deleting a capability. Accepts a list of
  * agents currently using the capability so admins can see which agents
  * will lose this tool before they confirm.
+ *
+ * A refused delete shows inside the dialog, above its buttons, and the dialog
+ * stays open: the parent closes it (clears `target`) only on success (§124).
  */
 
 import {
@@ -19,6 +22,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
+import { SaveError } from '@/components/forms/form-error';
+import type { SaveFailure } from '@/lib/errors/save-error';
 
 export interface DeleteCapabilityTarget {
   id: string;
@@ -36,7 +41,8 @@ export interface DeleteCapabilityDialogProps {
   usedBy: UsedByAgent[];
   /** Agents in other orgs using it: counted, never named (§107 t-752). */
   otherOrgAgentCount?: number;
-  error: string | null;
+  /** The refused delete, from `useSaveFailure()`; shown above the buttons. */
+  failure: SaveFailure | null;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -46,7 +52,7 @@ export function DeleteCapabilityDialog({
   target,
   usedBy,
   otherOrgAgentCount = 0,
-  error,
+  failure,
   isDeleting,
   onCancel,
   onConfirm,
@@ -94,12 +100,16 @@ export function DeleteCapabilityDialog({
           </div>
         )}
 
-        {error && <p className="text-destructive text-sm">{error}</p>}
+        <SaveError failure={failure} />
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
+            onClick={(e) => {
+              // Closes only on success, so a failure stays readable here.
+              e.preventDefault();
+              onConfirm();
+            }}
             className="bg-red-600 hover:bg-red-700"
             disabled={isDeleting}
           >

@@ -29,8 +29,10 @@ import { Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 export interface PlatformBindingOwnerProps {
   agentId: string;
@@ -49,12 +51,15 @@ export function PlatformBindingOwner({
   onHandedBack,
 }: PlatformBindingOwnerProps) {
   const [handingBack, setHandingBack] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not hand the provider and model back. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const platformDecides = bindingOwner === 'platform';
 
   async function handBack() {
     setHandingBack(true);
-    setError(null);
+    save.clear();
     try {
       const agent = await apiClient.patch<{ provider: string; model: string }>(
         API.ADMIN.ORCHESTRATION.agentById(agentId),
@@ -62,11 +67,7 @@ export function PlatformBindingOwner({
       );
       onHandedBack(agent);
     } catch (err) {
-      setError(
-        err instanceof APIClientError
-          ? err.message
-          : 'Could not hand the provider and model back. Try again in a moment.'
-      );
+      save.report(err);
     } finally {
       setHandingBack(false);
     }
@@ -99,6 +100,7 @@ export function PlatformBindingOwner({
               ? 'Set by this organisation. The platform no longer moves them.'
               : 'Not yet decided. The platform settles this on its next maintenance pass.'}
           </p>
+          <SaveError failure={save.failure} />
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -117,11 +119,6 @@ export function PlatformBindingOwner({
             )}
           </div>
         </>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-          {error}
-        </p>
       )}
     </div>
   );

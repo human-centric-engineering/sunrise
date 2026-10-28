@@ -308,7 +308,7 @@ describe('EmbedConfigPanel', () => {
     await user.click(toggleBtn!);
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to update token')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not update the token. Try again.');
     });
   });
 
@@ -348,7 +348,7 @@ describe('EmbedConfigPanel', () => {
     await user.click(deleteBtn!);
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to delete token')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not update the token. Try again.');
     });
   });
 

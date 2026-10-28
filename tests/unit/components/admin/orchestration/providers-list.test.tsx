@@ -733,7 +733,7 @@ describe('ProvidersList', () => {
       await user.click(screen.getByRole('button', { name: /reset/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/couldn't reset the circuit breaker/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(/couldn't update this provider/i);
       });
     });
   });

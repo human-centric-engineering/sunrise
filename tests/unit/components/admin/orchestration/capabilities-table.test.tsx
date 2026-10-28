@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
@@ -411,7 +411,7 @@ describe('CapabilitiesTable', () => {
       await user.click(switches[0]);
 
       await waitFor(() => {
-        expect(screen.getByText(/couldn't update/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Not allowed');
       });
 
       const switchesAfter = screen.getAllByRole('switch');
@@ -867,7 +867,7 @@ describe('CapabilitiesTable', () => {
       await waitFor(() => expect(screen.getByText('Delete capability')).toBeInTheDocument());
     }
 
-    it('shows table-level error banner when delete fails with APIClientError', async () => {
+    it('shows the refusal inside the delete dialog, which stays open', async () => {
       const { apiClient, APIClientError } = await import('@/lib/api/client');
       vi.mocked(apiClient.delete).mockRejectedValue(
         new APIClientError('In use by 2 agents', 'CAPABILITY_IN_USE', 409)
@@ -886,13 +886,13 @@ describe('CapabilitiesTable', () => {
       await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
-        expect(
-          screen.getByText(`Couldn't delete "${THREE_CAPABILITIES[0].name}": In use by 2 agents`)
-        ).toBeInTheDocument();
+        expect(within(screen.getByRole('alertdialog')).getByRole('alert')).toHaveTextContent(
+          'In use by 2 agents'
+        );
       });
     });
 
-    it('shows generic table-level error banner when delete fails with non-APIClientError', async () => {
+    it('shows the generic fallback inside the delete dialog when the failure is not an API error', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.delete).mockRejectedValue(new Error('boom'));
 
@@ -909,9 +909,9 @@ describe('CapabilitiesTable', () => {
       await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
-        expect(
-          screen.getByText(`Couldn't delete "${THREE_CAPABILITIES[0].name}". Try again.`)
-        ).toBeInTheDocument();
+        expect(within(screen.getByRole('alertdialog')).getByRole('alert')).toHaveTextContent(
+          'Could not delete the capability. Try again.'
+        );
       });
     });
   });
@@ -1197,7 +1197,9 @@ describe('CapabilitiesTable', () => {
     expect(firstSwitch).toBeChecked();
     await user.click(firstSwitch);
 
-    expect(await screen.findByText(/Couldn't update ".*"\. Try again\./)).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not update the capability. Try again.'
+    );
     expect(screen.getAllByRole('switch')[0]).toBeChecked();
   });
 

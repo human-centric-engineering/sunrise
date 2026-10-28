@@ -57,7 +57,9 @@ import {
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
@@ -90,7 +92,11 @@ export function UserTable({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSave = useSaveFailure({
+    fallback: 'Could not delete the user. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Clean up search debounce timeout on unmount
@@ -226,19 +232,18 @@ export function UserTable({
     if (!deleteUserId) return;
 
     setIsLoading(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.USERS.byId(deleteUserId));
       setDeleteUserId(null);
       void fetchUsers(meta.page);
     } catch (error) {
-      if (error instanceof APIClientError) {
-        setDeleteError(error.message);
-      }
+      // The dialog stays open with the failure above its buttons.
+      reportDelete(error);
     } finally {
       setIsLoading(false);
     }
-  }, [deleteUserId, fetchUsers, meta.page]);
+  }, [deleteUserId, fetchUsers, meta.page, clearDelete, reportDelete]);
 
   /**
    * Render sort icon
@@ -439,7 +444,15 @@ export function UserTable({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
+      <AlertDialog
+        open={!!deleteUserId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteUserId(null);
+            clearDelete();
+          }
+        }}
+      >
         <AlertDialogContent>
           {isPlatformAdmin(users.find((u) => u.id === deleteUserId)) ? (
             <>
@@ -462,11 +475,15 @@ export function UserTable({
                   data, sessions, and accounts will be permanently deleted.
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
+              <SaveError failure={deleteSave.failure} />
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction
-                  onClick={() => void handleDelete()}
+                  onClick={(e) => {
+                    // Closes only on success, so a failure stays readable here.
+                    e.preventDefault();
+                    void handleDelete();
+                  }}
                   className="bg-red-600 hover:bg-red-700"
                   disabled={isLoading}
                 >

@@ -42,7 +42,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={null}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -58,7 +58,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -75,7 +75,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -91,7 +91,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -106,7 +106,11 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error="2 agents reference this provider — re-point them first"
+          failure={{
+            message: '2 agents reference this provider — re-point them first',
+            stale: false,
+            fields: [],
+          }}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -124,7 +128,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}
@@ -146,7 +150,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={vi.fn()}
           onConfirm={onConfirm}
@@ -162,7 +166,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={true}
           onCancel={vi.fn()}
           onConfirm={vi.fn()}
@@ -179,7 +183,7 @@ describe('PermanentDeleteProviderDialog', () => {
       render(
         <PermanentDeleteProviderDialog
           target={TARGET}
-          error={null}
+          failure={null}
           isDeleting={false}
           onCancel={onCancel}
           onConfirm={vi.fn()}

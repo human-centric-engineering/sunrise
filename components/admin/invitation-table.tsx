@@ -52,10 +52,12 @@ import {
 import type { InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
+import { SaveError } from '@/components/forms/form-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { getRoleBadgeVariant } from '@/lib/utils/initials';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
@@ -90,9 +92,19 @@ export function InvitationTable({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
   const [deleteEmail, setDeleteEmail] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
+  // Row actions (resend) report above the table; the delete dialog has its own.
+  const listSave = useSaveFailure({
+    fallback: 'Could not resend the invitation. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const deleteSave = useSaveFailure({
+    fallback: 'Could not delete the invitation. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearList, report: reportList } = listSave;
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const resendSuccessTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -228,19 +240,18 @@ export function InvitationTable({
     if (!deleteEmail) return;
 
     setIsLoading(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.invitationByEmail(deleteEmail));
       setDeleteEmail(null);
       void fetchInvitations(meta.page);
     } catch (error) {
-      if (error instanceof APIClientError) {
-        setDeleteError(error.message);
-      }
+      // The dialog stays open with the failure above its buttons.
+      reportDelete(error);
     } finally {
       setIsLoading(false);
     }
-  }, [deleteEmail, fetchInvitations, meta.page]);
+  }, [deleteEmail, fetchInvitations, meta.page, clearDelete, reportDelete]);
 
   /**
    * Handle resend invitation
@@ -249,6 +260,7 @@ export function InvitationTable({
     async (invitation: InvitationListItem) => {
       setResendingEmail(invitation.email);
       setResendSuccess(null);
+      clearList();
       try {
         // Use the existing invite API with resend=true
         await apiClient.post(`${API.USERS.INVITE}?resend=true`, {
@@ -263,13 +275,13 @@ export function InvitationTable({
         resendSuccessTimeoutRef.current = setTimeout(() => setResendSuccess(null), 3000);
         // Refresh the list to get updated expiration
         void fetchInvitations(meta.page);
-      } catch {
-        // Error is silently caught — Batch 6 will add proper error state UI
+      } catch (err) {
+        reportList(err);
       } finally {
         setResendingEmail(null);
       }
     },
-    [fetchInvitations, meta.page]
+    [fetchInvitations, meta.page, clearList, reportList]
   );
 
   /**
@@ -307,6 +319,8 @@ export function InvitationTable({
           Invitation resent successfully to {resendSuccess}
         </div>
       )}
+
+      <SaveError failure={listSave.failure} />
 
       {/* Table */}
       <div className="rounded-md border">
@@ -482,7 +496,15 @@ export function InvitationTable({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteEmail} onOpenChange={() => setDeleteEmail(null)}>
+      <AlertDialog
+        open={!!deleteEmail}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteEmail(null);
+            clearDelete();
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Invitation</AlertDialogTitle>
@@ -492,11 +514,15 @@ export function InvitationTable({
               invitation.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
+          <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => void handleDelete()}
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                void handleDelete();
+              }}
               className="bg-red-600 hover:bg-red-700"
               disabled={isLoading}
             >

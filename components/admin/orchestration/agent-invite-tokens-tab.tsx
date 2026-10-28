@@ -25,8 +25,10 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface InviteToken {
@@ -70,7 +72,16 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
   const schedule = useTimeout();
   const [tokens, setTokens] = useState<InviteToken[] | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load and clipboard failures; a refused revoke or create is a save (§124).
   const [error, setError] = useState<string | null>(null);
+  const listSave = useSaveFailure({
+    fallback: 'Could not revoke the token. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const createSave = useSaveFailure({
+    fallback: 'Could not create the token. Try again.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -101,7 +112,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
 
   const handleCreate = async () => {
     setCreating(true);
-    setError(null);
+    createSave.clear();
     try {
       const body: Record<string, unknown> = {};
       if (newLabel.trim()) body.label = newLabel.trim();
@@ -115,7 +126,8 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
       setNewExpiresAt('');
       await fetchTokens();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to create token');
+      // The dialog stays open with the failure above its buttons.
+      createSave.report(err);
     } finally {
       setCreating(false);
     }
@@ -123,12 +135,12 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
 
   const handleRevoke = async (tokenId: string) => {
     setRevoking(tokenId);
-    setError(null);
+    listSave.clear();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.agentInviteTokenById(agentId, tokenId));
       await fetchTokens();
     } catch (err) {
-      setError(err instanceof APIClientError ? err.message : 'Failed to revoke token');
+      listSave.report(err);
     } finally {
       setRevoking(null);
     }
@@ -199,6 +211,8 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
           {error}
         </div>
       )}
+
+      <SaveError failure={listSave.failure} />
 
       {tokens && tokens.length > 0 ? (
         <div className="rounded-md border">
@@ -288,7 +302,13 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
       )}
 
       {/* Create token dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog
+        open={showCreate}
+        onOpenChange={(open) => {
+          setShowCreate(open);
+          createSave.clear();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create invite token</DialogTitle>
@@ -340,8 +360,16 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
               <DatePicker id="token-expires" value={newExpiresAt} onChange={setNewExpiresAt} />
             </div>
           </div>
+          <SaveError failure={createSave.failure} />
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowCreate(false);
+                createSave.clear();
+              }}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={creating}>

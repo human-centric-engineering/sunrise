@@ -21,6 +21,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import type { SaveFailure } from '@/lib/errors/save-error';
 
 export interface DeleteProviderTarget {
   id: string;
@@ -30,7 +32,8 @@ export interface DeleteProviderTarget {
 
 export interface DeleteProviderDialogProps {
   target: DeleteProviderTarget | null;
-  error: string | null;
+  /** The refused deactivation, from `useSaveFailure()`; shown above the buttons. */
+  failure: SaveFailure | null;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -38,7 +41,7 @@ export interface DeleteProviderDialogProps {
 
 export function DeleteProviderDialog({
   target,
-  error,
+  failure,
   isDeleting,
   onCancel,
   onConfirm,
@@ -62,7 +65,7 @@ export function DeleteProviderDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {error && <p className="text-destructive text-sm">{error}</p>}
+        <SaveError failure={failure} />
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>

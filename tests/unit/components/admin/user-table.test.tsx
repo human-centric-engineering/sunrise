@@ -755,6 +755,9 @@ describe('components/admin/user-table', () => {
         },
         { timeout: 2000 }
       );
+      // The dialog stays open with the failure inside it (§124)
+      expect(await screen.findByRole('alert')).toHaveTextContent('Failed to delete user');
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     });
 
     it('should navigate to edit page', async () => {

@@ -90,7 +90,9 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tip } from '@/components/ui/tooltip';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { SaveError } from '@/components/forms/form-error';
+import { apiClient } from '@/lib/api/client';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -152,7 +154,24 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     setExportNotice(null);
   }, [selected]);
   const [deleteTarget, setDeleteTarget] = useState<AiAgentListItem | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Load and export failures stay in `listError`; a refused toggle or bulk
+  // action goes to `listSave` above the table, and each confirm dialog shows
+  // its own (§124).
+  const listSave = useSaveFailure({
+    fallback: 'Could not update the agents. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const deleteSave = useSaveFailure({
+    fallback: 'Delete failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const bulkDeleteSave = useSaveFailure({
+    fallback: 'Bulk delete failed. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearList, report: reportList } = listSave;
+  const { clear: clearDelete, report: reportDelete } = deleteSave;
+  const { clear: clearBulkDelete, report: reportBulkDelete } = bulkDeleteSave;
   const [duplicateSource, setDuplicateSource] = useState<AiAgent | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -337,42 +356,43 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
    * Optimistic status toggle — flips the local row first, then PATCHes.
    * On failure, reverts.
    */
-  const handleToggleStatus = useCallback(async (agent: AiAgentListItem, nextActive: boolean) => {
-    const previousActive = !nextActive; // the state we're flipping away from
-    setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, isActive: nextActive } : a)));
-    try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
-        body: { isActive: nextActive },
-      });
-    } catch (err) {
-      // Revert to the state before this specific toggle, not from a stale closure
+  const handleToggleStatus = useCallback(
+    async (agent: AiAgentListItem, nextActive: boolean) => {
+      const previousActive = !nextActive; // the state we're flipping away from
+      clearList();
       setAgents((prev) =>
-        prev.map((a) => (a.id === agent.id ? { ...a, isActive: previousActive } : a))
+        prev.map((a) => (a.id === agent.id ? { ...a, isActive: nextActive } : a))
       );
-      setListError(
-        err instanceof APIClientError
-          ? `Couldn't update "${agent.name}": ${err.message}`
-          : `Couldn't update "${agent.name}". Try again.`
-      );
-    }
-  }, []);
+      try {
+        await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
+          body: { isActive: nextActive },
+        });
+      } catch (err) {
+        // Revert to the state before this specific toggle, not from a stale closure
+        setAgents((prev) =>
+          prev.map((a) => (a.id === agent.id ? { ...a, isActive: previousActive } : a))
+        );
+        reportList(err);
+      }
+    },
+    [clearList, reportList]
+  );
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setIsLoading(true);
-    setDeleteError(null);
+    clearDelete();
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.agentById(deleteTarget.id));
       setDeleteTarget(null);
       void fetchAgents(meta.page);
     } catch (err) {
-      setDeleteError(
-        err instanceof APIClientError ? err.message : 'Delete failed. Try again in a moment.'
-      );
+      // The dialog stays open with the failure above its buttons.
+      reportDelete(err);
     } finally {
       setIsLoading(false);
     }
-  }, [deleteTarget, fetchAgents, meta.page]);
+  }, [deleteTarget, fetchAgents, meta.page, clearDelete, reportDelete]);
 
   const handleExportSelected = useCallback(async () => {
     if (selected.size === 0) return;
@@ -432,24 +452,24 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     async (action: 'activate' | 'deactivate' | 'delete') => {
       if (selected.size === 0) return;
       setBulkAction(action);
-      setListError(null);
+      // A bulk delete is confirmed in its dialog and reports there; the dialog
+      // closes only on success.
+      const clear = action === 'delete' ? clearBulkDelete : clearList;
+      const report = action === 'delete' ? reportBulkDelete : reportList;
+      clear();
       try {
         await apiClient.post(API.ADMIN.ORCHESTRATION.AGENTS_BULK, {
           body: { action, agentIds: [...selected] },
         });
+        if (action === 'delete') setBulkDeleteOpen(false);
         void fetchAgents(meta.page);
       } catch (err) {
-        setListError(
-          err instanceof APIClientError
-            ? `Bulk ${action} failed: ${err.message}`
-            : `Bulk ${action} failed. Try again in a moment.`
-        );
+        report(err);
       } finally {
         setBulkAction(null);
-        setBulkDeleteOpen(false);
       }
     },
-    [selected, fetchAgents, meta.page]
+    [selected, fetchAgents, meta.page, clearList, reportList, clearBulkDelete, reportBulkDelete]
   );
 
   const toggleRow = useCallback((id: string) => {
@@ -918,6 +938,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         </div>
       )}
 
+      <SaveError failure={listSave.failure} />
+
       {/* Table */}
       <div className={`rounded-md border ${isLoading && agents.length > 0 ? 'opacity-60' : ''}`}>
         <Table>
@@ -1122,7 +1144,15 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       </div>
 
       {/* Delete confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            clearDelete();
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete agent</AlertDialogTitle>
@@ -1132,11 +1162,15 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               preserved. You can reactivate it by flipping its status back on.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
+          <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => void handleDelete()}
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                void handleDelete();
+              }}
               className="bg-red-600 hover:bg-red-700"
               disabled={isLoading}
             >
@@ -1147,7 +1181,13 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       </AlertDialog>
 
       {/* Bulk delete confirmation */}
-      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteOpen(open);
+          clearBulkDelete();
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -1158,11 +1198,15 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               default lists, but their history is preserved. System agents are excluded.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {listError && <p className="text-destructive text-sm">{listError}</p>}
+          <SaveError failure={bulkDeleteSave.failure} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => void handleBulkAction('delete')}
+              onClick={(e) => {
+                // Closes only on success, so a failure stays readable here.
+                e.preventDefault();
+                void handleBulkAction('delete');
+              }}
               className="bg-red-600 hover:bg-red-700"
               disabled={!!bulkAction}
             >

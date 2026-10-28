@@ -24,6 +24,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import type { SaveFailure } from '@/lib/errors/save-error';
 
 export interface PermanentDeleteTarget {
   id: string;
@@ -33,7 +35,8 @@ export interface PermanentDeleteTarget {
 
 export interface PermanentDeleteProviderDialogProps {
   target: PermanentDeleteTarget | null;
-  error: string | null;
+  /** The refused delete, from `useSaveFailure()`; shown above the buttons. */
+  failure: SaveFailure | null;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -41,7 +44,7 @@ export interface PermanentDeleteProviderDialogProps {
 
 export function PermanentDeleteProviderDialog({
   target,
-  error,
+  failure,
   isDeleting,
   onCancel,
   onConfirm,
@@ -74,9 +77,7 @@ export function PermanentDeleteProviderDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {error && (
-          <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-        )}
+        <SaveError failure={failure} />
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>

@@ -10,7 +10,7 @@
  * - Hides detections that are already configured
  * - One-click Configure POSTs the suggested config + writes settings
  *   defaults when slots are empty
- * - Shows inline error when the POST fails; row stays visible
+ * - Shows the server's message when the POST fails; row stays visible
  * - Calls onProviderCreated and refetches detection on success
  *
  * @see components/admin/orchestration/provider-detections-banner.tsx
@@ -340,7 +340,8 @@ describe('ProviderDetectionsBanner', () => {
     await user.click(screen.getByRole('button', { name: /^configure$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Could not configure Anthropic/i)).toBeInTheDocument();
+      // The server's own message, not a fixed one (§124).
+      expect(screen.getByRole('alert')).toHaveTextContent('bad');
     });
     // Row still visible — operator can retry or open the wizard.
     expect(screen.getByText('Anthropic')).toBeInTheDocument();

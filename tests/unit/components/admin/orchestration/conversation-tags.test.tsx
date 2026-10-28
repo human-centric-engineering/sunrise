@@ -27,7 +27,9 @@ import { ConversationTags } from '@/components/admin/orchestration/conversation-
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockPatch = vi.fn();
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError, which the shared save-error reader checks against.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: { patch: (...args: unknown[]) => mockPatch(...args) },
 }));
 vi.mock('@/lib/api/endpoints', () => ({
