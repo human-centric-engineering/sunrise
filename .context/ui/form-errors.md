@@ -171,6 +171,14 @@ person can read it and try again or cancel. Close it only on success. Radix's
 `e.preventDefault()`. A dialog that closes and then shows the error elsewhere,
 or draws it behind its own overlay, loses it (owner ruling, 2026-10-28).
 
+While the action is in flight the dialog is committed to it: disable the
+action button **and** Cancel, and ignore the close Radix asks for (Escape, an
+outside click) by returning early from `onOpenChange` while pending. Otherwise
+a second click sends the request twice, and a failure arriving after the
+dialog closed is shown nowhere. Clear the dialog's failure **when it opens**
+(where the target is set), not only when it closes, so one row's failure never
+appears in the next row's dialog.
+
 A controlled dialog with no `DialogTrigger` returns no focus when it closes.
 One with a trigger hands focus back to it, after a failure shown outside the
 dialog has taken focus: prevent that with
@@ -301,6 +309,7 @@ boundaries, and `ErrorCard` are not save errors and keep their own display.
 
 Not converted, by rule: load errors, test / run / preview / search actions
 (test buttons, the audit-models and rerun dialogs, the builder's run panel,
-the pairwise judge, LLM generation previews, knowledge search), the chat, and
-org switches. `components/forms/` and the auth pages move onto it in t-950,
+the pairwise judge, LLM generation previews, knowledge search), the chat's
+messages (its approval card's approve and reject are converted), and org
+switches. `components/forms/` and the auth pages move onto it in t-950,
 which also adds a check against hand-drawn save-error boxes.
