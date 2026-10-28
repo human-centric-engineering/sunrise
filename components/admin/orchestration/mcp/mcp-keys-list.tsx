@@ -224,6 +224,8 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       <Dialog
         open={createDialogOpen}
         onOpenChange={(open) => {
+          // Committed while the key is being created, so its failure is shown here.
+          if (!open && creating) return;
           setCreateDialogOpen(open);
           createFailure.clear();
           if (!open) setShowPlaintext(null);

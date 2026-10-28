@@ -283,7 +283,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       <Dialog
         open={editingResource !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the save is in flight, so its failure is shown here.
+          if (!open && !editSaving) {
             setEditingResource(null);
             editFailure.clear();
           }
@@ -371,6 +372,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
+          // Committed while the resource is being created, so its failure is shown here.
+          if (!open && creating) return;
           setCreateOpen(open);
           createFailure.clear();
           if (!open) setForm(EMPTY_RESOURCE_FORM);
@@ -510,7 +513,13 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                 ))}
               </div>
               {!readOnly && (
-                <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    createFailure.clear();
+                    setCreateOpen(true);
+                  }}
+                >
                   Create Your First Resource
                 </Button>
               )}

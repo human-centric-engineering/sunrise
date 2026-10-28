@@ -7,7 +7,10 @@
  * `metadata.pendingApproval` is set.
  *
  * State machine:
- *   idle → submitting → waiting → completed | failed | expired
+ *   idle → waiting → completed | failed | expired
+ *
+ * (While the decision's POST is in flight the card shows `sending`, which is
+ * component state, not a reducer state.)
  *
  * Approve / Reject POSTs hit the channel-specific token endpoint
  * (`…/approve/chat`, `…/reject/chat`). The actorLabel is set
@@ -186,8 +189,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
           body: JSON.stringify(body),
         });
         if (!res.ok) throw await apiErrorFromResponse(res);
-        dispatch({ type: action === 'approve' ? 'approve_submit' : 'reject_submit' });
-        dispatch({ type: 'submit_ok' });
+        dispatch({ type: 'submit_ok', payload: { action } });
         startPolling(action);
         return true;
       } catch (err) {
@@ -226,7 +228,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
 
   const expired = state.kind === 'expired';
   const failed = state.kind === 'failed';
-  const busy = state.kind === 'submitting' || state.kind === 'waiting';
+  const busy = state.kind === 'waiting';
 
   return (
     <div
@@ -268,9 +270,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
           <span>
             {sending
               ? `Submitting ${sending === 'approve' ? 'approval' : 'rejection'}…`
-              : state.kind === 'submitting'
-                ? `Submitting ${state.action === 'approve' ? 'approval' : 'rejection'}…`
-                : 'Waiting for the workflow to finish…'}
+              : 'Waiting for the workflow to finish…'}
           </span>
         </div>
       )}

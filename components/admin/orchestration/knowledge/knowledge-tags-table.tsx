@@ -156,6 +156,14 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
   });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
+  // Opening the form clears the last save's failure, so a failure left by
+  // an earlier dialog never shows in this one.
+  function openForm(next: Extract<DialogState, { kind: 'create' | 'edit' }>): void {
+    formFailure.clear();
+    setFieldErrors({});
+    setDialog(next);
+  }
+
   // Drill-down state: which tag is expanded, and what data we've loaded.
   // Cached by tag id so re-opening the same row doesn't refetch.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -224,7 +232,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
             onFailure={(err) => listFailure.report(err, "Couldn't delete the unused tags")}
             onRefresh={() => void refresh()}
           />
-          <Button onClick={() => setDialog({ kind: 'create' })}>New tag</Button>
+          <Button onClick={() => openForm({ kind: 'create' })}>New tag</Button>
         </div>
       )}
 
@@ -299,7 +307,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDialog({ kind: 'edit', tag });
+                                openForm({ kind: 'edit', tag });
                               }}
                               aria-label={`Edit ${tag.name}`}
                             >
@@ -522,7 +530,9 @@ function CreateOrEditDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) onClose();
+        // Committed while the save is in flight: Escape and an outside click
+        // would otherwise close it before its failure arrives.
+        if (!o && !busy) onClose();
       }}
     >
       <DialogContent>

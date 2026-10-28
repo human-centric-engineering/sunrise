@@ -248,7 +248,13 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
             its own input template (JSON) that gets passed as the workflow input.
           </FieldHelp>
         </h2>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button
+          size="sm"
+          onClick={() => {
+            createSave.clear();
+            setShowCreate(true);
+          }}
+        >
           <Plus className="mr-1 h-4 w-4" /> New schedule
         </Button>
       </div>
@@ -323,6 +329,8 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       <Dialog
         open={showCreate}
         onOpenChange={(open) => {
+          // Committed while the schedule is being created, so its failure is shown here.
+          if (!open && creating) return;
           setShowCreate(open);
           createSave.clear();
         }}
@@ -386,6 +394,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
                 setShowCreate(false);
                 createSave.clear();
               }}
+              disabled={creating}
             >
               Cancel
             </Button>

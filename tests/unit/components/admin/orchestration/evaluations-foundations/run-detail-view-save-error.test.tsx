@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('next/navigation', () => ({
@@ -86,5 +86,50 @@ describe('RunDetailView — refused cancel', () => {
     expect(alert).toHaveTextContent('Run already finished');
     expect(alert.nextElementSibling).toContainElement(cancel);
     await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it('keeps the refusal shown when the next poll finds the run finished and Cancel goes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // The run finishes as the cancel arrives: the server refuses it, and
+      // every poll after that reports the run completed.
+      let finished = false;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (url === API.ADMIN.ORCHESTRATION.evalRunCancel('run-1')) {
+            finished = true;
+            return json(
+              { success: false, error: { code: 'CONFLICT', message: 'Run is already completed' } },
+              409
+            );
+          }
+          if (url.startsWith(API.ADMIN.ORCHESTRATION.evalRunCases('run-1'))) {
+            return json({ success: true, data: { items: [], nextCursor: null } });
+          }
+          return json({
+            success: true,
+            data: finished
+              ? { ...RUN, status: 'completed', completedAt: '2026-05-10T10:05:00Z' }
+              : RUN,
+          });
+        })
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RunDetailView runId="run-1" />);
+
+      await user.click(await screen.findByRole('button', { name: /Cancel run/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Run is already completed');
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /Cancel run/i })).not.toBeInTheDocument()
+      );
+      expect(screen.getByRole('alert')).toHaveTextContent('Run is already completed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

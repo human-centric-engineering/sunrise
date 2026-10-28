@@ -255,6 +255,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
+          // Committed while the prompt is being created, so its failure is shown here.
+          if (!open && creating) return;
           setCreateOpen(open);
           createFailure.clear();
           if (!open) setCreateForm(EMPTY_CREATE_FORM);
@@ -294,7 +296,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       <Dialog
         open={editingPrompt !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the save is in flight, so its failure is shown here.
+          if (!open && !editSaving) {
             setEditingPrompt(null);
             editFailure.clear();
           }
@@ -403,7 +406,13 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                 from a menu — they are <em>not</em> auto-invoked by the model.
               </p>
               {!readOnly && (
-                <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    createFailure.clear();
+                    setCreateOpen(true);
+                  }}
+                >
                   Create Your First Prompt
                 </Button>
               )}

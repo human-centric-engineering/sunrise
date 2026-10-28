@@ -188,4 +188,31 @@ describe('KnowledgeTagsTable — failed saves', () => {
     expect(within(dialog).getByText(/Other Tag/)).toBeInTheDocument();
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
+
+  it('holds the tag form open on Escape while saving, so a late failure never reaches the next New tag form', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: (err: unknown) => void = () => {};
+    vi.mocked(apiClient.post).mockImplementation(
+      () => new Promise((_resolve, reject) => (fail = reject))
+    );
+    const user = userEvent.setup();
+    render(<KnowledgeTagsTable initialTags={[UNUSED]} initialMeta={META} />);
+
+    await user.click(screen.getByRole('button', { name: /new tag/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'Billing');
+    await user.click(screen.getByRole('button', { name: /create tag/i }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    fail(new APIClientError('Tag service unavailable', 'INTERNAL_ERROR', 500));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Tag service unavailable');
+
+    await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+    await user.click(screen.getByRole('button', { name: /new tag/i }));
+    const next = await screen.findByRole('dialog');
+    expect(within(next).queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

@@ -89,7 +89,14 @@ export function DocumentRenameModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Committed while the save is in flight, so its failure is shown here.
+        if (!next && saving) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="w-full max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

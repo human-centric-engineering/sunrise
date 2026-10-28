@@ -3,8 +3,8 @@
 /**
  * ApprovalCard component tests
  *
- * Drives the state machine (idle → submitting → waiting → completed /
- * failed / expired) with a stubbed `fetch`. We don't assert on the
+ * Drives the state machine (idle → waiting → completed / failed /
+ * expired, with the card's own sending state while the POST is in flight) with a stubbed `fetch`. We don't assert on the
  * dialog primitives — those are covered by Radix's own tests and the
  * shadcn AlertDialog elsewhere — only on the submit + polling
  * behaviour and the synthesised follow-up message handed to
@@ -661,7 +661,7 @@ describe('ApprovalCard — error and cleanup paths', () => {
       await Promise.resolve();
     });
 
-    // Assert: AbortError is silently suppressed — the component stays in submitting state
+    // Assert: AbortError is silently suppressed — the card never leaves idle
     // (returns early from catch without dispatching failure), so no Failed: text appears.
     expect(screen.queryByText(/Failed:/i)).not.toBeInTheDocument();
 

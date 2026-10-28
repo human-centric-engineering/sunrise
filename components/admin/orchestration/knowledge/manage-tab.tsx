@@ -98,7 +98,10 @@ import { DocumentKeywordsModal } from '@/components/admin/orchestration/knowledg
 import { DocumentRenameModal } from '@/components/admin/orchestration/knowledge/document-rename-modal';
 import { DocumentTagsModal } from '@/components/admin/orchestration/knowledge/document-tags-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
-import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import type {
+  PdfPreviewData,
+  UploadOutcome,
+} from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
 import { PdfPreviewModal } from '@/components/admin/orchestration/knowledge/pdf-preview-modal';
 import { pdfPreviewFromStoredDocument } from '@/components/admin/orchestration/knowledge/stored-pdf-preview';
@@ -275,6 +278,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   });
   const { clear: clearRowFailure, report: reportRowFailure } = rowFailure;
   const [uploadOpen, setUploadOpen] = useState(false);
+  // An upload or URL fetch in flight holds the upload dialog open, so its
+  // failure is shown in the dialog rather than nowhere.
+  const [uploadBusy, setUploadBusy] = useState(false);
   const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);
   const [viewKeywordsName, setViewKeywordsName] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -470,10 +476,15 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     }
   }, []);
 
-  const handleUploadComplete = useCallback(() => {
-    setUploadOpen(false);
-    refreshAll();
-  }, [refreshAll]);
+  const handleUploadComplete = useCallback(
+    ({ refused }: UploadOutcome) => {
+      // Files the bulk upload refused are listed in the dialog: keep it open
+      // so they are seen, and refresh the list for the files that did land.
+      if (!refused) setUploadOpen(false);
+      refreshAll();
+    },
+    [refreshAll]
+  );
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
@@ -1364,7 +1375,13 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           of this component) since it's already done. */}
       {!setupComplete && builtInPanel}
 
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+      <Dialog
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          if (!open && uploadBusy) return;
+          setUploadOpen(open);
+        }}
+      >
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1379,6 +1396,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           <DocumentUploadZone
             onUploadComplete={handleUploadComplete}
             onPdfPreview={handlePdfPreview}
+            onBusyChange={setUploadBusy}
           />
         </DialogContent>
       </Dialog>

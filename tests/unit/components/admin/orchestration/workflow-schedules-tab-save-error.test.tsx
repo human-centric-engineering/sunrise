@@ -150,4 +150,30 @@ describe('WorkflowSchedulesTab — failed save', () => {
     expect(dialog).toHaveTextContent('Weekly Digest');
     expect(screen.queryByText(/Morning run is busy/)).not.toBeInTheDocument();
   });
+
+  it('holds the create dialog open on Escape while the schedule is being created', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.post).mockImplementation(
+      () =>
+        new Promise((_, reject) => (fail = () => reject(new APIClientError('Late boom', 'X', 500))))
+    );
+    const user = userEvent.setup();
+    render(<WorkflowSchedulesTab workflowId="wf-1" />);
+
+    await user.click(await screen.findByRole('button', { name: /new schedule/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^name$/i), 'Nightly');
+    await user.type(within(dialog).getByPlaceholderText('0 9 * * 1-5'), '0 1 * * *');
+    await user.click(within(dialog).getByRole('button', { name: /^create$/i }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: /^create$/i })).toBeDisabled()
+    );
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    fail();
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late boom');
+  });
 });

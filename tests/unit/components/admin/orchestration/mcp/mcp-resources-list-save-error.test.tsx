@@ -75,6 +75,19 @@ function refuse(status: number, code: string, message: string) {
   );
 }
 
+/** A request held open until the test answers it with a refusal. */
+function holdThenRefuse(): (status: number, code: string, message: string) => void {
+  let answer: (r: Response) => void = () => {};
+  mockFetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+  return (status, code, message) =>
+    answer(
+      new Response(JSON.stringify({ success: false, error: { code, message } }), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+}
+
 describe('McpResourcesList — failed saves', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -189,5 +202,40 @@ describe('McpResourcesList — failed saves', () => {
     await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[1]);
     await screen.findByRole('alertdialog');
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
+  });
+
+  it('holds the create dialog open on Escape while the resource is being created', async () => {
+    const user = userEvent.setup();
+    render(<McpResourcesList initialResources={[RESOURCE]} />);
+
+    await user.click(screen.getByTestId('create-resource-trigger'));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^Name/i), 'Agents');
+    await user.selectOptions(within(dialog).getByTestId('select-root'), 'agent_list');
+    const refuseLate = holdThenRefuse();
+    await user.click(within(dialog).getByRole('button', { name: /^Create Resource$/i }));
+    await within(dialog).findByRole('button', { name: /creating/i });
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    refuseLate(500, 'INTERNAL_ERROR', 'Late create failure');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late create failure');
+  });
+
+  it('holds the edit dialog open on Escape while the save is in flight', async () => {
+    const user = userEvent.setup();
+    render(<McpResourcesList initialResources={[RESOURCE]} />);
+
+    await user.click(screen.getByTestId('edit-resource-r-1'));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^Description/i), ' more');
+    const refuseLate = holdThenRefuse();
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+    await within(dialog).findByRole('button', { name: /saving/i });
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    refuseLate(500, 'INTERNAL_ERROR', 'Late edit failure');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late edit failure');
   });
 });

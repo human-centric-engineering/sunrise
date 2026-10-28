@@ -3,17 +3,10 @@
  * unit-tested directly without bouncing through the React lifecycle.
  */
 
-export type Action =
-  | 'approve_submit'
-  | 'reject_submit'
-  | 'submit_ok'
-  | 'poll_completed'
-  | 'poll_failed'
-  | 'poll_expired';
+export type Action = 'submit_ok' | 'poll_completed' | 'poll_failed' | 'poll_expired';
 
 export type CardState =
   | { kind: 'idle' }
-  | { kind: 'submitting'; action: 'approve' | 'reject' }
   | { kind: 'waiting'; action: 'approve' | 'reject' }
   | { kind: 'completed'; action: 'approve' | 'reject' }
   | { kind: 'failed'; message: string }
@@ -26,13 +19,12 @@ export interface ReducerEvent {
 
 export function reducer(state: CardState, event: ReducerEvent): CardState {
   switch (event.type) {
-    case 'approve_submit':
-      return { kind: 'submitting', action: 'approve' };
-    case 'reject_submit':
-      return { kind: 'submitting', action: 'reject' };
     case 'submit_ok':
-      if (state.kind !== 'submitting') return state;
-      return { kind: 'waiting', action: state.action };
+      // The server accepted the decision: wait for the workflow. While the
+      // POST is in flight the card shows its own sending state, so there is
+      // no reducer state for it.
+      if (state.kind !== 'idle' || !event.payload?.action) return state;
+      return { kind: 'waiting', action: event.payload.action };
     case 'poll_completed':
       // Carry the action forward so the rendered terminal-state copy
       // says the right thing — "approved/completed" vs "rejected/cancelled".

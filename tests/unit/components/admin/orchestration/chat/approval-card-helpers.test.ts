@@ -176,9 +176,22 @@ describe('safeStringify', () => {
 // reducer — guard branches (no-op transitions)
 // ---------------------------------------------------------------------------
 
+describe('reducer — submit_ok', () => {
+  it.each(['approve', 'reject'] as const)(
+    'moves an idle card straight to waiting, carrying the %s decision',
+    (action) => {
+      // Act
+      const next = reducer({ kind: 'idle' }, { type: 'submit_ok', payload: { action } });
+
+      // Assert
+      expect(next).toEqual({ kind: 'waiting', action });
+    }
+  );
+});
+
 describe('reducer — no-op guard branches', () => {
-  it('submit_ok dispatched when not in submitting state returns the same state', () => {
-    // Arrange: state is idle, not submitting
+  it('submit_ok without an action returns the same state', () => {
+    // Arrange: idle, but the event does not say which decision was accepted
     const state: CardState = { kind: 'idle' };
     const event: ReducerEvent = { type: 'submit_ok' };
 
@@ -186,6 +199,18 @@ describe('reducer — no-op guard branches', () => {
     const next = reducer(state, event);
 
     // Assert: guard returns state unchanged (same reference)
+    expect(next).toBe(state);
+  });
+
+  it('submit_ok dispatched when not idle returns the same state', () => {
+    // Arrange: already waiting on an earlier decision
+    const state: CardState = { kind: 'waiting', action: 'approve' };
+    const event: ReducerEvent = { type: 'submit_ok', payload: { action: 'reject' } };
+
+    // Act
+    const next = reducer(state, event);
+
+    // Assert: the first accepted decision stands
     expect(next).toBe(state);
   });
 

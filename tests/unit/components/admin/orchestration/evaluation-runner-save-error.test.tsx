@@ -186,4 +186,71 @@ describe('EvaluationRunner — refused save', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps a refused manual save when an auto-save that started before it then succeeds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // PATCHes are answered by the test, in the order they were sent.
+      const pending: Array<(res: Response) => void> = [];
+      const ok = () => new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === 'PATCH') return new Promise<Response>((r) => pending.push(r));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                data: {
+                  logs: [
+                    { sequenceNumber: 1, eventType: 'user_input', content: 'Q?' },
+                    { sequenceNumber: 2, eventType: 'ai_response', content: 'A.' },
+                  ],
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        })
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<EvaluationRunner evaluation={EVALUATION} />);
+      await screen.findAllByText('A.');
+      const save = screen.getByTitle('Save annotations');
+
+      // Save #1 (manual) is in flight when an edit's auto-save (#2) starts.
+      await user.click(save);
+      await user.click(screen.getAllByText('You')[0].closest('button')!);
+      await user.click(await screen.findByRole('button', { name: 'Expected' }));
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+      await waitFor(() => expect(pending).toHaveLength(2));
+
+      // #1 succeeds, which frees Save while #2 is still in flight.
+      pending[0](ok());
+      await waitFor(() => expect(save).toBeEnabled());
+
+      // Save #3 (manual) is refused.
+      await user.click(save);
+      await waitFor(() => expect(pending).toHaveLength(3));
+      pending[2](
+        new Response(
+          JSON.stringify({ success: false, error: { code: 'CONFLICT', message: 'Refused #3' } }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('Refused #3');
+
+      // #2 succeeds, but it started before #3: the refusal still stands.
+      pending[1](ok());
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(save).toBeEnabled());
+      expect(screen.getByRole('alert')).toHaveTextContent('Refused #3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

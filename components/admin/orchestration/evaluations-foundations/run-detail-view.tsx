@@ -234,18 +234,22 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
             <p className="text-muted-foreground mt-1 text-sm">{run.description}</p>
           ) : null}
         </div>
-        {ACTIVE_STATUSES.has(run.status) ? (
+        {/* A refused cancel outlives the button: "already completed" arrives
+            just as the run finishes, and the next poll removes Cancel. */}
+        {ACTIVE_STATUSES.has(run.status) || cancelSave.failure ? (
           <div className="flex max-w-sm flex-col items-end gap-2">
             <SaveError failure={cancelSave.failure} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCancel()}
-              disabled={cancelling}
-            >
-              <X className="mr-1 h-4 w-4" aria-hidden />
-              {cancelling ? 'Cancelling…' : 'Cancel run'}
-            </Button>
+            {ACTIVE_STATUSES.has(run.status) ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCancel()}
+                disabled={cancelling}
+              >
+                <X className="mr-1 h-4 w-4" aria-hidden />
+                {cancelling ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

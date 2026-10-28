@@ -168,4 +168,25 @@ describe('McpToolsList — failed saves', () => {
     dialog = await screen.findByRole('alertdialog');
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
+
+  it('holds the edit dialog open on Escape while the save is in flight', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    let fail: () => void = () => {};
+    vi.mocked(apiClient.patch).mockImplementation(
+      () =>
+        new Promise((_, reject) => (fail = () => reject(new APIClientError('Late boom', 'X', 500))))
+    );
+    const user = userEvent.setup();
+    render(<McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY]} />);
+
+    await user.click(screen.getByRole('button', { name: /edit send email/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+    await within(dialog).findByRole('button', { name: /saving/i });
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    fail();
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late boom');
+  });
 });

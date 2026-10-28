@@ -216,6 +216,10 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // The number of the latest annotation save, and of the manual save that
+  // last failed (see persistAnnotations).
+  const saveSeqRef = useRef(0);
+  const failedSaveSeqRef = useRef(0);
   const statusPatched = useRef(false);
   const annotationsRef = useRef(annotations);
   useEffect(() => {
@@ -446,6 +450,10 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
    */
   const persistAnnotations = useCallback(
     async (manual = false) => {
+      // Number each save, so a success clears only a failure that came
+      // before it started: an auto-save already in flight when a manual
+      // save failed says nothing about the manual one.
+      const seq = ++saveSeqRef.current;
       if (manual) clearAnnotationSave();
       setSaving(true);
       try {
@@ -458,9 +466,12 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
         if (!res.ok) throw await apiErrorFromResponse(res);
         setLastSaved(new Date());
         // Saved now, so an earlier refused manual save no longer stands.
-        clearAnnotationSave();
+        if (seq > failedSaveSeqRef.current) clearAnnotationSave();
       } catch (err) {
-        if (manual) reportAnnotationSave(err);
+        if (manual) {
+          failedSaveSeqRef.current = seq;
+          reportAnnotationSave(err);
+        }
       } finally {
         setSaving(false);
       }

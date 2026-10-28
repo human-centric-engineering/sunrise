@@ -53,6 +53,19 @@ function refuse(status: number, code: string, message: string) {
   );
 }
 
+/** A request held open until the test answers it with a refusal. */
+function holdThenRefuse(): (status: number, code: string, message: string) => void {
+  let answer: (r: Response) => void = () => {};
+  mockFetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+  return (status, code, message) =>
+    answer(
+      new Response(JSON.stringify({ success: false, error: { code, message } }), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+}
+
 describe('McpPromptsList — failed saves', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -167,5 +180,39 @@ describe('McpPromptsList — failed saves', () => {
     await user.click(screen.getAllByRole('button', { name: /^Remove$/i })[1]);
     await screen.findByRole('alertdialog');
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
+  });
+
+  it('holds the create dialog open on Escape while the prompt is being created', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[PROMPT]} />);
+
+    await user.click(screen.getByTestId('create-prompt-trigger'));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByTestId('prompt-name-input'), 'my-prompt');
+    await user.type(within(dialog).getByLabelText(/Template/i), 'hello');
+    const refuseLate = holdThenRefuse();
+    await user.click(within(dialog).getByTestId('create-prompt-submit'));
+    await within(dialog).findByRole('button', { name: /creating/i });
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    refuseLate(500, 'INTERNAL_ERROR', 'Late create failure');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late create failure');
+  });
+
+  it('holds the edit dialog open on Escape while the save is in flight', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[PROMPT]} />);
+
+    await user.click(screen.getByTestId('edit-prompt-p-1'));
+    const dialog = await screen.findByRole('dialog');
+    const refuseLate = holdThenRefuse();
+    await user.click(within(dialog).getByTestId('edit-prompt-save'));
+    await within(dialog).findByRole('button', { name: /saving/i });
+    await user.keyboard('{Escape}');
+    expect(dialog).toBeInTheDocument();
+
+    refuseLate(500, 'INTERNAL_ERROR', 'Late edit failure');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Late edit failure');
   });
 });

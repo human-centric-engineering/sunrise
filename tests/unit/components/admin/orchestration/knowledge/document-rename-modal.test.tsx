@@ -209,6 +209,27 @@ describe('DocumentRenameModal', () => {
     finish({ id: 'doc-1' });
   });
 
+  it('ignores Escape while the save is in flight, so its failure is shown in the dialog', async () => {
+    let fail!: (err: unknown) => void;
+    vi.mocked(apiClient.patch).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      })
+    );
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.type(screen.getByLabelText('Name'), ' v2');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await screen.findByRole('button', { name: /saving/i });
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled();
+    await user.keyboard('{Escape}');
+
+    expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
+    fail(new APIClientError('Name taken'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Name taken');
+  });
+
   it('starts empty for a document with no name, and saves what is typed', async () => {
     const user = userEvent.setup();
     renderModal({ documentName: null });

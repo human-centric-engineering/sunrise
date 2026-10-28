@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
@@ -128,5 +128,72 @@ describe('ManageTab — failed actions', () => {
     expect(alert).toHaveTextContent('Seed data not found');
     expect(alert.nextElementSibling).toContainElement(load);
     expect(alert).toHaveFocus();
+  });
+
+  it('keeps the upload dialog open when a bulk upload refused some files, showing which', async () => {
+    const onRefresh = vi.fn();
+    serve(() =>
+      json(200, {
+        success: true,
+        data: {
+          results: [
+            { fileName: 'a.md', status: 'ok' },
+            { fileName: 'b.md', status: 'error', error: 'Duplicate document' },
+          ],
+        },
+      })
+    );
+    const user = userEvent.setup();
+    render(<ManageTab documents={[DOC]} onRefresh={onRefresh} />);
+
+    await user.click(screen.getByRole('button', { name: /upload document/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText(/upload documents/i), {
+      target: {
+        files: [
+          new File(['# A'], 'a.md', { type: 'text/markdown' }),
+          new File(['# B'], 'b.md', { type: 'text/markdown' }),
+        ],
+      },
+    });
+    await user.click(await screen.findByRole('button', { name: /upload 2 files/i }));
+
+    // The list refreshed for the file that landed...
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    // ...and the dialog stayed open with the refusal in it.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('b.md: Duplicate document');
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toContainElement(alert);
+  });
+
+  it('holds the upload dialog open on Escape while the upload is in flight', async () => {
+    let answer: (r: Response) => void = () => {};
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Promise<Response>((r) => (answer = r));
+      if (url.includes('/knowledge/documents?')) {
+        return Promise.resolve(json(200, { success: true, data: [DOC] }));
+      }
+      return Promise.resolve(json(200, { success: true, data: {} }));
+    });
+    const user = userEvent.setup();
+    render(<ManageTab documents={[DOC]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /upload document/i }));
+    await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText(/upload documents/i), {
+      target: { files: [new File(['# A'], 'a.md', { type: 'text/markdown' })] },
+    });
+    await user.click(await screen.findByRole('button', { name: /^upload\s*$/i }));
+    await screen.findByRole('button', { name: /uploading/i });
+
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // The late failure lands in the dialog that is still open.
+    answer(json(422, { success: false, error: { code: 'VALIDATION_ERROR', message: 'Bad file' } }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Bad file');
+    expect(screen.getByRole('dialog')).toContainElement(alert);
   });
 });

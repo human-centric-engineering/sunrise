@@ -266,7 +266,8 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       <Dialog
         open={editingTool !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          // Committed while the save is in flight, so its failure is shown here.
+          if (!open && !editSaving) {
             setEditingTool(null);
             editFailure.clear();
           }
