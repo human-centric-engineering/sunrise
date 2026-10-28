@@ -89,11 +89,12 @@ export interface SaveErrorProps<TField extends string> {
    */
   stale?: StaleSaveProps;
   /**
-   * Brings a named field's container forward (a hidden tab) when the field is
-   * not on the page. Called with the first named field; focus follows on the
-   * next frame.
+   * Brings a hidden field's container forward (a tab) when not every named
+   * field is on the page. Called with all of them, in the order the server
+   * sent; the form brings forward whichever holds the one it shows first (its
+   * earliest tab). Focus then goes to the first named field on the page.
    */
-  onRevealField?: (field: TField) => void;
+  onRevealField?: (fields: TField[]) => void;
 }
 
 /**
@@ -110,6 +111,18 @@ function firstField(root: ParentNode, names: readonly string[]): HTMLElement | n
   );
   return names.every((n) => matched.has(n)) ? (found[0] ?? null) : null; // document order
 }
+
+/** The first of `names` on the page inside `root`, in page order, whichever it is. */
+function firstPresent(root: ParentNode, names: readonly string[]): HTMLElement | null {
+  return (
+    Array.from(root.querySelectorAll<HTMLElement>('[name], [id]')).find(
+      (el) => names.includes(el.getAttribute('name') ?? '') || names.includes(el.id)
+    ) ?? null
+  );
+}
+
+/** Frames to wait for a revealed tab to render before giving the summary focus. */
+const REVEAL_FRAMES = 5;
 
 /** Focuses a field, reporting whether it took focus (a disabled one does not). */
 function focusField(el: HTMLElement): boolean {
@@ -156,12 +169,24 @@ export function SaveError<TField extends string>({
     }
     if (!onRevealField) return focusBox();
 
-    onRevealField(failure.fields[0].field);
-    // The revealed tab renders on the next commit; look again after it.
-    const frame = requestAnimationFrame(() => {
-      const revealed = firstField(root, names);
-      if (!revealed || !focusField(revealed)) focusBox();
-    });
+    // The form picks the tab. With errors on two tabs, the fields on the
+    // others can't all be on the page at once, so focus goes to the first
+    // named field the revealed tab shows: the summary by Save says how many.
+    onRevealField(names);
+    // The revealed tab renders on a later commit; look again until it has.
+    let frame = 0;
+    let tries = 0;
+    const look = () => {
+      const revealed = firstPresent(root, names);
+      if (revealed) {
+        if (!focusField(revealed)) focusBox();
+      } else if (++tries < REVEAL_FRAMES) {
+        frame = requestAnimationFrame(look);
+      } else {
+        focusBox();
+      }
+    };
+    frame = requestAnimationFrame(look);
     return () => cancelAnimationFrame(frame);
     // Moves on a new failure only; a parent re-rendering with a new
     // onRevealField must not pull focus back.
