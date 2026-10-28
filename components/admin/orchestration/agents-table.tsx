@@ -372,7 +372,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         setAgents((prev) =>
           prev.map((a) => (a.id === agent.id ? { ...a, isActive: previousActive } : a))
         );
-        reportList(err);
+        // Reported above the table, so it names the row.
+        reportList(err, `Couldn't update "${agent.name}"`);
       }
     },
     [clearList, reportList]
@@ -464,7 +465,9 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         if (action === 'delete') setBulkDeleteOpen(false);
         void fetchAgents(meta.page);
       } catch (err) {
-        report(err);
+        // The delete dialog says what it was; above the table, say which action.
+        if (action === 'delete') report(err);
+        else report(err, `Bulk ${action} failed`);
       } finally {
         setBulkAction(null);
       }

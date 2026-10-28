@@ -85,6 +85,21 @@ describe('useSaveFailure', () => {
     expect(result.current.failure?.message).toBe('Unknown jurisdiction Pick at least one');
   });
 
+  it('leads with what the failure was about, for a list row reported above the table', () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'Could not save.' }));
+
+    act(() => {
+      result.current.report(
+        new APIClientError('Slug already taken', 'CONFLICT', 409),
+        'Couldn’t update "Support bot"'
+      );
+    });
+
+    expect(result.current.failure?.message).toBe(
+      'Couldn’t update "Support bot": Slug already taken'
+    );
+  });
+
   it('makes a new failure object each time, so the same message moves again', () => {
     const { result } = renderHook(() => useSaveFailure({ fallback: 'Could not save.' }));
 

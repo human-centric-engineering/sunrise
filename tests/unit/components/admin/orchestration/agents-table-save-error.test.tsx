@@ -79,7 +79,10 @@ describe('AgentsTable — failed saves', () => {
     await user.click(screen.getAllByRole('switch')[0]);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('System agents cannot be deactivated');
+    // Above the table, so it says which row.
+    expect(alert).toHaveTextContent(
+      'Couldn\'t update "Alpha": System agents cannot be deactivated'
+    );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
     expect(alert).toHaveFocus();
   });
