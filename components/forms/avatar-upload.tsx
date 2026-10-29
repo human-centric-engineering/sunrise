@@ -17,9 +17,11 @@ import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { isRecord } from '@/lib/utils';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient, apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { AvatarCropDialog } from '@/components/forms/avatar-crop-dialog';
+import { SaveError } from '@/components/forms/form-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { getMaxFileSizeBytes } from '@/lib/validations/storage';
 import { SUPPORTED_IMAGE_TYPES } from '@/lib/storage/constants';
 
@@ -45,7 +47,11 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not update your avatar. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+  const { clear: clearFailure, show: showFailure, report: reportFailure } = save;
   const [isDragging, setIsDragging] = useState(false);
 
   // Crop dialog state
@@ -64,20 +70,23 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
   };
 
   // Handle file selection - show crop dialog
-  const handleFileSelect = useCallback((file: File) => {
-    setError(null);
+  const handleFileSelect = useCallback(
+    (file: File) => {
+      clearFailure();
 
-    const validationError = validateFile(file);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
+      const validationError = validateFile(file);
+      if (validationError) {
+        showFailure(validationError);
+        return;
+      }
 
-    // Create object URL for the cropper
-    const imageUrl = URL.createObjectURL(file);
-    setCropImageSrc(imageUrl);
-    setShowCropDialog(true);
-  }, []);
+      // Create object URL for the cropper
+      const imageUrl = URL.createObjectURL(file);
+      setCropImageSrc(imageUrl);
+      setShowCropDialog(true);
+    },
+    [clearFailure, showFailure]
+  );
 
   // Handle crop confirmation - upload the cropped blob
   const handleCropConfirm = useCallback(
@@ -92,7 +101,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
       try {
         setIsUploading(true);
-        setError(null);
+        clearFailure();
 
         const formData = new FormData();
         formData.append('file', croppedBlob, 'avatar.jpg');
@@ -102,14 +111,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
           body: formData,
         });
 
-        if (!response.ok) {
-          const raw: unknown = await response.json();
-          const errorMsg =
-            isRecord(raw) && isRecord(raw.error) && typeof raw.error.message === 'string'
-              ? raw.error.message
-              : 'Upload failed';
-          throw new Error(errorMsg);
-        }
+        if (!response.ok) throw await apiErrorFromResponse(response);
 
         const raw: unknown = await response.json();
         const avatarUrl =
@@ -124,16 +126,12 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         await authClient.updateUser({ image: avatarUrl });
         router.refresh();
       } catch (err) {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError('Failed to upload avatar');
-        }
+        reportFailure(err);
       } finally {
         setIsUploading(false);
       }
     },
-    [router, cropImageSrc, track]
+    [router, cropImageSrc, track, clearFailure, reportFailure]
   );
 
   // Handle crop cancellation
@@ -199,7 +197,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
     if (!currentAvatar) return;
 
     setIsDeleting(true);
-    setError(null);
+    clearFailure();
 
     apiClient
       .delete(API.USERS.ME_AVATAR)
@@ -209,11 +207,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         router.refresh();
       })
       .catch((err: unknown) => {
-        if (err instanceof APIClientError) {
-          setError(err.message);
-        } else {
-          setError('Failed to remove avatar');
-        }
+        reportFailure(err);
       })
       .finally(() => {
         setIsDeleting(false);
@@ -316,8 +310,8 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
             JPEG, PNG, WebP or GIF. Max {MAX_FILE_SIZE_MB}MB.
           </p>
 
-          {/* Error message */}
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {/* Beside Upload and Remove */}
+          <SaveError failure={save.failure} />
         </div>
       </div>
 

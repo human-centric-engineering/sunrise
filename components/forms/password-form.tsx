@@ -22,8 +22,10 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { PasswordStrength } from '@/components/forms/password-strength';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { fieldCount } from '@/lib/errors/save-error';
 
 // Password change schema with confirmation
 const changePasswordSchema = z
@@ -39,9 +41,10 @@ const changePasswordSchema = z
 
 type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
+const WRONG_PASSWORD = 'Current password is incorrect';
+
 export function PasswordForm() {
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const schedule = useTimeout();
   const { track } = useAnalytics();
@@ -51,6 +54,7 @@ export function PasswordForm() {
     handleSubmit,
     watch,
     reset,
+    setError,
     formState: { errors },
   } = useForm<ChangePasswordInput>({
     resolver: zodResolver(changePasswordSchema),
@@ -62,19 +66,34 @@ export function PasswordForm() {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'Could not change your password. Try again in a moment.',
+  });
+
   const newPassword = watch('newPassword');
 
   const onSubmit = async (data: ChangePasswordInput) => {
     try {
       setIsLoading(true);
-      setError(null);
       setSuccess(false);
 
-      await authClient.changePassword({
+      // better-auth answers a refusal rather than throwing it.
+      const { error } = await authClient.changePassword({
         currentPassword: data.currentPassword,
         newPassword: data.newPassword,
         revokeOtherSessions: true,
       });
+      if (error) {
+        if (error.code === 'INVALID_PASSWORD') {
+          // The one field it is about: its message goes under it, and it takes
+          // focus. By Save, the summary every form shows for a named field.
+          setError('currentPassword', { type: 'server', message: WRONG_PASSWORD });
+          save.show(fieldCount(1), [{ field: 'currentPassword', message: WRONG_PASSWORD }]);
+        } else {
+          save.show(error.message || 'Could not change your password. Try again in a moment.');
+        }
+        return;
+      }
 
       // Track password change
       void track(EVENTS.PASSWORD_CHANGED);
@@ -85,16 +104,8 @@ export function PasswordForm() {
       // Reset success message after 5 seconds
       schedule(() => setSuccess(false), 5000);
     } catch (err) {
-      if (err instanceof Error) {
-        // Handle common better-auth error messages
-        if (err.message.includes('incorrect') || err.message.includes('wrong')) {
-          setError('Current password is incorrect');
-        } else {
-          setError(err.message || 'Failed to change password');
-        }
-      } else {
-        setError('An unexpected error occurred');
-      }
+      // A network failure: the browser's own text says nothing useful.
+      save.report(err);
     } finally {
       setIsLoading(false);
     }
@@ -115,7 +126,7 @@ export function PasswordForm() {
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
       {/* Current Password */}
       <div className="space-y-2">
         <Label htmlFor="currentPassword">Current Password</Label>
@@ -159,10 +170,7 @@ export function PasswordForm() {
         <FormError message={errors.confirmPassword?.message} />
       </div>
 
-      {/* Error message */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-      )}
+      <SaveError failure={save.failure} />
 
       {/* Submit button */}
       <Button type="submit" disabled={isLoading}>

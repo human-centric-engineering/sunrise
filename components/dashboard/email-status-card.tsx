@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, AlertCircle, Mail, Loader2 } from 'lucide-react';
 import type { VerificationStatus } from '@/lib/auth/verification-status';
+import { SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 interface EmailStatusCardProps {
   status: VerificationStatus;
@@ -26,11 +28,13 @@ interface EmailStatusCardProps {
 export function EmailStatusCard({ status: initialStatus, email }: EmailStatusCardProps) {
   const [status, setStatus] = useState<VerificationStatus>(initialStatus);
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const save = useSaveFailure({ fallback: 'An error occurred. Please try again.' });
 
   const handleSendVerification = () => {
     setIsLoading(true);
-    setMessage(null);
+    setSent(false);
+    save.clear();
 
     fetch('/api/auth/send-verification-email', {
       method: 'POST',
@@ -42,20 +46,35 @@ export function EmailStatusCard({ status: initialStatus, email }: EmailStatusCar
       .then((response) => {
         if (response.ok) {
           setStatus('pending');
-          setMessage('Verification email sent! Check your inbox.');
+          setSent(true);
         } else if (response.status === 429) {
-          setMessage('Too many requests. Please try again later.');
+          save.show('Too many requests. Please try again later.');
         } else {
-          setMessage('Failed to send verification email. Please try again.');
+          save.show('Failed to send verification email. Please try again.');
         }
       })
-      .catch(() => {
-        setMessage('An error occurred. Please try again.');
+      .catch((err: unknown) => {
+        save.report(err);
       })
       .finally(() => {
         setIsLoading(false);
       });
   };
+
+  // What the last send said, just above the button that sent it. One slot in
+  // both unverified states, so the button keeps its place when the status moves.
+  const feedback = (
+    <>
+      {sent && (
+        <p className="mt-2 text-xs text-green-600">Verification email sent! Check your inbox.</p>
+      )}
+      {save.failure && (
+        <div className="mt-2">
+          <SaveError failure={save.failure} />
+        </div>
+      )}
+    </>
+  );
 
   // Render content based on status
   const renderContent = () => {
@@ -73,7 +92,7 @@ export function EmailStatusCard({ status: initialStatus, email }: EmailStatusCar
           <>
             <div className="text-2xl font-bold">Unverified</div>
             <p className="text-muted-foreground text-xs">Check your inbox to verify your email</p>
-            {message && <p className="mt-2 text-xs text-green-600">{message}</p>}
+            {feedback}
             <Button
               variant="outline"
               size="sm"
@@ -101,13 +120,7 @@ export function EmailStatusCard({ status: initialStatus, email }: EmailStatusCar
           <>
             <div className="text-2xl font-bold">Unverified</div>
             <p className="text-muted-foreground text-xs">Verify your email for added security</p>
-            {message && (
-              <p
-                className={`mt-2 text-xs ${message.includes('sent') ? 'text-green-600' : 'text-red-600'}`}
-              >
-                {message}
-              </p>
-            )}
+            {feedback}
             <Button
               variant="outline"
               size="sm"

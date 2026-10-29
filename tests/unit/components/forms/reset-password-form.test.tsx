@@ -1077,7 +1077,7 @@ describe('components/forms/reset-password-form', () => {
           await Promise.resolve();
           if (callbacks?.onError) {
             callbacks.onError({
-              error: { message: 'Token is invalid or expired', status: 400 },
+              error: { code: 'INVALID_TOKEN', message: 'Invalid token', status: 400 },
             });
           }
           return Promise.resolve();
@@ -1112,7 +1112,7 @@ describe('components/forms/reset-password-form', () => {
           await Promise.resolve();
           if (callbacks?.onError) {
             callbacks.onError({
-              error: { message: 'Token is expired', status: 400 },
+              error: { code: 'INVALID_TOKEN', message: 'Invalid token', status: 400 },
             });
           }
           return Promise.resolve();

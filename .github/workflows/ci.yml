@@ -393,6 +393,16 @@ jobs:
             echo "::error::A test builds a next/navigation router by hand instead of with createMockRouter(). See the step log for file:line."
             exit 1
           }
+      # Repo-wide for the same reason. A failed save is shown one way, through
+      # <SaveError> beside the button pressed (§124); this reports a component
+      # that draws its own red box for a save's error instead.
+      - name: Hand-drawn save-error boxes
+        if: needs.config.outputs.code == 'true'
+        run: |
+          npm run check:save-errors || {
+            echo "::error::A component draws its own box for a failed save instead of using <SaveError>. See the step log for file:line."
+            exit 1
+          }
       # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to
       # package.json (a boundary check, migration-hygiene lint, etc.); vanilla
       # Sunrise ships no such script, so `--if-present` makes this a no-op here

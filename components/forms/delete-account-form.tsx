@@ -18,6 +18,9 @@ import { useAnalytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SaveError } from '@/components/forms/form-error';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,7 +43,10 @@ export function DeleteAccountForm() {
   const [isOpen, setIsOpen] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not delete your account. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [isPending, setIsPending] = useState(false);
   const { reset } = useAnalytics();
 
@@ -51,7 +57,7 @@ export function DeleteAccountForm() {
 
     try {
       setIsLoading(true);
-      setError(null);
+      save.clear();
 
       const result = await apiClient.delete<unknown>(API.USERS.ME, {
         body: { confirmation: 'DELETE' },
@@ -80,11 +86,7 @@ export function DeleteAccountForm() {
         setIsLoading(false);
         return;
       }
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to delete account');
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
       setIsLoading(false);
     }
   };
@@ -94,22 +96,23 @@ export function DeleteAccountForm() {
     window.location.href = '/';
   };
 
-  const handleOpenChange = (open: boolean) => {
-    // Not while the request runs: its answer may be a pending deletion,
-    // which needs the dialog to say so and to leave the page.
-    if (!open && isLoading) return;
-    // The account is already disabled: closing the dialog leaves the page.
-    if (!open && isPending) {
-      leave();
-      return;
-    }
-    setIsOpen(open);
-    if (!open) {
-      // Reset state when dialog closes
+  // Committed while the request runs: its answer may be a pending deletion,
+  // which needs the dialog to say so and to leave the page.
+  const dialog = useCommittedDialog({
+    open: isOpen,
+    pending: isLoading,
+    onOpen: () => setIsOpen(true),
+    onClose: () => {
+      // The account is already disabled: closing the dialog leaves the page.
+      if (isPending) {
+        leave();
+        return;
+      }
+      setIsOpen(false);
       setConfirmation('');
-      setError(null);
-    }
-  };
+    },
+    clear: save.clear,
+  });
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/20">
@@ -123,7 +126,7 @@ export function DeleteAccountForm() {
             </p>
           </div>
 
-          <AlertDialog open={isOpen} onOpenChange={handleOpenChange}>
+          <AlertDialog open={isOpen} onOpenChange={dialog.onOpenChange}>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm">
                 Delete Account
@@ -141,7 +144,7 @@ export function DeleteAccountForm() {
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    {/* Closing the dialog leaves the page (`handleOpenChange`). */}
+                    {/* Closing the dialog leaves the page (`onClose`). */}
                     <AlertDialogAction>Continue</AlertDialogAction>
                   </AlertDialogFooter>
                 </>
@@ -170,23 +173,16 @@ export function DeleteAccountForm() {
                       />
                     </div>
 
-                    {error && (
-                      <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-                        {error}
-                      </div>
-                    )}
+                    <SaveError failure={save.failure} />
                   </div>
 
                   <AlertDialogFooter>
-                    <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
                     <AlertDialogAction
-                      onClick={(e) => {
-                        // Keep the dialog open while the request runs: it
-                        // shows the answer (an error, or a pending deletion).
-                        e.preventDefault();
-                        void handleDelete();
-                      }}
-                      disabled={!isConfirmed || isLoading}
+                      // Kept open while the request runs: it shows the answer
+                      // (an error, or a pending deletion).
+                      {...dialog.actionProps({ disabled: !isConfirmed })}
+                      onClick={(e) => dialog.confirm(e, handleDelete)}
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     >
                       {isLoading ? (

@@ -23,7 +23,12 @@ was also amber, which doesn't read as a failure.
 | `<StaleSaveNotice>`      | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
 `<FormError>` in the same file is unchanged and is **not** for a failed save:
-it is the inline box for a client-side message or an auth-flow code.
+it is the inline box for a client-side message or an auth-flow code (an OAuth
+failure that comes back in the URL, shown by Sign In until the form's own
+sign-in fails).
+
+**A hand-drawn save-error box fails the build**: `npm run check:save-errors`
+(in `npm run validate`, and its own CI step). See [The check](#the-check).
 
 ## The rules
 
@@ -162,6 +167,39 @@ render. A plain form that does place messages passes a
 table (or none, to take server paths as field names), and renders each
 `save.failure.fields` entry under its field. Call `save.clear()` first thing in
 the Save handler when there is no `<form onSubmit>` to wrap.
+
+## Recipe: an auth flow
+
+better-auth's refusals are not `APIClientError`s, so `readSaveError()` can't
+read them: `save.show(message)` puts better-auth's message in the same place,
+and the `catch` still goes through `save.report(err)` (a network failure gets
+the fallback, not the browser's "Failed to fetch").
+
+```tsx
+await authClient.signIn.email(body, {
+  onError: (ctx) => save.show(ctx.error.message || 'Invalid email or password'),
+});
+```
+
+**better-auth answers a refusal; it does not throw one** (`lib/auth/client.ts`
+sets no `throw: true`). A call with no `onError` must read `error` from its
+result, or a refusal looks like success. The password form did exactly that
+until t-950: a wrong current password showed "Password changed successfully".
+
+```tsx
+const { error } = await authClient.changePassword({ currentPassword, newPassword });
+if (error) {
+  if (error.code === 'INVALID_PASSWORD') {
+    setError('currentPassword', { type: 'server', message: WRONG });
+    save.show(fieldCount(1), [{ field: 'currentPassword', message: WRONG }]); // focuses it
+  } else save.show(error.message);
+  return;
+}
+```
+
+A raw `fetch` to a better-auth endpoint (`/api/auth/send-verification-email`)
+gets `{ code, message }` back, not the API envelope: show its `message` from
+the `!res.ok` branch, and leave `catch` to the fallback.
 
 ## Recipe: a dialog
 
@@ -312,6 +350,44 @@ const [stale, setStale] = useState(0); // refused: setStale((n) => n + 1); reloa
 }
 ```
 
+## The check
+
+`scripts/ci/save-error-boxes.ts` (run by `npm run check:save-errors`) reports
+a component that renders its own red or destructive box around state a
+**mutation**'s failure set. It reads the TypeScript, not class names: 92
+components that submit use red classes legitimately (field messages, delete
+buttons, load panels).
+
+- **A mutation**: `apiClient.post|patch|put|delete`, a `fetch` with a
+  `method` other than `'GET'` (a shorthand `{ method }` counts), or an
+  `authClient` call other than a read (`getSession`, `useSession`, `list…`).
+- **State it set**: a `useState` setter called with a value in the `catch`
+  after one, in a `.catch()` on one's promise chain, in better-auth's
+  `onError`, or in either branch of an `if` on one's result (awaited, or a
+  `.then((res) => …)` callback's parameter). A value that state flows into
+  (`const displayError = error || oauthMessage`, `results[id]`,
+  `{ ...fieldErrors }`) counts as it; one it only decides
+  (`const label = error ? 'Retry' : 'Save'`) does not.
+- **A box**: an element whose `className` names a red or destructive colour,
+  showing that state as text (`{error}`, `{error.message}`, `{error || '…'}`).
+
+Not reported: a load error (its `try` reads), `<SaveError>`/`<FormError>`
+(they draw the box), and a state that only picks what renders.
+
+It cannot tell a run, test or export from a save: both are a POST. Those are
+declared, with the reason, in `BOX_EXEMPTIONS` (`path#state`); an exemption
+that stops matching fails the run, so the list can't outlive what it
+excuses. **A fork** doesn't edit that core file: it puts
+`{/* save-error-box-ignore: <why> */}` on the line directly above the box, or
+`// save-error-box-ignore: <why>` where the box sits inside parentheses
+(`{error && (`), since JSX braces don't parse there. The reason is required.
+
+What it can't see is listed at the top of the file (a reducer's state, a
+setter passed to a helper, a client other than these three). It also matches
+state by name across a file, so two components in one file that each declare
+`[error, setError]` share it; the marker excuses a load panel caught that way. It raises the
+floor; review still matters.
+
 ## Out of scope
 
 Load and run errors in panels (execution detail, evaluation runner), error
@@ -334,6 +410,10 @@ boundaries, and `ErrorCard` are not save errors and keep their own display.
   knowledge and MCP; evaluations, experiments, workflows, schedules,
   executions, approvals, webhooks and triggers. Each list has one box above
   its table; each confirm dialog keeps its failure inside and stays open.
+- The sign-in and account forms (t-950): sign-in (and its send-verification
+  button), sign-up, both steps of password reset, invitation, contact,
+  profile, password, preferences, avatar, delete account (a committed
+  dialog), the two verify-email pages and the dashboard's email status card.
 - `<StaleSaveNotice>`: webhooks table, workflow schedules tab, workflow
   builder.
 
@@ -341,5 +421,4 @@ Not converted, by rule: load errors, test / run / preview / search actions
 (test buttons, the audit-models and rerun dialogs, the builder's run panel,
 the pairwise judge, LLM generation previews, knowledge search), the chat's
 messages (its approval card's approve and reject are converted), and org
-switches. `components/forms/` and the auth pages move onto it in t-950,
-which also adds a check against hand-drawn save-error boxes.
+switches. Each is declared in `BOX_EXEMPTIONS` with its reason.

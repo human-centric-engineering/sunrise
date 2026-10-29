@@ -40,21 +40,23 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError and apiErrorFromResponse: the shared save error reads them.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     delete: vi.fn(),
   },
-  APIClientError: class APIClientError extends Error {
-    code: string;
-    details?: unknown;
-    constructor(message: string, code: string, details?: unknown) {
-      super(message);
-      this.code = code;
-      this.details = details;
-      this.name = 'APIClientError';
-    }
-  },
 }));
+
+/** A refused upload as the route sends it: the API's error envelope. */
+function refusedUpload(body: unknown, status = 400): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const FALLBACK = 'Could not update your avatar. Try again in a moment.';
 
 vi.mock('@/components/forms/avatar-crop-dialog', () => ({
   AvatarCropDialog: ({
@@ -446,10 +448,12 @@ describe('components/forms/avatar-upload', () => {
       // Arrange
       const user = userEvent.setup();
 
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        json: async () => ({ error: { message: 'Upload failed' } }),
-      } as Response);
+      vi.mocked(global.fetch).mockResolvedValue(
+        refusedUpload({
+          success: false,
+          error: { code: 'UPLOAD_FAILED', message: 'Upload failed' },
+        })
+      );
 
       const { container } = render(
         <AvatarUpload currentAvatar={null} userName="John Doe" initials="JD" />
@@ -563,10 +567,12 @@ describe('components/forms/avatar-upload', () => {
       // Arrange
       const user = userEvent.setup();
 
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        json: async () => ({ error: { message: 'Upload failed' } }),
-      } as Response);
+      vi.mocked(global.fetch).mockResolvedValue(
+        refusedUpload({
+          success: false,
+          error: { code: 'UPLOAD_FAILED', message: 'Upload failed' },
+        })
+      );
 
       const { container } = render(
         <AvatarUpload currentAvatar={null} userName="John Doe" initials="JD" />
@@ -594,10 +600,7 @@ describe('components/forms/avatar-upload', () => {
       // Arrange
       const user = userEvent.setup();
 
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        json: async () => ({}),
-      } as Response);
+      vi.mocked(global.fetch).mockResolvedValue(refusedUpload({}, 500));
 
       const { container } = render(
         <AvatarUpload currentAvatar={null} userName="John Doe" initials="JD" />
@@ -617,7 +620,7 @@ describe('components/forms/avatar-upload', () => {
 
       // Assert - Generic error message
       await waitFor(() => {
-        expect(screen.getByText(/Upload failed/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(FALLBACK);
       });
     });
 
@@ -643,10 +646,11 @@ describe('components/forms/avatar-upload', () => {
       const confirmButton = screen.getByTestId('crop-confirm');
       await user.click(confirmButton);
 
-      // Assert - Error message is displayed
+      // Assert - the fallback, not the browser's own text
       await waitFor(() => {
-        expect(screen.getByText(/Network error/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(FALLBACK);
       });
+      expect(screen.queryByText(/Network error/i)).not.toBeInTheDocument();
     });
 
     it('should clear previous error when starting new upload', async () => {
@@ -810,7 +814,7 @@ describe('components/forms/avatar-upload', () => {
 
       // Assert - Generic error message
       await waitFor(() => {
-        expect(screen.getByText(/Failed to remove avatar/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(FALLBACK);
       });
     });
 

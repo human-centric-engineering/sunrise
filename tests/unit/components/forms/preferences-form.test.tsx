@@ -521,7 +521,10 @@ describe('components/forms/preferences-form', () => {
       await user.click(saveButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/an unexpected error occurred/i)).toBeInTheDocument();
+        // The fallback, not the browser's own text.
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not save your preferences. Try again in a moment.'
+        );
       });
     });
 

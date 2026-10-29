@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { updateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
@@ -32,9 +32,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FieldHelp } from '@/components/ui/field-help';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { getTimezonesByRegion, getTimezoneRegions } from '@/lib/utils/timezones';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+
+/** Server path → the field that shows it: every field here renders its message. */
+const SERVER_FIELDS: Partial<Record<string, keyof UpdateUserInput>> = {
+  name: 'name',
+  bio: 'bio',
+  phone: 'phone',
+  timezone: 'timezone',
+  location: 'location',
+};
 
 interface ProfileFormProps {
   user: {
@@ -50,7 +60,6 @@ interface ProfileFormProps {
 export function ProfileForm({ user }: ProfileFormProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const schedule = useTimeout();
   const { track } = useAnalytics();
@@ -67,6 +76,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     handleSubmit,
     setValue,
     watch,
+    setError,
     formState: { errors, isDirty },
   } = useForm<UpdateUserInput>({
     resolver: zodResolver(updateUserSchema),
@@ -81,12 +91,17 @@ export function ProfileForm({ user }: ProfileFormProps) {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'Could not update your profile. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const currentTimezone = watch('timezone');
 
   const onSubmit = async (data: UpdateUserInput) => {
     try {
       setIsLoading(true);
-      setError(null);
       setSuccess(false);
 
       // Clean up empty strings to null for optional fields.
@@ -130,18 +145,14 @@ export function ProfileForm({ user }: ProfileFormProps) {
       // Reset success after 3 seconds
       schedule(() => setSuccess(false), 3000);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to update profile');
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
       {/* Name */}
       <div className="space-y-2">
         <Label htmlFor="name">Name</Label>
@@ -254,10 +265,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
         <FormError message={errors.location?.message} />
       </div>
 
-      {/* Error message */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-      )}
+      <SaveError failure={save.failure} />
 
       {/* Success message */}
       {success && (

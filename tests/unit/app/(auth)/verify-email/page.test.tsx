@@ -581,10 +581,11 @@ describe('VerifyEmailClientContent', () => {
       // Act: Click resend button
       await user.click(resendButton);
 
-      // Assert: Error message appears (shows Error.message when it's an Error instance)
-      await waitFor(() => {
-        expect(screen.getByText(/network error/i)).toBeInTheDocument();
-      });
+      // Assert: the fallback, not the browser's own text
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Failed to resend verification email. Please try again.'
+      );
+      expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
     });
 
     it('should show error message with destructive styling', async () => {
@@ -609,12 +610,10 @@ describe('VerifyEmailClientContent', () => {
       // Act: Click resend button
       await user.click(resendButton);
 
-      // Assert: Error message container has destructive styling
-      await waitFor(() => {
-        const errorMessage = screen.getByText(/failed to resend verification email/i);
-        // The error message is wrapped in a div with destructive styling
-        expect(errorMessage.className).toMatch(/text-destructive/);
-      });
+      // Assert: shown through the shared save error, announced and focused
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(/failed to resend verification email/i);
+      expect(alert).toHaveFocus();
     });
 
     it('should re-enable button after error', async () => {

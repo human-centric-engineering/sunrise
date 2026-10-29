@@ -14,9 +14,10 @@ import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /**
  * Login Form Component
@@ -39,18 +40,24 @@ export function LoginForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
   const [attemptedEmail, setAttemptedEmail] = useState<string | null>(null);
+  const [notVerified, setNotVerified] = useState(false);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
-  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const verification = useSaveFailure({
+    fallback: 'Failed to send verification email. Please try again.',
+  });
 
-  // Check for OAuth errors in URL params (read directly, don't store in state)
+  // An OAuth sign-in that failed comes back in the URL: it is shown where a
+  // failed sign-in is, until the form's own sign-in fails instead.
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
-  const displayError =
-    error ||
-    (oauthError ? oauthErrorDescription || 'OAuth authentication failed. Please try again.' : null);
+  const oauthMessage = oauthError
+    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
+    : null;
+  // From better-auth's code, not its wording: a fork may reword the message.
+  const unverified = notVerified && !!attemptedEmail && !!save.failure;
 
   const {
     register,
@@ -70,7 +77,7 @@ export function LoginForm() {
     if (!attemptedEmail) return;
 
     setIsSendingVerification(true);
-    setVerificationError(null);
+    verification.clear();
 
     try {
       const response = await fetch('/api/auth/send-verification-email', {
@@ -81,18 +88,18 @@ export function LoginForm() {
 
       if (!response.ok) {
         const raw: unknown = await response.json().catch(() => ({}));
-        const msg =
+        verification.show(
           isRecord(raw) && typeof raw.message === 'string'
             ? raw.message
-            : 'Failed to send verification email';
-        throw new Error(msg);
+            : 'Failed to send verification email'
+        );
+        return;
       }
 
       setVerificationSent(true);
     } catch (err) {
-      setVerificationError(
-        err instanceof Error ? err.message : 'Failed to send verification email. Please try again.'
-      );
+      // A network failure: the browser's own text says nothing useful.
+      verification.report(err);
     } finally {
       setIsSendingVerification(false);
     }
@@ -101,11 +108,11 @@ export function LoginForm() {
   const onSubmit = async (data: SignInInput) => {
     try {
       setIsLoading(true);
-      setError(null);
       setAttemptedEmail(data.email);
+      setNotVerified(false);
       // Reset verification states for new login attempt
       setVerificationSent(false);
-      setVerificationError(null);
+      verification.clear();
 
       await authClient.signIn.email(
         {
@@ -129,16 +136,19 @@ export function LoginForm() {
           },
           onError: (ctx) => {
             if (ctx.response?.status === 429) {
-              setError('Too many sign-in attempts. Please wait a few minutes before trying again.');
+              save.show(
+                'Too many sign-in attempts. Please wait a few minutes before trying again.'
+              );
             } else {
-              setError(ctx.error.message || 'Invalid email or password');
+              setNotVerified(ctx.error.code === 'EMAIL_NOT_VERIFIED');
+              save.show(ctx.error.message || 'Invalid email or password');
             }
             setIsLoading(false);
           },
         }
       );
-    } catch {
-      setError('An unexpected error occurred. Please try again.');
+    } catch (err) {
+      save.report(err);
       setIsLoading(false);
     }
   };
@@ -149,7 +159,7 @@ export function LoginForm() {
       <OAuthButtons callbackUrl={callbackUrl} />
 
       {/* Email/Password Form */}
-      <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+      <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
         {/* Email Field */}
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
@@ -177,45 +187,36 @@ export function LoginForm() {
           <FormError message={errors.password?.message} />
         </div>
 
-        {/* Error Message */}
-        {displayError && (
+        {/* A failed sign-in, beside Sign In */}
+        <SaveError failure={save.failure} />
+        {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {/* Show send verification email button for unverified email errors */}
+        {unverified && (
           <div className="space-y-3">
-            <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-              {displayError}
-            </div>
-            {/* Show send verification email button for unverified email errors */}
-            {displayError.toLowerCase().includes('email not verified') && attemptedEmail && (
+            {verificationSent ? (
+              <div className="flex items-center gap-2 rounded-md bg-green-50 p-3 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>Verification email sent! Check your inbox.</span>
+              </div>
+            ) : (
               <>
-                {verificationSent ? (
-                  <div className="flex items-center gap-2 rounded-md bg-green-50 p-3 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
-                    <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    <span>Verification email sent! Check your inbox.</span>
-                  </div>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      disabled={isSendingVerification}
-                      onClick={() => void handleSendVerification()}
-                    >
-                      {isSendingVerification ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        'Send verification email'
-                      )}
-                    </Button>
-                    {verificationError && (
-                      <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-                        {verificationError}
-                      </div>
-                    )}
-                  </>
-                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={isSendingVerification}
+                  onClick={() => void handleSendVerification()}
+                >
+                  {isSendingVerification ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    'Send verification email'
+                  )}
+                </Button>
+                <SaveError failure={verification.failure} />
               </>
             )}
           </div>

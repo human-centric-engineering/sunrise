@@ -11,10 +11,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /**
  * Signup Form Component
@@ -40,14 +41,15 @@ export function SignupForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
 
-  // Check for OAuth errors in URL params (read directly, don't store in state)
+  // An OAuth sign-up that failed comes back in the URL: it is shown where a
+  // failed sign-up is, until the form's own sign-up fails instead.
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
-  const displayError =
-    error ||
-    (oauthError ? oauthErrorDescription || 'OAuth authentication failed. Please try again.' : null);
+  const oauthMessage = oauthError
+    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
+    : null;
 
   const {
     register,
@@ -71,7 +73,6 @@ export function SignupForm() {
   const onSubmit = async (data: SignUpInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       await authClient.signUp.email(
         {
@@ -104,13 +105,13 @@ export function SignupForm() {
             router.refresh();
           },
           onError: (ctx) => {
-            setError(ctx.error.message || 'Failed to create account. Please try again.');
+            save.show(ctx.error.message || 'Failed to create account. Please try again.');
             setIsLoading(false);
           },
         }
       );
-    } catch {
-      setError('An unexpected error occurred. Please try again.');
+    } catch (err) {
+      save.report(err);
       setIsLoading(false);
     }
   };
@@ -121,7 +122,7 @@ export function SignupForm() {
       <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} />
 
       {/* Email/Password Form */}
-      <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+      <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
         {/* Name Field */}
         <div className="space-y-2">
           <Label htmlFor="name">Full Name</Label>
@@ -180,12 +181,9 @@ export function SignupForm() {
           <FormError message={errors.confirmPassword?.message} />
         </div>
 
-        {/* Error Message */}
-        {displayError && (
-          <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-            {displayError}
-          </div>
-        )}
+        {/* A failed sign-up, beside Create Account */}
+        <SaveError failure={save.failure} />
+        {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
 
         {/* Submit Button */}
         <Button type="submit" className="w-full" disabled={isLoading}>

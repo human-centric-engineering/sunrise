@@ -99,7 +99,8 @@ export function isStaleSave(err: unknown): boolean {
   return err instanceof APIClientError && err.code === ErrorCodes.STALE_RECORD;
 }
 
-function fieldCount(n: number): string {
+/** What `<SaveError>` says by Save when `n` named fields need fixing. */
+export function fieldCount(n: number): string {
   return n === 1 ? '1 field needs fixing.' : `${n} fields need fixing.`;
 }
 

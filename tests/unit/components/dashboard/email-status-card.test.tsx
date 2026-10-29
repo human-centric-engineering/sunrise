@@ -384,7 +384,7 @@ describe('components/dashboard/email-status-card', () => {
       });
     });
 
-    it('should display error messages in red color', async () => {
+    it('should show a failed send through the shared save error', async () => {
       // Arrange
       const user = userEvent.setup();
       mockFetch.mockResolvedValue({
@@ -397,17 +397,30 @@ describe('components/dashboard/email-status-card', () => {
       // Act
       await user.click(screen.getByRole('button', { name: /verify email/i }));
 
-      // Assert
-      await waitFor(() => {
-        const errorMessage = screen.getByText(
-          /failed to send verification email. please try again/i
-        );
-        expect(errorMessage).toHaveClass('text-red-600');
-      });
+      // Assert: through the shared save error, announced and focused
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(/failed to send verification email. please try again/i);
+      expect(alert).toHaveFocus();
     });
   });
 
   describe('message display', () => {
+    it('shows a failed resend from the pending state as a failure, not in green', async () => {
+      // Arrange: the pending state used to render every message green
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue({ ok: false, status: 429 });
+
+      render(<EmailStatusCard status="pending" email={testEmail} />);
+
+      // Act
+      await user.click(screen.getByRole('button'));
+
+      // Assert
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Too many requests. Please try again later.');
+      expect(screen.getByText(/too many requests/i)).not.toHaveClass('text-green-600');
+    });
+
     it('should not show message initially', () => {
       // Arrange & Act
       render(<EmailStatusCard status="not_sent" email={testEmail} />);

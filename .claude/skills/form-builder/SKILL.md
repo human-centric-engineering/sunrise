@@ -5,8 +5,9 @@ description: |
   `react-hook-form` + Zod + shadcn/ui following the established
   pattern: `mode: 'onTouched'`, all fields default-valued, `apiClient`
   for non-auth submits / `authClient` for auth flows, `<FormError>` for
-  per-field errors, and `<FieldHelp>` ⓘ popovers on every non-trivial
-  field. Use when creating new forms under `components/forms/` or
+  per-field errors, `<SaveError>` + `useSaveFailure()` for a failed save
+  (beside Save; never a hand-drawn box), and `<FieldHelp>` ⓘ popovers on
+  every non-trivial field. Use when creating new forms under `components/forms/` or
   modifying existing ones.
 ---
 
@@ -15,6 +16,8 @@ description: |
 Production-ready forms in Sunrise use one composition: `react-hook-form` for state, `zodResolver` for validation, shadcn primitives for UI, and `<FieldHelp>` for inline guidance on non-trivial fields. Reference `components/forms/profile-form.tsx` and `preferences-form.tsx` for the canonical implementations — copy them instead of inventing.
 
 **Required by CLAUDE.md:** every non-trivial form field gets a `<FieldHelp>` ⓘ popover. See [`.context/ui/contextual-help.md`](../../../.context/ui/contextual-help.md) for the full spec.
+
+**A failed save is shown one way** (§124): `<SaveError>`, fed by `useSaveFailure()`, directly beside the Save button that was pressed. It is red, announced, and brings itself into view and takes focus; server field errors land under their fields. Never draw your own red box for it — `npm run check:save-errors` (part of `npm run validate`, and a CI step) fails on one. Full spec: [`.context/ui/form-errors.md`](../../../.context/ui/form-errors.md).
 
 ## Core Patterns
 
@@ -27,21 +30,27 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { yourSchema, type YourInput } from '@/lib/validations/your-domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FormError } from './form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+
+/** Server path → the field that shows it. List only fields that render their message. */
+const SERVER_FIELDS: Partial<Record<string, keyof YourInput>> = {
+  field: 'field',
+};
 
 export function YourForm() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors },
   } = useForm<YourInput>({
     resolver: zodResolver(yourSchema),
@@ -51,10 +60,17 @@ export function YourForm() {
     },
   });
 
+  // Owns the failed save: reads what the save threw, puts field messages
+  // under their fields, and clears it on every press of Save.
+  const save = useSaveFailure({
+    fallback: 'Could not save. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const onSubmit = async (data: YourInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       await apiClient.post('/api/v1/endpoint', { body: data });
 
@@ -62,27 +78,20 @@ export function YourForm() {
       router.refresh();
     } catch (err) {
       setIsLoading(false);
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to submit');
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="field">Field Label</Label>
         <Input id="field" disabled={isLoading} {...register('field')} />
         <FormError message={errors.field?.message} />
       </div>
 
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-          {error}
-        </div>
-      )}
+      {/* Directly beside the button that saves */}
+      <SaveError failure={save.failure} />
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Loading...' : 'Submit'}
@@ -98,9 +107,11 @@ Forms maintain these state variables:
 
 ```typescript
 const [isLoading, setIsLoading] = useState(false); // Request in progress
-const [error, setError] = useState<string | null>(null); // General form error
+const save = useSaveFailure({ fallback, fields, setError }); // The failed save
 const [success, setSuccess] = useState(false); // Success state (optional)
 ```
+
+There is no `error` state for a failed save: `save.failure` is it, and `<SaveError failure={save.failure} />` shows it.
 
 ### Validation Schema Pattern
 
@@ -187,7 +198,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
 // API client (for non-auth forms)
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 
 // Auth client (for auth forms only)
 import { authClient } from '@/lib/auth/client';
@@ -199,7 +210,10 @@ import { yourSchema, type YourInput } from '@/lib/validations/your-domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FormError } from './form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
+
+// The failed save
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 // Icons (for feedback)
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -280,7 +294,7 @@ Full spec and accessibility notes: [`.context/ui/contextual-help.md`](../../../.
 
 ```typescript
 import { PasswordInput } from '@/components/ui/password-input';
-import { PasswordStrength } from './password-strength';
+import { PasswordStrength } from '@/components/forms/password-strength';
 
 const password = watch('password'); // Watch for strength meter
 
@@ -336,7 +350,9 @@ if (success) {
 - [ ] All form fields have default values
 - [ ] `mode: 'onTouched'` set on useForm
 - [ ] Loading state disables all inputs and button
-- [ ] Error state displayed to user
+- [ ] A failed save shown by `<SaveError>` from `useSaveFailure()`, directly beside the Save button (no hand-drawn red box: `npm run check:save-errors`)
+- [ ] `<form onSubmit={save.submit(handleSubmit(onSubmit))}>`, so each press clears the last failure
+- [ ] Server field errors mapped in a `SERVER_FIELDS` table, for fields that render their message
 - [ ] Success handling (redirect or message)
 - [ ] FormError component used for field errors
 - [ ] **Every non-trivial field has `<FieldHelp>` inside its `<Label>`** (per CLAUDE.md)
@@ -367,26 +383,21 @@ const updated = await apiClient.patch<ResponseType>('/api/v1/endpoint', {
 await apiClient.delete('/api/v1/endpoint');
 ```
 
-**Error handling:**
+**Error handling:** hand what the save threw to `save.report()`. It reads the `APIClientError` (its message, and a `VALIDATION_ERROR`'s field errors in either server shape), puts field messages under the fields in `SERVER_FIELDS`, and uses the `fallback` for anything the server didn't say (a network failure's "Failed to fetch" is the browser's, not yours to show).
 
 ```typescript
 try {
   await apiClient.post('/api/v1/endpoint', { body: data });
 } catch (err) {
-  if (err instanceof APIClientError) {
-    setError(err.message);
-
-    // Handle validation errors
-    if (err.code === 'VALIDATION_ERROR' && err.details) {
-      // err.details contains field-specific errors
-    }
-  }
+  save.report(err);
 }
 ```
 
+A plain-state form with no fields to place uses `useSaveFailure({ fallback, fields: NO_SERVER_FIELDS })` and calls `save.clear()` first thing in its Save handler. A raw `fetch` (an upload) turns a failed response into the same error: `if (!res.ok) throw await apiErrorFromResponse(res);`. A confirm dialog uses `useCommittedDialog()` and keeps its failure inside. Recipes for each: [`.context/ui/form-errors.md`](../../../.context/ui/form-errors.md).
+
 ## Auth Client Usage
 
-**For authentication forms ONLY, use authClient:**
+**For authentication forms ONLY, use authClient.** Its refusals are not `APIClientError`s, so `save.show(message)` puts them in the same place:
 
 ```typescript
 import { authClient } from '@/lib/auth/client';
@@ -401,11 +412,20 @@ await authClient.signIn.email(
       router.refresh();
     },
     onError: (ctx) => {
-      setError(ctx.error.message || 'Failed to sign in');
+      save.show(ctx.error.message || 'Failed to sign in');
       setIsLoading(false);
     },
   }
 );
+
+// better-auth answers a refusal; it does not throw one (lib/auth/client.ts
+// sets no `throw: true`). A call without callbacks must read `error`, or a
+// refusal looks like success:
+const { error } = await authClient.changePassword({ currentPassword, newPassword });
+if (error) {
+  save.show(error.message || 'Could not change your password.');
+  return;
+}
 
 // Sign up
 await authClient.signUp.email(
@@ -437,7 +457,9 @@ await authClient.signIn.social({
 **Available Form Helpers:**
 
 - `FieldHelp` - ⓘ popover for non-trivial field guidance (`components/ui/field-help.tsx`) — required on non-self-evident fields per CLAUDE.md
-- `FormError` - Field error display (`components/forms/form-error.tsx`)
+- `FormError` - Field error display, and an OAuth error that arrives in the URL (`components/forms/form-error.tsx`)
+- `SaveError` + `useSaveFailure()` - The failed save, beside Save (`components/forms/form-error.tsx`, `lib/hooks/use-save-failure.ts`; spec in `.context/ui/form-errors.md`)
+- `useCommittedDialog()` - A confirm dialog that saves: locked while it runs, failure kept inside (`lib/hooks/use-committed-dialog.ts`)
 - `PasswordStrength` - Password strength meter (`components/forms/password-strength.tsx`)
 - `OAuthButtons` - OAuth sign-in buttons (`components/forms/oauth-buttons.tsx`)
 
