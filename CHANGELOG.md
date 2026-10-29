@@ -28,9 +28,10 @@ release process.
   `Record<path, string[]>`) through a typed server-path → field table. A
   tabbed form passes `onRevealField(fields)` to bring forward the tab holding
   a rejected field. The settings page, the event subscription form, the
-  admin forms with a Save button, and the admin lists and confirm dialogs
-  (one box above each list; a dialog keeps its failure inside and stays open)
-  use it. See `.context/ui/form-errors.md` (§124).
+  admin forms with a Save button, the admin lists and confirm dialogs (one
+  box above each list; a dialog keeps its failure inside and stays open), and
+  the sign-in and account forms use it. See `.context/ui/form-errors.md`
+  (§124).
 - **`useSaveFailure()`** (`lib/hooks/use-save-failure.ts`): owns a page's
   failed save. It reads the error, puts field messages on a react-hook-form
   form, and wraps submit so every press clears the last failure;
@@ -49,6 +50,16 @@ release process.
   refusal is never lost; the dialog's failure clears as it opens and closes.
   Every admin dialog that saves uses it; dialogs that run or test something
   (re-run an execution, audit models) are out of §124's scope (§124).
+- **`npm run check:save-errors`** (`scripts/ci/check-save-error-boxes.ts`):
+  reports a component that draws its own red box for a failed save instead of
+  using `<SaveError>`. It runs in `npm run validate` and as its own CI step,
+  over every `.tsx` under `components/` and `app/`. **Forks:** your own
+  components are scanned too, so a form of yours with a hand-drawn save error
+  fails `validate` after this merge. Move it onto `<SaveError>` (the recipes
+  are in `.context/ui/form-errors.md`), or, for a box that isn't a save (a
+  run, a test, an export), put `{/* save-error-box-ignore: <why> */}` on the
+  line above it. Don't add your paths to `BOX_EXEMPTIONS`: that list is
+  Sunrise's own (§124).
 
 ### Changed
 
@@ -58,6 +69,14 @@ release process.
   `components/forms/form-error.tsx`. **Forks:** a page rendering it gets the
   new look and focus behaviour with no change; a test asserting its amber
   classes needs updating (§124).
+
+### Fixed
+
+- **Changing your password with the wrong current password said it
+  succeeded.** better-auth's client answers a refusal as `{ error }` rather
+  than throwing it, and the password form only read a throw, so it showed
+  "Password changed successfully" while nothing changed. It now shows "Current
+  password is incorrect" under that field (§124).
 
 ## [0.16.0] — 2026-10-27
 

@@ -159,36 +159,45 @@ await authClient.signIn.email({ email, password }, { onSuccess, onError });
 
 ---
 
-### 7. Forgetting to Clear Error State
+### 7. Drawing Your Own Box for a Failed Save
 
-**Problem:** Old errors persist after re-submission
+**Problem:** An error box placed wherever the author put it (usually the top of the form) is off-screen from the Save that was pressed, nothing brings it into view, and the save looks like it did nothing. A stale one also sits there after the next press. `npm run check:save-errors` fails on it (§124).
 
 **Wrong:**
 
 ```typescript
+const [error, setError] = useState<string | null>(null);
 const onSubmit = async (data) => {
-  setIsLoading(true);
   try {
     await apiClient.post('/api/endpoint', { body: data });
   } catch (err) {
     setError(err.message);
   }
 };
+// …
+{error && <div className="bg-destructive/10 text-destructive">{error}</div>}
 ```
 
 **Correct:**
 
 ```typescript
+const save = useSaveFailure({ fallback: 'Could not save. Try again.', fields: SERVER_FIELDS, setError });
 const onSubmit = async (data) => {
-  setIsLoading(true);
-  setError(null); // Clear previous error
   try {
     await apiClient.post('/api/endpoint', { body: data });
   } catch (err) {
-    setError(err.message);
+    save.report(err); // field messages under their fields, the rest by Save
   }
 };
+// …
+<form onSubmit={save.submit(handleSubmit(onSubmit))}> {/* every press clears the last one */}
+  …
+  <SaveError failure={save.failure} />
+  <Button type="submit">Save</Button>
+</form>
 ```
+
+See `.context/ui/form-errors.md` for the plain-state, dialog, list and raw-`fetch` recipes.
 
 ---
 
@@ -312,17 +321,17 @@ export function LoginForm() {
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
 
-  const [error, setError] = useState<string | null>(null);
-
-  // Display OAuth error OR form error
-  const displayError =
-    error || (oauthError ? oauthErrorDescription || 'OAuth sign-in failed' : null);
+  const save = useSaveFailure({ fallback: 'Could not sign in. Try again.' });
+  const oauthMessage = oauthError ? oauthErrorDescription || 'OAuth sign-in failed' : null;
 
   return (
-    <>
-      {displayError && <FormError message={displayError} />}
+    <form onSubmit={save.submit(handleSubmit(onSubmit))}>
       {/* rest of form */}
-    </>
+      {/* A failed sign-in replaces the OAuth notice; both sit by Sign In */}
+      <SaveError failure={save.failure} />
+      {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
+      <Button type="submit">Sign In</Button>
+    </form>
   );
 }
 ```
@@ -334,10 +343,10 @@ export function LoginForm() {
 1. Always use `mode: 'onTouched'` for forms
 2. Always provide all `defaultValues`
 3. Always disable inputs during `isLoading`
-4. Always clear error before new submission
+4. Show a failed save with `<SaveError>` from `useSaveFailure()`, beside Save; never a hand-drawn box
 5. Always call `router.refresh()` after navigation
 6. Use `authClient` for auth, `apiClient` for everything else
-7. Use `void handleSubmit(onSubmit)(e)` for form submission
+7. Use `save.submit(handleSubmit(onSubmit))` for form submission
 8. Check for OAuth errors in search params
 9. Allow empty strings for optional URL fields
 10. Disable button when `success` state is true

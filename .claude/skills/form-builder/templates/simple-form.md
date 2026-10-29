@@ -43,14 +43,22 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { simpleFormSchema, type SimpleFormInput } from '@/lib/validations/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FormError } from './form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+
+/** Server path → the field that shows it: every field here renders its message. */
+const SERVER_FIELDS: Partial<Record<string, keyof SimpleFormInput>> = {
+  name: 'name',
+  email: 'email',
+  message: 'message',
+};
 
 interface SimpleFormProps {
   onSuccess?: () => void;
@@ -60,12 +68,12 @@ interface SimpleFormProps {
 export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors },
   } = useForm<SimpleFormInput>({
     resolver: zodResolver(simpleFormSchema),
@@ -77,10 +85,15 @@ export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'Could not submit the form. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const onSubmit = async (data: SimpleFormInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       await apiClient.post('/api/v1/endpoint', { body: data });
 
@@ -95,11 +108,7 @@ export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
       }
     } catch (err) {
       setIsLoading(false);
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to submit form');
-      } else {
-        setError('An unexpected error occurred. Please try again.');
-      }
+      save.report(err);
     }
   };
 
@@ -116,7 +125,7 @@ export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
       {/* Name Field */}
       <div className="space-y-2">
         <Label htmlFor="name">Name</Label>
@@ -156,12 +165,8 @@ export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
         <FormError message={errors.message?.message} />
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-          {error}
-        </div>
-      )}
+      {/* The failed save, directly beside the button that saves */}
+      <SaveError failure={save.failure} />
 
       {/* Submit Button */}
       <Button type="submit" className="w-full" disabled={isLoading}>

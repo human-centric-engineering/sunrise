@@ -411,7 +411,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Approval Queue (admin)   | `.context/admin/orchestration-approvals.md`               | Pending approvals list, approve/reject, sidebar badge                                                                                            |
 | Setup Wizard             | `.context/admin/setup-wizard.md`                          | 5-step guided setup flow, resume behavior                                                                                                        |
 | Contextual Help          | `.context/ui/contextual-help.md`                          | `<FieldHelp>` directive for form fields                                                                                                          |
-| Form Save Errors         | `.context/ui/form-errors.md`                              | `<SaveError>` + `readSaveError()`: one way every form shows a failed save, beside Save, moved into view; the stale variant                       |
+| Form Save Errors         | `.context/ui/form-errors.md`                              | `<SaveError>` + `useSaveFailure()`: one way every form shows a failed save, beside Save; `check:save-errors` fails a hand-drawn box              |
 | UI Hooks                 | `.context/ui/hooks.md`                                    | `useLocalStorage`, `useWizard`, `useTimeout`                                                                                                     |
 | Per-Surface Theming      | `.context/ui/surface-theming.md`                          | `data-surface` seam: proxy classification, `<SurfaceSync>`, fork-owned `brand-theme.css`, the six design constraints                             |
 

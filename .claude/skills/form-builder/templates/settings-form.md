@@ -52,7 +52,7 @@ export const defaultSettings: SettingsInput = {
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import {
   settingsSchema,
   type SettingsInput,
@@ -69,7 +69,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { FormError } from './form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 
 interface SettingsFormProps {
@@ -78,7 +79,6 @@ interface SettingsFormProps {
 
 export function SettingsForm({ initialValues }: SettingsFormProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const {
@@ -95,10 +95,16 @@ export function SettingsForm({ initialValues }: SettingsFormProps) {
     },
   });
 
+  // NO_SERVER_FIELDS: every server message joins the summary by Save. Pass a
+  // field table with `setError` instead to put messages under their fields.
+  const save = useSaveFailure({
+    fallback: 'Could not save your settings. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
+
   const onSubmit = async (data: SettingsInput) => {
     try {
       setIsLoading(true);
-      setError(null);
       setSuccess(false);
 
       await apiClient.patch('/api/v1/users/me/settings', { body: data });
@@ -110,16 +116,12 @@ export function SettingsForm({ initialValues }: SettingsFormProps) {
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       setIsLoading(false);
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to save settings');
-      } else {
-        setError('An unexpected error occurred. Please try again.');
-      }
+      save.report(err);
     }
   };
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-8">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-8">
       {/* Notification Settings Section */}
       <div className="space-y-4">
         <h3 className="text-lg font-medium">Notifications</h3>
@@ -325,12 +327,8 @@ export function SettingsForm({ initialValues }: SettingsFormProps) {
         </div>
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-          {error}
-        </div>
-      )}
+      {/* The failed save, directly beside the button that saves */}
+      <SaveError failure={save.failure} />
 
       {/* Success Display */}
       {success && (
