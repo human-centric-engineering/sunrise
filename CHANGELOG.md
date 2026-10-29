@@ -82,8 +82,9 @@ release process.
   `PATCH /api/v1/admin/orchestration/settings` accepted
   `imageInputGloballyEnabled` and `documentInputGloballyEnabled`, answered
   200, and dropped both, so turning either off said "Saved" while chat kept
-  accepting uploads. It now writes them. **Forks:** if you turned either off,
-  check it on Settings after this merge; until now it was still on (t-963).
+  accepting uploads. It now writes them. **Forks:** a switch you turned off
+  was never stored, so Settings shows it on and uploads are still allowed. If
+  you meant it off, turn it off again and save after this merge (t-963).
 
 ## [0.16.0] — 2026-10-27
 
