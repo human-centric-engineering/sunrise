@@ -11,7 +11,7 @@
  * @see scripts/ci/check-save-error-boxes.ts
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -123,6 +123,34 @@ describe('scripts/ci/check-save-error-boxes', () => {
     expect(main(root)).toBe(0);
     const count = exemptFiles + 1;
     expect(logs).toEqual([`Save-error boxes OK (${count} files under components/, app/ scanned).`]);
+  });
+
+  it('skips a directory whose name ends in .tsx rather than reporting it unreadable', () => {
+    const exemptFiles = writeExemptedBoxes();
+    mkdirSync(join(root, 'components/odd.tsx'), { recursive: true });
+    write({ 'components/odd.tsx/form.tsx': SHARED });
+
+    expect(main(root)).toBe(0);
+    // The directory is listed but not counted as a file it read; its child is.
+    expect(logs).toEqual([
+      `Save-error boxes OK (${exemptFiles + 2} files under components/, app/ scanned).`,
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('fails, naming the file, when one it found cannot be read', () => {
+    writeExemptedBoxes();
+    write({ 'components/forms/locked.tsx': HAND_DRAWN });
+    chmodSync(join(root, 'components/forms/locked.tsx'), 0o000);
+
+    try {
+      // "I could not look" must not read as "there is nothing there".
+      expect(main(root)).toBe(1);
+      expect(errors.join('\n')).toContain('Could not read:\n  components/forms/locked.tsx');
+      expect(errors.join('\n')).not.toContain('Hand-drawn save-error boxes found');
+    } finally {
+      chmodSync(join(root, 'components/forms/locked.tsx'), 0o644);
+    }
   });
 
   it('fails on an exemption that no longer matches a box', () => {
