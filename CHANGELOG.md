@@ -58,7 +58,8 @@ release process.
   fails `validate` after this merge. Move it onto `<SaveError>` (the recipes
   are in `.context/ui/form-errors.md`), or, for a box that isn't a save (a
   run, a test, an export), put `{/* save-error-box-ignore: <why> */}` on the
-  line above it. Don't add your paths to `BOX_EXEMPTIONS`: that list is
+  line above it (`// save-error-box-ignore: <why>` inside parentheses, where
+  JSX braces don't parse). Don't add your paths to `BOX_EXEMPTIONS`: that list is
   Sunrise's own (§124).
 
 ### Changed

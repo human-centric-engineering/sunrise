@@ -92,8 +92,9 @@ export function main(root = process.cwd()): number {
     console.error('');
     console.error(
       'Not a save (a run, a test, an export)? Put {/* save-error-box-ignore: <why> */} on the ' +
-        'line above the box (a fork does this), or add `path#state` to BOX_EXEMPTIONS in ' +
-        'scripts/ci/save-error-boxes.ts with the reason. See .context/ui/form-errors.md.'
+        'line above the box (// save-error-box-ignore: <why> inside parentheses; a fork does ' +
+        'this), or add `path#state` to BOX_EXEMPTIONS in scripts/ci/save-error-boxes.ts with ' +
+        'the reason. See .context/ui/form-errors.md.'
     );
   }
 

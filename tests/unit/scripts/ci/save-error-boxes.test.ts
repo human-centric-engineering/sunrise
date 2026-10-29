@@ -63,6 +63,7 @@ describe('scripts/ci/save-error-boxes', () => {
         "await fetch('/x', { method: isEdit ? 'PATCH' : 'POST' });",
       ],
       ['an authClient call', 'await authClient.updateUser({ image: "" });'],
+      ['a fetch with a shorthand method', "await fetch('/x', { method, body });"],
     ])('treats %s as a mutation', (_name, call) => {
       const body = `async function save() { try { ${call} } catch { setError('Failed'); } }`;
 
@@ -74,6 +75,8 @@ describe('scripts/ci/save-error-boxes', () => {
       ['a bare fetch', "await fetch('/x');"],
       ['a fetch with GET', "await fetch('/x', { method: 'GET' });"],
       ['authClient.getSession', 'await authClient.getSession();'],
+      ['authClient.useSession', 'authClient.useSession();'],
+      ['authClient.listSessions', 'await authClient.listSessions();'],
     ])('does not report a load error: %s', (_name, call) => {
       const body = `async function load() { try { ${call} } catch { setError('Failed'); } }`;
 
@@ -117,6 +120,45 @@ describe('scripts/ci/save-error-boxes', () => {
         }`;
 
       expect(scan(component(body, RED_BOX))).toHaveLength(1);
+    });
+
+    it("reports state set in the else of an if on a mutation's result", () => {
+      const body = `
+        async function send() {
+          const res = await fetch('/x', { method: 'POST' });
+          if (res.ok) { setSent(true); } else { setError('Failed to send'); }
+        }`;
+
+      expect(scan(component(body, RED_BOX))).toHaveLength(1);
+    });
+
+    it("reports state set in an if on a .then() callback's mutation result", () => {
+      // No .catch and no await: the result arrives as the callback's parameter.
+      const body = `
+        function send() {
+          fetch('/x', { method: 'POST' }).then((r) => {
+            if (!r.ok) setError('Failed to send');
+          });
+        }`;
+
+      expect(scan(component(body, RED_BOX))).toHaveLength(1);
+    });
+
+    it("does not report an if on a load's .then() result", () => {
+      const body = `
+        function load() {
+          fetch('/x').then((r) => { if (!r.ok) setError('Could not load'); });
+        }`;
+
+      expect(scan(component(body, RED_BOX))).toEqual([]);
+    });
+
+    it('does not report a sign-in prompt read from authClient.useSession()', () => {
+      const body = `
+        const { data: session } = authClient.useSession();
+        if (!session) setError('Please sign in');`;
+
+      expect(scan(component(body, RED_BOX))).toEqual([]);
     });
 
     it("does not take another function's result of the same name for the mutation's", () => {
@@ -177,6 +219,33 @@ describe('scripts/ci/save-error-boxes', () => {
       ]);
     });
 
+    it.each([
+      ['an indexed lookup', 'const shown = results[id];', '{shown.message}'],
+      ['an object spread', 'const all = { ...error, x: 1 };', '{all.name}'],
+      ['a ternary branch', "const shown = busy ? '' : error;", '{shown}'],
+      ['a template', 'const shown = `Failed: ${error}`;', '{shown}'],
+    ])('reports state carried through %s', (_name, decl, child) => {
+      const body = `${CATCH_SAVE}
+        const results = { a: error };
+        const id = 'a';
+        ${decl}`;
+
+      expect(scan(component(body, `<p className="text-destructive">${child}</p>`))).toHaveLength(1);
+    });
+
+    it.each([
+      ['a ternary condition', "const label = error ? 'Retry' : 'Save';"],
+      ['a boolean of it', 'const label = !!error;'],
+      ['the left of &&', "const label = error && 'Retry';"],
+    ])('does not report a value the state only decides: %s', (_name, decl) => {
+      // A destructive button whose label the failure picks is not the failure.
+      const body = `${CATCH_SAVE}
+        ${decl}`;
+      const jsx = '<Button className="bg-destructive text-white">{label}</Button>';
+
+      expect(scan(component(body, jsx))).toEqual([]);
+    });
+
     it('names the innermost red element, once', () => {
       const jsx = `
         <div className="border-red-200 bg-red-50">
@@ -230,6 +299,16 @@ describe('scripts/ci/save-error-boxes', () => {
       const jsx = `
         {/* save-error-box-ignore: a run, not a save */}
         <p className="text-destructive">{error}</p>`;
+
+      expect(scan(component(CATCH_SAVE, jsx))).toEqual([]);
+    });
+
+    it('excuses a box with the // form, inside parentheses where JSX braces do not parse', () => {
+      const jsx = `
+        {error && (
+          // save-error-box-ignore: a run, not a save
+          <p className="text-destructive">{error}</p>
+        )}`;
 
       expect(scan(component(CATCH_SAVE, jsx))).toEqual([]);
     });

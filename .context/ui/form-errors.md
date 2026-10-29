@@ -359,12 +359,15 @@ components that submit use red classes legitimately (field messages, delete
 buttons, load panels).
 
 - **A mutation**: `apiClient.post|patch|put|delete`, a `fetch` with a
-  `method` other than `'GET'`, or an `authClient` call other than
-  `getSession`.
+  `method` other than `'GET'` (a shorthand `{ method }` counts), or an
+  `authClient` call other than a read (`getSession`, `useSession`, `list…`).
 - **State it set**: a `useState` setter called with a value in the `catch`
   after one, in a `.catch()` on one's promise chain, in better-auth's
-  `onError`, or in an `if` on one's result. A value derived from that state
-  (`const displayError = error || oauthMessage`) counts as it.
+  `onError`, or in either branch of an `if` on one's result (awaited, or a
+  `.then((res) => …)` callback's parameter). A value that state flows into
+  (`const displayError = error || oauthMessage`, `results[id]`,
+  `{ ...fieldErrors }`) counts as it; one it only decides
+  (`const label = error ? 'Retry' : 'Save'`) does not.
 - **A box**: an element whose `className` names a red or destructive colour,
   showing that state as text (`{error}`, `{error.message}`, `{error || '…'}`).
 
@@ -375,11 +378,14 @@ It cannot tell a run, test or export from a save: both are a POST. Those are
 declared, with the reason, in `BOX_EXEMPTIONS` (`path#state`); an exemption
 that stops matching fails the run, so the list can't outlive what it
 excuses. **A fork** doesn't edit that core file: it puts
-`{/* save-error-box-ignore: <why> */}` on the line directly above the box. The
-reason is required.
+`{/* save-error-box-ignore: <why> */}` on the line directly above the box, or
+`// save-error-box-ignore: <why>` where the box sits inside parentheses
+(`{error && (`), since JSX braces don't parse there. The reason is required.
 
 What it can't see is listed at the top of the file (a reducer's state, a
-setter passed to a helper, a client other than these three). It raises the
+setter passed to a helper, a client other than these three). It also matches
+state by name across a file, so two components in one file that each declare
+`[error, setError]` share it; the marker excuses a load panel caught that way. It raises the
 floor; review still matters.
 
 ## Out of scope

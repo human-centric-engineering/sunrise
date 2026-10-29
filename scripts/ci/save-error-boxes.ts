@@ -24,17 +24,19 @@
  *   - inside a `.catch(…)` on a promise chain that sends one, or
  *   - inside an `onError` callback passed to a mutation (better-auth's
  *     `authClient.signIn.email(body, { onError })`), or
- *   - inside an `if` whose condition reads a mutation's result
- *     (`const { error } = await authClient.changePassword(...)`: better-auth
- *     answers a refusal rather than throwing it).
+ *   - inside either branch of an `if` whose condition reads a mutation's
+ *     result (`const { error } = await authClient.changePassword(...)`:
+ *     better-auth answers a refusal rather than throwing it), the result
+ *     bound by `await` or as a `.then((res) => …)` callback's parameter.
  * - **Mutation**: `apiClient.post|patch|put|delete(...)`, a `fetch(url, init)`
  *   whose `init` has a `method` that is not the literal `'GET'`, or a call on
- *   `authClient` other than `getSession`.
+ *   `authClient` other than a read (`getSession`, `useSession`, `list…`).
  * - **Red box**: a JSX element whose `className` names a red or destructive
  *   colour (`bg-destructive/10`, `text-destructive`, `border-red-300`,
  *   `text-red-700`), showing the state as text inside it (`{error}`,
- *   `{error.message}`, `{error || '…'}`). A value derived from the state
- *   (`const displayError = error || oauthMessage`) counts as the state.
+ *   `{error.message}`, `{error || '…'}`). A value the state can flow into
+ *   (`const displayError = error || oauthMessage`) counts as the state; one
+ *   it only decides (`const label = error ? 'Retry' : 'Save'`) does not.
  *
  * A load error is not reported: its `try` reads (`apiClient.get`, a bare
  * `fetch(url)`). Nor is `<SaveError failure={…}>` or `<FormError message={…}>`:
@@ -47,8 +49,10 @@
  * read in the box. A setter passed to a helper that calls it is not followed. A
  * box drawn by another component the page passes the message to is that
  * component's, and is reported there only if it submits. A mutation through
- * any client but these three is not one. It raises the floor; it is not a
- * proof.
+ * any client but these three is not one. States are matched by name across
+ * the file, so two components in one file that each declare `[error,
+ * setError]` share it: a load panel beside a save's catch is reported, and
+ * the marker below excuses it. It raises the floor; it is not a proof.
  */
 
 import ts from 'typescript';
@@ -64,7 +68,9 @@ export interface SaveErrorBox {
 /**
  * `{/* save-error-box-ignore: <why> *\/}` on the line above a box excuses it,
  * for a fork's own component: a fork never edits {@link BOX_EXEMPTIONS}, a core
- * file. The reason is required; the marker with nothing after it does not count.
+ * file. Inside parentheses (`{error && (` then the box) JSX braces don't
+ * parse, so there it is `// save-error-box-ignore: <why>`; any comment form
+ * counts. The reason is required; the marker with nothing after it does not.
  */
 const IGNORE_DIRECTIVE = /save-error-box-ignore:[ \t]*[^\s*]/;
 
@@ -98,22 +104,29 @@ export function isMutationCall(call: ts.CallExpression): boolean {
   const chain = calleeChain(call.expression);
   if (!chain) return false;
   if (chain[0] === 'apiClient' && chain.length === 2) return MUTATING_API.has(chain[1]);
-  if (chain[0] === 'authClient' && chain.length >= 2) return chain[1] !== 'getSession';
+  if (chain[0] === 'authClient' && chain.length >= 2) {
+    return !/^(?:get|use|list)[A-Z]/.test(chain[chain.length - 1]);
+  }
   if (chain.length === 1 && chain[0] === 'fetch') {
     const init = call.arguments[1];
     if (!init || !ts.isObjectLiteralExpression(init)) return false;
     const method = init.properties.find(
-      (p): p is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'method'
+      (p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'method'
     );
     if (!method) return false;
+    // `{ method }`, or a spread-in value: not known to be a GET, so a mutation.
+    if (!ts.isPropertyAssignment(method)) return true;
     const value = method.initializer;
     return !(ts.isStringLiteral(value) && value.text.toUpperCase() === 'GET');
   }
   return false;
 }
 
-/** Whether a node contains a mutation call, not looking into nested functions. */
+/**
+ * Whether a node contains a mutation call, nested functions included: a
+ * callback the try defines (an onSuccess handler's own fetch) is part of what
+ * it sends.
+ */
 function sendsMutation(node: ts.Node): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
@@ -122,8 +135,6 @@ function sendsMutation(node: ts.Node): boolean {
       found = true;
       return;
     }
-    // A callback defined in the try but not run by it (an onSuccess handler's
-    // own fetch) is still part of what the try sends: keep looking inside.
     ts.forEachChild(n, visit);
   };
   visit(node);
@@ -144,26 +155,40 @@ function settersReporting(node: ts.Node, setters: Map<string, string>, into: Set
 
 /**
  * Each function that binds a mutation's awaited result, with the names bound:
- * `const { error } = await authClient.x()`, `const res = await fetch(url, { method })`.
+ * `const { error } = await authClient.x()`, `const res = await fetch(url, { method })`,
+ * or `fetch(url, { method }).then((res) => …)`'s `res`, bound in the callback.
  * Kept per function, so a load elsewhere in the file reading its own `res` is
  * not taken for the mutation's.
  */
 function mutationResults(root: ts.Node): Map<ts.Node, Set<string>> {
   const byFunction = new Map<ts.Node, Set<string>>();
+  const bindIn = (fn: ts.Node, name: ts.BindingName): void => {
+    const names = byFunction.get(fn) ?? new Set<string>();
+    const bind = (n: ts.BindingName): void => {
+      if (ts.isIdentifier(n)) names.add(n.text);
+      else for (const el of n.elements) if (!ts.isOmittedExpression(el)) bind(el.name);
+    };
+    bind(name);
+    byFunction.set(fn, names);
+  };
   const visit = (n: ts.Node): void => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === 'then' &&
+      sendsMutation(n.expression.expression)
+    ) {
+      const cb = n.arguments[0];
+      const param = cb && ts.isFunctionLike(cb) ? cb.parameters[0] : undefined;
+      if (cb && param) bindIn(cb, param.name);
+    }
     if (ts.isVariableDeclaration(n) && n.initializer) {
       let init: ts.Expression = n.initializer;
       if (ts.isAwaitExpression(init)) init = init.expression;
       if (ts.isCallExpression(init) && isMutationCall(init)) {
         let fn: ts.Node = n;
         while (fn.parent && !ts.isFunctionLike(fn)) fn = fn.parent;
-        const names = byFunction.get(fn) ?? new Set<string>();
-        const bind = (name: ts.BindingName): void => {
-          if (ts.isIdentifier(name)) names.add(name.text);
-          else for (const el of name.elements) if (!ts.isOmittedExpression(el)) bind(el.name);
-        };
-        bind(n.name);
-        byFunction.set(fn, names);
+        bindIn(fn, n.name);
       }
     }
     ts.forEachChild(n, visit);
@@ -207,6 +232,53 @@ function mentions(node: ts.Node, names: Set<string>): boolean {
   };
   visit(node);
   return found;
+}
+
+/**
+ * Whether `expr`'s value can be one of `states`' values, or text made from one:
+ * `error`, `error.message`, `results[id]`, `error || fallback`, `x ? error : y`,
+ * `` `${error}` ``, `{ ...fieldErrors }`.
+ * Not a value the state only decides (`error ? 'Retry' : 'Save'`, `!!error`).
+ */
+function carries(expr: ts.Expression, states: Set<string>): boolean {
+  if (ts.isIdentifier(expr)) return states.has(expr.text);
+  if (
+    ts.isPropertyAccessExpression(expr) ||
+    ts.isElementAccessExpression(expr) ||
+    ts.isParenthesizedExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isAwaitExpression(expr)
+  ) {
+    return carries(expr.expression, states);
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+      return carries(expr.left, states) || carries(expr.right, states);
+    }
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) return carries(expr.right, states);
+    if (op === ts.SyntaxKind.PlusToken) {
+      return carries(expr.left, states) || carries(expr.right, states);
+    }
+    return false;
+  }
+  if (ts.isConditionalExpression(expr)) {
+    return carries(expr.whenTrue, states) || carries(expr.whenFalse, states);
+  }
+  if (ts.isTemplateExpression(expr)) {
+    return expr.templateSpans.some((span) => carries(span.expression, states));
+  }
+  // `{ ...fieldErrors, ...localErrors }`, `{ message: error }`
+  if (ts.isObjectLiteralExpression(expr)) {
+    return expr.properties.some(
+      (p) =>
+        (ts.isSpreadAssignment(p) && carries(p.expression, states)) ||
+        (ts.isPropertyAssignment(p) && carries(p.initializer, states)) ||
+        (ts.isShorthandPropertyAssignment(p) && states.has(p.name.text))
+    );
+  }
+  return false;
 }
 
 /** The string pieces of a `className` value: a literal, a template, or `cn(...)`'s literals. */
@@ -273,6 +345,7 @@ export function scanSaveErrorBoxes(source: string, path: string): SaveErrorBox[]
     for (const branch of ownIfs(fn)) {
       if (mentions(branch.expression, names)) {
         settersReporting(branch.thenStatement, setters, saveStates);
+        if (branch.elseStatement) settersReporting(branch.elseStatement, setters, saveStates);
       }
     }
   }
@@ -314,7 +387,7 @@ export function scanSaveErrorBoxes(source: string, path: string): SaveErrorBox[]
         !saveStates.has(n.name.text) &&
         n.initializer &&
         !ts.isFunctionLike(n.initializer) &&
-        mentions(n.initializer, saveStates)
+        carries(n.initializer, saveStates)
       ) {
         saveStates.add(n.name.text);
         grew = true;
