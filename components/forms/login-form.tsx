@@ -42,6 +42,7 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
   const [attemptedEmail, setAttemptedEmail] = useState<string | null>(null);
+  const [notVerified, setNotVerified] = useState(false);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
   const verification = useSaveFailure({
@@ -55,8 +56,8 @@ export function LoginForm() {
   const oauthMessage = oauthError
     ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
     : null;
-  const unverified =
-    !!attemptedEmail && !!save.failure?.message.toLowerCase().includes('email not verified');
+  // From better-auth's code, not its wording: a fork may reword the message.
+  const unverified = notVerified && !!attemptedEmail && !!save.failure;
 
   const {
     register,
@@ -108,6 +109,7 @@ export function LoginForm() {
     try {
       setIsLoading(true);
       setAttemptedEmail(data.email);
+      setNotVerified(false);
       // Reset verification states for new login attempt
       setVerificationSent(false);
       verification.clear();
@@ -138,6 +140,7 @@ export function LoginForm() {
                 'Too many sign-in attempts. Please wait a few minutes before trying again.'
               );
             } else {
+              setNotVerified(ctx.error.code === 'EMAIL_NOT_VERIFIED');
               save.show(ctx.error.message || 'Invalid email or password');
             }
             setIsLoading(false);

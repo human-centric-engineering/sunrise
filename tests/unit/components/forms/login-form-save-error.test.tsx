@@ -48,17 +48,20 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/forms/oauth-buttons', () => ({ OAuthButtons: () => null }));
 
 type SignInCallbacks = {
-  onError: (ctx: { error: { message?: string }; response?: { status: number } }) => void;
+  onError: (ctx: {
+    error: { code?: string; message?: string };
+    response?: { status: number };
+  }) => void;
 };
 
 /** Makes the next sign-in come back refused, the way better-auth's client reports it. */
-function refuseSignIn(message: string, status = 401) {
+function refuseSignIn(message: string, status = 401, code?: string) {
   vi.mocked(authClient.signIn.email).mockImplementation((async (
     _body: unknown,
     callbacks: SignInCallbacks
   ) => {
-    callbacks.onError({ error: { message }, response: { status } });
-    return { data: null, error: { message, status } };
+    callbacks.onError({ error: { code, message }, response: { status } });
+    return { data: null, error: { code, message, status } };
   }) as never);
 }
 
@@ -174,11 +177,32 @@ describe('components/forms/login-form save errors', () => {
 
   describe('unverified email', () => {
     async function reachUnverified(user: ReturnType<typeof userEvent.setup>) {
-      refuseSignIn('Email not verified');
+      refuseSignIn('Email not verified', 403, 'EMAIL_NOT_VERIFIED');
       render(<LoginForm />);
       await submitSignIn(user);
       return screen.findByRole('button', { name: 'Send verification email' });
     }
+
+    it("should go by better-auth's code, not its wording", async () => {
+      // A fork that rewords the refusal still gets the resend...
+      refuseSignIn('Please confirm your address first', 403, 'EMAIL_NOT_VERIFIED');
+      const user = userEvent.setup();
+      const { unmount } = render(<LoginForm />);
+      await submitSignIn(user);
+      expect(
+        await screen.findByRole('button', { name: 'Send verification email' })
+      ).toBeInTheDocument();
+      unmount();
+
+      // ...and a message that says the words without the code does not.
+      refuseSignIn('Email not verified', 401);
+      render(<LoginForm />);
+      await submitSignIn(user);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Email not verified');
+      expect(
+        screen.queryByRole('button', { name: 'Send verification email' })
+      ).not.toBeInTheDocument();
+    });
 
     it('should offer Send verification email between the sign-in alert and Sign In', async () => {
       const user = userEvent.setup();

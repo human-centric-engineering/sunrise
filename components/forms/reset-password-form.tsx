@@ -214,7 +214,8 @@ function CompleteResetForm({ token }: { token: string }) {
   const [isLoading, setIsLoading] = useState(false);
   const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
   const [success, setSuccess] = useState(false);
-  const linkExpired = /invalid|expired/.test(save.failure?.message ?? '');
+  const [linkRefused, setLinkRefused] = useState(false);
+  const linkExpired = linkRefused && !!save.failure;
 
   const {
     register,
@@ -257,14 +258,15 @@ function CompleteResetForm({ token }: { token: string }) {
             }, 1500);
           },
           onError: (ctx) => {
-            const msg = ctx.error.message || 'Failed to reset password';
-
-            // Handle token-specific errors
-            if (msg.includes('invalid') || msg.includes('expired')) {
-              save.show('This reset link is invalid or has expired. Please request a new one.');
-            } else {
-              save.show(msg);
-            }
+            // better-auth refuses an expired, used or unknown token alike, as
+            // INVALID_TOKEN ("Invalid token"): match the code, not the wording.
+            const refused = ctx.error.code === 'INVALID_TOKEN';
+            setLinkRefused(refused);
+            save.show(
+              refused
+                ? 'This reset link is invalid or has expired. Please request a new one.'
+                : ctx.error.message || 'Failed to reset password'
+            );
 
             setIsLoading(false);
           },

@@ -38,15 +38,20 @@ vi.mock('next/navigation', () => ({
   useSearchParams: vi.fn(() => nav.params),
 }));
 
-type ResetCallbacks = { onError: (ctx: { error: { message?: string } }) => void };
+type ResetCallbacks = {
+  onError: (ctx: { error: { code?: string; message?: string } }) => void;
+};
 
-function refuseReset(message: string) {
+/** What better-auth sends for an expired, used or unknown token alike. */
+const INVALID_TOKEN = ['Invalid token', 'INVALID_TOKEN'] as const;
+
+function refuseReset(message: string, code?: string) {
   vi.mocked(authClient.resetPassword).mockImplementation((async (
     _body: unknown,
     callbacks: ResetCallbacks
   ) => {
-    callbacks.onError({ error: { message } });
-    return { data: null, error: { message } };
+    callbacks.onError({ error: { code, message } });
+    return { data: null, error: { code, message } };
   }) as never);
 }
 
@@ -107,7 +112,7 @@ describe('components/forms/reset-password-form save errors', () => {
     });
 
     it('should show the link-expired message and a request-new-link action for an invalid token', async () => {
-      refuseReset('token is invalid');
+      refuseReset(...INVALID_TOKEN);
       const user = userEvent.setup();
       render(<ResetPasswordForm />);
 
@@ -123,17 +128,26 @@ describe('components/forms/reset-password-form save errors', () => {
       await waitFor(() => expect(alert).toHaveFocus());
     });
 
-    it('should treat an expired token the same way', async () => {
-      refuseReset('token expired');
+    it("should go by better-auth's code, not its wording", async () => {
+      // A reworded refusal with the code still offers a new link...
+      refuseReset('That link has been used', 'INVALID_TOKEN');
       const user = userEvent.setup();
-      render(<ResetPasswordForm />);
-
+      const { unmount } = render(<ResetPasswordForm />);
       await submitNewPassword(user);
-
       expect(await screen.findByRole('alert')).toHaveTextContent(
         'This reset link is invalid or has expired.'
       );
       expect(screen.getByRole('link', { name: 'Request new reset link' })).toBeInTheDocument();
+      unmount();
+
+      // ...and a message that merely says "invalid", without it, does not.
+      refuseReset('Password is invalid: too short', 'PASSWORD_TOO_SHORT');
+      render(<ResetPasswordForm />);
+      await submitNewPassword(user);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Password is invalid: too short');
+      expect(
+        screen.queryByRole('link', { name: 'Request new reset link' })
+      ).not.toBeInTheDocument();
     });
 
     it('should show any other refusal as sent, without the request-new-link action', async () => {
@@ -152,7 +166,7 @@ describe('components/forms/reset-password-form save errors', () => {
     });
 
     it('should drop the request-new-link action when the next press clears the failure', async () => {
-      refuseReset('token is invalid');
+      refuseReset(...INVALID_TOKEN);
       const user = userEvent.setup();
       render(<ResetPasswordForm />);
       await submitNewPassword(user);

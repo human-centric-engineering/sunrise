@@ -22,8 +22,10 @@ import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /** Server path → the field that shows it: every field here renders its message. */
+// No `email`: its input is read-only (the invitation's address), so a message
+// about it goes by the button, where it can be read, not under a field no one
+// can fix.
 const SERVER_FIELDS: Partial<Record<string, keyof AcceptInvitationInput>> = {
-  email: 'email',
   password: 'password',
   confirmPassword: 'confirmPassword',
 };

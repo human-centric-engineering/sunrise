@@ -84,6 +84,25 @@ describe('components/forms/accept-invite-form save errors', () => {
     expect(alert).not.toHaveFocus();
   });
 
+  it('should show a message about the read-only email by Activate Account, where it can be read', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('Validation failed', 'VALIDATION_ERROR', 400, {
+        errors: [{ path: 'email', message: 'Email does not match the invitation' }],
+      })
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteForm />);
+
+    await activate(user);
+
+    // Not "1 field needs fixing." pointing at a field no one can edit.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Email does not match the invitation');
+    expect(alert).not.toHaveTextContent('needs fixing');
+    expect(screen.getAllByText('Email does not match the invitation')).toHaveLength(1);
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
   it('should show a plain refusal in the alert, focused, with no field message', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('Invitation already used', 'CONFLICT', 409)

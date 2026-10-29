@@ -498,7 +498,7 @@ describe('components/forms/login-form', () => {
           {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
         );
         void callbacks?.onError?.({
-          error: { message: 'Email not verified' },
+          error: { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
       });
 
@@ -531,7 +531,7 @@ describe('components/forms/login-form', () => {
           {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
         );
         void callbacks?.onError?.({
-          error: { message: 'Email not verified' },
+          error: { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
       });
 
@@ -584,7 +584,7 @@ describe('components/forms/login-form', () => {
           {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
         );
         void callbacks?.onError?.({
-          error: { message: 'Email not verified' },
+          error: { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
       });
 
@@ -629,7 +629,7 @@ describe('components/forms/login-form', () => {
           {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
         );
         void callbacks?.onError?.({
-          error: { message: 'Email not verified' },
+          error: { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
       });
 

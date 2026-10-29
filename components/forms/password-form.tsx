@@ -25,6 +25,7 @@ import { PasswordStrength } from '@/components/forms/password-strength';
 import { FormError, SaveError } from '@/components/forms/form-error';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { fieldCount } from '@/lib/errors/save-error';
 
 // Password change schema with confirmation
 const changePasswordSchema = z
@@ -87,9 +88,7 @@ export function PasswordForm() {
           // The one field it is about: its message goes under it, and it takes
           // focus. By Save, the summary every form shows for a named field.
           setError('currentPassword', { type: 'server', message: WRONG_PASSWORD });
-          save.show('1 field needs fixing.', [
-            { field: 'currentPassword', message: WRONG_PASSWORD },
-          ]);
+          save.show(fieldCount(1), [{ field: 'currentPassword', message: WRONG_PASSWORD }]);
         } else {
           save.show(error.message || 'Could not change your password. Try again in a moment.');
         }
