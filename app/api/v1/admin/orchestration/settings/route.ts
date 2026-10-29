@@ -283,6 +283,12 @@ export const PATCH = withAdminAuth(
     if (body.voiceInputGloballyEnabled !== undefined) {
       updateData.voiceInputGloballyEnabled = body.voiceInputGloballyEnabled;
     }
+    if (body.imageInputGloballyEnabled !== undefined) {
+      updateData.imageInputGloballyEnabled = body.imageInputGloballyEnabled;
+    }
+    if (body.documentInputGloballyEnabled !== undefined) {
+      updateData.documentInputGloballyEnabled = body.documentInputGloballyEnabled;
+    }
     if (body.inputGuardMode !== undefined) {
       updateData.inputGuardMode = body.inputGuardMode;
     }

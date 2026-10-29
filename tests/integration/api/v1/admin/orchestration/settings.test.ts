@@ -150,6 +150,8 @@ function makeSettingsRow(
     maxMessagesPerConversation: number | null;
     embedAllowedOrigins: unknown;
     voiceInputGloballyEnabled: boolean;
+    imageInputGloballyEnabled: boolean;
+    documentInputGloballyEnabled: boolean;
     activeEmbeddingModelId: string | null;
   }> = {}
 ) {
@@ -178,6 +180,8 @@ function makeSettingsRow(
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     voiceInputGloballyEnabled: true as boolean,
+    imageInputGloballyEnabled: true as boolean,
+    documentInputGloballyEnabled: true as boolean,
     activeEmbeddingModelId: null as string | null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -471,6 +475,25 @@ describe('Admin Orchestration — /settings', () => {
       expect(upsertCall?.update.voiceInputGloballyEnabled).toBe(false);
       expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
     });
+
+    // t-963: the route accepted these two and dropped them, answering 200, so
+    // turning image or PDF input off org-wide said "Saved" and changed nothing.
+    it.each(['imageInputGloballyEnabled', 'documentInputGloballyEnabled'] as const)(
+      'writes %s when sent (org-wide attachment kill switch)',
+      async (field) => {
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+          makeSettingsRow({ [field]: false }) as never
+        );
+
+        const res = await PATCH(makePatch({ [field]: false }));
+
+        expect(res.status).toBe(200);
+        const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+        expect(upsertCall?.update[field]).toBe(false);
+        const body = await parseJson<{ data: Record<string, unknown> }>(res);
+        expect(body.data[field]).toBe(false);
+      }
+    );
 
     it('updates voiceInputGloballyEnabled back to true', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
