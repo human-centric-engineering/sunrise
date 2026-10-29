@@ -27,7 +27,8 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
    capabilities/agents/workflows in the orchestration layer, declare your env
    vars in `lib/app/env.ts`, register app-scoped rate-limit tiers/rules, swap
    email/storage/analytics providers via their adapters ([§4](#4-configuration--environment--the-libapp-surface)).
-   The fewer existing Sunrise files you modify, the smaller every future merge conflict.
+   The fewer existing Sunrise files you modify, the smaller every future merge conflict,
+   and each one you do modify gets a row in your [divergence ledger](#the-divergence-ledger).
 
 2. **Depend on the public surface, not internals.** Build against Sunrise's
    stable helpers rather than reaching into their implementations:
@@ -1538,6 +1539,86 @@ For the full version contract and how Sunrise releases are produced, see
 
 ## 9. Staying in sync with upstream Sunrise
 
+### Pulling a release
+
+In this order. Steps 3 and 5 are the ones the merge itself will not remind you
+of.
+
+1. **Read your [divergence ledger](#the-divergence-ledger) first.** It lists
+   every Sunrise file you have edited and what to keep when it conflicts, so
+   you know which conflicts are yours before git shows them to you.
+2. **Merge the release tag** from the tier you sync from — Sunrise for a
+   direct fork (`git fetch upstream --tags && git merge vX.Y.Z`), your
+   framework for a fork built on one.
+3. **Resolve each conflict by its row's merge action.** A conflict in a
+   Sunrise file that no row names is an edit nobody recorded: resolve it, then
+   add its row in the sync PR.
+4. **Apply the release's migrations** ([below](#migrations)).
+5. **Retire the rows the release made unnecessary.** For each row waiting on
+   an upstream issue, check the issue, not just the CHANGELOG, which lists only
+   what shipped: `gh issue view N --repo human-centric-engineering/sunrise --json state,stateReason`.
+   - **Closed as completed:** delete the row only if the release you are taking
+     carries the fix in the shape you carry. An approved ask can be reshaped,
+     and deleting on the issue number alone can drop an edit the release does
+     not replace.
+   - **Closed as not planned:** the trigger will never fire. Rewrite the row as
+     permanent, or plan the move to the alternative the decline named.
+   - **Closed as a duplicate:** check the original issue instead.
+   - **Still open:** keep the row, and keep its edit applied.
+6. **Merge the sync PR with a merge commit** ([next](#merge-the-sync-pr--never-squash-it)).
+
+### The divergence ledger
+
+Every edit your fork carries to a file Sunrise owns can conflict at the next
+sync. Record each one in a **divergence ledger, in the same PR as the edit**.
+An edit nobody recorded is rediscovered at the next merge, and possibly
+resolved the wrong way.
+
+**Where it lives — one path per tier:**
+
+| You are                                       | Your ledger                                  |
+| --------------------------------------------- | -------------------------------------------- |
+| a leaf fork (including a leaf on a framework) | `.context/app/platform-divergences.md`       |
+| a framework-tier fork (e.g. Daybreak)         | `.context/framework/platform-divergences.md` |
+
+Both paths sit inside the [reserved tiers](#the-appplatform-model), so the
+ledger itself never conflicts. **Sunrise ships neither file**: create yours on
+your first divergence, and add its tier to `lib/app/reserved-tiers.ts` if it is
+the first file you have put there. A leaf on a framework keeps its own
+app-tier ledger for the edits it carries to both upstreams' files; the
+framework's ledger belongs to the framework, and arrives in your tree with it.
+
+**What goes in it:** edits to files an upstream tier owns and keeps evolving —
+core `lib/`, `app/api/v1/`, core `components/`, `proxy.ts`, platform tests,
+root config, Sunrise's docs, a deleted platform page. **What does not:**
+filling a `lib/app/*` scaffold, adding a model to `prisma/schema/app.prisma`,
+or any new file of your own. Those ship empty to be filled, and merge cleanly.
+
+**One row per carried edit**, numbered, with a number never reused once a row
+is retired:
+
+```markdown
+| #   | File                     | Change                    | Why no seam could carry it      | Merge action                | Upstream       | Delete when                     |
+| --- | ------------------------ | ------------------------- | ------------------------------- | --------------------------- | -------------- | ------------------------------- |
+| 1   | `lib/example/feature.ts` | Pass `orgId` to `build()` | `build()` has no context option | Keep mine, re-apply the arg | `sunrise#1234` | `build()` accepts a context arg |
+```
+
+- **Change** — what you did, kept minimal. A one-line edit is a cheap merge;
+  a rewritten platform file is not.
+- **Merge action** — what to do when the file conflicts: keep mine, take
+  theirs and re-apply, keep mine (deleted).
+- **Upstream** — the issue the row is carried for, as `sunrise#N` (or
+  `<framework>#N` for a file your framework owns), or `landed vX.Y.Z` once a
+  release carries it. `none` is allowed only for an edit no upstream change
+  should remove, such as deleting a marketing page you do not want — say why
+  in **Why**. An edit Sunrise ought to make possible through a seam is an issue
+  to file, and filing it is part of the same PR.
+- **Delete when** — the specific event that makes the row removable. Without
+  one, the ledger only grows.
+
+The rows that cite an issue are also the list of places your fork was forced
+off the seams — which is exactly what Sunrise needs to hear about.
+
 ### Merge the sync PR — never squash it
 
 **"Squash and merge" on a sync PR keeps every file and silently breaks your next
@@ -1618,7 +1699,9 @@ files that _can_ conflict are the ones both you and upstream edit (the migration
 directory above, the marketing-page route shims ([§6](#6-landing-page--routes)) —
 a one-line "keep mine" when your content lives in app-owned files — branding, and
 `package.json` — see [§7](#7-adding-dependencies--scripts)); resolve those keeping
-your version, and add a follow-up rather than rewriting Sunrise's.
+your version, and add a follow-up rather than rewriting Sunrise's. An edit to a
+Sunrise file that you carry from sync to sync belongs in your
+[divergence ledger](#the-divergence-ledger).
 
 - **One shared history.** App and Sunrise migrations both live in
   `prisma/migrations/` and are applied in timestamp order. On an upstream
