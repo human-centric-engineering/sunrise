@@ -1547,7 +1547,8 @@ made it unnecessary.
 
 1. **Read your [divergence ledger](#the-divergence-ledger) first.** It lists
    every upstream file you have edited and what to keep when it conflicts, so
-   you know which conflicts are yours before git shows them to you.
+   you know which conflicts are yours before git shows them to you. Read the
+   release's CHANGELOG range too ([§8](#what-to-do-when-you-upgrade)).
 2. **Merge the release tag** from the tier you sync from — Sunrise for a
    direct fork (`git fetch upstream --tags && git merge vX.Y.Z`), your
    framework for a fork built on one.
@@ -1559,7 +1560,10 @@ made it unnecessary.
    - **Closed as completed:** retire the row only if the release you are taking
      carries the fix in the shape you carry. An approved ask can be reshaped,
      and retiring on the issue number alone can drop an edit the release does
-     not replace.
+     not replace. On a leaf built on a framework, the release you are taking
+     is the framework's, so a `sunrise#N` fix is there only once the
+     framework has taken the Sunrise release that carries it — check the
+     `lib/sunrise-version.ts` it brings, not the date the issue closed.
    - **Closed as not planned:** the trigger will never fire. Rewrite the row as
      permanent, or plan the move to the alternative the decline named.
    - **Closed as a duplicate:** check the original issue instead.
@@ -1570,17 +1574,17 @@ made it unnecessary.
    row, all in the sync PR.
 
 4. **Resolve the remaining conflicts by each row's merge action.** A conflict
-   in an upstream file that no row names, other than the routine ones
-   [§6](#6-landing-page--routes) and [§7](#7-adding-dependencies--scripts)
-   already cover, is an edit nobody recorded: resolve it, then add its row.
+   in an upstream file that no row names, other than the
+   [routine ones](#the-divergence-ledger) the ledger leaves out, is an edit
+   nobody recorded: resolve it, then add its row.
 5. **Apply the release's migrations** ([below](#migrations)).
 6. **Merge the sync PR with a merge commit** ([next](#merge-the-sync-pr--never-squash-it)).
 
 ### The divergence ledger
 
 Every edit your fork carries to a file an upstream tier owns (Sunrise, or the
-framework you build on) can conflict at the next sync. Record each one in a **divergence ledger, in the same PR as the edit**.
-An edit nobody recorded is rediscovered at the next merge, and possibly
+framework you build on) can conflict at the next sync. Record each one in a
+**divergence ledger, in the same PR as the edit**. An edit nobody recorded is rediscovered at the next merge, and possibly
 resolved the wrong way.
 
 **Where it lives — one path per tier:**
@@ -1600,15 +1604,20 @@ framework's ledger belongs to the framework, and arrives in your tree with it.
 **What goes in it:** edits to files an upstream tier owns and keeps evolving —
 core `lib/`, `app/api/v1/`, core `components/`, `proxy.ts`, platform tests,
 root config, Sunrise's docs, a deleted platform page. **What does not:**
-filling a `lib/app/*` scaffold, adding a model to `prisma/schema/app.prisma`,
-or any new file of your own. Those ship empty to be filled, and merge cleanly.
-Nor do the edits every fork makes and this guide already tells you how to
-merge: your name, version and dependencies in `package.json`
-([§7](#7-adding-dependencies--scripts)), and the marketing-page shims
-([§6](#6-landing-page--routes)).
+filling a `lib/app/*` scaffold your upstream shipped empty, adding a model to
+`prisma/schema/app.prisma`, or any new file of your own. Those ship empty to
+be filled, and merge cleanly. **On a leaf built on a framework, a scaffold the
+framework has filled is the framework's file**: fill the hook it gives you
+(Daybreak's are the `lib/app/leaf-*` files), and an edit to the framework's
+copy is a row. Also left out are the edits every fork makes that this guide
+already tells you how to merge: branding ([§2](#2-branding--theming)), the
+marketing-page shims ([§6](#6-landing-page--routes)), your name, version and
+dependencies in `package.json` ([§7](#7-adding-dependencies--scripts)), and a
+Hub bootstrap committed to `CLAUDE.md` ([§1](#1-first-steps)).
 
-**One row per carried edit**, numbered, with a number never reused once a row
-is retired:
+**One row per carried edit**, numbered. Retiring a row deletes it, so keep a
+`Next row: N` line under the table and take numbers from it; a number another
+PR or note cited then never comes to mean a different edit:
 
 ```markdown
 | #   | File                     | Change                    | Why no seam could carry it      | Merge action                | Upstream       | Delete when                     |
@@ -1623,8 +1632,9 @@ is retired:
 - **Upstream** — the issue the row is carried for, as `sunrise#N` (or
   `<framework>#N` for a file your framework owns). `none` is allowed only for
   an edit no upstream change should remove, such as deleting a platform page
-  you do not want — say why in **Why**. An edit Sunrise ought to make possible
-  through a seam is an issue to file, and filing it is part of the same PR.
+  you do not want — say why in **Why**. An edit an upstream ought to make
+  possible through a seam is an issue to file with the tier that owns the
+  file, and filing it is part of the same PR.
   There is no "landed" state: once a release carries the fix, the row is
   retired (step 3 above), not kept.
 - **Delete when** — the specific event that makes the row removable, checked
