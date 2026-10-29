@@ -513,12 +513,14 @@ describe('components/forms/password-form', () => {
     it('shows a wrong current password under that field, not a success', async () => {
       await submitWith(REFUSED('INVALID_PASSWORD', 'Invalid password'));
 
+      // By Save, the field-count summary, not the message a second time.
       const alert = await screen.findByRole('alert');
-      expect(alert).toHaveTextContent('Current password is incorrect');
-      // Under the field too, and the field takes focus: it is what needs fixing.
+      expect(alert).toHaveTextContent('1 field needs fixing.');
+      expect(alert).not.toHaveTextContent('Current password is incorrect');
+      // The message goes under the field, which takes focus: it is what needs fixing.
       const field = screen.getByLabelText('Current Password');
       expect(field).toHaveFocus();
-      expect(screen.getAllByText('Current password is incorrect')).toHaveLength(2);
+      expect(screen.getAllByText('Current password is incorrect')).toHaveLength(1);
       expect(screen.queryByText(/password changed successfully/i)).not.toBeInTheDocument();
       expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });

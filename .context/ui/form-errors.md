@@ -191,7 +191,7 @@ const { error } = await authClient.changePassword({ currentPassword, newPassword
 if (error) {
   if (error.code === 'INVALID_PASSWORD') {
     setError('currentPassword', { type: 'server', message: WRONG });
-    save.show(WRONG, [{ field: 'currentPassword', message: WRONG }]); // focuses it
+    save.show('1 field needs fixing.', [{ field: 'currentPassword', message: WRONG }]); // focuses it
   } else save.show(error.message);
   return;
 }

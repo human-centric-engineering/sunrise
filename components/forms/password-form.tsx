@@ -84,9 +84,12 @@ export function PasswordForm() {
       });
       if (error) {
         if (error.code === 'INVALID_PASSWORD') {
-          // The one field it is about: its message goes under it, and it takes focus.
+          // The one field it is about: its message goes under it, and it takes
+          // focus. By Save, the summary every form shows for a named field.
           setError('currentPassword', { type: 'server', message: WRONG_PASSWORD });
-          save.show(WRONG_PASSWORD, [{ field: 'currentPassword', message: WRONG_PASSWORD }]);
+          save.show('1 field needs fixing.', [
+            { field: 'currentPassword', message: WRONG_PASSWORD },
+          ]);
         } else {
           save.show(error.message || 'Could not change your password. Try again in a moment.');
         }
