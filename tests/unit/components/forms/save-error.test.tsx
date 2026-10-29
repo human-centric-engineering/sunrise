@@ -20,9 +20,17 @@ import type { SaveFailure } from '@/lib/errors/save-error';
 
 const scrollIntoView = vi.fn();
 
+/** Where the box sits: below the window unless a test puts it in view. */
+function placeBox(top: number) {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+    DOMRect.fromRect({ x: 0, y: top, width: 400, height: 48 })
+  );
+}
+
 beforeEach(() => {
   scrollIntoView.mockClear();
   Element.prototype.scrollIntoView = scrollIntoView;
+  placeBox(window.innerHeight + 500);
 });
 
 afterEach(() => {
@@ -104,6 +112,19 @@ describe('SaveError', () => {
     expect(alert).toHaveFocus();
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView.mock.contexts[0]).toBe(alert);
+  });
+
+  it('takes focus without scrolling when it is already in view, as in a sticky Save bar', async () => {
+    // With the admin area's scroll padding, scrolling a box that is in view
+    // would move the page under it on every failure (t-964).
+    placeBox(100);
+    render(<Harness next={() => failure({ message: 'Budget too high' })} />);
+
+    save();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveFocus();
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('moves again on a second failure with the same message', async () => {

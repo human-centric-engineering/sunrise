@@ -40,9 +40,11 @@ release process.
   row reported above its table). `invalid` is react-hook-form's `onInvalid`
   (`handleSubmit(onSubmit, save.invalid)`), so a save the schema blocks says
   how many fields need fixing by Save and focuses the first; `block(problems)`
-  does the same for a plain-state form's own checks. **`invalidSave()`**
-  (`lib/errors/save-error.ts`) is `invalid` for a form that holds its failure
-  itself (t-964).
+  does the same for a plain-state form's own checks. `submit` also blocks a
+  press while a number field holds something the browser can't read (`1,000`),
+  which would otherwise save as blank. **`invalidSave()`** and
+  **`unreadableNumbers()`** (`lib/errors/save-error.ts`) are the same for a
+  form that holds its failure itself (t-964).
   Also **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only
   needs to know a save was refused as stale (§124).
 - **`apiErrorFromResponse()`** (`lib/api/client.ts`): the `APIClientError`

@@ -7,6 +7,7 @@ import {
   applyFieldErrors,
   invalidSave,
   readSaveError,
+  unreadableNumbers,
   type SaveFailure,
 } from '@/lib/errors/save-error';
 
@@ -53,7 +54,9 @@ export interface SaveFailureState<TField extends string> {
   clear: () => void;
   /**
    * Wraps a submit handler so every press clears the last failure first,
-   * including a press that client validation blocks:
+   * including a press that client validation blocks. A number field the
+   * browser can't read blocks the press before the handler runs (see
+   * `unreadableNumbers`):
    * `<form onSubmit={submit(handleSubmit(onSubmit))}>`.
    */
   submit: (
@@ -133,20 +136,25 @@ export function useSaveFailure<TField extends string>(
     []
   );
 
-  const block = useCallback((problems: Array<{ field: string; message: string }>) => {
-    if (problems.length === 0) return false;
-    setFailure({
-      message: problems.map((p) => p.message).join(' '),
-      stale: false,
-      fields: problems,
-    });
-    return true;
-  }, []);
+  const block = useCallback(
+    (problems: Array<{ field: string; message: string }>) => {
+      if (problems.length === 0) return false;
+      show(problems.map((p) => p.message).join(' '), problems);
+      return true;
+    },
+    [show]
+  );
 
   const clear = useCallback(() => setFailure(null), []);
 
   const submit = useCallback(
     (handler: (e?: BaseSyntheticEvent) => Promise<void> | void) => (e: BaseSyntheticEvent) => {
+      const unreadable = unreadableNumbers(e.currentTarget);
+      if (unreadable) {
+        e.preventDefault();
+        setFailure(unreadable);
+        return;
+      }
       setFailure(null);
       void handler(e);
     },

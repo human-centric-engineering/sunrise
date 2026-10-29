@@ -30,6 +30,7 @@ import {
   applyFieldErrors,
   invalidSave,
   readSaveError,
+  unreadableNumbers,
   type SaveFailure,
 } from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
@@ -431,6 +432,13 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
     <form
       noValidate
       onSubmit={(e) => {
+        // A number the browser can't read would save as blank: block it first.
+        const unreadable = unreadableNumbers(e.currentTarget);
+        if (unreadable) {
+          e.preventDefault();
+          setSaveFailure(unreadable);
+          return;
+        }
         // Cleared on every press: one client validation blocks never reaches onSubmit.
         setSaveFailure(null);
         void handleSubmit(onSubmit, (errors) => setSaveFailure(invalidSave(errors)))(e);

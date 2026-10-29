@@ -219,6 +219,82 @@ describe('useSaveFailure', () => {
     expect(handler).toHaveBeenCalledWith(event);
   });
 
+  describe('a number field the browser could not read (t-964)', () => {
+    /**
+     * A form with a number field holding `typed`. happy-dom has no number
+     * parsing, so the browser's verdict is set the way a real one reports it:
+     * `validity.badInput`, with the value read back as ''.
+     */
+    function formWith(badInput: boolean) {
+      const form = document.createElement('form');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.name = 'globalMonthlyBudgetUsd';
+      Object.defineProperty(input, 'validity', { value: { badInput } });
+      form.append(input);
+      return form;
+    }
+    function submitEvent(form: HTMLFormElement) {
+      const preventDefault = vi.fn();
+      const event = { currentTarget: form, preventDefault } as unknown as Parameters<
+        ReturnType<ReturnType<typeof useSaveFailure>['submit']>
+      >[0];
+      return { event, preventDefault };
+    }
+
+    it('blocks the press before the handler, naming the field, instead of saving it as blank', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const handler = vi.fn();
+      const { event, preventDefault } = submitEvent(formWith(true));
+
+      act(() => {
+        result.current.submit(handler)(event);
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalled();
+      expect(result.current.failure).toEqual({
+        message: '1 field needs a number.',
+        stale: false,
+        fields: [{ field: 'globalMonthlyBudgetUsd', message: 'Enter a number.' }],
+      });
+    });
+
+    it('counts several, and skips a readable field beside them', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const form = formWith(true);
+      const second = form.querySelector('input')!.cloneNode() as HTMLInputElement;
+      second.name = 'defaultMaxCostPerTurnUsd';
+      Object.defineProperty(second, 'validity', { value: { badInput: true } });
+      const fine = document.createElement('input');
+      fine.name = 'maxConversationsPerUser';
+      form.append(second, fine);
+
+      act(() => {
+        result.current.submit(vi.fn())(submitEvent(form).event);
+      });
+
+      expect(result.current.failure?.message).toBe('2 fields need a number.');
+      expect(result.current.failure?.fields.map((f) => f.field)).toEqual([
+        'globalMonthlyBudgetUsd',
+        'defaultMaxCostPerTurnUsd',
+      ]);
+    });
+
+    it('lets a readable one through', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const handler = vi.fn();
+      const { event } = submitEvent(formWith(false));
+
+      act(() => {
+        result.current.submit(handler)(event);
+      });
+
+      expect(handler).toHaveBeenCalledWith(event);
+      expect(result.current.failure).toBeNull();
+    });
+  });
+
   it('clears on request', () => {
     const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
     act(() => {

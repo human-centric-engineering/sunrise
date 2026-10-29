@@ -156,7 +156,13 @@ export function SaveError<TField extends string>({
     if (!failure || !box) return;
     const focusBox = () => {
       box.focus({ preventScroll: true });
-      box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // Only when it is out of view: one in a sticky Save bar is always in
+      // view, and scrolling it would move the page under it, by as much as the
+      // scroll area's padding, on every failure.
+      const { top, bottom } = box.getBoundingClientRect();
+      if (top < 0 || bottom > window.innerHeight) {
+        box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
     };
     const names = failure.fields.map((f) => f.field);
     if (names.length === 0) return focusBox();

@@ -126,6 +126,30 @@ export function invalidSave<TValues extends FieldValues>(
 }
 
 /**
+ * The number fields in `form` the browser could not read (`1,000` in Firefox,
+ * `1e` in Chrome), as a failure, or null when there are none. Such a field's
+ * value reads as `''`, which a form takes for "left blank", so with the
+ * browser's own check off (`noValidate`) a typed budget would save as no cap.
+ * `useSaveFailure().submit` checks this first; a form that holds its failure
+ * itself calls it at the top of its submit.
+ */
+export function unreadableNumbers(form: unknown): SaveFailure<string> | null {
+  if (typeof HTMLFormElement === 'undefined' || !(form instanceof HTMLFormElement)) return null;
+  const fields = Array.from(form.elements).flatMap((el) =>
+    el instanceof HTMLInputElement && el.validity.badInput && (el.name || el.id)
+      ? [{ field: el.name || el.id, message: 'Enter a number.' }]
+      : []
+  );
+  if (fields.length === 0) return null;
+  return {
+    message:
+      fields.length === 1 ? '1 field needs a number.' : `${fields.length} fields need a number.`,
+    stale: false,
+    fields,
+  };
+}
+
+/**
  * Each blocked field, by the name it was registered under (`variants.0.label`
  * for a field in an array), with its message, in the order react-hook-form
  * holds them. An entry with a `type` is a field's error; anything else holds

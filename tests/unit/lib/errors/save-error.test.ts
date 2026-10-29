@@ -14,7 +14,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 
 import { APIClientError } from '@/lib/api/client';
-import { applyFieldErrors, invalidSave, isStaleSave, readSaveError } from '@/lib/errors/save-error';
+import {
+  applyFieldErrors,
+  invalidSave,
+  isStaleSave,
+  readSaveError,
+  unreadableNumbers,
+} from '@/lib/errors/save-error';
 
 /** `validateRequestBody`'s shape (`lib/api/validation.ts`). */
 function listError(errors: Array<{ path: string; message: string }>) {
@@ -329,5 +335,12 @@ describe('invalidSave', () => {
     expect(invalidSave({ slug: { type: 'validate' } }).fields).toEqual([
       { field: 'slug', message: 'Check this field.' },
     ]);
+  });
+});
+
+describe('unreadableNumbers', () => {
+  it('has nothing to say without a form, as on the server or in a submit with no target', () => {
+    expect(unreadableNumbers(undefined)).toBeNull();
+    expect(unreadableNumbers({ elements: [] })).toBeNull();
   });
 });

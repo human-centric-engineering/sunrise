@@ -17,6 +17,7 @@ was also amber, which doesn't read as a failure.
 | `applyFieldErrors()`     | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
 | `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
 | `invalidSave()`          | `lib/errors/save-error.ts`                             | A save react-hook-form's validation blocked, as a failure: the field count, each field named           |
+| `unreadableNumbers()`    | `lib/errors/save-error.ts`                             | The number fields the browser couldn't read, as a failure; `save.submit` checks it on every press      |
 | `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
 | `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
 | `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure as it opens and closes                      |
@@ -63,7 +64,12 @@ its own CI step). See [The check](#the-check).
    handler) holds every limit its inputs declare, and keep the attributes for
    the spinner and keyboard. A decimal `step` (`0.1`) is a spinner increment
    here, not a rule; `step` left out means whole numbers, so the schema says
-   `.int()`.
+   `.int()`. One limit no schema can hold: a number field the browser can't
+   read (`1,000` in Firefox, `1e` in Chrome) reads as `''`, which a form takes
+   for blank, so a typed budget would save as no cap. `save.submit` blocks
+   that press first ("1 field needs a number.", focus on the field); a form
+   that holds its failure itself calls `unreadableNumbers(e.currentTarget)` at
+   the top of its submit.
 
 ## Reading the failure
 

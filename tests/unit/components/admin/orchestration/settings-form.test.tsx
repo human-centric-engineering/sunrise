@@ -1320,5 +1320,23 @@ describe('SettingsForm', () => {
       await waitFor(() => expect(vectorWeight).toHaveFocus());
       expect(apiClient.patch).not.toHaveBeenCalled();
     });
+
+    it('blocks a budget the browser could not read as a number, instead of saving no cap', async () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const budget = document.getElementById('globalMonthlyBudgetUsd') as HTMLInputElement;
+      // What a browser reports for "1,000" typed into a number input: the value
+      // reads as '', which the schema takes for a blank (no cap).
+      await user.clear(budget);
+      Object.defineProperty(budget, 'validity', { value: { badInput: true } });
+
+      await user.click(screen.getByRole('button', { name: /save settings/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('1 field needs a number.');
+      await waitFor(() => expect(budget).toHaveFocus());
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
   });
 });

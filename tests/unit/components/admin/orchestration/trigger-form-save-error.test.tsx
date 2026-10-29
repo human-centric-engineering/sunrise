@@ -193,6 +193,39 @@ describe('TriggerForm — failed save', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
+    it('checks a secret typed on an hmac trigger with none stored, where the input shows', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      render(
+        <TriggerForm
+          mode="edit"
+          initial={{
+            id: 'trig_1',
+            channel: 'hmac',
+            name: 'HMAC integration',
+            workflowId: 'wf_1',
+            metadata: {},
+            isEnabled: true,
+            hasSigningSecret: false,
+          }}
+          workflows={WORKFLOWS}
+          agents={[]}
+          enabledChannels={['hmac']}
+          baseUrl="https://app.example.com"
+        />
+      );
+      fireEvent.change(screen.getByPlaceholderText('64 hex chars recommended'), {
+        target: { value: 'short' },
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Signing secret must be at least 16 characters.'
+      );
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
     it('does not check a secret an edit is not rotating, since none is sent', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockResolvedValue({});
