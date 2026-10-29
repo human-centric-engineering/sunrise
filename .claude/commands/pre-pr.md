@@ -220,8 +220,8 @@ If the run reported `no TypeScript sources changed — nothing to gate`, record
 
 ### Step 4: Scan for anti-patterns
 
-Two of these thirteen checks ship an executable scanner — **4f** and **4m**. The
-other eleven are prose, which means _you_ write the scanner, here, now, in
+Three of these fourteen checks ship an executable scanner — **4f**, **4m** and
+**4n**. The other eleven are prose, which means _you_ write the scanner, here, now, in
 whatever shell you happen to have. Three rules before you do. Each one exists
 because it has already cost this project a false CLEAN.
 
@@ -242,7 +242,7 @@ strictly better than one that passes quietly.
 CI, and they differ exactly where it hurts: `compgen` is a bash builtin, and a
 `compgen -G` loop under zsh printed nothing and was very nearly banked as a clean
 tree — that instance is what opened #641. `shopt`, arrays and `[[ ]]` vary too.
-This is why **4f and 4m are Node scripts** under `scripts/ci/`: neither is at the mercy of
+This is why **4f, 4m and 4n are Node scripts** under `scripts/ci/`: none is at the mercy of
 which shell started. If you find yourself debugging shell quoting, stop and
 rewrite it as a Node script. And if the check is worth keeping, it belongs in
 `scripts/ci/` with tests, not inlined here.
@@ -335,6 +335,18 @@ The **cast** is always wrong: `AppRouterInstance` gains required members between
 The **six-member literal** means the author intended a complete router, so it should use the factory. A minimal stub (`push`/`replace` only, for a component that reads nothing else) is fine and deliberately not flagged.
 
 Nothing type-checks a `vi.mock` factory, so neither form fails the build. This scan is the only thing that catches them. The rules, and every shape that has defeated a version of this check, live in `scripts/ci/router-mocks.ts` and are held there by `tests/unit/scripts/ci/router-mocks.test.ts`. See `.context/testing/mocking.md`.
+
+**4n. Hand-drawn save-error boxes**
+
+```bash
+npm run check:save-errors
+```
+
+Run by `npm run validate` (Step 1) and by CI, so this too is normally answered by Step 1. It must print `Save-error boxes OK (N files ... scanned)`; any `file:line` it prints is a finding.
+
+A failed save is shown one way: `<SaveError>`, fed by `useSaveFailure()`, beside the button that was pressed (§124, `.context/ui/form-errors.md`). This flags a component that renders its own red or destructive box around a state a **mutation**'s failure set: a `catch` after `apiClient.post|patch|put|delete`, a `fetch` with a method, or an `authClient` call; a `.catch()` on such a chain; better-auth's `onError`; or an `if` on such a call's result. A load error (`apiClient.get`, a bare `fetch`) is not reported, and nor is anything drawn by `<SaveError>` or `<FormError>`. **Repo-wide**, for 4m's reason.
+
+A class-name grep cannot do this: 92 components that submit use red classes for field messages, delete buttons and load panels. What it cannot tell apart is a run, test or export from a save, since both are a POST: those are declared in `BOX_EXEMPTIONS` in `scripts/ci/save-error-boxes.ts`, keyed `path#state` with the reason, and an exemption that no longer matches a box fails the run. The rules, and what it cannot see, live in that file and are held by `tests/unit/scripts/ci/save-error-boxes.test.ts`.
 
 ### Step 5: Check .context/ documentation
 
@@ -456,6 +468,7 @@ Output a clear summary in this format:
 - [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
 - [ ] Hand-rolled router mocks: {CLEAN or N violation(s): `npm run check:router-mocks`}
+- [ ] Hand-drawn save-error boxes: {CLEAN or N violation(s): `npm run check:save-errors`}
 
 ### Documentation Check
 - [ ] Stale content in changed docs: {CLEAN or issues found}
