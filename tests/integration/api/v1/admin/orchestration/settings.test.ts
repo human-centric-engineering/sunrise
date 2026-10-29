@@ -125,6 +125,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
+import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -478,22 +479,86 @@ describe('Admin Orchestration — /settings', () => {
 
     // t-963: the route accepted these two and dropped them, answering 200, so
     // turning image or PDF input off org-wide said "Saved" and changed nothing.
-    it.each(['imageInputGloballyEnabled', 'documentInputGloballyEnabled'] as const)(
-      'writes %s when sent (org-wide attachment kill switch)',
-      async (field) => {
-        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
-          makeSettingsRow({ [field]: false }) as never
-        );
+    it.each([
+      ['imageInputGloballyEnabled', 'documentInputGloballyEnabled'],
+      ['documentInputGloballyEnabled', 'imageInputGloballyEnabled'],
+    ] as const)('writes %s, both ways, and leaves %s alone', async (field, other) => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
 
-        const res = await PATCH(makePatch({ [field]: false }));
+      for (const value of [false, true]) {
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockClear();
+        const res = await PATCH(makePatch({ [field]: value }));
 
         expect(res.status).toBe(200);
-        const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
-        expect(upsertCall?.update[field]).toBe(false);
-        const body = await parseJson<{ data: Record<string, unknown> }>(res);
-        expect(body.data[field]).toBe(false);
+        const update = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0]?.update;
+        expect(update?.[field]).toBe(value);
+        expect(update).not.toHaveProperty(other);
       }
-    );
+    });
+
+    /**
+     * Every field the PATCH schema accepts reaches the update. The schema,
+     * its "at least one field" refine and the route's copy-into-update chain
+     * are three hand-kept lists; t-963's two switches were in the first two
+     * and missing from the third, so they validated, answered 200 and were
+     * dropped. A field added to the schema fails here until the route writes
+     * it, or until it is listed below with where it goes.
+     */
+    describe('every accepted field is written', () => {
+      // A valid value for each, and the update key it lands on when that
+      // isn't its own name.
+      const SAMPLES: Record<string, { value: unknown; writes?: string }> = {
+        defaultModels: { value: { chat: 'claude-sonnet-4-6' } },
+        globalMonthlyBudgetUsd: { value: 100 },
+        searchConfig: { value: null },
+        defaultApprovalTimeoutMs: { value: 60_000 },
+        approvalDefaultAction: { value: 'allow' },
+        voiceInputGloballyEnabled: { value: false },
+        imageInputGloballyEnabled: { value: false },
+        documentInputGloballyEnabled: { value: false },
+        activeEmbeddingModelId: { value: null, writes: 'activeEmbeddingModel' },
+        inputGuardMode: { value: 'block' },
+        outputGuardMode: { value: 'block' },
+        citationGuardMode: { value: 'block' },
+        webhookRetentionDays: { value: 30 },
+        webhookDlqRetentionDays: { value: 30 },
+        // Blank (for ever): the row keeps executions for ever, so a finite
+        // cost-log window is refused (#456).
+        costLogRetentionDays: { value: null },
+        auditLogRetentionDays: { value: 30 },
+        executionRetentionDays: { value: 30 },
+        evaluationRetentionDays: { value: 30 },
+        maxConversationsPerUser: { value: 10 },
+        maxMessagesPerConversation: { value: 10 },
+        stuckExecutionThresholdMins: { value: 30 },
+        embedAllowedOrigins: { value: ['https://example.com'] },
+        defaultMaxCostPerExecutionUsd: { value: 1 },
+        defaultMaxCostPerTurnUsd: { value: 1 },
+      };
+      // Written only under If-Match against the list's version (§122): its
+      // own tests below send one and assert the write.
+      const OWN_TESTS = new Set(['escalationConfig']);
+
+      it('has a sample for every field the schema accepts', () => {
+        const accepted = Object.keys(updateOrchestrationSettingsSchema.shape).sort();
+        expect(accepted.length).toBeGreaterThan(0);
+        expect([...Object.keys(SAMPLES), ...OWN_TESTS].sort()).toEqual(accepted);
+      });
+
+      it.each(Object.entries(SAMPLES))('writes %s', async (field, { value, writes }) => {
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+          makeSettingsRow() as never
+        );
+
+        const res = await PATCH(makePatch({ [field]: value }));
+
+        expect(res.status).toBe(200);
+        const update = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0]?.update;
+        expect(update).toHaveProperty(writes ?? field);
+      });
+    });
 
     it('updates voiceInputGloballyEnabled back to true', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
