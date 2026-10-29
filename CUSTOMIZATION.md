@@ -1541,36 +1541,45 @@ For the full version contract and how Sunrise releases are produced, see
 
 ### Pulling a release
 
-In this order. Steps 3 and 5 are the ones the merge itself will not remind you
-of.
+In this order. Retiring rows comes **before** resolving conflicts: resolve
+first and a row's "keep mine" puts your edit back over the upstream fix that
+made it unnecessary.
 
 1. **Read your [divergence ledger](#the-divergence-ledger) first.** It lists
-   every Sunrise file you have edited and what to keep when it conflicts, so
+   every upstream file you have edited and what to keep when it conflicts, so
    you know which conflicts are yours before git shows them to you.
 2. **Merge the release tag** from the tier you sync from — Sunrise for a
    direct fork (`git fetch upstream --tags && git merge vX.Y.Z`), your
    framework for a fork built on one.
-3. **Resolve each conflict by its row's merge action.** A conflict in a
-   Sunrise file that no row names is an edit nobody recorded: resolve it, then
-   add its row in the sync PR.
-4. **Apply the release's migrations** ([below](#migrations)).
-5. **Retire the rows the release made unnecessary.** For each row waiting on
-   an upstream issue, check the issue, not just the CHANGELOG, which lists only
-   what shipped: `gh issue view N --repo human-centric-engineering/sunrise --json state,stateReason`.
-   - **Closed as completed:** delete the row only if the release you are taking
+3. **Retire the rows the release made unnecessary.** For every row, ask
+   whether its **Delete when** has happened. For a row carried for an issue,
+   check the issue, not just the CHANGELOG, which lists only what shipped —
+   and ask the repo the issue was filed in, which for a `<framework>#N` row is
+   not Sunrise: `gh issue view N --repo <owner>/<repo> --json state,stateReason`.
+   - **Closed as completed:** retire the row only if the release you are taking
      carries the fix in the shape you carry. An approved ask can be reshaped,
-     and deleting on the issue number alone can drop an edit the release does
+     and retiring on the issue number alone can drop an edit the release does
      not replace.
    - **Closed as not planned:** the trigger will never fire. Rewrite the row as
      permanent, or plan the move to the alternative the decline named.
    - **Closed as a duplicate:** check the original issue instead.
    - **Still open:** keep the row, and keep its edit applied.
+
+   **Retiring a row means taking upstream's change in place of that row's
+   edit** (any other row's edit to the same file stays), then deleting the
+   row, all in the sync PR.
+
+4. **Resolve the remaining conflicts by each row's merge action.** A conflict
+   in an upstream file that no row names, other than the routine ones
+   [§6](#6-landing-page--routes) and [§7](#7-adding-dependencies--scripts)
+   already cover, is an edit nobody recorded: resolve it, then add its row.
+5. **Apply the release's migrations** ([below](#migrations)).
 6. **Merge the sync PR with a merge commit** ([next](#merge-the-sync-pr--never-squash-it)).
 
 ### The divergence ledger
 
-Every edit your fork carries to a file Sunrise owns can conflict at the next
-sync. Record each one in a **divergence ledger, in the same PR as the edit**.
+Every edit your fork carries to a file an upstream tier owns (Sunrise, or the
+framework you build on) can conflict at the next sync. Record each one in a **divergence ledger, in the same PR as the edit**.
 An edit nobody recorded is rediscovered at the next merge, and possibly
 resolved the wrong way.
 
@@ -1593,6 +1602,10 @@ core `lib/`, `app/api/v1/`, core `components/`, `proxy.ts`, platform tests,
 root config, Sunrise's docs, a deleted platform page. **What does not:**
 filling a `lib/app/*` scaffold, adding a model to `prisma/schema/app.prisma`,
 or any new file of your own. Those ship empty to be filled, and merge cleanly.
+Nor do the edits every fork makes and this guide already tells you how to
+merge: your name, version and dependencies in `package.json`
+([§7](#7-adding-dependencies--scripts)), and the marketing-page shims
+([§6](#6-landing-page--routes)).
 
 **One row per carried edit**, numbered, with a number never reused once a row
 is retired:
@@ -1608,13 +1621,15 @@ is retired:
 - **Merge action** — what to do when the file conflicts: keep mine, take
   theirs and re-apply, keep mine (deleted).
 - **Upstream** — the issue the row is carried for, as `sunrise#N` (or
-  `<framework>#N` for a file your framework owns), or `landed vX.Y.Z` once a
-  release carries it. `none` is allowed only for an edit no upstream change
-  should remove, such as deleting a marketing page you do not want — say why
-  in **Why**. An edit Sunrise ought to make possible through a seam is an issue
-  to file, and filing it is part of the same PR.
-- **Delete when** — the specific event that makes the row removable. Without
-  one, the ledger only grows.
+  `<framework>#N` for a file your framework owns). `none` is allowed only for
+  an edit no upstream change should remove, such as deleting a platform page
+  you do not want — say why in **Why**. An edit Sunrise ought to make possible
+  through a seam is an issue to file, and filing it is part of the same PR.
+  There is no "landed" state: once a release carries the fix, the row is
+  retired (step 3 above), not kept.
+- **Delete when** — the specific event that makes the row removable, checked
+  at every sync whether or not the row cites an issue. Without one, the ledger
+  only grows.
 
 The rows that cite an issue are also the list of places your fork was forced
 off the seams — which is exactly what Sunrise needs to hear about.
@@ -1699,8 +1714,8 @@ files that _can_ conflict are the ones both you and upstream edit (the migration
 directory above, the marketing-page route shims ([§6](#6-landing-page--routes)) —
 a one-line "keep mine" when your content lives in app-owned files — branding, and
 `package.json` — see [§7](#7-adding-dependencies--scripts)); resolve those keeping
-your version, and add a follow-up rather than rewriting Sunrise's. An edit to a
-Sunrise file that you carry from sync to sync belongs in your
+your version rather than rewriting Sunrise's. Any other edit to a Sunrise file
+that you carry from sync to sync is a row in your
 [divergence ledger](#the-divergence-ledger).
 
 - **One shared history.** App and Sunrise migrations both live in
