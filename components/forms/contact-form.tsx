@@ -9,10 +9,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { Loader2, CheckCircle2 } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+
+/** Server path → the field that shows it: every field here renders its message. */
+const SERVER_FIELDS: Partial<Record<string, keyof ContactClientInput>> = {
+  name: 'name',
+  email: 'email',
+  subject: 'subject',
+  message: 'message',
+};
 
 interface ContactFormResponse {
   message: string;
@@ -34,7 +43,6 @@ interface ContactFormResponse {
  */
 export function ContactForm() {
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const { trackFormSubmitted } = useFormAnalytics();
 
@@ -42,6 +50,7 @@ export function ContactForm() {
     register,
     handleSubmit,
     reset,
+    setError,
     formState: { errors },
   } = useForm<ContactClientInput>({
     resolver: zodResolver(contactClientSchema),
@@ -55,10 +64,15 @@ export function ContactForm() {
     },
   });
 
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    fields: SERVER_FIELDS,
+    setError,
+  });
+
   const onSubmit = async (data: ContactClientInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       // Send form data including honeypot field
       await apiClient.post<ContactFormResponse>(API.PUBLIC.CONTACT, {
@@ -71,11 +85,7 @@ export function ContactForm() {
       setIsSuccess(true);
       reset();
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError('An unexpected error occurred. Please try again.');
-      }
+      save.report(err);
     } finally {
       setIsLoading(false);
     }
@@ -99,7 +109,7 @@ export function ContactForm() {
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
       {/* Hidden honeypot field - invisible to real users, attracts bots */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
         <label htmlFor="website">Website (leave blank)</label>
@@ -160,10 +170,7 @@ export function ContactForm() {
         <FormError message={errors.message?.message} />
       </div>
 
-      {/* Error Message */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-      )}
+      <SaveError failure={save.failure} />
 
       {/* Submit Button */}
       <Button type="submit" className="w-full" disabled={isLoading}>

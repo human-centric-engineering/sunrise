@@ -6,6 +6,8 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Mail } from 'lucide-react';
+import { SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /**
  * Email Verification Pending Content
@@ -29,16 +31,18 @@ function VerifyEmailContent() {
   const email = searchParams.get('email');
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Failed to resend verification email. Please try again.',
+  });
 
   async function handleResend() {
     if (!email) {
-      setError('Email address is required to resend verification');
+      save.show('Email address is required to resend verification');
       return;
     }
 
     setResending(true);
-    setError(null);
+    save.clear();
 
     try {
       // Call better-auth resend verification endpoint
@@ -54,11 +58,8 @@ function VerifyEmailContent() {
 
       setResent(true);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to resend verification email. Please try again.'
-      );
+      // Nothing the server says here is worth more than the fallback.
+      save.report(err);
     } finally {
       setResending(false);
     }
@@ -112,12 +113,7 @@ function VerifyEmailContent() {
               </p>
             )}
 
-            {/* Error Message */}
-            {error && (
-              <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-                {error}
-              </div>
-            )}
+            <SaveError failure={save.failure} />
           </div>
         )}
 

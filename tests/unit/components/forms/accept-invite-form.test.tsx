@@ -16,17 +16,12 @@ import { createMockRouter } from '@/tests/types/mocks';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 // Mock dependencies
-vi.mock('@/lib/api/client', () => ({
+// The real APIClientError: the shared save error reads it.
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: {
     get: vi.fn(),
     post: vi.fn(),
-  },
-  APIClientError: class APIClientError extends Error {
-    code?: string;
-    constructor(message: string, code?: string) {
-      super(message);
-      this.code = code;
-    }
   },
 }));
 
@@ -59,7 +54,9 @@ vi.mock('@/components/forms/password-strength', () => ({
   )),
 }));
 
-vi.mock('@/components/forms/form-error', () => ({
+vi.mock('@/components/forms/form-error', async (importOriginal) => ({
+  // The real SaveError: the failed activation is shown through it.
+  SaveError: (await importOriginal<typeof import('@/components/forms/form-error')>()).SaveError,
   FormError: vi.fn(({ message }) =>
     message ? <div data-testid="form-error">{message}</div> : null
   ),
@@ -732,7 +729,9 @@ describe('components/forms/accept-invite-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/unexpected error/i)).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Failed to accept invitation. Please try again.'
+        );
       });
     });
 

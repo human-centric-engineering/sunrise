@@ -12,14 +12,16 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
-import { apiClient, APIClientError } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { SaveError } from '@/components/forms/form-error';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import type { UserPreferences } from '@/types';
 
 interface PreferencesFormProps {
@@ -29,7 +31,10 @@ interface PreferencesFormProps {
 export function PreferencesForm({ preferences }: PreferencesFormProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({
+    fallback: 'Could not save your preferences. Try again in a moment.',
+    fields: NO_SERVER_FIELDS,
+  });
   const [success, setSuccess] = useState(false);
   const schedule = useTimeout();
   const { track } = useAnalytics();
@@ -41,7 +46,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
   const handleSave = async () => {
     try {
       setIsLoading(true);
-      setError(null);
+      save.clear();
       setSuccess(false);
 
       await apiClient.patch<UserPreferences>(API.USERS.ME_PREFERENCES, {
@@ -63,11 +68,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       // Reset success after 3 seconds
       schedule(() => setSuccess(false), 3000);
     } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message || 'Failed to update preferences');
-      } else {
-        setError('An unexpected error occurred');
-      }
+      save.report(err);
     } finally {
       setIsLoading(false);
     }
@@ -147,10 +148,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
         Security alerts cannot be disabled for your protection.
       </p>
 
-      {/* Error message */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-      )}
+      <SaveError failure={save.failure} />
 
       {/* Success message */}
       {success && (

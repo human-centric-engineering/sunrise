@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { useFormAnalytics } from '@/lib/analytics/events';
 import { useTimeout } from '@/lib/hooks/use-timeout';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   resetPasswordRequestSchema,
   resetPasswordSchema,
@@ -17,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { FormError } from '@/components/forms/form-error';
+import { FormError, SaveError } from '@/components/forms/form-error';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { Mail } from 'lucide-react';
 import Link from 'next/link';
@@ -77,7 +78,7 @@ function RequestResetForm() {
   const { trackFormSubmitted } = useFormAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({ fallback: 'Failed to send reset email. Please try again.' });
   const [success, setSuccess] = useState(false);
   const [submittedEmail, setSubmittedEmail] = useState('');
 
@@ -94,7 +95,6 @@ function RequestResetForm() {
   const onSubmit = async (data: ResetPasswordRequestInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       // Call better-auth password reset request endpoint directly
       const response = await fetch('/api/auth/request-password-reset', {
@@ -116,8 +116,8 @@ function RequestResetForm() {
       setSubmittedEmail(data.email);
       setSuccess(true);
       setIsLoading(false);
-    } catch {
-      setError('Failed to send reset email. Please try again.');
+    } catch (err) {
+      save.report(err);
       setIsLoading(false);
     }
   };
@@ -165,7 +165,7 @@ function RequestResetForm() {
 
   // Form state - show email input
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
       {/* Show contextual message for URL errors (expired/invalid links) */}
       {urlErrorMessage && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/10 dark:text-amber-400">
@@ -187,9 +187,7 @@ function RequestResetForm() {
         <FormError message={errors.email?.message} />
       </div>
 
-      {error && (
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-      )}
+      <SaveError failure={save.failure} />
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Sending...' : 'Send reset link'}
@@ -214,8 +212,9 @@ function CompleteResetForm({ token }: { token: string }) {
   const router = useRouter();
   const schedule = useTimeout();
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
   const [success, setSuccess] = useState(false);
+  const linkExpired = /invalid|expired/.test(save.failure?.message ?? '');
 
   const {
     register,
@@ -237,7 +236,6 @@ function CompleteResetForm({ token }: { token: string }) {
   const onSubmit = async (data: ResetPasswordInput) => {
     try {
       setIsLoading(true);
-      setError(null);
 
       await authClient.resetPassword(
         {
@@ -263,17 +261,17 @@ function CompleteResetForm({ token }: { token: string }) {
 
             // Handle token-specific errors
             if (msg.includes('invalid') || msg.includes('expired')) {
-              setError('This reset link is invalid or has expired. Please request a new one.');
+              save.show('This reset link is invalid or has expired. Please request a new one.');
             } else {
-              setError(msg);
+              save.show(msg);
             }
 
             setIsLoading(false);
           },
         }
       );
-    } catch {
-      setError('An unexpected error occurred. Please try again.');
+    } catch (err) {
+      save.report(err);
       setIsLoading(false);
     }
   };
@@ -292,7 +290,7 @@ function CompleteResetForm({ token }: { token: string }) {
 
   // Form state - show password reset form
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
       <input type="hidden" {...register('token')} />
 
       {/* Password Field */}
@@ -325,15 +323,11 @@ function CompleteResetForm({ token }: { token: string }) {
         <FormError message={errors.confirmPassword?.message} />
       </div>
 
-      {error && (
-        <div className="space-y-3">
-          <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">{error}</div>
-          {(error.includes('invalid') || error.includes('expired')) && (
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/reset-password">Request new reset link</Link>
-            </Button>
-          )}
-        </div>
+      <SaveError failure={save.failure} />
+      {linkExpired && (
+        <Button asChild variant="outline" className="w-full">
+          <Link href="/reset-password">Request new reset link</Link>
+        </Button>
       )}
 
       <Button type="submit" className="w-full" disabled={isLoading}>

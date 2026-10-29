@@ -9,6 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { SaveError } from '@/components/forms/form-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { isRecord } from '@/lib/utils';
 
 /**
  * Email Verification Callback Content
@@ -30,7 +33,9 @@ function VerifyEmailCallbackContent() {
   const [email, setEmail] = useState('');
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
-  const [resendError, setResendError] = useState<string | null>(null);
+  const resend = useSaveFailure({
+    fallback: 'Failed to resend verification email. Please try again.',
+  });
 
   // If no error, verification succeeded - redirect to dashboard
   useEffect(() => {
@@ -58,12 +63,12 @@ function VerifyEmailCallbackContent() {
 
   async function handleResend() {
     if (!email) {
-      setResendError('Please enter your email address');
+      resend.show('Please enter your email address');
       return;
     }
 
     setResending(true);
-    setResendError(null);
+    resend.clear();
 
     try {
       const response = await fetch('/api/auth/send-verification-email', {
@@ -73,17 +78,20 @@ function VerifyEmailCallbackContent() {
       });
 
       if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(data.message ?? 'Failed to resend verification email');
+        // better-auth's own error body: `{ code, message }`.
+        const data: unknown = await response.json().catch(() => null);
+        resend.show(
+          isRecord(data) && typeof data.message === 'string'
+            ? data.message
+            : 'Failed to resend verification email. Please try again.'
+        );
+        return;
       }
 
       setResent(true);
     } catch (err) {
-      setResendError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to resend verification email. Please try again.'
-      );
+      // A network failure: the browser's own text says nothing useful.
+      resend.report(err);
     } finally {
       setResending(false);
     }
@@ -133,11 +141,7 @@ function VerifyEmailCallbackContent() {
               )}
             </Button>
 
-            {resendError && (
-              <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-                {resendError}
-              </div>
-            )}
+            <SaveError failure={resend.failure} />
           </>
         ) : (
           <div className="space-y-4">

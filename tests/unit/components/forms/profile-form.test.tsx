@@ -649,7 +649,10 @@ describe('components/forms/profile-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/unexpected error occurred/i)).toBeInTheDocument();
+        // The fallback, not the browser's own text.
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Could not update your profile. Try again in a moment.'
+        );
       });
     });
 
