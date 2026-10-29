@@ -80,7 +80,7 @@ describe('McpSettingsForm — failed save', () => {
     await waitFor(() => expect(document.querySelector('[name="globalRateLimit"]')).toHaveFocus());
   });
 
-  it('clears the failure on the next press, even one client validation blocks', async () => {
+  it('replaces the failure with the blocked fields when client validation blocks the next press', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(
       new APIClientError('MCP settings are locked', 'FORBIDDEN', 403)
@@ -90,10 +90,31 @@ describe('McpSettingsForm — failed save', () => {
     await user.click(save);
     await screen.findByRole('alert');
 
-    await user.clear(document.querySelector<HTMLInputElement>('[name="serverName"]')!);
+    const serverName = document.querySelector<HTMLInputElement>('[name="serverName"]')!;
+    await user.clear(serverName);
     await user.click(save);
 
     expect(await screen.findByText('Required')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.')
+    );
+    expect(screen.getByRole('alert')).not.toHaveTextContent('MCP settings are locked');
+    await waitFor(() => expect(serverName).toHaveFocus());
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks an out-of-range number by Save, before any request, now the browser does not', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    const user = userEvent.setup();
+    const save = await renderDirty(user);
+    const rateLimit = document.querySelector<HTMLInputElement>('[name="globalRateLimit"]')!;
+    await user.clear(rateLimit);
+    await user.type(rateLimit, '20000');
+    await user.click(save);
+
+    expect(await screen.findByText('Max 10,000')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.');
+    await waitFor(() => expect(rateLimit).toHaveFocus());
+    expect(apiClient.patch).not.toHaveBeenCalled();
   });
 });

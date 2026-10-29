@@ -334,7 +334,7 @@ export function RunCreateForm({
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="max-w-3xl space-y-6">
+    <form noValidate onSubmit={(e) => void handleSubmit(e)} className="max-w-3xl space-y-6">
       {/* Basics */}
       <Card>
         <CardHeader>

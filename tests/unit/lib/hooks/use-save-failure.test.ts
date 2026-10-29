@@ -141,6 +141,65 @@ describe('useSaveFailure', () => {
     });
   });
 
+  it("shows react-hook-form's blocked fields as a count by Save, each named for focus", () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    act(() => {
+      result.current.report(new Error('boom'));
+    });
+    const before = result.current.failure;
+
+    act(() => {
+      result.current.invalid({
+        email: { type: 'invalid_string', message: 'Invalid email address' },
+      });
+    });
+
+    expect(result.current.failure).toEqual({
+      message: '1 field needs fixing.',
+      stale: false,
+      fields: [{ field: 'email', message: 'Invalid email address' }],
+    });
+    expect(result.current.failure).not.toBe(before);
+  });
+
+  it("puts a plain form's own messages by Save and says it blocked", () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    let blocked: boolean | undefined;
+
+    act(() => {
+      blocked = result.current.block([
+        { field: 'name', message: 'Name is required.' },
+        { field: 'signingSecret', message: 'Signing secret must be at least 16 characters.' },
+      ]);
+    });
+
+    expect(blocked).toBe(true);
+    expect(result.current.failure).toEqual({
+      message: 'Name is required. Signing secret must be at least 16 characters.',
+      stale: false,
+      fields: [
+        { field: 'name', message: 'Name is required.' },
+        { field: 'signingSecret', message: 'Signing secret must be at least 16 characters.' },
+      ],
+    });
+  });
+
+  it('lets the save through, and leaves the failure alone, when the plain check finds nothing', () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    act(() => {
+      result.current.report(new Error('boom'));
+    });
+    const before = result.current.failure;
+    let blocked: boolean | undefined;
+
+    act(() => {
+      blocked = result.current.block([]);
+    });
+
+    expect(blocked).toBe(false);
+    expect(result.current.failure).toBe(before);
+  });
+
   it('clears the last failure on every press, before the handler runs', () => {
     const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
     act(() => {
@@ -158,6 +217,82 @@ describe('useSaveFailure', () => {
 
     expect(result.current.failure).toBeNull();
     expect(handler).toHaveBeenCalledWith(event);
+  });
+
+  describe('a number field the browser could not read (t-964)', () => {
+    /**
+     * A form with a number field holding `typed`. happy-dom has no number
+     * parsing, so the browser's verdict is set the way a real one reports it:
+     * `validity.badInput`, with the value read back as ''.
+     */
+    function formWith(badInput: boolean) {
+      const form = document.createElement('form');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.name = 'globalMonthlyBudgetUsd';
+      Object.defineProperty(input, 'validity', { value: { badInput } });
+      form.append(input);
+      return form;
+    }
+    function submitEvent(form: HTMLFormElement) {
+      const preventDefault = vi.fn();
+      const event = { currentTarget: form, preventDefault } as unknown as Parameters<
+        ReturnType<ReturnType<typeof useSaveFailure>['submit']>
+      >[0];
+      return { event, preventDefault };
+    }
+
+    it('blocks the press before the handler, naming the field, instead of saving it as blank', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const handler = vi.fn();
+      const { event, preventDefault } = submitEvent(formWith(true));
+
+      act(() => {
+        result.current.submit(handler)(event);
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalled();
+      expect(result.current.failure).toEqual({
+        message: '1 field needs a number.',
+        stale: false,
+        fields: [{ field: 'globalMonthlyBudgetUsd', message: 'Enter a number.' }],
+      });
+    });
+
+    it('counts several, and skips a readable field beside them', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const form = formWith(true);
+      const second = form.querySelector('input')!.cloneNode() as HTMLInputElement;
+      second.name = 'defaultMaxCostPerTurnUsd';
+      Object.defineProperty(second, 'validity', { value: { badInput: true } });
+      const fine = document.createElement('input');
+      fine.name = 'maxConversationsPerUser';
+      form.append(second, fine);
+
+      act(() => {
+        result.current.submit(vi.fn())(submitEvent(form).event);
+      });
+
+      expect(result.current.failure?.message).toBe('2 fields need a number.');
+      expect(result.current.failure?.fields.map((f) => f.field)).toEqual([
+        'globalMonthlyBudgetUsd',
+        'defaultMaxCostPerTurnUsd',
+      ]);
+    });
+
+    it('lets a readable one through', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      const handler = vi.fn();
+      const { event } = submitEvent(formWith(false));
+
+      act(() => {
+        result.current.submit(handler)(event);
+      });
+
+      expect(handler).toHaveBeenCalledWith(event);
+      expect(result.current.failure).toBeNull();
+    });
   });
 
   it('clears on request', () => {

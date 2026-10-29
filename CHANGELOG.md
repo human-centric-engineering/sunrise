@@ -37,7 +37,14 @@ release process.
   form, and wraps submit so every press clears the last failure;
   `NO_SERVER_FIELDS` is its table for a page that places no field messages,
   and `report(err, context)` leads the message with what it was about (a list
-  row reported above its table).
+  row reported above its table). `invalid` is react-hook-form's `onInvalid`
+  (`handleSubmit(onSubmit, save.invalid)`), so a save the schema blocks says
+  how many fields need fixing by Save and focuses the first; `block(problems)`
+  does the same for a plain-state form's own checks. `submit` also blocks a
+  press while a number field holds something the browser can't read (`1,000`),
+  which would otherwise save as blank. **`invalidSave()`** and
+  **`unreadableNumbers()`** (`lib/errors/save-error.ts`) are the same for a
+  form that holds its failure itself (t-964).
   Also **`isStaleSave()`** (`lib/errors/save-error.ts`), for a page that only
   needs to know a save was refused as stale (§124).
 - **`apiErrorFromResponse()`** (`lib/api/client.ts`): the `APIClientError`
@@ -61,6 +68,15 @@ release process.
   line above it (`// save-error-box-ignore: <why>` inside parentheses, where
   JSX braces don't parse). Don't add your paths to `BOX_EXEMPTIONS`: that list is
   Sunrise's own (§124).
+  It also fails a `<form>` without `noValidate`: with a limit on any input
+  (`required`, `max`, `type="email"`), the browser blocks Save with its own
+  bubble before the form's validation runs, so the shared error never shows.
+  **Forks:** each `<form>` of yours fails `validate` until it has
+  `noValidate`. Before adding it, check the form's schema holds every limit
+  its inputs declare (a `type="number"` with no `step` means whole numbers:
+  `.int()`), or the check moves to the server; then pass `save.invalid` to
+  `handleSubmit`. A form that must keep the browser's checks takes
+  `{/* browser-validation-ignore: <why> */}` on the line above it (t-964).
 
 ### Changed
 

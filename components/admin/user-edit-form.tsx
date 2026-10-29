@@ -166,7 +166,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
             <CardTitle>Edit User</CardTitle>
             <CardDescription>Update user information and permissions</CardDescription>
           </CardHeader>
-          <form onSubmit={save.submit(handleSubmit(onSubmit))}>
+          <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
             <CardContent className="space-y-6">
               {/* Success message */}
               {success && (

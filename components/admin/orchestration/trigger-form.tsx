@@ -124,6 +124,18 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
 
   async function handleSubmit(e?: BaseSyntheticEvent) {
     e?.preventDefault();
+    // The secret input shows for hmac unless an edit keeps the stored one.
+    // Required when it creates or rotates; otherwise checked once typed in.
+    const secretShown =
+      channel === 'hmac' && !(isEdit && initial?.hasSigningSecret && !rotateSecret);
+    const secretRequired = !isEdit || rotateSecret;
+    const problems = [
+      ...(name.trim() ? [] : [{ field: 'name', message: 'Name is required.' }]),
+      ...(secretShown && (secretRequired || signingSecret !== '') && signingSecret.length < 16
+        ? [{ field: 'signingSecret', message: 'Signing secret must be at least 16 characters.' }]
+        : []),
+    ];
+    if (save.block(problems)) return;
     setSubmitting(true);
 
     const eventTypes = eventTypesRaw
@@ -167,7 +179,7 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
   }
 
   return (
-    <form onSubmit={save.submit(handleSubmit)} className="space-y-6">
+    <form noValidate onSubmit={save.submit(handleSubmit)} className="space-y-6">
       {/* Channel */}
       <div className="space-y-2">
         <Label htmlFor="channel">

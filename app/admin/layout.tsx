@@ -151,7 +151,9 @@ export default async function AdminLayout({
             admin there is still looking at the entered org's. */}
         <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />
         <InFlightExecutionBanner />
-        <main className="flex-1 overflow-y-auto overscroll-contain">
+        {/* Scroll padding: a field brought into view by focus clears the
+            sticky Save bars forms pin to the top or bottom of this area. */}
+        <main className="flex-1 scroll-py-32 overflow-y-auto overscroll-contain">
           <div className="p-6">
             <SharedSettingsAccessProvider
               readOnly={sharedSettings.readOnly}

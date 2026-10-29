@@ -15,6 +15,8 @@ import {
   applyExemptions,
   BOX_EXEMPTIONS,
   formatBox,
+  formatBrowserValidatedForm,
+  scanBrowserValidation,
   scanSaveErrorBoxes,
 } from '@/scripts/ci/save-error-boxes';
 
@@ -362,6 +364,60 @@ describe('scripts/ci/save-error-boxes', () => {
   it('formats a box with where it is and what it shows', () => {
     expect(formatBox({ path: 'components/x.tsx', line: 14, state: 'error' })).toBe(
       'components/x.tsx:14  renders `error` in a red box of its own'
+    );
+  });
+});
+
+describe('scanBrowserValidation', () => {
+  /** A component returning `jsx`, with the form on line 3. */
+  const form = (jsx: string) =>
+    ['export function Form() {', '  return (', jsx, '  );', '}'].join('\n');
+  const scan = (source: string) => scanBrowserValidation(source, 'components/f.tsx');
+
+  it('reports a <form> without noValidate, with its line', () => {
+    expect(scan(form('<form onSubmit={save}><input required /></form>'))).toEqual([
+      { path: 'components/f.tsx', line: 3 },
+    ]);
+  });
+
+  it('reports one with no limits in view: they can come from a component in another file', () => {
+    expect(scan(form('<form onSubmit={save}><Section /></form>'))).toHaveLength(1);
+  });
+
+  it('passes noValidate and noValidate={true}', () => {
+    expect(scan(form('<form noValidate onSubmit={save}><input required /></form>'))).toEqual([]);
+    expect(scan(form('<form noValidate={true}><input required /></form>'))).toEqual([]);
+  });
+
+  it('reports noValidate={false} and a computed value it cannot read', () => {
+    expect(scan(form('<form noValidate={false}><input required /></form>'))).toHaveLength(1);
+    expect(scan(form('<form noValidate={off}><input required /></form>'))).toHaveLength(1);
+  });
+
+  it('reports each form in a file, and a self-closing one', () => {
+    const source = form('<>\n<form noValidate />\n<form />\n<form></form>\n</>');
+    expect(scan(source).map((f) => f.line)).toEqual([5, 6]);
+  });
+
+  it('ignores a component named Form: it is not the element', () => {
+    expect(scan(form('<Form {...methods}><input required /></Form>'))).toEqual([]);
+  });
+
+  it('excuses a form with the marker and a reason on the line above, in either comment form', () => {
+    const jsx = (marker: string) => `<>\n${marker}\n<form><input required /></form>\n</>`;
+    expect(scan(form(jsx('{/* browser-validation-ignore: a search box */}')))).toEqual([]);
+    expect(scan(form(jsx('// browser-validation-ignore: a search box')))).toEqual([]);
+  });
+
+  it('does not excuse the marker with no reason', () => {
+    expect(
+      scan(form('<>\n{/* browser-validation-ignore: */}\n<form><input required /></form>\n</>'))
+    ).toHaveLength(1);
+  });
+
+  it('formats a form with where it is and what it does', () => {
+    expect(formatBrowserValidatedForm({ path: 'components/x.tsx', line: 9 })).toBe(
+      'components/x.tsx:9  <form> without noValidate: the browser blocks Save first'
     );
   });
 });

@@ -633,6 +633,21 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       save.show('Pick a provider type before submitting.');
       return;
     }
+    const problems = [
+      ...(draft.name.trim() ? [] : [{ field: 'provider-name', message: 'Name is required.' }]),
+      ...(/^[a-z0-9-]+$/.test(draft.slug)
+        ? []
+        : [
+            {
+              field: 'provider-slug',
+              message: 'Slug must be lowercase letters, numbers and hyphens.',
+            },
+          ]),
+      ...(draft.providerType === 'openai-compatible' && !draft.baseUrl.trim()
+        ? [{ field: 'provider-base-url', message: 'Base URL is required.' }]
+        : []),
+    ];
+    if (save.block(problems)) return;
     setSubmitting(true);
     try {
       const payload: Record<string, unknown> = {
@@ -778,6 +793,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   // single source of "no API key" UX.
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         void handleManualSubmit(e);
       }}

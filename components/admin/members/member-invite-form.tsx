@@ -130,7 +130,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
       </CardHeader>
       <CardContent>
         <form
-          onSubmit={save.submit(handleSubmit((data) => send(data, false)))}
+          onSubmit={save.submit(handleSubmit((data) => send(data, false), save.invalid))}
           className="space-y-4"
           noValidate
         >

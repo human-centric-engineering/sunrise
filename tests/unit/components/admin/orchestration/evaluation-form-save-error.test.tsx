@@ -83,7 +83,7 @@ describe('EvaluationForm — failed save', () => {
     await waitFor(() => expect(document.querySelector('[name="title"]')).toHaveFocus());
   });
 
-  it('clears the failure on the next press, even one client validation blocks', async () => {
+  it('replaces the failure with the blocked fields when client validation blocks the next press', async () => {
     const { apiClient, APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('Agent not found', 'NOT_FOUND', 404)
@@ -97,6 +97,11 @@ describe('EvaluationForm — failed save', () => {
     await user.click(create);
 
     expect(await screen.findByText('Title is required')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.')
+    );
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Agent not found');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /title/i })).toHaveFocus());
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 });

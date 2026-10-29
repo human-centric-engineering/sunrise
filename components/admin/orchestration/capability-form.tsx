@@ -1056,7 +1056,11 @@ export function CapabilityForm({
   })();
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))} className="space-y-6">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}
+      className="space-y-6"
+    >
       {/* Sticky action bar, with the save error under it so it stays in view */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 space-y-2 border-b px-2 py-3 backdrop-blur">
         <div className="flex items-center justify-between">

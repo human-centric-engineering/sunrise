@@ -126,7 +126,11 @@ export function PasswordForm() {
   }
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-6"
+    >
       {/* Current Password */}
       <div className="space-y-2">
         <Label htmlFor="currentPassword">Current Password</Label>

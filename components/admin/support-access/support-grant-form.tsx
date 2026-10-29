@@ -136,7 +136,11 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4" noValidate>
+        <form
+          onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+          className="space-y-4"
+          noValidate
+        >
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="grant-level" className="flex items-center gap-1">

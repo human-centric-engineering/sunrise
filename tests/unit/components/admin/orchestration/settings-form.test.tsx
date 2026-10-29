@@ -1295,4 +1295,48 @@ describe('SettingsForm', () => {
       expect(screen.getByText('Safety')).toBeInTheDocument();
     });
   });
+
+  // t-964: the owner's §124 ship check. Vector weight 15 got the browser's own
+  // "must be less than or equal to 2" bubble, not the shared save error.
+  describe('a save its own validation blocks', () => {
+    it('shows the message under the field and the count by Save, focused there, sending nothing', async () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const vectorWeight = document.getElementById('vectorWeight') as HTMLInputElement;
+      expect(vectorWeight.closest('form')).toHaveAttribute('novalidate');
+
+      await user.clear(vectorWeight);
+      await user.type(vectorWeight, '15');
+      const save = screen.getByRole('button', { name: /save settings/i });
+      await user.click(save);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('1 field needs fixing.');
+      expect(alert.nextElementSibling).toContainElement(save);
+      const message = vectorWeight.parentElement!.querySelector('p.text-red-600');
+      expect(message?.textContent).toMatch(/2/);
+      await waitFor(() => expect(vectorWeight).toHaveFocus());
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('blocks a budget the browser could not read as a number, instead of saving no cap', async () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const budget = document.getElementById('globalMonthlyBudgetUsd') as HTMLInputElement;
+      // What a browser reports for "1,000" typed into a number input: the value
+      // reads as '', which the schema takes for a blank (no cap).
+      await user.clear(budget);
+      Object.defineProperty(budget, 'validity', { value: { badInput: true } });
+
+      await user.click(screen.getByRole('button', { name: /save settings/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('1 field needs a number.');
+      await waitFor(() => expect(budget).toHaveFocus());
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+  });
 });
