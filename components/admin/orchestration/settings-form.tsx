@@ -36,7 +36,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiClient } from '@/lib/api/client';
-import { applyFieldErrors, readSaveError, type SaveFailure } from '@/lib/errors/save-error';
+import {
+  applyFieldErrors,
+  invalidSave,
+  readSaveError,
+  type SaveFailure,
+} from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -249,9 +254,7 @@ export function SettingsForm({
   allowPrivateEscalationWebhook = false,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
-  const [saveFailure, setSaveFailure] = React.useState<SaveFailure<keyof SettingsFormData> | null>(
-    null
-  );
+  const [saveFailure, setSaveFailure] = React.useState<SaveFailure | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
@@ -506,10 +509,13 @@ export function SettingsForm({
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         // Cleared on every press: one client validation blocks never reaches onSubmit.
         setSaveFailure(null);
-        void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e);
+        void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0], (errors) =>
+          setSaveFailure(invalidSave(errors))
+        )(e);
       }}
       className="max-w-3xl space-y-6"
     >

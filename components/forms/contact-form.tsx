@@ -109,7 +109,11 @@ export function ContactForm() {
   }
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-4"
+    >
       {/* Hidden honeypot field - invisible to real users, attracts bots */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
         <label htmlFor="website">Website (leave blank)</label>

@@ -146,4 +146,29 @@ describe('ExperimentsList — failed save', () => {
     expect(within(dialog).getByText('Short vs Long')).toBeInTheDocument();
     expect(screen.queryByText(/Boom A/)).not.toBeInTheDocument();
   });
+
+  it('blocks a blank variant label by Save, focused on it, before any request (t-964)', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockImplementation((url: string) =>
+      Promise.resolve(url.includes('/agents') ? [AGENT] : [])
+    );
+    const user = userEvent.setup();
+    render(<ExperimentsList />);
+
+    await user.click(await screen.findByRole('button', { name: /new experiment/i }));
+    await user.type(screen.getByPlaceholderText(/e\.g\. Formal vs casual tone/i), 'New Exp');
+    await user.click(await screen.findByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'Support Bot' }));
+    const second = screen.getByPlaceholderText('Variant 2 label');
+    await user.clear(second);
+
+    const create = screen.getByRole('button', { name: /create experiment/i });
+    await user.click(create);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Variant 2 needs a label.');
+    expect(alert.nextElementSibling).toContainElement(create);
+    await waitFor(() => expect(second).toHaveFocus());
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
 });

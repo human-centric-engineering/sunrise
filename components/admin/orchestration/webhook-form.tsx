@@ -26,7 +26,12 @@ import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-selec
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
-import { applyFieldErrors, readSaveError, type SaveFailure } from '@/lib/errors/save-error';
+import {
+  applyFieldErrors,
+  invalidSave,
+  readSaveError,
+  type SaveFailure,
+} from '@/lib/errors/save-error';
 import { API } from '@/lib/api/endpoints';
 import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
 import { useTimeout } from '@/lib/hooks/use-timeout';
@@ -203,7 +208,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
-  const [saveFailure, setSaveFailure] = useState<SaveFailure<keyof WebhookFormData> | null>(null);
+  const [saveFailure, setSaveFailure] = useState<SaveFailure | null>(null);
   const [secretRevealed, setSecretRevealed] = useState(false);
   // Briefly latched to give the copy button a "✓ Copied" affordance.
   const [secretCopied, setSecretCopied] = useState(false);
@@ -424,10 +429,11 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         // Cleared on every press: one client validation blocks never reaches onSubmit.
         setSaveFailure(null);
-        void handleSubmit(onSubmit)(e);
+        void handleSubmit(onSubmit, (errors) => setSaveFailure(invalidSave(errors)))(e);
       }}
       className="max-w-2xl space-y-6"
     >

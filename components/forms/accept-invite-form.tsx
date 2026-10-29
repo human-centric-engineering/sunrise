@@ -309,7 +309,11 @@ export function AcceptInviteForm() {
           />
 
           {/* Password Form Section */}
-          <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+          <form
+            noValidate
+            onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+            className="space-y-4"
+          >
             {/* Hidden Token Field */}
             <input type="hidden" {...register('token')} />
 

@@ -94,8 +94,9 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
 
   return (
     <form
+      noValidate
       onSubmit={save.submit(async (e) => {
-        await handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0])(e);
+        await handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0], save.invalid)(e);
       })}
     >
       <Card>

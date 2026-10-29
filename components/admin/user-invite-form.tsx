@@ -235,7 +235,7 @@ export function UserInviteForm() {
             account.
           </CardDescription>
         </CardHeader>
-        <form onSubmit={save.submit(handleSubmit(onSubmit))}>
+        <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
           <CardContent className="space-y-6">
             {/* Name field */}
             <div className="space-y-2">

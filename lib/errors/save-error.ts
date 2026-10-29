@@ -17,6 +17,7 @@
  * @see .context/ui/form-errors.md
  */
 
+import type { FieldErrors, FieldValues } from 'react-hook-form';
 import { z } from 'zod';
 
 import { APIClientError } from '@/lib/api/client';
@@ -102,6 +103,44 @@ export function isStaleSave(err: unknown): boolean {
 /** What `<SaveError>` says by Save when `n` named fields need fixing. */
 export function fieldCount(n: number): string {
   return n === 1 ? '1 field needs fixing.' : `${n} fields need fixing.`;
+}
+
+/**
+ * A save the form's own validation blocked (react-hook-form's `onInvalid`),
+ * as `<SaveError>` shows it: how many fields need fixing, by Save, with each
+ * field named so focus goes to the first. Each field already shows its own
+ * message. Prefer `useSaveFailure().invalid`; this is for a form that holds
+ * its failure itself.
+ */
+export function invalidSave<TValues extends FieldValues>(
+  errors: FieldErrors<TValues>
+): SaveFailure<string> {
+  const fields = blockedFields(errors);
+  const root = errors.root?.message;
+  return {
+    message:
+      fields.length > 0 ? fieldCount(fields.length) : (root ?? 'Check the form and try again.'),
+    stale: false,
+    fields,
+  };
+}
+
+/**
+ * Each blocked field, by the name it was registered under (`variants.0.label`
+ * for a field in an array), with its message, in the order react-hook-form
+ * holds them. An entry with a `type` is a field's error; anything else holds
+ * more fields. `root` is the form's own key, not a field.
+ */
+function blockedFields(errors: object, prefix = ''): Array<{ field: string; message: string }> {
+  return Object.entries(errors).flatMap(([key, entry]: [string, unknown]) => {
+    if ((!prefix && key === 'root') || !entry || typeof entry !== 'object') return [];
+    const field = prefix ? `${prefix}.${key}` : key;
+    if ('type' in entry && typeof entry.type === 'string') {
+      const message = 'message' in entry && typeof entry.message === 'string' ? entry.message : '';
+      return [{ field, message: message || 'Check this field.' }];
+    }
+    return blockedFields(entry, field);
+  });
 }
 
 export function readSaveError(err: unknown, options: { fallback: string }): SaveFailure;

@@ -16,6 +16,7 @@ was also amber, which doesn't read as a failure.
 | `readSaveError()`        | `lib/errors/save-error.ts`                             | Turns what a save threw into a `SaveFailure`: a message, the named fields, `stale`                     |
 | `applyFieldErrors()`     | `lib/errors/save-error.ts`                             | Puts a failure's field messages on a react-hook-form form through `setError`                           |
 | `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
+| `invalidSave()`          | `lib/errors/save-error.ts`                             | A save react-hook-form's validation blocked, as a failure: the field count, each field named           |
 | `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
 | `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
 | `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure as it opens and closes                      |
@@ -27,8 +28,9 @@ it is the inline box for a client-side message or an auth-flow code (an OAuth
 failure that comes back in the URL, shown by Sign In until the form's own
 sign-in fails).
 
-**A hand-drawn save-error box fails the build**: `npm run check:save-errors`
-(in `npm run validate`, and its own CI step). See [The check](#the-check).
+**A hand-drawn save-error box fails the build**, and so does a `<form>`
+without `noValidate`: `npm run check:save-errors` (in `npm run validate`, and
+its own CI step). See [The check](#the-check).
 
 ## The rules
 
@@ -52,6 +54,16 @@ sign-in fails).
    the summary text instead.
 6. **No toast.** The app has no toast system, and the stale notice needs room
    for its explanation and its Reload and Copy buttons.
+7. **The form validates, not the browser.** Every `<form>` sets `noValidate`.
+   Without it, a limit on an input (`required`, `min`/`max`, `type="email"`,
+   `pattern`, `minLength`, a `type="number"` with no `step`) makes the browser
+   block Save with a bubble of its own, before the form's validation runs, so
+   none of the above happens. Validation stays client-side: before adding
+   `noValidate`, check the form's schema (or, for a plain-state form, its Save
+   handler) holds every limit its inputs declare, and keep the attributes for
+   the spinner and keyboard. A decimal `step` (`0.1`) is a spinner increment
+   here, not a rule; `step` left out means whole numbers, so the schema says
+   `.int()`.
 
 ## Reading the failure
 
@@ -129,7 +141,7 @@ const onSubmit = async (values: FormData) => {
   }
 };
 
-<form onSubmit={save.submit(handleSubmit(onSubmit))}>
+<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
 
 // beside Save:
 <div className="sticky bottom-4 space-y-2">
@@ -139,6 +151,11 @@ const onSubmit = async (values: FormData) => {
 ```
 
 The field renders its message as it already does (`errors.x?.message`).
+`save.invalid` is react-hook-form's `onInvalid`: when the form's own
+validation blocks Save, it puts `"2 fields need fixing."` by Save and focus on
+the first blocked field in page order (a field in an array by its registered
+path, `variants.1.label`). A form that holds its failure in its own state
+passes `(errors) => setSaveFailure(invalidSave(errors))` instead.
 `report()` passes `shouldFocus: false` to `setError`, because `<SaveError>`
 does the focusing and picks the first field in page order. It returns the
 failure, so a caller can branch on `stale`.
@@ -167,6 +184,15 @@ render. A plain form that does place messages passes a
 table (or none, to take server paths as field names), and renders each
 `save.failure.fields` entry under its field. Call `save.clear()` first thing in
 the Save handler when there is no `<form onSubmit>` to wrap.
+
+Its own checks go through `save.block()`, with each field named as its input
+is (`id` or `name`), so their messages show by Save and focus goes to the
+first. It returns whether it blocked:
+
+```tsx
+const problems = name.trim() ? [] : [{ field: 'name', message: 'Name is required.' }];
+if (save.block(problems)) return;
+```
 
 ## Recipe: an auth flow
 
@@ -381,6 +407,14 @@ excuses. **A fork** doesn't edit that core file: it puts
 `{/* save-error-box-ignore: <why> */}` on the line directly above the box, or
 `// save-error-box-ignore: <why>` where the box sits inside parentheses
 (`{error && (`), since JSX braces don't parse there. The reason is required.
+
+**A `<form>` without `noValidate`** is reported too
+(`scanBrowserValidation`), whatever its inputs: an input from another file
+brings its limits with it, and a scan of one file can't see them. On a form
+with no limits `noValidate` changes nothing. `noValidate={false}`, or a value
+it can't read, counts as missing. A form that must keep the browser's checks
+puts `{/* browser-validation-ignore: <why> */}` on the line above the
+`<form>` (or `//` inside parentheses); the reason is required.
 
 What it can't see is listed at the top of the file (a reducer's state, a
 setter passed to a helper, a client other than these three). It also matches

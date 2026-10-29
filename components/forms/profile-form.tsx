@@ -152,7 +152,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
   };
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-6"
+    >
       {/* Name */}
       <div className="space-y-2">
         <Label htmlFor="name">Name</Label>

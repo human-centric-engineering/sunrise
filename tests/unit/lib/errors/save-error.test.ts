@@ -1,5 +1,5 @@
 /**
- * readSaveError / applyFieldErrors tests
+ * readSaveError / applyFieldErrors / invalidSave tests
  *
  * The helper is the only place that knows both server field-error shapes, so
  * each shape is tested landing on the fields it names, through a form's own
@@ -8,10 +8,13 @@
  * @see lib/errors/save-error.ts
  */
 
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { FieldErrors, FieldValues } from 'react-hook-form';
 import { describe, it, expect, vi } from 'vitest';
+import { z } from 'zod';
 
 import { APIClientError } from '@/lib/api/client';
-import { applyFieldErrors, isStaleSave, readSaveError } from '@/lib/errors/save-error';
+import { applyFieldErrors, invalidSave, isStaleSave, readSaveError } from '@/lib/errors/save-error';
 
 /** `validateRequestBody`'s shape (`lib/api/validation.ts`). */
 function listError(errors: Array<{ path: string; message: string }>) {
@@ -255,5 +258,76 @@ describe('isStaleSave', () => {
   it('is false for any other refusal, and for an error the API never sent', () => {
     expect(isStaleSave(new APIClientError('Conflict', 'CONFLICT', 409))).toBe(false);
     expect(isStaleSave(new Error('STALE_RECORD'))).toBe(false);
+  });
+});
+
+/** What react-hook-form hands `onInvalid` for `values`, from its real Zod resolver. */
+async function resolverErrors<T extends z.ZodType<FieldValues, FieldValues>>(
+  schema: T,
+  values: FieldValues
+) {
+  const result = await zodResolver(schema)(values, undefined, {
+    fields: {},
+    shouldUseNativeValidation: false,
+  });
+  return result.errors;
+}
+
+describe('invalidSave', () => {
+  it('counts the blocked fields by Save and names each, in the order the form holds them', async () => {
+    const schema = z.object({
+      name: z.string().min(1, 'Name is required'),
+      weight: z.number().max(2, 'At most 2'),
+      note: z.string(),
+    });
+
+    const failure = invalidSave(await resolverErrors(schema, { name: '', weight: 15, note: '' }));
+
+    expect(failure).toEqual({
+      message: '2 fields need fixing.',
+      stale: false,
+      fields: [
+        { field: 'name', message: 'Name is required' },
+        { field: 'weight', message: 'At most 2' },
+      ],
+    });
+  });
+
+  it('names a field in an array by its registered path, so focus can find it', async () => {
+    const schema = z.object({
+      variants: z.array(z.object({ label: z.string().min(1, 'Label is required') })),
+    });
+
+    const failure = invalidSave(
+      await resolverErrors(schema, { variants: [{ label: 'A' }, { label: '' }] })
+    );
+
+    expect(failure.message).toBe('1 field needs fixing.');
+    expect(failure.fields).toEqual([{ field: 'variants.1.label', message: 'Label is required' }]);
+  });
+
+  it('treats a field called "type" as a field, not as part of an error', async () => {
+    const schema = z.object({ type: z.enum(['a', 'b'], { message: 'Pick a type' }) });
+
+    const failure = invalidSave(await resolverErrors(schema, { type: 'c' }));
+
+    expect(failure.fields).toEqual([{ field: 'type', message: 'Pick a type' }]);
+  });
+
+  it('says the form-level message when no field is blocked, and never "0 fields"', () => {
+    // react-hook-form's `root` type also indexes sub-keys; a plain one is its common shape.
+    const errors = { root: { type: 'server', message: 'Pick at least one' } } as FieldErrors;
+    expect(invalidSave(errors)).toEqual({
+      message: 'Pick at least one',
+      stale: false,
+      fields: [],
+    });
+    expect(invalidSave({}).message).toBe('Check the form and try again.');
+  });
+
+  it('gives a field with no message of its own a prompt, so the summary still names it', () => {
+    expect(invalidSave({ slug: { type: 'validate' } }).fields).toEqual([
+      { field: 'slug', message: 'Check this field.' },
+    ]);
   });
 });

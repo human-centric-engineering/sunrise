@@ -17,7 +17,7 @@ Production-ready forms in Sunrise use one composition: `react-hook-form` for sta
 
 **Required by CLAUDE.md:** every non-trivial form field gets a `<FieldHelp>` ⓘ popover. See [`.context/ui/contextual-help.md`](../../../.context/ui/contextual-help.md) for the full spec.
 
-**A failed save is shown one way** (§124): `<SaveError>`, fed by `useSaveFailure()`, directly beside the Save button that was pressed. It is red, announced, and brings itself into view and takes focus; server field errors land under their fields. Never draw your own red box for it — `npm run check:save-errors` (part of `npm run validate`, and a CI step) fails on one. Full spec: [`.context/ui/form-errors.md`](../../../.context/ui/form-errors.md).
+**A failed save is shown one way** (§124): `<SaveError>`, fed by `useSaveFailure()`, directly beside the Save button that was pressed. It is red, announced, and brings itself into view and takes focus; server field errors land under their fields. Never draw your own red box for it — `npm run check:save-errors` (part of `npm run validate`, and a CI step) fails on one. Every `<form>` sets `noValidate`, so the schema blocks a bad value through the same error rather than the browser's bubble; the same check fails a `<form>` without it. Full spec: [`.context/ui/form-errors.md`](../../../.context/ui/form-errors.md).
 
 ## Core Patterns
 
@@ -83,7 +83,7 @@ export function YourForm() {
   };
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="field">Field Label</Label>
         <Input id="field" disabled={isLoading} {...register('field')} />
@@ -351,7 +351,8 @@ if (success) {
 - [ ] `mode: 'onTouched'` set on useForm
 - [ ] Loading state disables all inputs and button
 - [ ] A failed save shown by `<SaveError>` from `useSaveFailure()`, directly beside the Save button (no hand-drawn red box: `npm run check:save-errors`)
-- [ ] `<form onSubmit={save.submit(handleSubmit(onSubmit))}>`, so each press clears the last failure
+- [ ] `<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>`: each press clears the last failure, and a save the schema blocks shows by Save
+- [ ] Every limit an input declares (`required`, `min`/`max`, `type="email"`, `pattern`, `minLength`, a `type="number"` with no `step` → `.int()`) is in the schema too: `noValidate` turns the browser's checks off, and `npm run check:save-errors` fails a `<form>` without it
 - [ ] Server field errors mapped in a `SERVER_FIELDS` table, for fields that render their message
 - [ ] Success handling (redirect or message)
 - [ ] FormError component used for field errors

@@ -1,5 +1,5 @@
 /**
- * Hand-drawn save-error boxes check: CLI.
+ * Hand-drawn save-error boxes check, and forms the browser validates first: CLI.
  *
  * The rules, and why this is needed at all, live in
  * `scripts/ci/save-error-boxes.ts`. This file only walks `components/` and
@@ -19,7 +19,10 @@ import { posix, sep } from 'path';
 import {
   applyExemptions,
   formatBox,
+  formatBrowserValidatedForm,
+  scanBrowserValidation,
   scanSaveErrorBoxes,
+  type BrowserValidatedForm,
   type SaveErrorBox,
 } from '@/scripts/ci/save-error-boxes';
 
@@ -53,6 +56,7 @@ export function main(root = process.cwd()): number {
   }
 
   const found: SaveErrorBox[] = [];
+  const forms: BrowserValidatedForm[] = [];
   const unreadable: string[] = [];
   for (const file of files) {
     let source: string;
@@ -65,6 +69,7 @@ export function main(root = process.cwd()): number {
       continue;
     }
     found.push(...scanSaveErrorBoxes(source, file));
+    forms.push(...scanBrowserValidation(source, file));
   }
 
   const { boxes, staleExemptions } = applyExemptions(found);
@@ -98,7 +103,22 @@ export function main(root = process.cwd()): number {
     );
   }
 
-  if (boxes.length > 0 || staleExemptions.length > 0 || unreadable.length > 0) return 1;
+  if (forms.length > 0) {
+    console.error(`Forms the browser validates before the form does (${forms.length}):`);
+    for (const form of forms) console.error(`  ${formatBrowserValidatedForm(form)}`);
+    console.error('');
+    console.error(
+      'Add noValidate to the <form>, after checking its schema (or its own code) holds every ' +
+        "limit its inputs declare, and pass save.invalid as handleSubmit's second argument so " +
+        "a blocked save shows by Save. A form that must keep the browser's checks: put " +
+        '{/* browser-validation-ignore: <why> */} on the line above it. See ' +
+        '.context/ui/form-errors.md.'
+    );
+  }
+
+  if (boxes.length > 0 || staleExemptions.length > 0 || unreadable.length > 0 || forms.length > 0) {
+    return 1;
+  }
 
   console.log(`Save-error boxes OK (${files.length} files under ${ROOTS.join('/, ')}/ scanned).`);
   return 0;

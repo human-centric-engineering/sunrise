@@ -465,7 +465,11 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
   }
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-6">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-6"
+    >
       {/* Sticky action bar, with the save error under it so it stays in view */}
       <div className="bg-background sticky top-0 z-10 space-y-2 border-b pb-4">
         <div className="flex items-center justify-between">

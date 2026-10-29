@@ -165,7 +165,11 @@ function RequestResetForm() {
 
   // Form state - show email input
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-4"
+    >
       {/* Show contextual message for URL errors (expired/invalid links) */}
       {urlErrorMessage && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/10 dark:text-amber-400">
@@ -292,7 +296,11 @@ function CompleteResetForm({ token }: { token: string }) {
 
   // Form state - show password reset form
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="space-y-4"
+    >
       <input type="hidden" {...register('token')} />
 
       {/* Password Field */}

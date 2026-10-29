@@ -171,7 +171,11 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
               : 'Create a new feature flag to control feature availability.'}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={save.submit(handleSubmit(onSubmit))} className="space-y-4">
+        <form
+          noValidate
+          onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+          className="space-y-4"
+        >
           <div className="grid gap-4 pt-4">
             {/* Name field */}
             <div className="grid gap-2">

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SetupWizard } from '@/components/admin/orchestration/setup-wizard';
@@ -105,5 +105,52 @@ describe('SetupWizard provider step — failed create', () => {
     expect(alert).toHaveTextContent('Slug "anthropic" is already taken');
     expect(alert.nextElementSibling).toContainElement(create);
     expect(alert).toHaveFocus();
+  });
+
+  describe("the manual form's own checks, now the browser's are off (t-964)", () => {
+    const posted = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([url, init]) =>
+            init?.method === 'POST' && typeof url === 'string' && url.includes('/providers')
+        );
+
+    async function openManual(user: ReturnType<typeof userEvent.setup>, type: RegExp) {
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+      await user.click(await screen.findByRole('button', { name: /configure manually instead/i }));
+      await user.click(screen.getByRole('combobox', { name: /provider type/i }));
+      await user.click(screen.getByRole('option', { name: type }));
+    }
+
+    it('blocks a blank name and a slug outside [a-z0-9-] by Save, focused on Name, before any request', async () => {
+      const user = userEvent.setup();
+      await openManual(user, /anthropic/i);
+      await user.type(document.getElementById('provider-slug')!, 'Anthropic Prod');
+
+      const create = screen.getByRole('button', { name: /create provider/i });
+      await user.click(create);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(
+        'Name is required. Slug must be lowercase letters, numbers and hyphens.'
+      );
+      expect(alert.nextElementSibling).toContainElement(create);
+      await waitFor(() => expect(document.getElementById('provider-name')).toHaveFocus());
+      expect(posted()).toEqual([]);
+    });
+
+    it('blocks an OpenAI-compatible provider with no base URL, before any request', async () => {
+      const user = userEvent.setup();
+      await openManual(user, /openai-compatible/i);
+      await user.type(document.getElementById('provider-name')!, 'Local');
+      await user.type(document.getElementById('provider-slug')!, 'local');
+
+      await user.click(screen.getByRole('button', { name: /create provider/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Base URL is required.');
+      await waitFor(() => expect(document.getElementById('provider-base-url')).toHaveFocus());
+      expect(posted()).toEqual([]);
+    });
   });
 });

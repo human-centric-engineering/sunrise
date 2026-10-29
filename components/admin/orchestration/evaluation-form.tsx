@@ -102,7 +102,11 @@ export function EvaluationForm({ agents }: EvaluationFormProps) {
   };
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))} className="max-w-xl space-y-6">
+    <form
+      noValidate
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+      className="max-w-xl space-y-6"
+    >
       {/* Agent */}
       <div className="space-y-2">
         <Label htmlFor="agentId">

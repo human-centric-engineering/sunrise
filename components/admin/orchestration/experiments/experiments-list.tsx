@@ -148,9 +148,20 @@ function CreateExperimentForm({
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (!name.trim() || !agentId) return;
+    save.clear();
+    if (
+      save.block(
+        variants.flatMap((v, i) =>
+          v.label.trim()
+            ? []
+            : [{ field: `variant-${i}`, message: `Variant ${i + 1} needs a label.` }]
+        )
+      )
+    ) {
+      return;
+    }
 
     setSubmitting(true);
-    save.clear();
     try {
       await apiClient.post(ENDPOINT, {
         body: {
@@ -174,7 +185,7 @@ function CreateExperimentForm({
         <CardTitle className="text-base">New Experiment</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        <form noValidate onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           {/* Name */}
           <div className="space-y-1.5">
             <Label htmlFor="exp-name">
@@ -267,6 +278,7 @@ function CreateExperimentForm({
               {variants.map((v, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <Input
+                    id={`variant-${i}`}
                     value={v.label}
                     onChange={(e) => updateVariantLabel(i, e.target.value)}
                     placeholder={`Variant ${i + 1} label`}

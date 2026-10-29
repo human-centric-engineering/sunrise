@@ -117,4 +117,92 @@ describe('TriggerForm — failed save', () => {
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
+
+  describe("the form's own checks, now the browser's are off (t-964)", () => {
+    function renderHmacEdit() {
+      render(
+        <TriggerForm
+          mode="edit"
+          initial={{
+            id: 'trig_1',
+            channel: 'hmac',
+            name: 'HMAC integration',
+            workflowId: 'wf_1',
+            metadata: {},
+            isEnabled: true,
+            hasSigningSecret: true,
+          }}
+          workflows={WORKFLOWS}
+          agents={[]}
+          enabledChannels={['hmac']}
+          baseUrl="https://app.example.com"
+        />
+      );
+    }
+
+    it('blocks a blank name by Save, focused on Name, before any request', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
+
+      await user.click(screen.getByRole('button', { name: 'Create trigger' }));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Name is required.');
+      expect(alert.nextElementSibling).toContainElement(
+        screen.getByRole('button', { name: 'Create trigger' })
+      );
+      await waitFor(() => expect(screen.getByLabelText('Name')).toHaveFocus());
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('blocks a rotated signing secret under 16 characters, before any request', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      renderHmacEdit();
+      await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+      const secret = screen.getByPlaceholderText('64 hex chars recommended');
+      fireEvent.change(secret, { target: { value: 'short' } });
+
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Signing secret must be at least 16 characters.'
+      );
+      await waitFor(() => expect(secret).toHaveFocus());
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('sends a rotated secret of 16 characters', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+      const user = userEvent.setup();
+      renderHmacEdit();
+      await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+      fireEvent.change(screen.getByPlaceholderText('64 hex chars recommended'), {
+        target: { value: 'a'.repeat(16) },
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledOnce());
+      expect(vi.mocked(apiClient.patch).mock.calls[0][1]).toMatchObject({
+        body: { signingSecret: 'a'.repeat(16) },
+      });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('does not check a secret an edit is not rotating, since none is sent', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+      const user = userEvent.setup();
+      renderHmacEdit();
+
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledOnce());
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
 });

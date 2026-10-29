@@ -502,6 +502,68 @@ export const BOX_EXEMPTIONS: Readonly<Record<string, string>> = {
   'components/admin/orchestration/setup-wizard.tsx#result': RUN + ' A provider’s connection test.',
 };
 
+/**
+ * A `<form>` that lets the browser validate first (§124 t-964). With a limit
+ * on any of its inputs (`required`, `min`, `max`, `type="email"`, `pattern`,
+ * `minLength`, a `type="number"` with no `step`), the browser blocks Save with
+ * a bubble of its own before the form's validation runs, so the shared save
+ * error never shows. `noValidate` hands every check to the form's own
+ * validation, which must hold the same limits.
+ *
+ * Every `<form>` is held to it, not only one whose limits are in view: an
+ * input from another file (`<Input>` in a section component) brings its limits
+ * with it, and a scan of one file cannot see them. On a form with no limits
+ * `noValidate` changes nothing.
+ */
+export interface BrowserValidatedForm {
+  path: string;
+  /** 1-based line of the `<form>`. */
+  line: number;
+}
+
+/**
+ * Excuses one `<form>`, with the reason, on the line above it: `{/*
+ * browser-validation-ignore: <why> *\/}`, or `//` inside parentheses.
+ */
+const BROWSER_VALIDATION_IGNORE = /browser-validation-ignore:[ \t]*[^\s*]/;
+
+/** Whether an element turns the browser's checks off: `noValidate` or `noValidate={true}`. */
+function setsNoValidate(attributes: ts.JsxAttributes): boolean {
+  return attributes.properties.some((attr) => {
+    if (!ts.isJsxAttribute(attr) || !ts.isIdentifier(attr.name)) return false;
+    if (attr.name.text !== 'noValidate') return false;
+    if (!attr.initializer) return true;
+    return (
+      ts.isJsxExpression(attr.initializer) &&
+      attr.initializer.expression?.kind === ts.SyntaxKind.TrueKeyword
+    );
+  });
+}
+
+export function scanBrowserValidation(source: string, path: string): BrowserValidatedForm[] {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const lines = source.split('\n');
+  const found: BrowserValidatedForm[] = [];
+  const visit = (n: ts.Node): void => {
+    if (
+      (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+      ts.isIdentifier(n.tagName) &&
+      n.tagName.text === 'form' &&
+      !setsNoValidate(n.attributes)
+    ) {
+      const line = file.getLineAndCharacterOfPosition(n.getStart(file)).line + 1;
+      if (!BROWSER_VALIDATION_IGNORE.test(lines[line - 2] ?? '')) found.push({ path, line });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  return found;
+}
+
+export function formatBrowserValidatedForm(form: BrowserValidatedForm): string {
+  return `${form.path}:${form.line}  <form> without noValidate: the browser blocks Save first`;
+}
+
 export interface BoxReport {
   /** Boxes no exemption covers. */
   boxes: SaveErrorBox[];

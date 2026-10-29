@@ -1,8 +1,14 @@
 'use client';
 
 import { useCallback, useState, type BaseSyntheticEvent } from 'react';
+import type { FieldErrors, FieldValues } from 'react-hook-form';
 
-import { applyFieldErrors, readSaveError, type SaveFailure } from '@/lib/errors/save-error';
+import {
+  applyFieldErrors,
+  invalidSave,
+  readSaveError,
+  type SaveFailure,
+} from '@/lib/errors/save-error';
 
 /** `react-hook-form`'s `setError`, narrowed to what a failed save sets. */
 type SetFieldError<TField extends string> = (
@@ -28,6 +34,21 @@ export interface SaveFailureState<TField extends string> {
    * on Save, or fields its own validation blocked.
    */
   show: (message: string, fields?: SaveFailure<TField>['fields']) => void;
+  /**
+   * react-hook-form's `onInvalid`: the form's own validation blocked Save.
+   * Each field already shows its message; this says how many by Save and
+   * moves focus to the first:
+   * `handleSubmit(onSubmit, save.invalid)`.
+   */
+  invalid: <TValues extends FieldValues>(errors: FieldErrors<TValues>) => void;
+  /**
+   * A plain-state form's own check blocked Save. The form renders no message
+   * under its fields, so theirs go by Save, and focus goes to the first field.
+   * Fields are named as the page's inputs are (`name` or `id`), not as the
+   * server names them. Returns whether it blocked:
+   * `if (save.block(problems)) return;`.
+   */
+  block: (problems: Array<{ field: string; message: string }>) => boolean;
   /** Hides the failure. */
   clear: () => void;
   /**
@@ -107,6 +128,21 @@ export function useSaveFailure<TField extends string>(
     []
   );
 
+  const invalid = useCallback(
+    <TValues extends FieldValues>(errors: FieldErrors<TValues>) => setFailure(invalidSave(errors)),
+    []
+  );
+
+  const block = useCallback((problems: Array<{ field: string; message: string }>) => {
+    if (problems.length === 0) return false;
+    setFailure({
+      message: problems.map((p) => p.message).join(' '),
+      stale: false,
+      fields: problems,
+    });
+    return true;
+  }, []);
+
   const clear = useCallback(() => setFailure(null), []);
 
   const submit = useCallback(
@@ -117,5 +153,5 @@ export function useSaveFailure<TField extends string>(
     []
   );
 
-  return { failure, report, show, clear, submit };
+  return { failure, report, show, invalid, block, clear, submit };
 }

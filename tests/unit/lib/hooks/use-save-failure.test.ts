@@ -141,6 +141,65 @@ describe('useSaveFailure', () => {
     });
   });
 
+  it("shows react-hook-form's blocked fields as a count by Save, each named for focus", () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    act(() => {
+      result.current.report(new Error('boom'));
+    });
+    const before = result.current.failure;
+
+    act(() => {
+      result.current.invalid({
+        email: { type: 'invalid_string', message: 'Invalid email address' },
+      });
+    });
+
+    expect(result.current.failure).toEqual({
+      message: '1 field needs fixing.',
+      stale: false,
+      fields: [{ field: 'email', message: 'Invalid email address' }],
+    });
+    expect(result.current.failure).not.toBe(before);
+  });
+
+  it("puts a plain form's own messages by Save and says it blocked", () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    let blocked: boolean | undefined;
+
+    act(() => {
+      blocked = result.current.block([
+        { field: 'name', message: 'Name is required.' },
+        { field: 'signingSecret', message: 'Signing secret must be at least 16 characters.' },
+      ]);
+    });
+
+    expect(blocked).toBe(true);
+    expect(result.current.failure).toEqual({
+      message: 'Name is required. Signing secret must be at least 16 characters.',
+      stale: false,
+      fields: [
+        { field: 'name', message: 'Name is required.' },
+        { field: 'signingSecret', message: 'Signing secret must be at least 16 characters.' },
+      ],
+    });
+  });
+
+  it('lets the save through, and leaves the failure alone, when the plain check finds nothing', () => {
+    const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+    act(() => {
+      result.current.report(new Error('boom'));
+    });
+    const before = result.current.failure;
+    let blocked: boolean | undefined;
+
+    act(() => {
+      blocked = result.current.block([]);
+    });
+
+    expect(blocked).toBe(false);
+    expect(result.current.failure).toBe(before);
+  });
+
   it('clears the last failure on every press, before the handler runs', () => {
     const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
     act(() => {

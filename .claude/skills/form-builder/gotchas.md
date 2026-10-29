@@ -190,7 +190,7 @@ const onSubmit = async (data) => {
   }
 };
 // …
-<form onSubmit={save.submit(handleSubmit(onSubmit))}> {/* every press clears the last one */}
+<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}> {/* every press clears the last one */}
   …
   <SaveError failure={save.failure} />
   <Button type="submit">Save</Button>
@@ -325,7 +325,7 @@ export function LoginForm() {
   const oauthMessage = oauthError ? oauthErrorDescription || 'OAuth sign-in failed' : null;
 
   return (
-    <form onSubmit={save.submit(handleSubmit(onSubmit))}>
+    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
       {/* rest of form */}
       {/* A failed sign-in replaces the OAuth notice; both sit by Sign In */}
       <SaveError failure={save.failure} />

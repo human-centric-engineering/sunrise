@@ -153,6 +153,37 @@ describe('scripts/ci/check-save-error-boxes', () => {
     }
   });
 
+  it('fails on a planted <form> the browser would validate first, and names it', () => {
+    writeExemptedBoxes();
+    write({
+      'components/forms/new-form.tsx': SHARED.replace(
+        'return <SaveError failure={save.failure} />;',
+        'return <form onSubmit={save.submit(handleSubmit(onSubmit))}><input required /></form>;'
+      ),
+    });
+
+    expect(main(root)).toBe(1);
+    const out = errors.join('\n');
+    expect(out).toContain('Forms the browser validates before the form does (1):');
+    expect(out).toContain(
+      'components/forms/new-form.tsx:4  <form> without noValidate: the browser blocks Save first'
+    );
+    expect(out).not.toContain('Hand-drawn save-error boxes found');
+  });
+
+  it('passes the same form once it sets noValidate', () => {
+    writeExemptedBoxes();
+    write({
+      'components/forms/new-form.tsx': SHARED.replace(
+        'return <SaveError failure={save.failure} />;',
+        'return <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} />;'
+      ),
+    });
+
+    expect(main(root)).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
   it('fails on an exemption that no longer matches a box', () => {
     write({ 'components/forms/new-form.tsx': SHARED });
 
