@@ -20,6 +20,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 
@@ -140,6 +141,17 @@ export function PdfPreviewModal({
     reportDiscardFailure,
   ]);
 
+  // Committed while Confirm or Discard runs: Escape waits for it.
+  const dialog = useCommittedDialog({
+    open,
+    pending: confirming || discarding,
+    onClose: () => onOpenChange(false),
+    clear: () => {
+      clearConfirmFailure();
+      clearDiscardFailure();
+    },
+  });
+
   if (!data) return null;
 
   const { preview } = data;
@@ -150,14 +162,7 @@ export function PdfPreviewModal({
   const wantsCleanup = data.runCleanup;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while Confirm or Discard runs: Escape waits for it.
-        if (!next && (confirming || discarding)) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -252,12 +257,12 @@ export function PdfPreviewModal({
         <DialogFooter className="gap-2 sm:gap-0">
           <Button
             variant="ghost"
-            onClick={() => void handleDiscard()}
-            disabled={confirming || discarding}
+            {...dialog.actionProps()}
+            onClick={(e) => dialog.confirm(e, handleDiscard)}
           >
             {discarding ? 'Discarding...' : 'Discard'}
           </Button>
-          <Button onClick={() => void handleConfirm()} disabled={confirming || discarding}>
+          <Button {...dialog.actionProps()} onClick={(e) => dialog.confirm(e, handleConfirm)}>
             {wantsCleanup ? (
               <Sparkles className="mr-1.5 h-4 w-4" />
             ) : (

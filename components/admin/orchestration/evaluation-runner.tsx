@@ -58,6 +58,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat-events';
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
@@ -526,6 +527,15 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     }
   }, [evaluation.id, clearArchiveSave, reportArchiveSave]);
 
+  // Committed while the archive runs: Escape and outside clicks wait for it.
+  const archiveDialog = useCommittedDialog({
+    open: archiveOpen,
+    pending: isArchiving,
+    onOpen: () => setArchiveOpen(true),
+    onClose: () => setArchiveOpen(false),
+    clear: clearArchiveSave,
+  });
+
   // ─── Complete ───────────────────────────────────────────────────────────
 
   const handleComplete = useCallback(async () => {
@@ -851,15 +861,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     <div className="space-y-4">
       {/* Action bar */}
       <div className="flex items-center justify-end gap-2">
-        <AlertDialog
-          open={archiveOpen}
-          onOpenChange={(open) => {
-            // Committed while the archive runs: Escape and outside clicks wait for it.
-            if (!open && isArchiving) return;
-            setArchiveOpen(open);
-            clearArchiveSave();
-          }}
-        >
+        <AlertDialog open={archiveOpen} onOpenChange={archiveDialog.onOpenChange}>
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={isArchiving}>
               <Archive className="mr-2 h-4 w-4" />
@@ -876,14 +878,11 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
             </AlertDialogHeader>
             <SaveError failure={archiveSave.failure} />
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={isArchiving}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel {...archiveDialog.cancelProps}>Cancel</AlertDialogCancel>
+              {/* Closes only on success, so a refusal can be read inside it. */}
               <AlertDialogAction
-                disabled={isArchiving}
-                onClick={(e) => {
-                  // Closes only on success, so a refusal can be read inside it.
-                  e.preventDefault();
-                  void handleArchive();
-                }}
+                {...archiveDialog.actionProps()}
+                onClick={(e) => archiveDialog.confirm(e, handleArchive)}
               >
                 Archive
               </AlertDialogAction>

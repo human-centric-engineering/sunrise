@@ -9,7 +9,7 @@
  *   - Calls onConfirm with the trimmed summary when filled
  *   - Disables Publish + shows error label when summary > 500 chars
  *   - Disables Publish while `publishing` is true and shows the spinner label
- *   - Calls onOpenChange(false) on Cancel
+ *   - Calls onOpenChange(false) on Cancel; ignores Escape while publishing
  *   - Renders the inline error message via role=alert when present
  *   - Resets the input when the dialog re-opens
  *
@@ -81,6 +81,20 @@ describe('PublishDialog', () => {
     const publishBtn = screen.getByRole('button', { name: /publishing/i });
     expect(publishBtn).toBeDisabled();
     expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled();
+  });
+
+  it('stays open through Escape while publishing, so a failure lands in it', async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderDialog({ publishing: true });
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('closes on Escape when nothing is publishing', async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderDialog();
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it('calls onOpenChange(false) when Cancel is clicked', async () => {

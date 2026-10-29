@@ -24,6 +24,7 @@ import {
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 import { SaveError } from '@/components/forms/form-error';
 import type { SaveFailure } from '@/lib/errors/save-error';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 export interface DeleteCapabilityTarget {
   id: string;
@@ -43,6 +44,8 @@ export interface DeleteCapabilityDialogProps {
   otherOrgAgentCount?: number;
   /** The refused delete, from `useSaveFailure()`; shown above the buttons. */
   failure: SaveFailure | null;
+  /** Clears `failure`; called each time the dialog opens. */
+  clearFailure?: () => void;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -53,18 +56,21 @@ export function DeleteCapabilityDialog({
   usedBy,
   otherOrgAgentCount = 0,
   failure,
+  clearFailure,
   isDeleting,
   onCancel,
   onConfirm,
 }: DeleteCapabilityDialogProps) {
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const dialog = useCommittedDialog({
+    open: !!target,
+    pending: isDeleting,
+    onClose: onCancel,
+    clear: clearFailure,
+  });
+
   return (
-    <AlertDialog
-      open={!!target}
-      onOpenChange={(open) => {
-        // Committed while the delete is in flight: a late failure must land here.
-        if (!open && !isDeleting) onCancel();
-      }}
-    >
+    <AlertDialog open={!!target} onOpenChange={dialog.onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete capability</AlertDialogTitle>
@@ -104,15 +110,11 @@ export function DeleteCapabilityDialog({
         <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={(e) => {
-              // Closes only on success, so a failure stays readable here.
-              e.preventDefault();
-              onConfirm();
-            }}
+            {...dialog.actionProps()}
+            onClick={(e) => dialog.confirm(e, onConfirm)}
             className="bg-red-600 hover:bg-red-700"
-            disabled={isDeleting}
           >
             {isDeleting ? 'Deleting…' : 'Delete'}
           </AlertDialogAction>

@@ -29,6 +29,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface InviteToken {
@@ -156,6 +157,14 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
     }
   };
 
+  // Committed while the create runs; an earlier failure never greets a reopen.
+  const createDialog = useCommittedDialog({
+    open: showCreate,
+    pending: creating,
+    onClose: () => setShowCreate(false),
+    clear: createSave.clear,
+  });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -200,14 +209,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
               : 'No tokens yet'}
           </p>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => {
-            createSave.clear();
-            setShowCreate(true);
-          }}
-        >
+        <Button type="button" size="sm" onClick={() => setShowCreate(true)}>
           <Plus className="mr-1 h-3.5 w-3.5" />
           Create token
         </Button>
@@ -309,15 +311,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
       )}
 
       {/* Create token dialog */}
-      <Dialog
-        open={showCreate}
-        onOpenChange={(open) => {
-          // Committed while the create is in flight: a late failure must land here.
-          if (!open && creating) return;
-          setShowCreate(open);
-          createSave.clear();
-        }}
-      >
+      <Dialog open={showCreate} onOpenChange={createDialog.onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create invite token</DialogTitle>
@@ -374,15 +368,16 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                setShowCreate(false);
-                createSave.clear();
-              }}
-              disabled={creating}
+              onClick={() => setShowCreate(false)}
+              {...createDialog.cancelProps}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={() => void handleCreate()} disabled={creating}>
+            <Button
+              type="button"
+              {...createDialog.actionProps()}
+              onClick={(e) => createDialog.confirm(e, handleCreate)}
+            >
               {creating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

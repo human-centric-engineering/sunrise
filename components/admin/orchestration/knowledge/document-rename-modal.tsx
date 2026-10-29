@@ -30,6 +30,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 const MAX_NAME_LENGTH = 255;
 
@@ -60,11 +61,8 @@ export function DocumentRenameModal({
 
   // Seed the input from the current name each time the modal opens.
   useEffect(() => {
-    if (open) {
-      setName(documentName ?? '');
-      clearFailure();
-    }
-  }, [open, documentName, clearFailure]);
+    if (open) setName(documentName ?? '');
+  }, [open, documentName]);
 
   const trimmed = name.trim();
   const dirty = trimmed.length > 0 && trimmed !== (documentName ?? '').trim();
@@ -88,15 +86,16 @@ export function DocumentRenameModal({
     }
   }
 
+  // Committed while the save is in flight, so its failure is shown here.
+  const dialog = useCommittedDialog({
+    open,
+    pending: saving,
+    onClose: () => onOpenChange(false),
+    clear: clearFailure,
+  });
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while the save is in flight, so its failure is shown here.
-        if (!next && saving) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="w-full max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -134,10 +133,13 @@ export function DocumentRenameModal({
         <SaveError failure={failure.failure} />
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
             Cancel
           </Button>
-          <Button onClick={() => void save()} disabled={!dirty || saving}>
+          <Button
+            {...dialog.actionProps({ disabled: !dirty })}
+            onClick={(e) => dialog.confirm(e, save)}
+          >
             <Save className="mr-1.5 h-3.5 w-3.5" />
             {saving ? 'Saving…' : 'Save'}
           </Button>

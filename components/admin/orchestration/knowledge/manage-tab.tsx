@@ -56,6 +56,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   CSV_MAX_ROW_CHARS,
@@ -281,6 +282,12 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // An upload or URL fetch in flight holds the upload dialog open, so its
   // failure is shown in the dialog rather than nowhere.
   const [uploadBusy, setUploadBusy] = useState(false);
+  // The upload zone reports its own failures; the dialog only waits for it.
+  const uploadDialog = useCommittedDialog({
+    open: uploadOpen,
+    pending: uploadBusy,
+    onClose: () => setUploadOpen(false),
+  });
   const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);
   const [viewKeywordsName, setViewKeywordsName] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -1375,13 +1382,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           of this component) since it's already done. */}
       {!setupComplete && builtInPanel}
 
-      <Dialog
-        open={uploadOpen}
-        onOpenChange={(open) => {
-          if (!open && uploadBusy) return;
-          setUploadOpen(open);
-        }}
-      >
+      <Dialog open={uploadOpen} onOpenChange={uploadDialog.onOpenChange}>
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

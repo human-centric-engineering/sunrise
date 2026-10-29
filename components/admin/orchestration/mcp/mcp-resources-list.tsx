@@ -45,6 +45,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -149,7 +150,6 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
 
   function openEdit(resource: ResourceRow): void {
     setEditingResource(resource);
-    editFailure.clear();
     setEditForm({
       name: resource.name,
       description: resource.description,
@@ -275,21 +275,38 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     }));
   }
 
+  // Each dialog is committed while its save runs, so its failure is shown in
+  // it; each failure is cleared as its dialog opens.
+  const editDialog = useCommittedDialog({
+    open: editingResource !== null,
+    pending: editSaving,
+    onClose: () => setEditingResource(null),
+    clear: editFailure.clear,
+  });
+  const createDialog = useCommittedDialog({
+    open: createOpen,
+    pending: creating,
+    onOpen: () => setCreateOpen(true),
+    onClose: () => {
+      setCreateOpen(false);
+      setForm(EMPTY_RESOURCE_FORM);
+    },
+    clear: createFailure.clear,
+  });
+  // One remove dialog is open at a time (each row's trigger sets its id).
+  const removeDialog = useCommittedDialog({
+    open: removeId !== null,
+    pending: removing,
+    onClose: () => setRemoveId(null),
+    clear: removeFailure.clear,
+  });
+
   const isEmpty = resources.length === 0;
 
   return (
     <div className="space-y-4">
       {/* Edit Resource Dialog */}
-      <Dialog
-        open={editingResource !== null}
-        onOpenChange={(open) => {
-          // Committed while the save is in flight, so its failure is shown here.
-          if (!open && !editSaving) {
-            setEditingResource(null);
-            editFailure.clear();
-          }
-        }}
-      >
+      <Dialog open={editingResource !== null} onOpenChange={editDialog.onOpenChange}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Resource: {editingResource?.name}</DialogTitle>
@@ -358,8 +375,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
           <SaveError failure={editFailure.failure} />
           <DialogFooter>
             <Button
-              onClick={() => void handleEditSave()}
-              disabled={editSaving}
+              {...editDialog.actionProps()}
+              onClick={(e) => editDialog.confirm(e, handleEditSave)}
               data-testid="edit-resource-save"
             >
               {editSaving ? 'Saving...' : 'Save Changes'}
@@ -369,16 +386,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       </Dialog>
 
       {/* Create Resource Dialog */}
-      <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          // Committed while the resource is being created, so its failure is shown here.
-          if (!open && creating) return;
-          setCreateOpen(open);
-          createFailure.clear();
-          if (!open) setForm(EMPTY_RESOURCE_FORM);
-        }}
-      >
+      <Dialog open={createOpen} onOpenChange={createDialog.onOpenChange}>
         {!readOnly && (
           <DialogTrigger asChild>
             <Button size="sm" data-testid="create-resource-trigger">
@@ -470,8 +478,10 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
           <SaveError failure={createFailure.failure} />
           <DialogFooter>
             <Button
-              onClick={() => void handleCreate()}
-              disabled={!form.name.trim() || !form.uri.trim() || !form.resourceType || creating}
+              {...createDialog.actionProps({
+                disabled: !form.name.trim() || !form.uri.trim() || !form.resourceType,
+              })}
+              onClick={(e) => createDialog.confirm(e, handleCreate)}
             >
               {creating ? 'Creating...' : 'Create Resource'}
             </Button>
@@ -513,13 +523,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                 ))}
               </div>
               {!readOnly && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    createFailure.clear();
-                    setCreateOpen(true);
-                  }}
-                >
+                <Button size="sm" onClick={() => setCreateOpen(true)}>
                   Create Your First Resource
                 </Button>
               )}
@@ -603,15 +607,15 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                       </Button>
                       <AlertDialog
                         open={removeId === resource.id}
-                        onOpenChange={(open) => {
-                          // Committed while the remove runs: Escape waits for it.
-                          if (!open && removing) return;
-                          removeFailure.clear();
-                          setRemoveId(open ? resource.id : null);
-                        }}
+                        onOpenChange={removeDialog.onOpenChange}
                       >
                         <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive text-xs"
+                            onClick={() => setRemoveId(resource.id)}
+                          >
                             Remove
                           </Button>
                         </AlertDialogTrigger>
@@ -625,15 +629,16 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                           </AlertDialogHeader>
                           <SaveError failure={removeFailure.failure} />
                           <AlertDialogFooter>
-                            <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel {...removeDialog.cancelProps}>
+                              Cancel
+                            </AlertDialogCancel>
+                            {/* Closes only on success, so a failure stays readable here. */}
                             <AlertDialogAction
-                              disabled={removing}
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={(e) => {
-                                // Closes only on success, so a failure stays readable here.
-                                e.preventDefault();
-                                void handleRemove(resource.id);
-                              }}
+                              {...removeDialog.actionProps()}
+                              onClick={(e) =>
+                                removeDialog.confirm(e, () => handleRemove(resource.id))
+                              }
                             >
                               Remove
                             </AlertDialogAction>

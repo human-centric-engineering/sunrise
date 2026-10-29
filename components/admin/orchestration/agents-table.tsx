@@ -93,6 +93,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -396,6 +397,14 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     }
   }, [deleteTarget, fetchAgents, meta.page, clearDelete, reportDelete]);
 
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: isDeleting,
+    onClose: () => setDeleteTarget(null),
+    clear: clearDelete,
+  });
+
   const handleExportSelected = useCallback(async () => {
     if (selected.size === 0) return;
     setListError(null);
@@ -475,6 +484,14 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     },
     [selected, fetchAgents, meta.page, clearList, reportList, clearBulkDelete, reportBulkDelete]
   );
+
+  // Committed while the bulk delete runs; an earlier failure never greets a reopen.
+  const bulkDeleteDialog = useCommittedDialog({
+    open: bulkDeleteOpen,
+    pending: bulkAction === 'delete',
+    onClose: () => setBulkDeleteOpen(false),
+    clear: clearBulkDelete,
+  });
 
   const toggleRow = useCallback((id: string) => {
     setSelected((prev) => {
@@ -757,13 +774,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 Duplicate
               </DropdownMenuItem>
               {!agent.isSystem && (
-                <DropdownMenuItem
-                  className="text-red-600"
-                  onClick={() => {
-                    clearDelete();
-                    setDeleteTarget(agent);
-                  }}
-                >
+                <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(agent)}>
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
                 </DropdownMenuItem>
@@ -912,10 +923,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={() => {
-                  clearBulkDelete();
-                  setBulkDeleteOpen(true);
-                }}
+                onClick={() => setBulkDeleteOpen(true)}
                 disabled={!!bulkAction}
               >
                 {bulkAction === 'delete' ? (
@@ -1157,17 +1165,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       </div>
 
       {/* Delete confirmation */}
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && isDeleting) return;
-          if (!open) {
-            setDeleteTarget(null);
-            clearDelete();
-          }
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete agent</AlertDialogTitle>
@@ -1179,15 +1177,11 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void handleDelete();
-              }}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isDeleting}
             >
               {isDeleting ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
@@ -1196,15 +1190,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       </AlertDialog>
 
       {/* Bulk delete confirmation */}
-      <AlertDialog
-        open={bulkDeleteOpen}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && bulkAction === 'delete') return;
-          setBulkDeleteOpen(open);
-          clearBulkDelete();
-        }}
-      >
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={bulkDeleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -1217,15 +1203,12 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           </AlertDialogHeader>
           <SaveError failure={bulkDeleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={bulkAction === 'delete'}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...bulkDeleteDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void handleBulkAction('delete');
-              }}
+              // Another bulk action in flight also holds it.
+              {...bulkDeleteDialog.actionProps({ disabled: !!bulkAction })}
+              onClick={(e) => bulkDeleteDialog.confirm(e, () => handleBulkAction('delete'))}
               className="bg-red-600 hover:bg-red-700"
-              disabled={!!bulkAction}
             >
               {bulkAction === 'delete' ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>

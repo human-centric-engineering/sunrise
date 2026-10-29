@@ -45,6 +45,7 @@ import {
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -403,6 +404,14 @@ export function ExperimentsList(): React.ReactElement {
     }
   }
 
+  // Committed while the delete runs: Escape and outside clicks wait for it.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: !!deletingId,
+    onClose: () => setDeleteTarget(null),
+    clear: deleteSave.clear,
+  });
+
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading experiments...</p>;
   }
@@ -573,10 +582,7 @@ export function ExperimentsList(): React.ReactElement {
                           size="sm"
                           aria-label="Delete experiment"
                           disabled={deletingId === exp.id}
-                          onClick={() => {
-                            deleteSave.clear();
-                            setDeleteTarget(exp);
-                          }}
+                          onClick={() => setDeleteTarget(exp)}
                         >
                           {deletingId === exp.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -595,15 +601,7 @@ export function ExperimentsList(): React.ReactElement {
       </div>
 
       {/* Delete confirmation */}
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete runs: Escape and outside clicks wait for it.
-          if (open || deletingId) return;
-          setDeleteTarget(null);
-          deleteSave.clear();
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete experiment</AlertDialogTitle>
@@ -614,15 +612,14 @@ export function ExperimentsList(): React.ReactElement {
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
+            {/* Closes only on success, so a refusal can be read inside it (§124). */}
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a refusal can be read inside it (§124).
-                e.preventDefault();
-                if (deleteTarget) void handleDelete(deleteTarget.id);
-              }}
+              {...deleteDialog.actionProps()}
+              onClick={(e) =>
+                deleteDialog.confirm(e, () => deleteTarget && handleDelete(deleteTarget.id))
+              }
               className="bg-red-600 hover:bg-red-700"
-              disabled={!!deletingId}
             >
               {deletingId ? 'Deleting\u2026' : 'Delete'}
             </AlertDialogAction>

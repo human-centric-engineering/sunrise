@@ -43,6 +43,12 @@ release process.
   `apiClient` would have thrown for a failed response, for a caller that sends
   its own `fetch` (a multipart upload, a stream), so its save error reads the
   same way (§124).
+- **`useCommittedDialog()`** (`lib/hooks/use-committed-dialog.ts`): locks a
+  dialog while its save runs. The action and Cancel are disabled and Escape
+  or an outside click is ignored, so a second click can't send twice and a
+  refusal is never lost; the dialog's failure clears as it opens and closes.
+  Every admin dialog that saves uses it; dialogs that run or test something
+  (re-run an execution, audit models) are out of §124's scope (§124).
 
 ### Changed
 

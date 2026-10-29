@@ -18,6 +18,7 @@ was also amber, which doesn't read as a failure.
 | `isStaleSave()`          | `lib/errors/save-error.ts`                             | Whether a save was refused as stale, for a page that needs only that                                   |
 | `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
 | `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
+| `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure as it opens and closes                      |
 | `<SaveError>`            | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
 | `<StaleSaveNotice>`      | `components/admin/orchestration/stale-save-notice.tsx` | `<SaveError>`'s stale variant, mounted on its own by a page with no `<SaveError>` (lists, the builder) |
 
@@ -171,13 +172,42 @@ person can read it and try again or cancel. Close it only on success. Radix's
 `e.preventDefault()`. A dialog that closes and then shows the error elsewhere,
 or draws it behind its own overlay, loses it (owner ruling, 2026-10-28).
 
-While the action is in flight the dialog is committed to it: disable the
-action button **and** Cancel, and ignore the close Radix asks for (Escape, an
-outside click) by returning early from `onOpenChange` while pending. Otherwise
-a second click sends the request twice, and a failure arriving after the
-dialog closed is shown nowhere. Clear the dialog's failure **when it opens**
-(where the target is set), not only when it closes, so one row's failure never
-appears in the next row's dialog.
+While the action is in flight the dialog is committed to it: the action
+button **and** Cancel are disabled, and the close Radix asks for (Escape, an
+outside click) is ignored. Otherwise a second click sends the request twice,
+and a failure arriving after the dialog closed is shown nowhere. The dialog's
+failure is cleared **as it closes**, however it closes, and again as it
+opens, so one row's failure never appears in the next row's dialog (clearing
+only after an open lets the old failure render, be announced and take focus
+first). `useCommittedDialog()` does all of it; a dialog that
+saves uses it rather than writing the guards out:
+
+```tsx
+const dialog = useCommittedDialog({
+  open: !!target,
+  pending: deleting,
+  onClose: () => setTarget(null),
+  clear: deleteSave.clear,
+});
+
+<AlertDialog open={!!target} onOpenChange={dialog.onOpenChange}>
+  …
+  <SaveError failure={deleteSave.failure} />
+  <AlertDialogFooter>
+    <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
+    <AlertDialogAction {...dialog.actionProps()} onClick={(e) => dialog.confirm(e, handleDelete)}>
+      Delete
+    </AlertDialogAction>
+  </AlertDialogFooter>
+</AlertDialog>;
+```
+
+`actionProps({ disabled })` adds the action's own reasons to be disabled (an
+empty required reason). `confirm(e, run)` takes the action at click time, not
+during render, so an action that reads a ref passes the React Compiler's
+`react-hooks/refs` rule. A dialog that opens through its own
+`DialogTrigger` passes `onOpen`. The save closes the dialog itself on
+success.
 
 A controlled dialog with no `DialogTrigger` returns no focus when it closes.
 One with a trigger hands focus back to it, after a failure shown outside the

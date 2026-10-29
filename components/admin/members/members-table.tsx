@@ -46,6 +46,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { isOrgRole, ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
 
 export interface OrgMember {
@@ -107,6 +108,14 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
       setBusyUserId(null);
     }
   };
+
+  // Committed while the removal runs; a failure from one row never shows on the next.
+  const removeDialog = useCommittedDialog({
+    open: !!removing,
+    pending: isRemoving,
+    onClose: () => setRemoving(null),
+    clear: removeSave.clear,
+  });
 
   return (
     <div className="space-y-3">
@@ -175,10 +184,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                       variant="ghost"
                       size="icon"
                       disabled={busyUserId === member.id}
-                      onClick={() => {
-                        removeSave.clear();
-                        setRemoving(member);
-                      }}
+                      onClick={() => setRemoving(member)}
                       aria-label={`Remove ${member.name || member.email}`}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -191,17 +197,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
         </Table>
       </div>
 
-      <AlertDialog
-        open={!!removing}
-        onOpenChange={(open) => {
-          // Committed while the removal is in flight: a late failure must land here.
-          if (!open && isRemoving) return;
-          if (!open) {
-            setRemoving(null);
-            removeSave.clear();
-          }
-        }}
-      >
+      <AlertDialog open={!!removing} onOpenChange={removeDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove member</AlertDialogTitle>
@@ -213,14 +209,14 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
           </AlertDialogHeader>
           <SaveError failure={removeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isRemoving}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...removeDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={isRemoving}
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                if (removing) void remove(removing);
-              }}
+              {...removeDialog.actionProps()}
+              onClick={(e) =>
+                removeDialog.confirm(e, () => {
+                  if (removing) void remove(removing);
+                })
+              }
             >
               Remove
             </AlertDialogAction>

@@ -54,6 +54,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
@@ -185,7 +186,6 @@ function ActiveView({
       return;
     }
     check.clear();
-    submitSave.clear();
     setConfirmOpen(true);
   }
 
@@ -209,6 +209,14 @@ function ActiveView({
       setSaving(false);
     }
   }
+
+  // Committed while the quarantine runs; an earlier failure never greets a reopen.
+  const confirmDialog = useCommittedDialog({
+    open: confirmOpen,
+    pending: saving,
+    onClose: () => setConfirmOpen(false),
+    clear: submitSave.clear,
+  });
 
   return (
     <Card className="border-amber-200 dark:border-amber-900/60">
@@ -360,13 +368,7 @@ function ActiveView({
         </CardContent>
       )}
 
-      <AlertDialog
-        open={confirmOpen}
-        onOpenChange={(open) => {
-          // Committed while the quarantine is in flight: a late failure must land here.
-          if (!open && !saving) setConfirmOpen(false);
-        }}
-      >
+      <AlertDialog open={confirmOpen} onOpenChange={confirmDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Quarantine &ldquo;{capabilityName}&rdquo;?</AlertDialogTitle>
@@ -410,14 +412,10 @@ function ActiveView({
           )}
           <SaveError failure={submitSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...confirmDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void submit();
-              }}
-              disabled={saving}
+              {...confirmDialog.actionProps()}
+              onClick={(e) => confirmDialog.confirm(e, submit)}
             >
               {saving ? 'Quarantining…' : 'Confirm quarantine'}
             </AlertDialogAction>

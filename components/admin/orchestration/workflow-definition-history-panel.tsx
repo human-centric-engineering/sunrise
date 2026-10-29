@@ -39,6 +39,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { cn } from '@/lib/utils';
 
 interface VersionRow {
@@ -134,6 +135,14 @@ export function WorkflowDefinitionHistoryPanel({
     }
   }, [revertTarget, workflowId, fetchHistory, onReverted, clearRevertSave, reportRevertSave]);
 
+  // Committed while the rollback runs: Escape and outside clicks wait for it.
+  const revertDialog = useCommittedDialog({
+    open: !!revertTarget,
+    pending: reverting,
+    onClose: () => setRevertTarget(null),
+    clear: clearRevertSave,
+  });
+
   return (
     <div className="border-border rounded-md border">
       <div className="hover:bg-muted/40 flex w-full items-center gap-2 px-3 py-2 text-sm font-medium">
@@ -206,10 +215,7 @@ export function WorkflowDefinitionHistoryPanel({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        clearRevertSave();
-                        setRevertTarget(entry);
-                      }}
+                      onClick={() => setRevertTarget(entry)}
                     >
                       <RotateCcw className="mr-1 h-3 w-3" />
                       Rollback
@@ -249,16 +255,7 @@ export function WorkflowDefinitionHistoryPanel({
       </Dialog>
 
       {/* Rollback confirm */}
-      <AlertDialog
-        open={!!revertTarget}
-        onOpenChange={(open) => {
-          // Committed while the rollback runs: Escape and outside clicks wait for it.
-          if (!open && !reverting) {
-            setRevertTarget(null);
-            clearRevertSave();
-          }
-        }}
-      >
+      <AlertDialog open={!!revertTarget} onOpenChange={revertDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Roll back to this version?</AlertDialogTitle>
@@ -270,20 +267,15 @@ export function WorkflowDefinitionHistoryPanel({
           </AlertDialogHeader>
           <SaveError failure={revertSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...revertDialog.cancelProps}>Cancel</AlertDialogCancel>
             {/*
-              `event.preventDefault()` keeps the dialog open across the async
-              POST so a failure surfaces inline via `<SaveError>` rather than
-              the dialog auto-closing per Radix's default action behaviour.
-              `handleRevert` itself closes the dialog on success by clearing
-              `revertTarget`.
+              The action keeps the dialog open across the async POST so a
+              failure surfaces inline via `<SaveError>`; `handleRevert` closes
+              it on success by clearing `revertTarget`.
             */}
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void handleRevert();
-              }}
-              disabled={reverting}
+              {...revertDialog.actionProps()}
+              onClick={(e) => revertDialog.confirm(e, handleRevert)}
             >
               {reverting ? 'Rolling back…' : 'Rollback'}
             </AlertDialogAction>

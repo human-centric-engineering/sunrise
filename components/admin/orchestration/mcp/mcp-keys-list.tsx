@@ -47,6 +47,7 @@ import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { McpScope, ALL_MCP_SCOPES } from '@/types/mcp';
 import { apiKeyRowSchema, type ApiKeyRow } from '@/lib/validations/mcp';
 import { z } from 'zod';
@@ -188,6 +189,26 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     return new Date(expiresAt) < new Date();
   }
 
+  // Each dialog is committed while its save runs, so its failure is shown in
+  // it; each failure is cleared as its dialog opens.
+  const createDialog = useCommittedDialog({
+    open: createDialogOpen,
+    pending: creating,
+    onOpen: () => setCreateDialogOpen(true),
+    onClose: () => {
+      setCreateDialogOpen(false);
+      setShowPlaintext(null);
+    },
+    clear: createFailure.clear,
+  });
+  // One revoke dialog is open at a time (each row's trigger sets its id).
+  const revokeDialog = useCommittedDialog({
+    open: revokeId !== null,
+    pending: revoking,
+    onClose: () => setRevokeId(null),
+    clear: revokeFailure.clear,
+  });
+
   return (
     <div className="space-y-4">
       {/* Rotated key plaintext dialog */}
@@ -221,16 +242,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       </Dialog>
 
       {/* Create Key Dialog */}
-      <Dialog
-        open={createDialogOpen}
-        onOpenChange={(open) => {
-          // Committed while the key is being created, so its failure is shown here.
-          if (!open && creating) return;
-          setCreateDialogOpen(open);
-          createFailure.clear();
-          if (!open) setShowPlaintext(null);
-        }}
-      >
+      <Dialog open={createDialogOpen} onOpenChange={createDialog.onOpenChange}>
         <DialogTrigger asChild>
           <Button size="sm">Create API Key</Button>
         </DialogTrigger>
@@ -343,8 +355,10 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
           <DialogFooter>
             {!showPlaintext && (
               <Button
-                onClick={() => void handleCreate()}
-                disabled={!newKeyName.trim() || newKeyScopes.length === 0 || creating}
+                {...createDialog.actionProps({
+                  disabled: !newKeyName.trim() || newKeyScopes.length === 0,
+                })}
+                onClick={(e) => createDialog.confirm(e, handleCreate)}
               >
                 {creating ? 'Creating...' : 'Create Key'}
               </Button>
@@ -467,18 +481,14 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                             </Button>
                             <AlertDialog
                               open={revokeId === key.id}
-                              onOpenChange={(open) => {
-                                // Committed while the revoke runs: Escape waits for it.
-                                if (!open && revoking) return;
-                                revokeFailure.clear();
-                                setRevokeId(open ? key.id : null);
-                              }}
+                              onOpenChange={revokeDialog.onOpenChange}
                             >
                               <AlertDialogTrigger asChild>
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="text-destructive text-xs"
+                                  onClick={() => setRevokeId(key.id)}
                                 >
                                   Revoke
                                 </Button>
@@ -493,15 +503,16 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                                 </AlertDialogHeader>
                                 <SaveError failure={revokeFailure.failure} />
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel disabled={revoking}>Cancel</AlertDialogCancel>
+                                  <AlertDialogCancel {...revokeDialog.cancelProps}>
+                                    Cancel
+                                  </AlertDialogCancel>
+                                  {/* Closes only on success, so a failure stays readable here. */}
                                   <AlertDialogAction
-                                    disabled={revoking}
                                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                    onClick={(e) => {
-                                      // Closes only on success, so a failure stays readable here.
-                                      e.preventDefault();
-                                      void handleRevoke(key.id);
-                                    }}
+                                    {...revokeDialog.actionProps()}
+                                    onClick={(e) =>
+                                      revokeDialog.confirm(e, () => handleRevoke(key.id))
+                                    }
                                   >
                                     Revoke
                                   </AlertDialogAction>

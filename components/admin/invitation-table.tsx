@@ -58,6 +58,7 @@ import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { SaveError } from '@/components/forms/form-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { getRoleBadgeVariant } from '@/lib/utils/initials';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
@@ -254,6 +255,14 @@ export function InvitationTable({
     }
   }, [deleteEmail, fetchInvitations, meta.page, clearDelete, reportDelete]);
 
+  // Committed while the delete runs; a failure from one row never shows on the next.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteEmail,
+    pending: isDeleting,
+    onClose: () => setDeleteEmail(null),
+    clear: clearDelete,
+  });
+
   /**
    * Handle resend invitation
    */
@@ -444,10 +453,7 @@ export function InvitationTable({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => {
-                            clearDelete();
-                            setDeleteEmail(invitation.email);
-                          }}
+                          onClick={() => setDeleteEmail(invitation.email)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -500,17 +506,7 @@ export function InvitationTable({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog
-        open={!!deleteEmail}
-        onOpenChange={(open) => {
-          // Committed while the delete is in flight: a late failure must land here.
-          if (!open && isDeleting) return;
-          if (!open) {
-            setDeleteEmail(null);
-            clearDelete();
-          }
-        }}
-      >
+      <AlertDialog open={!!deleteEmail} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Invitation</AlertDialogTitle>
@@ -522,15 +518,11 @@ export function InvitationTable({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void handleDelete();
-              }}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
-              disabled={isDeleting}
             >
               {isDeleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>

@@ -54,6 +54,7 @@ import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import type { ReviewSchema } from '@/lib/orchestration/review-schema/types';
@@ -291,6 +292,28 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     }
   }, [rejectTarget, rejectReason, showSuccess, clearRejectSave, reportRejectSave]);
 
+  // Each dialog is committed while its decision runs; one row's failure
+  // never shows in the next row's dialog.
+  const approveDialog = useCommittedDialog({
+    open: approveTarget !== null,
+    pending: approveLoading,
+    onClose: () => {
+      setApproveTarget(null);
+      setApproveNotes('');
+      setApprovePayload(null);
+    },
+    clear: clearApproveSave,
+  });
+  const rejectDialog = useCommittedDialog({
+    open: rejectTarget !== null,
+    pending: rejectLoading,
+    onClose: () => {
+      setRejectTarget(null);
+      setRejectReason('');
+    },
+    clear: clearRejectSave,
+  });
+
   // ─── Extract approval prompt from trace ─────────────────────────────────
 
   function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
@@ -431,7 +454,6 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                           onClick={() => {
                             setApproveTarget(item.id);
                             setApproveNotes('');
-                            clearApproveSave();
                           }}
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />
@@ -444,7 +466,6 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                           onClick={() => {
                             setRejectTarget(item.id);
                             setRejectReason('');
-                            clearRejectSave();
                           }}
                         >
                           <XCircle className="h-3.5 w-3.5" />
@@ -488,12 +509,10 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                                     setApprovePayload(payload);
                                     setApproveTarget(item.id);
                                     setApproveNotes('');
-                                    clearApproveSave();
                                   }}
                                   onRequestReject={() => {
                                     setRejectTarget(item.id);
                                     setRejectReason('');
-                                    clearRejectSave();
                                   }}
                                   submitting={approveLoading || rejectLoading}
                                 />
@@ -654,18 +673,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
       </div>
 
       {/* ─── Approve Dialog ──────────────────────────────────────────────── */}
-      <AlertDialog
-        open={approveTarget !== null}
-        onOpenChange={(open) => {
-          // Committed while the approval runs: Escape and outside clicks wait for it.
-          if (!open && !approveLoading) {
-            setApproveTarget(null);
-            setApproveNotes('');
-            setApprovePayload(null);
-            clearApproveSave();
-          }
-        }}
-      >
+      <AlertDialog open={approveTarget !== null} onOpenChange={approveDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Approve execution?</AlertDialogTitle>
@@ -693,13 +701,10 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
           </div>
           <SaveError failure={approveSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={approveLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...approveDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void handleApproveSubmit();
-              }}
-              disabled={approveLoading}
+              {...approveDialog.actionProps()}
+              onClick={(e) => approveDialog.confirm(e, handleApproveSubmit)}
               className="bg-green-600 hover:bg-green-700"
             >
               {approveLoading ? (
@@ -714,17 +719,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
       </AlertDialog>
 
       {/* ─── Reject Dialog ───────────────────────────────────────────────── */}
-      <AlertDialog
-        open={rejectTarget !== null}
-        onOpenChange={(open) => {
-          // Committed while the rejection runs: Escape and outside clicks wait for it.
-          if (!open && !rejectLoading) {
-            setRejectTarget(null);
-            setRejectReason('');
-            clearRejectSave();
-          }
-        }}
-      >
+      <AlertDialog open={rejectTarget !== null} onOpenChange={rejectDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reject execution?</AlertDialogTitle>
@@ -752,13 +747,10 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
           </div>
           <SaveError failure={rejectSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={rejectLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...rejectDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void handleRejectSubmit();
-              }}
-              disabled={rejectLoading || !rejectReason.trim()}
+              {...rejectDialog.actionProps({ disabled: !rejectReason.trim() })}
+              onClick={(e) => rejectDialog.confirm(e, handleRejectSubmit)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {rejectLoading ? (

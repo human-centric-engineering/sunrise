@@ -39,6 +39,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { isStaleSave } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { StaleSaveNotice } from '@/components/admin/orchestration/stale-save-notice';
 import { API } from '@/lib/api/endpoints';
 
@@ -230,6 +231,20 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
     }
   };
 
+  // Each dialog is committed while its save runs, so its failure is shown in it.
+  const createDialog = useCommittedDialog({
+    open: showCreate,
+    pending: creating,
+    onClose: () => setShowCreate(false),
+    clear: createSave.clear,
+  });
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: deleting,
+    onClose: () => setDeleteTarget(null),
+    clear: deleteSave.clear,
+  });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -248,13 +263,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
             its own input template (JSON) that gets passed as the workflow input.
           </FieldHelp>
         </h2>
-        <Button
-          size="sm"
-          onClick={() => {
-            createSave.clear();
-            setShowCreate(true);
-          }}
-        >
+        <Button size="sm" onClick={() => setShowCreate(true)}>
           <Plus className="mr-1 h-4 w-4" /> New schedule
         </Button>
       </div>
@@ -311,10 +320,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => {
-                    deleteSave.clear();
-                    setDeleteTarget(s);
-                  }}
+                  onClick={() => setDeleteTarget(s)}
                   title="Delete schedule"
                 >
                   <Trash2 className="h-4 w-4 text-red-500" />
@@ -326,15 +332,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       )}
 
       {/* Create dialog */}
-      <Dialog
-        open={showCreate}
-        onOpenChange={(open) => {
-          // Committed while the schedule is being created, so its failure is shown here.
-          if (!open && creating) return;
-          setShowCreate(open);
-          createSave.clear();
-        }}
-      >
+      <Dialog open={showCreate} onOpenChange={createDialog.onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New schedule</DialogTitle>
@@ -390,17 +388,14 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => {
-                setShowCreate(false);
-                createSave.clear();
-              }}
-              disabled={creating}
+              onClick={() => setShowCreate(false)}
+              {...createDialog.cancelProps}
             >
               Cancel
             </Button>
             <Button
-              onClick={() => void handleCreate()}
-              disabled={creating || !createName || !createCron}
+              {...createDialog.actionProps({ disabled: !createName || !createCron })}
+              onClick={(e) => createDialog.confirm(e, handleCreate)}
             >
               {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Create
@@ -410,15 +405,7 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       </Dialog>
 
       {/* Delete confirmation */}
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete runs: Escape and outside clicks wait for it.
-          if (open || deleting) return;
-          setDeleteTarget(null);
-          deleteSave.clear();
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete schedule?</AlertDialogTitle>
@@ -429,14 +416,11 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
+            {/* Closes only on success, so a refusal can be read inside it (§124). */}
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a refusal can be read inside it (§124).
-                e.preventDefault();
-                void handleDelete();
-              }}
-              disabled={deleting}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
             >
               Delete

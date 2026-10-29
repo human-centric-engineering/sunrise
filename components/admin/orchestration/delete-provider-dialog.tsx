@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { SaveError } from '@/components/forms/form-error';
 import type { SaveFailure } from '@/lib/errors/save-error';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 export interface DeleteProviderTarget {
   id: string;
@@ -34,6 +35,8 @@ export interface DeleteProviderDialogProps {
   target: DeleteProviderTarget | null;
   /** The refused deactivation, from `useSaveFailure()`; shown above the buttons. */
   failure: SaveFailure | null;
+  /** Clears `failure`; called each time the dialog opens. */
+  clearFailure?: () => void;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -42,19 +45,21 @@ export interface DeleteProviderDialogProps {
 export function DeleteProviderDialog({
   target,
   failure,
+  clearFailure,
   isDeleting,
   onCancel,
   onConfirm,
 }: DeleteProviderDialogProps) {
+  // Committed while the deactivation runs; a failure from one row never shows on the next.
+  const dialog = useCommittedDialog({
+    open: !!target,
+    pending: isDeleting,
+    onClose: onCancel,
+    clear: clearFailure,
+  });
+
   return (
-    <AlertDialog
-      open={!!target}
-      // No trigger opens it, so it only ever asks to close (Escape, Cancel).
-      // Committed while the request is in flight: a late failure must land here.
-      onOpenChange={() => {
-        if (!isDeleting) onCancel();
-      }}
-    >
+    <AlertDialog open={!!target} onOpenChange={dialog.onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Deactivate provider</AlertDialogTitle>
@@ -70,17 +75,12 @@ export function DeleteProviderDialog({
         <SaveError failure={failure} />
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            // preventDefault so the dialog doesn't auto-close while
-            // the async deactivation is in flight — the parent flips
-            // `target` to null on success.
-            onClick={(e) => {
-              e.preventDefault();
-              onConfirm();
-            }}
+            // The parent flips `target` to null on success.
+            {...dialog.actionProps()}
+            onClick={(e) => dialog.confirm(e, onConfirm)}
             className="bg-amber-600 hover:bg-amber-700"
-            disabled={isDeleting}
           >
             {isDeleting ? 'Deactivating…' : 'Deactivate'}
           </AlertDialogAction>

@@ -69,6 +69,7 @@ import {
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
@@ -229,6 +230,14 @@ export function WorkflowsTable({
       setDeleting(false);
     }
   }, [deleteTarget, fetchWorkflows, meta.page, clearDeleteSave, reportDeleteSave]);
+
+  // Committed while the delete runs: Escape and outside clicks wait for it.
+  const deleteDialog = useCommittedDialog({
+    open: !!deleteTarget,
+    pending: deleting,
+    onClose: () => setDeleteTarget(null),
+    clear: clearDeleteSave,
+  });
 
   const handleDuplicate = useCallback(
     async (workflow: AiWorkflowListItem) => {
@@ -511,10 +520,7 @@ export function WorkflowsTable({
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-red-600"
-                              onClick={() => {
-                                clearDeleteSave();
-                                setDeleteTarget(workflow);
-                              }}
+                              onClick={() => setDeleteTarget(workflow)}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
                               Delete
@@ -561,15 +567,7 @@ export function WorkflowsTable({
         </div>
       </div>
 
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          // Committed while the delete runs: Escape and outside clicks wait for it.
-          if (open || deleting) return;
-          setDeleteTarget(null);
-          clearDeleteSave();
-        }}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={deleteDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete workflow</AlertDialogTitle>
@@ -581,15 +579,12 @@ export function WorkflowsTable({
           </AlertDialogHeader>
           <SaveError failure={deleteSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...deleteDialog.cancelProps}>Cancel</AlertDialogCancel>
+            {/* Closes only on success, so a refusal can be read inside it (§124). */}
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a refusal can be read inside it (§124).
-                e.preventDefault();
-                void handleDelete();
-              }}
+              {...deleteDialog.actionProps()}
+              onClick={(e) => deleteDialog.confirm(e, handleDelete)}
               className="bg-red-600 hover:bg-red-700"
-              disabled={deleting}
             >
               {deleting ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 
 const MAX_CHANGE_SUMMARY_CHARS = 500;
 
@@ -72,8 +73,17 @@ export function PublishDialog({
     void onConfirm(trimmed.length > 0 ? trimmed : undefined);
   }, [tooLong, publishing, onConfirm, trimmed]);
 
+  // Committed while the publish runs: Escape and outside clicks wait for it,
+  // so a failure lands in this dialog rather than after it closed. The
+  // parent owns `errorMessage` and clears it as the dialog opens and closes.
+  const dialog = useCommittedDialog({
+    open,
+    pending: publishing,
+    onClose: () => onOpenChange(false),
+  });
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Publish draft</DialogTitle>
@@ -117,11 +127,15 @@ export function PublishDialog({
             type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={publishing}
+            {...dialog.cancelProps}
           >
             Cancel
           </Button>
-          <Button type="button" onClick={handleConfirm} disabled={publishing || tooLong}>
+          <Button
+            type="button"
+            {...dialog.actionProps({ disabled: tooLong })}
+            onClick={(e) => dialog.confirm(e, handleConfirm)}
+          >
             {publishing ? 'Publishing…' : 'Publish'}
           </Button>
         </DialogFooter>

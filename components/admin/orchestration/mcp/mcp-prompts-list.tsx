@@ -43,6 +43,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -183,7 +184,6 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
 
   function openEdit(prompt: PromptRow): void {
     setEditingPrompt(prompt);
-    editFailure.clear();
     setEditForm({
       description: prompt.description,
       template: prompt.template,
@@ -247,21 +247,38 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
     setPreviewArgs(seed);
   }
 
+  // Each dialog is committed while its save runs, so its failure is shown in
+  // it; each failure is cleared as its dialog opens.
+  const createDialog = useCommittedDialog({
+    open: createOpen,
+    pending: creating,
+    onOpen: () => setCreateOpen(true),
+    onClose: () => {
+      setCreateOpen(false);
+      setCreateForm(EMPTY_CREATE_FORM);
+    },
+    clear: createFailure.clear,
+  });
+  const editDialog = useCommittedDialog({
+    open: editingPrompt !== null,
+    pending: editSaving,
+    onClose: () => setEditingPrompt(null),
+    clear: editFailure.clear,
+  });
+  // One remove dialog is open at a time (each row's trigger sets its id).
+  const removeDialog = useCommittedDialog({
+    open: removeId !== null,
+    pending: removing,
+    onClose: () => setRemoveId(null),
+    clear: removeFailure.clear,
+  });
+
   const isEmpty = prompts.length === 0;
 
   return (
     <div className="space-y-4">
       {/* Create button + dialog */}
-      <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          // Committed while the prompt is being created, so its failure is shown here.
-          if (!open && creating) return;
-          setCreateOpen(open);
-          createFailure.clear();
-          if (!open) setCreateForm(EMPTY_CREATE_FORM);
-        }}
-      >
+      <Dialog open={createOpen} onOpenChange={createDialog.onOpenChange}>
         {!readOnly && (
           <DialogTrigger asChild>
             <Button size="sm" data-testid="create-prompt-trigger">
@@ -282,8 +299,10 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
           <SaveError failure={createFailure.failure} />
           <DialogFooter>
             <Button
-              onClick={() => void handleCreate()}
-              disabled={!createForm.name.trim() || !createForm.template.trim() || creating}
+              {...createDialog.actionProps({
+                disabled: !createForm.name.trim() || !createForm.template.trim(),
+              })}
+              onClick={(e) => createDialog.confirm(e, handleCreate)}
               data-testid="create-prompt-submit"
             >
               {creating ? 'Creating...' : 'Create Prompt'}
@@ -293,16 +312,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog
-        open={editingPrompt !== null}
-        onOpenChange={(open) => {
-          // Committed while the save is in flight, so its failure is shown here.
-          if (!open && !editSaving) {
-            setEditingPrompt(null);
-            editFailure.clear();
-          }
-        }}
-      >
+      <Dialog open={editingPrompt !== null} onOpenChange={editDialog.onOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Prompt: {editingPrompt?.name}</DialogTitle>
@@ -331,8 +341,8 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
           <SaveError failure={editFailure.failure} />
           <DialogFooter>
             <Button
-              onClick={() => void handleEditSave()}
-              disabled={editSaving}
+              {...editDialog.actionProps()}
+              onClick={(e) => editDialog.confirm(e, handleEditSave)}
               data-testid="edit-prompt-save"
             >
               {editSaving ? 'Saving...' : 'Save Changes'}
@@ -406,13 +416,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                 from a menu — they are <em>not</em> auto-invoked by the model.
               </p>
               {!readOnly && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    createFailure.clear();
-                    setCreateOpen(true);
-                  }}
-                >
+                <Button size="sm" onClick={() => setCreateOpen(true)}>
                   Create Your First Prompt
                 </Button>
               )}
@@ -486,15 +490,15 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                         </Button>
                         <AlertDialog
                           open={removeId === prompt.id}
-                          onOpenChange={(open) => {
-                            // Committed while the remove runs: Escape waits for it.
-                            if (!open && removing) return;
-                            removeFailure.clear();
-                            setRemoveId(open ? prompt.id : null);
-                          }}
+                          onOpenChange={removeDialog.onOpenChange}
                         >
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive text-xs"
+                              onClick={() => setRemoveId(prompt.id)}
+                            >
                               Remove
                             </Button>
                           </AlertDialogTrigger>
@@ -510,15 +514,16 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                             </AlertDialogHeader>
                             <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
-                              <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel {...removeDialog.cancelProps}>
+                                Cancel
+                              </AlertDialogCancel>
+                              {/* Closes only on success, so a failure stays readable here. */}
                               <AlertDialogAction
-                                disabled={removing}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={(e) => {
-                                  // Closes only on success, so a failure stays readable here.
-                                  e.preventDefault();
-                                  void handleRemove(prompt.id);
-                                }}
+                                {...removeDialog.actionProps()}
+                                onClick={(e) =>
+                                  removeDialog.confirm(e, () => handleRemove(prompt.id))
+                                }
                               >
                                 Remove
                               </AlertDialogAction>

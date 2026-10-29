@@ -56,6 +56,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { exposedToolRowSchema, type ExposedToolRow } from '@/lib/validations/mcp';
 
 interface CapabilityRow {
@@ -191,7 +192,6 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
   }
 
   function openEdit(tool: ExposedToolRow) {
-    editFailure.clear();
     setEditingTool(tool);
     setEditForm({
       customName: tool.customName ?? '',
@@ -260,19 +260,26 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     }
   }
 
+  // Each dialog is committed while its save runs, so its failure is shown in
+  // it; each failure is cleared as its dialog opens.
+  const editDialog = useCommittedDialog({
+    open: editingTool !== null,
+    pending: editSaving,
+    onClose: () => setEditingTool(null),
+    clear: editFailure.clear,
+  });
+  // One remove dialog is open at a time (each row's trigger sets its id).
+  const removeDialog = useCommittedDialog({
+    open: removeId !== null,
+    pending: removing,
+    onClose: () => setRemoveId(null),
+    clear: removeFailure.clear,
+  });
+
   return (
     <div className="space-y-4">
       {/* Edit Tool Dialog */}
-      <Dialog
-        open={editingTool !== null}
-        onOpenChange={(open) => {
-          // Committed while the save is in flight, so its failure is shown here.
-          if (!open && !editSaving) {
-            setEditingTool(null);
-            editFailure.clear();
-          }
-        }}
-      >
+      <Dialog open={editingTool !== null} onOpenChange={editDialog.onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Tool: {editingTool?.capability.name}</DialogTitle>
@@ -426,7 +433,10 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
           </div>
           <SaveError failure={editFailure.failure} />
           <DialogFooter>
-            <Button onClick={() => void handleEditSave()} disabled={editSaving}>
+            <Button
+              {...editDialog.actionProps()}
+              onClick={(e) => editDialog.confirm(e, handleEditSave)}
+            >
               {editSaving ? 'Saving...' : 'Save Changes'}
             </Button>
           </DialogFooter>
@@ -559,15 +569,15 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                         </Button>
                         <AlertDialog
                           open={removeId === tool.id}
-                          onOpenChange={(open) => {
-                            // Committed while the remove runs: Escape waits for it.
-                            if (!open && removing) return;
-                            removeFailure.clear();
-                            setRemoveId(open ? tool.id : null);
-                          }}
+                          onOpenChange={removeDialog.onOpenChange}
                         >
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive text-xs"
+                              onClick={() => setRemoveId(tool.id)}
+                            >
                               Remove
                             </Button>
                           </AlertDialogTrigger>
@@ -581,15 +591,16 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                             </AlertDialogHeader>
                             <SaveError failure={removeFailure.failure} />
                             <AlertDialogFooter>
-                              <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel {...removeDialog.cancelProps}>
+                                Cancel
+                              </AlertDialogCancel>
+                              {/* Closes only on success, so a failure stays readable here. */}
                               <AlertDialogAction
-                                disabled={removing}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={(e) => {
-                                  // Closes only on success, so a failure stays readable here.
-                                  e.preventDefault();
-                                  void handleRemove(tool.id);
-                                }}
+                                {...removeDialog.actionProps()}
+                                onClick={(e) =>
+                                  removeDialog.confirm(e, () => handleRemove(tool.id))
+                                }
                               >
                                 Remove
                               </AlertDialogAction>

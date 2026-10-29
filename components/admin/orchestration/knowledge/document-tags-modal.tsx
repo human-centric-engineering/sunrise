@@ -38,6 +38,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { createKnowledgeTagSchema } from '@/lib/validations/orchestration';
 import { cn } from '@/lib/utils';
 
@@ -137,9 +138,8 @@ export function DocumentTagsModal({
       setTagIds([]);
       setOriginalTagIds([]);
       setError(null);
-      clearSaveFailure();
     }
-  }, [open, documentId, fetchTagsAndDoc, clearSaveFailure]);
+  }, [open, documentId, fetchTagsAndDoc]);
 
   // Inline tag-creation state. Operators who realise a tag is missing
   // can spin one up without leaving the modal — the new tag is added to
@@ -165,9 +165,8 @@ export function DocumentTagsModal({
       setCreateSlugDirty(false);
       setCreateDescription('');
       setCreateFieldErrors({});
-      clearCreateFailure();
     }
-  }, [open, clearCreateFailure]);
+  }, [open]);
 
   const [filter, setFilter] = useState('');
   useEffect(() => {
@@ -261,6 +260,25 @@ export function DocumentTagsModal({
     }
   }
 
+  // Switching document while open starts clean too: one document's failure
+  // never shows on the next (the dialog hook clears on open and close).
+  useEffect(() => {
+    clearSaveFailure();
+    clearCreateFailure();
+  }, [documentId, clearSaveFailure, clearCreateFailure]);
+
+  // Committed while a save or a tag create is in flight; both failures are
+  // cleared as it opens and closes.
+  const dialog = useCommittedDialog({
+    open,
+    pending: saving || createBusy,
+    onClose: () => onOpenChange(false),
+    clear: () => {
+      clearSaveFailure();
+      clearCreateFailure();
+    },
+  });
+
   async function save(): Promise<void> {
     if (!documentId) return;
     setSaving(true);
@@ -283,14 +301,7 @@ export function DocumentTagsModal({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while a save or a tag create is in flight.
-        if (!next && (saving || createBusy)) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="max-h-[85vh] w-full max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-start gap-2">
@@ -540,14 +551,12 @@ export function DocumentTagsModal({
         <SaveError failure={saveFailure.failure} />
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
             Cancel
           </Button>
           <Button
-            onClick={() => {
-              void save();
-            }}
-            disabled={!dirty || saving || loading}
+            {...dialog.actionProps({ disabled: !dirty || loading })}
+            onClick={(e) => dialog.confirm(e, save)}
           >
             <Save className="mr-1.5 h-3.5 w-3.5" />
             {saving ? 'Saving…' : 'Save tags'}

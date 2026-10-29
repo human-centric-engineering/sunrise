@@ -41,6 +41,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import type { SaveFailure } from '@/lib/errors/save-error';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { ClientDate } from '@/components/ui/client-date';
 import { createKnowledgeTagSchema } from '@/lib/validations/orchestration';
 import type { PaginationMeta } from '@/types/api';
@@ -156,10 +157,9 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
   });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
-  // Opening the form clears the last save's failure, so a failure left by
-  // an earlier dialog never shows in this one.
+  // Opening the form clears the last save's field errors; the dialog clears
+  // its failure as it opens, so one left by an earlier dialog never shows.
   function openForm(next: Extract<DialogState, { kind: 'create' | 'edit' }>): void {
-    formFailure.clear();
     setFieldErrors({});
     setDialog(next);
   }
@@ -318,7 +318,6 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                deleteFailure.clear();
                                 setDialog({ kind: 'delete', tag, phase: 'initial' });
                               }}
                               aria-label={`Delete ${tag.name}`}
@@ -360,11 +359,11 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
         state={dialog}
         busy={busy}
         failure={formFailure.failure}
+        clearFailure={formFailure.clear}
         fieldErrors={fieldErrors}
         onClearFieldError={(key) => setFieldErrors((prev) => ({ ...prev, [key]: undefined }))}
         onClose={() => {
           setDialog({ kind: 'closed' });
-          formFailure.clear();
           setFieldErrors({});
         }}
         onPress={formFailure.clear}
@@ -397,10 +396,8 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
         state={dialog}
         busy={busy}
         failure={deleteFailure.failure}
-        onClose={() => {
-          setDialog({ kind: 'closed' });
-          deleteFailure.clear();
-        }}
+        clearFailure={deleteFailure.clear}
+        onClose={() => setDialog({ kind: 'closed' })}
         onConfirm={async () => {
           if (dialog.kind !== 'delete') return;
           setBusy(true);
@@ -461,6 +458,8 @@ interface DialogCommonProps {
   busy: boolean;
   /** The failed save, shown above the dialog's buttons. */
   failure: SaveFailure | null;
+  /** Clears that failure; the dialog calls it each time it opens. */
+  clearFailure: () => void;
   onClose: () => void;
 }
 
@@ -468,6 +467,7 @@ function CreateOrEditDialog({
   state,
   busy,
   failure,
+  clearFailure,
   fieldErrors,
   onClearFieldError,
   onClose,
@@ -496,6 +496,10 @@ function CreateOrEditDialog({
   // existing tag starts "dirty" so we never overwrite the persisted slug.
   const [slugDirty, setSlugDirty] = useState(existing !== null);
   const [localErrors, setLocalErrors] = useState<FieldErrors>({});
+
+  // Committed while the save is in flight: Escape and an outside click
+  // would otherwise close it before its failure arrives.
+  const dialog = useCommittedDialog({ open, pending: busy, onClose, clear: clearFailure });
 
   if (!open) return null;
 
@@ -527,14 +531,7 @@ function CreateOrEditDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        // Committed while the save is in flight: Escape and an outside click
-        // would otherwise close it before its failure arrives.
-        if (!o && !busy) onClose();
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{existing ? 'Edit tag' : 'New tag'}</DialogTitle>
@@ -629,10 +626,10 @@ function CreateOrEditDialog({
         </div>
         <SaveError failure={failure} />
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
+          <Button variant="ghost" onClick={onClose} {...dialog.cancelProps}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={busy}>
+          <Button {...dialog.actionProps()} onClick={(e) => dialog.confirm(e, handleSubmit)}>
             {existing ? 'Save changes' : 'Create tag'}
           </Button>
         </DialogFooter>
@@ -645,9 +642,18 @@ function DeleteDialog({
   state,
   busy,
   failure,
+  clearFailure,
   onClose,
   onConfirm,
 }: DialogCommonProps & { onConfirm: () => Promise<void> }): React.ReactElement | null {
+  // Committed while the delete runs: Escape waits for it.
+  const dialog = useCommittedDialog({
+    open: state.kind === 'delete',
+    pending: busy,
+    onClose,
+    clear: clearFailure,
+  });
+
   if (state.kind !== 'delete') return null;
   const { tag, phase, blockedAgents, otherOrgCount = 0, ownGrantCount = 0 } = state;
   // The server names at most 50 of the caller's own grants; say how many more.
@@ -657,13 +663,7 @@ function DeleteDialog({
   const isForceConfirm = phase === 'force-confirm';
 
   return (
-    <Dialog
-      open
-      onOpenChange={(o) => {
-        // Committed while the delete runs: Escape waits for it.
-        if (!o && !busy) onClose();
-      }}
-    >
+    <Dialog open onOpenChange={dialog.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -716,16 +716,14 @@ function DeleteDialog({
         <SaveError failure={failure} />
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
+          <Button variant="ghost" onClick={onClose} {...dialog.cancelProps}>
             {isAgentBlocked ? 'Close' : 'Cancel'}
           </Button>
           {isAgentBlocked ? null : (
             <Button
               variant="destructive"
-              onClick={() => {
-                void onConfirm();
-              }}
-              disabled={busy}
+              {...dialog.actionProps()}
+              onClick={(e) => dialog.confirm(e, onConfirm)}
             >
               {isForceConfirm ? 'Delete anyway' : 'Delete'}
             </Button>

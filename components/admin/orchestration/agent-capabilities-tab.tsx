@@ -48,6 +48,7 @@ import { apiClient, apiErrorFromResponse, APIClientError } from '@/lib/api/clien
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import type { AiAgentCapability, AiCapability } from '@/types/prisma';
 
 /**
@@ -469,7 +470,6 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
     fallback: 'Could not save capability config. Try again.',
     fields: NO_SERVER_FIELDS,
   });
-  const clearSave = save.clear;
   const [saving, setSaving] = useState(false);
   // Soft warning surfaced from the binding-save API meta when an
   // ${env:VAR} reference points at an unset env var. Save still
@@ -484,11 +484,18 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
     if (link) {
       setConfigText(link.customConfig ? JSON.stringify(link.customConfig, null, 2) : '');
       setRateLimit(link.customRateLimit ? String(link.customRateLimit) : '');
-      clearSave();
       setMissingEnvVars([]);
       setUnavailableEnvVars({ names: [], prefix: null });
     }
-  }, [link, clearSave]);
+  }, [link]);
+
+  // Committed while the save runs; an earlier failure never greets a reopen.
+  const dialog = useCommittedDialog({
+    open: !!link,
+    pending: saving,
+    onClose: () => onOpenChange(false),
+    clear: save.clear,
+  });
 
   async function handleSave() {
     if (!link) return;
@@ -553,14 +560,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
   }
 
   return (
-    <Dialog
-      open={!!link}
-      onOpenChange={(open) => {
-        // Committed while the save is in flight: a late failure must land here.
-        if (!open && saving) return;
-        onOpenChange(open);
-      }}
-    >
+    <Dialog open={!!link} onOpenChange={dialog.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Configure {link?.capability.name}</DialogTitle>
@@ -683,11 +683,15 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={saving}
+            {...dialog.cancelProps}
           >
             {missingEnvVars.length > 0 || unavailableEnvVars.names.length > 0 ? 'Close' : 'Cancel'}
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+          <Button
+            type="button"
+            {...dialog.actionProps()}
+            onClick={(e) => dialog.confirm(e, handleSave)}
+          >
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </DialogFooter>

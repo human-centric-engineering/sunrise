@@ -41,6 +41,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiErrorFromResponse } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   extractFinalOutput,
@@ -226,6 +227,21 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
     if (ok) setRejectOpen(false);
   }, [submit, rejectReason, clearRejectSave]);
 
+  // Each dialog is committed while either decision is in flight; an earlier
+  // refusal never greets a reopen.
+  const approveDialog = useCommittedDialog({
+    open: approveOpen,
+    pending: sending !== null,
+    onClose: () => setApproveOpen(false),
+    clear: clearApproveSave,
+  });
+  const rejectDialog = useCommittedDialog({
+    open: rejectOpen,
+    pending: sending !== null,
+    onClose: () => setRejectOpen(false),
+    clear: clearRejectSave,
+  });
+
   const expired = state.kind === 'expired';
   const failed = state.kind === 'failed';
   const busy = state.kind === 'waiting';
@@ -295,15 +311,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
       )}
 
       {/* Approve dialog */}
-      <AlertDialog
-        open={approveOpen}
-        onOpenChange={(open) => {
-          // Committed while the decision is in flight: a refusal lands here.
-          if (!open && sending !== null) return;
-          setApproveOpen(open);
-          clearApproveSave();
-        }}
-      >
+      <AlertDialog open={approveOpen} onOpenChange={approveDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Approve action?</AlertDialogTitle>
@@ -330,14 +338,10 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
           </div>
           <SaveError failure={approveSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={sending !== null}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...approveDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only once the server accepts, so a refusal is read here.
-                e.preventDefault();
-                void handleApprove();
-              }}
-              disabled={sending !== null}
+              {...approveDialog.actionProps()}
+              onClick={(e) => approveDialog.confirm(e, handleApprove)}
             >
               {sending === 'approve' && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
@@ -349,14 +353,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
       </AlertDialog>
 
       {/* Reject dialog */}
-      <AlertDialog
-        open={rejectOpen}
-        onOpenChange={(open) => {
-          if (!open && sending !== null) return;
-          setRejectOpen(open);
-          clearRejectSave();
-        }}
-      >
+      <AlertDialog open={rejectOpen} onOpenChange={rejectDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reject action?</AlertDialogTitle>
@@ -386,14 +383,10 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
           </div>
           <SaveError failure={rejectSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={sending !== null}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...rejectDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only once the server accepts, so a refusal is read here.
-                e.preventDefault();
-                void handleReject();
-              }}
-              disabled={sending !== null || !rejectReason.trim()}
+              {...rejectDialog.actionProps({ disabled: !rejectReason.trim() })}
+              onClick={(e) => rejectDialog.confirm(e, handleReject)}
               className="bg-destructive hover:bg-destructive/90"
             >
               {sending === 'reject' && (

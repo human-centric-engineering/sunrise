@@ -44,6 +44,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { cn } from '@/lib/utils';
 
 interface HistoryEntry {
@@ -133,6 +134,14 @@ export function InstructionsHistoryPanel({
     }
   }, [revertTarget, agentId, fetchHistory, onReverted, clearRevert, reportRevert]);
 
+  // Committed while the revert runs; a failure from one version never shows on the next.
+  const revertDialog = useCommittedDialog({
+    open: !!revertTarget,
+    pending: reverting,
+    onClose: () => setRevertTarget(null),
+    clear: clearRevert,
+  });
+
   return (
     <div className="border-border rounded-md border">
       <button
@@ -199,10 +208,7 @@ export function InstructionsHistoryPanel({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
-                            clearRevert();
-                            setRevertTarget({ entry, versionIndex });
-                          }}
+                          onClick={() => setRevertTarget({ entry, versionIndex })}
                         >
                           <RotateCcw className="mr-1 h-3 w-3" />
                           Revert
@@ -241,17 +247,7 @@ export function InstructionsHistoryPanel({
       </Dialog>
 
       {/* Revert confirm */}
-      <AlertDialog
-        open={!!revertTarget}
-        onOpenChange={(open) => {
-          // Committed while the revert is in flight: a late failure must land here.
-          if (!open && reverting) return;
-          if (!open) {
-            setRevertTarget(null);
-            clearRevert();
-          }
-        }}
-      >
+      <AlertDialog open={!!revertTarget} onOpenChange={revertDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revert to this version?</AlertDialogTitle>
@@ -262,14 +258,10 @@ export function InstructionsHistoryPanel({
           </AlertDialogHeader>
           <SaveError failure={revertSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...revertDialog.cancelProps}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                // Closes only on success, so a failure stays readable here.
-                e.preventDefault();
-                void handleRevert();
-              }}
-              disabled={reverting}
+              {...revertDialog.actionProps()}
+              onClick={(e) => revertDialog.confirm(e, handleRevert)}
             >
               {reverting ? 'Reverting…' : 'Revert'}
             </AlertDialogAction>

@@ -71,6 +71,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import {
   CONTEXT_LENGTH_LEVELS,
   LATENCY_LEVELS,
@@ -294,11 +295,10 @@ export function DiscoverModelsDialog({
     setSearch('');
     setActiveBuckets(new Set());
     setReviewRows([]);
-    clearSubmit();
     setResult(null);
     setCandidates(null);
     setDiscoveryError(null);
-  }, [open, initialProviderSlug, prefilledModelIds, clearSubmit]);
+  }, [open, initialProviderSlug, prefilledModelIds]);
 
   // When the operator goes back to step 1 and picks a different
   // provider, drop any selections from the previous provider —
@@ -481,15 +481,16 @@ export function DiscoverModelsDialog({
     return providers.find((p) => p.slug === providerSlug)?.name ?? null;
   }, [initialProviderName, providerSlug, providers]);
 
+  // Committed while the add runs; an earlier failure never greets a reopen.
+  const dialog = useCommittedDialog({
+    open,
+    pending: submitting,
+    onClose: () => onOpenChange(false),
+    clear: clearSubmit,
+  });
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Committed while the add is in flight: a late failure must land here.
-        if (!next && submitting) return;
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={dialog.onOpenChange}>
       <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -577,15 +578,15 @@ export function DiscoverModelsDialog({
           )}
           {step === 'review' && (
             <>
-              <Button variant="ghost" onClick={() => setStep('discovery')} disabled={submitting}>
+              <Button variant="ghost" onClick={() => setStep('discovery')} {...dialog.cancelProps}>
                 ← Back
               </Button>
-              <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+              <Button variant="ghost" onClick={() => onOpenChange(false)} {...dialog.cancelProps}>
                 Cancel
               </Button>
               <Button
-                disabled={submitting || reviewRows.length === 0}
-                onClick={() => void handleSubmit()}
+                {...dialog.actionProps({ disabled: reviewRows.length === 0 })}
+                onClick={(e) => dialog.confirm(e, handleSubmit)}
               >
                 {submitting ? (
                   <>

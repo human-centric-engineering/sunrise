@@ -578,10 +578,7 @@ export function CapabilitiesTable({
                         {!cap.isSystem && !readOnly && (
                           <DropdownMenuItem
                             className="text-red-600"
-                            onClick={() => {
-                              clearDelete();
-                              setDeleteTarget(cap);
-                            }}
+                            onClick={() => setDeleteTarget(cap)}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
@@ -633,11 +630,9 @@ export function CapabilitiesTable({
         usedBy={deleteTarget?._agents ?? []}
         otherOrgAgentCount={deleteTarget?._otherOrgAgentCount ?? 0}
         failure={deleteSave.failure}
+        clearFailure={clearDelete}
         isDeleting={isDeleting}
-        onCancel={() => {
-          setDeleteTarget(null);
-          clearDelete();
-        }}
+        onCancel={() => setDeleteTarget(null)}
         onConfirm={() => void handleDelete()}
       />
     </div>

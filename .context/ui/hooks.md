@@ -176,6 +176,17 @@ submit so every press clears the last failure first. Each report is a new
 object, so the same message moves into view again. Full rules and recipes:
 [Form save errors](./form-errors.md).
 
+## `useCommittedDialog({ open, pending, onClose, onOpen?, clear? })`
+
+**File:** `lib/hooks/use-committed-dialog.ts`
+
+Locks a dialog while its save runs: `onOpenChange` ignores a close while
+`pending`, `cancelProps` and `actionProps({ disabled? })` disable Cancel and
+the action, and `confirm(e, run)` (the action's `onClick`) calls
+`preventDefault` so an `AlertDialogAction` doesn't close the dialog before the
+save answers. `clear` runs as the dialog opens and as it closes. Recipe: [Form save errors → a
+dialog](./form-errors.md).
+
 ## See also
 
 - [Setup Wizard](../admin/setup-wizard.md) — composes `useLocalStorage` and `useWizard` together
