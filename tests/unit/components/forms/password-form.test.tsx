@@ -61,6 +61,15 @@ vi.mock('@/lib/utils/password-strength', () => ({
 /**
  * Test Suite: PasswordForm Component
  */
+/** What better-auth's client resolves when the password changed. */
+const CHANGED = { data: { token: null, user: { id: 'u1' } }, error: null } as never;
+
+/** What it resolves when it refused: it never throws a refusal. */
+const REFUSED = (code: string, message: string) => ({
+  data: null,
+  error: { code, message, status: 400, statusText: 'Bad Request' },
+});
+
 describe('components/forms/password-form', () => {
   let mockTrack: ReturnType<typeof vi.fn>;
 
@@ -267,7 +276,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       const { authClient } = await import('@/lib/auth/client');
 
-      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+      vi.mocked(authClient.changePassword).mockResolvedValue(CHANGED);
 
       render(<PasswordForm />);
 
@@ -354,7 +363,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       const { authClient } = await import('@/lib/auth/client');
 
-      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+      vi.mocked(authClient.changePassword).mockResolvedValue(CHANGED);
 
       render(<PasswordForm />);
 
@@ -383,7 +392,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       const { authClient } = await import('@/lib/auth/client');
 
-      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+      vi.mocked(authClient.changePassword).mockResolvedValue(CHANGED);
 
       render(<PasswordForm />);
 
@@ -409,7 +418,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       const { authClient } = await import('@/lib/auth/client');
 
-      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+      vi.mocked(authClient.changePassword).mockResolvedValue(CHANGED);
 
       render(<PasswordForm />);
 
@@ -440,7 +449,7 @@ describe('components/forms/password-form', () => {
       vi.useFakeTimers();
       const { authClient } = await import('@/lib/auth/client');
 
-      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+      vi.mocked(authClient.changePassword).mockResolvedValue(CHANGED);
 
       render(<PasswordForm />);
 
@@ -478,141 +487,66 @@ describe('components/forms/password-form', () => {
   });
 
   describe('error handling', () => {
-    it('should NOT track analytics on password change failure', async () => {
-      // Arrange
+    // better-auth's client answers a refusal as `{ data: null, error }` and
+    // never throws one (no `throw: true` in lib/auth/client.ts). Only a
+    // network failure rejects.
+    async function submitWith(result: unknown, kind: 'resolve' | 'reject' = 'resolve') {
       const user = userEvent.setup({ delay: null });
       const { authClient } = await import('@/lib/auth/client');
-
-      vi.mocked(authClient.changePassword).mockRejectedValue(
-        new Error('Current password is incorrect')
-      );
+      if (kind === 'resolve') {
+        vi.mocked(authClient.changePassword).mockResolvedValue(result);
+      } else {
+        vi.mocked(authClient.changePassword).mockRejectedValue(result);
+      }
 
       render(<PasswordForm />);
 
-      const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
-      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
-      const submitButton = screen.getByRole('button', { name: /change password/i });
+      await user.type(screen.getByLabelText('Current Password'), 'WrongPassword123!');
+      await user.type(
+        screen.getByLabelText(/^new password/i, { selector: 'input' }),
+        'NewPassword123!'
+      );
+      await user.type(screen.getByLabelText('Confirm New Password'), 'NewPassword123!');
+      await user.click(screen.getByRole('button', { name: /change password/i }));
+    }
 
-      // Act
-      await user.type(currentPasswordInput, 'WrongPassword123!');
-      await user.type(newPasswordInput, 'NewPassword123!');
-      await user.type(confirmPasswordInput, 'NewPassword123!');
-      await user.click(submitButton);
+    it('shows a wrong current password under that field, not a success', async () => {
+      await submitWith(REFUSED('INVALID_PASSWORD', 'Invalid password'));
 
-      // Assert - Analytics should NOT be called on error
-      await waitFor(() => {
-        expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
-      });
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Current password is incorrect');
+      // Under the field too, and the field takes focus: it is what needs fixing.
+      const field = screen.getByLabelText('Current Password');
+      expect(field).toHaveFocus();
+      expect(screen.getAllByText('Current password is incorrect')).toHaveLength(2);
+      expect(screen.queryByText(/password changed successfully/i)).not.toBeInTheDocument();
       expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
-    it('should display error message for incorrect current password', async () => {
-      // Arrange
-      const user = userEvent.setup({ delay: null });
-      const { authClient } = await import('@/lib/auth/client');
+    it("shows any other refusal in better-auth's words", async () => {
+      await submitWith(REFUSED('SESSION_EXPIRED', 'Session expired'));
 
-      vi.mocked(authClient.changePassword).mockRejectedValue(
-        new Error('Current password is incorrect')
+      expect(await screen.findByRole('alert')).toHaveTextContent('Session expired');
+      expect(screen.queryByText(/password changed successfully/i)).not.toBeInTheDocument();
+    });
+
+    it('shows the fallback for a network failure, not the browser text', async () => {
+      await submitWith(new TypeError('Failed to fetch'), 'reject');
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not change your password. Try again in a moment.'
       );
-
-      render(<PasswordForm />);
-
-      const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
-      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
-      const submitButton = screen.getByRole('button', { name: /change password/i });
-
-      // Act
-      await user.type(currentPasswordInput, 'WrongPassword123!');
-      await user.type(newPasswordInput, 'NewPassword123!');
-      await user.type(confirmPasswordInput, 'NewPassword123!');
-      await user.click(submitButton);
-
-      // Assert
-      await waitFor(() => {
-        expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
-      });
+      expect(screen.queryByText(/failed to fetch/i)).not.toBeInTheDocument();
     });
 
-    it('should display error message when better-auth fails', async () => {
-      // Arrange
-      const user = userEvent.setup({ delay: null });
-      const { authClient } = await import('@/lib/auth/client');
+    it('puts the error beside Change Password and brings it into focus', async () => {
+      await submitWith(REFUSED('SESSION_EXPIRED', 'Session expired'));
 
-      vi.mocked(authClient.changePassword).mockRejectedValue(new Error('Session expired'));
-
-      render(<PasswordForm />);
-
-      const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
-      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
-      const submitButton = screen.getByRole('button', { name: /change password/i });
-
-      // Act
-      await user.type(currentPasswordInput, 'CurrentPassword123!');
-      await user.type(newPasswordInput, 'NewPassword123!');
-      await user.type(confirmPasswordInput, 'NewPassword123!');
-      await user.click(submitButton);
-
-      // Assert
-      await waitFor(() => {
-        expect(screen.getByText(/session expired/i)).toBeInTheDocument();
-      });
-    });
-
-    it('should display generic error for unexpected errors', async () => {
-      // Arrange
-      const user = userEvent.setup({ delay: null });
-      const { authClient } = await import('@/lib/auth/client');
-
-      // Reject with non-Error object
-      vi.mocked(authClient.changePassword).mockRejectedValue('Unexpected error');
-
-      render(<PasswordForm />);
-
-      const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
-      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
-      const submitButton = screen.getByRole('button', { name: /change password/i });
-
-      // Act
-      await user.type(currentPasswordInput, 'CurrentPassword123!');
-      await user.type(newPasswordInput, 'NewPassword123!');
-      await user.type(confirmPasswordInput, 'NewPassword123!');
-      await user.click(submitButton);
-
-      // Assert
-      await waitFor(() => {
-        expect(screen.getByText(/an unexpected error occurred/i)).toBeInTheDocument();
-      });
-    });
-
-    it('should handle "wrong password" error message', async () => {
-      // Arrange
-      const user = userEvent.setup({ delay: null });
-      const { authClient } = await import('@/lib/auth/client');
-
-      // Note: Component uses case-sensitive .includes('wrong'), so use lowercase
-      vi.mocked(authClient.changePassword).mockRejectedValue(new Error('wrong password provided'));
-
-      render(<PasswordForm />);
-
-      const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
-      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
-      const submitButton = screen.getByRole('button', { name: /change password/i });
-
-      // Act
-      await user.type(currentPasswordInput, 'WrongPassword123!');
-      await user.type(newPasswordInput, 'NewPassword123!');
-      await user.type(confirmPasswordInput, 'NewPassword123!');
-      await user.click(submitButton);
-
-      // Assert: Should map "wrong" to "incorrect"
-      await waitFor(() => {
-        expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
-      });
+      const alert = await screen.findByRole('alert');
+      expect(alert.nextElementSibling).toBe(
+        screen.getByRole('button', { name: /change password/i })
+      );
+      expect(alert).toHaveFocus();
     });
   });
 });
