@@ -256,8 +256,15 @@ export class OrchestrationEngine {
     // --------------------------------------------------------------
     // 1. Row creation / resume
     // --------------------------------------------------------------
-    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId, lease } =
-      await this.initRun(workflow, inputData, options, baseLogger);
+    const {
+      executionId,
+      trace,
+      budgetLimitUsd,
+      ctx,
+      resumeAfterStepId,
+      resumeInFlightStepIds,
+      lease,
+    } = await this.initRun(workflow, inputData, options, baseLogger);
 
     yield workflowStarted(executionId, workflow.id);
     emitHookEvent('workflow.started', {
@@ -294,7 +301,8 @@ export class OrchestrationEngine {
             ctx,
             resumeAfterStepId,
             baseLogger,
-            options
+            options,
+            resumeInFlightStepIds
           ),
         { manualStatus: true }
       );
@@ -320,7 +328,8 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     resumeAfterStepId: string | undefined,
     baseLogger: Logger,
-    options: ExecuteOptions
+    options: ExecuteOptions,
+    resumeInFlightStepIds: string[] = []
   ): AsyncGenerator<ExecutionEvent, void, unknown> {
     const { executionId } = lease;
     let workflowSpanError: unknown = undefined;
@@ -337,16 +346,24 @@ export class OrchestrationEngine {
       const visited = new Set<string>();
       // Bounded retry tracking: key = "sourceStepId→targetStepId", value = attempts used.
       const retryCount = new Map<string, number>();
-      const queue: string[] = resumeAfterStepId
-        ? this.nextIdsAfter(byId, resumeAfterStepId)
-        : [workflow.definition.entryStepId];
+      // A crash-resume re-runs the steps that were in flight when the host
+      // died; every other resume continues after its cursor (t-966).
+      const queue: string[] =
+        resumeInFlightStepIds.length > 0
+          ? [...resumeInFlightStepIds]
+          : resumeAfterStepId
+            ? this.nextIdsAfter(byId, resumeAfterStepId)
+            : [workflow.definition.entryStepId];
 
       // On resume, seed visited with steps already recorded in the trace
       // so the in-degree check doesn't block successors of completed steps.
-      if (resumeAfterStepId) {
+      // A step being re-run is taken back out: one revisited by a loop edge
+      // has an entry from its earlier visit, and the walk skips visited ids.
+      if (resumeAfterStepId || resumeInFlightStepIds.length > 0) {
         for (const entry of trace) {
           visited.add(entry.stepId);
         }
+        for (const id of resumeInFlightStepIds) visited.delete(id);
       }
 
       // Build in-degree map for convergence detection. A step is "ready"
@@ -1128,6 +1145,9 @@ export class OrchestrationEngine {
     // steps don't see stale resume state, and `onAttemptStart` clears it
     // between retry attempts so retries start fresh (no resume replay on
     // attempt 1+).
+    // Turns replay only into the step that recorded them (t-966).
+    if (ctx.resumeStepId !== step.id) ctx.resumeTurns = undefined;
+    ctx.resumeStepId = undefined;
     const stepTurns: TurnEntry[] = [...(ctx.resumeTurns ?? [])];
     ctx.recordTurn = async (turn: TurnEntry) => {
       stepTurns.push(turn);
@@ -1421,6 +1441,10 @@ export class OrchestrationEngine {
     for (const step of steps) {
       void this.markCurrentStep(lease, step, baseLogger);
     }
+    // Branches share `ctx`, and turn replay is single-cursor, so no branch
+    // replays resume turns (see `initRun`).
+    ctx.resumeTurns = undefined;
+    ctx.resumeStepId = undefined;
 
     // Run all steps concurrently. Each step runs its full strategy
     // (including retries) independently.
@@ -1889,6 +1913,8 @@ export class OrchestrationEngine {
     budgetLimitUsd?: number;
     ctx: ExecutionContext;
     resumeAfterStepId?: string;
+    /** Steps a crash-resume re-runs, because they were in flight when the run stopped. */
+    resumeInFlightStepIds?: string[];
     lease: LeaseHandle;
   }> {
     if (options.resumeFromExecutionId) {
@@ -1956,12 +1982,12 @@ export class OrchestrationEngine {
       // results without re-firing.
       //
       // We look up turns on the running-step row keyed by `currentStep` (the
-      // resume cursor). Note: this is a single-cursor resume — a `parallel`
-      // step's siblings are intentionally discarded by the `deleteMany` below,
-      // and the engine re-walks the DAG. No seeded workflow today nests
-      // multi-turn executors (`agent_call`/`orchestrator`/`reflect`) inside a
-      // `parallel`, so the single-cursor strategy is sufficient. A future
-      // contributor combining the two would need a multi-cursor resume.
+      // resume cursor), and they are replayed into that step only
+      // (`ctx.resumeStepId`). Turn replay is single-cursor: a `parallel`
+      // batch's branches are re-run (see `inFlight` below) but without
+      // replay. No seeded workflow today nests multi-turn executors
+      // (`agent_call`/`orchestrator`/`reflect`) inside a `parallel`; a
+      // future contributor combining the two would need per-branch replay.
       if (row.currentStep) {
         const runningRow = await prisma.aiWorkflowRunningStep.findUnique({
           where: { executionId_stepId: { executionId: row.id, stepId: row.currentStep } },
@@ -1971,6 +1997,7 @@ export class OrchestrationEngine {
           const parsedTurns = turnEntriesSchema.safeParse(runningRow.turns);
           if (parsedTurns.success && parsedTurns.data.length > 0) {
             ctx.resumeTurns = parsedTurns.data;
+            ctx.resumeStepId = row.currentStep;
             baseLogger.info('Resume: restoring multi-turn step state', {
               executionId: row.id,
               currentStep: row.currentStep,
@@ -1994,10 +2021,48 @@ export class OrchestrationEngine {
           }
         }
       }
+      // Which steps a crash-resume re-runs (t-966). `currentStep` is written
+      // when a step STARTS and never moved on when it finishes, so on a run
+      // that was still `running` it names the step in flight — continuing
+      // after it would skip that step and leave everything downstream of it
+      // unreachable. What was in flight is every step with a running-step
+      // row (each branch of a parallel batch has one, deleted as the step
+      // finishes), plus the cursor unless the trace's last entry is that
+      // step finished — the crash fell between its checkpoint and the next
+      // step's start, or between the checkpoint and the row's delete.
+      //
+      // Approval and retry-step resumes keep `resumeAfterStepId`: both point
+      // the cursor at a step the trace records as finished, deliberately.
+      const inFlight: string[] = [];
+      if (reason === 'orphan-resume') {
+        const rows = await prisma.aiWorkflowRunningStep.findMany({
+          where: { executionId: row.id },
+          select: { stepId: true },
+        });
+        for (const r of rows) inFlight.push(r.stepId);
+        const last = trace.at(-1);
+        const cursorFinished =
+          last !== undefined &&
+          last.stepId === row.currentStep &&
+          (last.status === 'completed' || last.status === 'skipped');
+        if (row.currentStep && !cursorFinished && !inFlight.includes(row.currentStep)) {
+          inFlight.push(row.currentStep);
+        }
+        if (cursorFinished) {
+          // Its row survived only because the delete after its checkpoint
+          // failed; it is done.
+          const at = inFlight.indexOf(row.currentStep!);
+          if (at !== -1) inFlight.splice(at, 1);
+        }
+        if (inFlight.length > 0) {
+          baseLogger.info('Resume: re-running steps in flight at the crash', {
+            executionId: row.id,
+            stepIds: inFlight,
+          });
+        }
+      }
       // Clear all running-step rows for this execution before re-entry. The
-      // engine is about to call `markCurrentStep` on the resume target, which
-      // will INSERT a fresh row; any stale siblings from a pre-crash parallel
-      // fan-out are intentionally discarded.
+      // engine re-creates a row for each step as it runs it.
       await prisma.aiWorkflowRunningStep.deleteMany({ where: { executionId: row.id } });
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: row.id, leaseToken },
@@ -2009,6 +2074,7 @@ export class OrchestrationEngine {
         budgetLimitUsd: ctx.budgetLimitUsd,
         ctx,
         resumeAfterStepId: row.currentStep ?? undefined,
+        resumeInFlightStepIds: inFlight,
         lease: { executionId: row.id, token: leaseToken },
       };
     }
