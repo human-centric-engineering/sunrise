@@ -27,8 +27,8 @@ release process.
   delegation), so no two attempts share it. A crash-resume continues the
   attempt it was interrupted in — same number, same id, and its retry count,
   so a resumed step no longer gets a fresh set of retries — from the new
-  `AiWorkflowRunningStep.attempt` and `attemptId` columns (migrations
-  included) (#1143, t-965).
+  `AiWorkflowRunningStep.attempt` and `attemptId` columns (one migration)
+  (#1143, t-965).
 - **`<SaveError>`** (`components/forms/form-error.tsx`) and **`readSaveError()`
   / `applyFieldErrors()`** (`lib/errors/save-error.ts`): the one way a form
   shows a save the server refused. The form places it beside the Save button
