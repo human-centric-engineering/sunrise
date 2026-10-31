@@ -89,6 +89,15 @@ release process.
 
 ### Fixed
 
+- **A workflow run resumed after a crash skipped the step it crashed in.**
+  The engine records a run's current step when the step starts and never
+  moved it on, so the orphan sweep resumed after the step that was in flight:
+  that step, and everything waiting on it, never ran, and a run whose last
+  step was in flight was marked completed without it. A crash-resume now
+  re-runs every step that was in flight, all branches of a `parallel` batch
+  included. Approval and retry-step resumes are unchanged. Saved multi-turn
+  state is now replayed only into the step that recorded it; a resume used to
+  hand it to the next step to run (t-966).
 - **Changing your password with the wrong current password said it
   succeeded.** better-auth's client answers a refusal as `{ error }` rather
   than throwing it, and the password form only read a throw, so it showed
