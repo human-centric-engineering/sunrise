@@ -91,6 +91,12 @@ export interface ExecutionContext {
    */
   resumeTurns?: TurnEntry[];
   /**
+   * The step `resumeTurns` were recorded by. `executeSingleStep` hands the
+   * turns only to that step and drops them for any other, so a resume never
+   * replays one step's conversation into the next (t-966).
+   */
+  resumeStepId?: string;
+  /**
    * Mid-step checkpoint hook. Multi-turn executors call this after each
    * completed turn to persist progress. The engine's implementation appends
    * to an in-memory accumulator AND writes the full array to the

@@ -588,6 +588,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'Step executors by step type, all registered from code.',
   },
   {
+    file: 'lib/orchestration/engine/orchestration-engine.ts',
+    holders: ['walkPositions'],
+    posture: 'row-keyed',
+    keyedBy: "the run's live ExecutionContext object",
+    why: "A WeakMap from a run's live ExecutionContext to that run's walk position (step ids, counts) so its checkpoint can save it (t-966). The key is an object only that run holds, so no run in another org can be handed the entry, and it is collected with the run.",
+  },
+  {
     file: 'lib/orchestration/evaluations/graders/registry.ts',
     holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',
