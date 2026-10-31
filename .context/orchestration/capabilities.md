@@ -38,26 +38,26 @@ Every outcome is a `CapabilityResult` — the dispatcher never throws at its bou
 
 Everything is exported from `@/lib/orchestration/capabilities`:
 
-| Export                         | Kind      | Purpose                                                                                                                                  |
-| ------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `getHandler`, `has`, `clearCache`                                        |
-| `workflowAgentId`              | function  | Mint the synthetic `agentId` a workflow's `tool_call` steps dispatch under. Use this rather than re-inlining the template (#528)         |
-| `isWorkflowAgentId`            | function  | True when an `agentId` is a workflow label rather than a real `AiAgent.id`                                                               |
-| `WORKFLOW_AGENT_ID_PREFIX`     | const     | The `workflow:` prefix itself, for a fork that needs to match on it directly                                                             |
-| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the built-in handlers; also runs the app auto-init + flush                                                          |
-| `registerAppCapability`        | function  | Add one app/fork capability (extends `BaseCapability`); optional `{ slug?, guard? }`; idempotent by key                                  |
-| `registerAppCapabilities`      | function  | Flush app-registered capabilities into the dispatcher (called by `registerBuiltInCapabilities`)                                          |
-| `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list); advertises each tool under its **slug** (#509) |
-| `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                                                              |
-| `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                                                      |
-| `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                                                              |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, workflowExecutionId?, stepId?, stepAttempt?, entityContext?, scope?, customConfig?, isEnabled? }`   |
-| `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                                                            |
-| `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                                                           |
-| `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                                                          |
-| `CapabilityRegisterOptions`    | type      | Optional 2nd arg to `register` / `registerAppCapability`: `{ slug?, guard? }` (fork seam)                                                |
-| `CapabilityGuard`              | type      | `(context) => { allow, reason? } \| Promise<…>` — pre-execute dispatch gate                                                              |
-| `CapabilityGuardDecision`      | type      | `{ allow: boolean; reason?: string }` returned by a `CapabilityGuard`                                                                    |
+| Export                         | Kind      | Purpose                                                                                                                                            |
+| ------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `getHandler`, `has`, `clearCache`                                                  |
+| `workflowAgentId`              | function  | Mint the synthetic `agentId` a workflow's `tool_call` steps dispatch under. Use this rather than re-inlining the template (#528)                   |
+| `isWorkflowAgentId`            | function  | True when an `agentId` is a workflow label rather than a real `AiAgent.id`                                                                         |
+| `WORKFLOW_AGENT_ID_PREFIX`     | const     | The `workflow:` prefix itself, for a fork that needs to match on it directly                                                                       |
+| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the built-in handlers; also runs the app auto-init + flush                                                                    |
+| `registerAppCapability`        | function  | Add one app/fork capability (extends `BaseCapability`); optional `{ slug?, guard? }`; idempotent by key                                            |
+| `registerAppCapabilities`      | function  | Flush app-registered capabilities into the dispatcher (called by `registerBuiltInCapabilities`)                                                    |
+| `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list); advertises each tool under its **slug** (#509)           |
+| `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                                                                        |
+| `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                                                                |
+| `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                                                                        |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, workflowExecutionId?, stepId?, stepAttempt?, stepVisit?, entityContext?, scope?, customConfig?, isEnabled? }` |
+| `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                                                                      |
+| `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                                                                     |
+| `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                                                                    |
+| `CapabilityRegisterOptions`    | type      | Optional 2nd arg to `register` / `registerAppCapability`: `{ slug?, guard? }` (fork seam)                                                          |
+| `CapabilityGuard`              | type      | `(context) => { allow, reason? } \| Promise<…>` — pre-execute dispatch gate                                                                        |
+| `CapabilityGuardDecision`      | type      | `{ allow: boolean; reason?: string }` returned by a `CapabilityGuard`                                                                              |
 
 Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`, `EscalateToHumanCapability`, `ApplyAuditChangesCapability`, `AddProviderModelsCapability`, `DeactivateProviderModelsCapability`, `CallExternalApiCapability`, `RunWorkflowCapability`, `UploadToStorageCapability`) are **not** re-exported — callers go through the dispatcher.
 
@@ -187,11 +187,13 @@ Dispatch step 9 therefore writes `agentId` only when it is a real agent, and `wo
 
 `agent_call` dispatches carry `workflowExecutionId` too. Until #600 only `tool_call` did, and the asymmetry sat inside one file: the `agent_call` executor's own LLM `logCost` set it while the capability dispatch beside it did not, so a tool an agent invoked mid-workflow recorded an `agentId` and a null execution link and never appeared against the run.
 
-### Step and attempt (`CapabilityContext.stepId`, `stepAttempt`)
+### Step, visit and attempt (`CapabilityContext.stepId`, `stepVisit`, `stepAttempt`)
 
-Beside `workflowExecutionId`, the `tool_call` and `agent_call` executors set `stepId` (the `WorkflowStep.id` the dispatch came from) and `stepAttempt`: 0 for the step's first attempt, 1 for the first retry under `errorStrategy: 'retry'`, and so on. Without it every attempt of a step dispatches with the same identity, so a capability that keeps per-attempt state — a read budget, a scratchpad — cannot tell a retry from the first try. Key that state on `(workflowExecutionId, stepId, stepAttempt)` (#1143; HCE Hub's Triage agent read budget was the case).
+Beside `workflowExecutionId`, the `tool_call` and `agent_call` executors set `stepId` (the `WorkflowStep.id` the dispatch came from) and `stepAttempt`: 0 for the step's first attempt, 1 for the first retry under `errorStrategy: 'retry'`, and so on. Without it every attempt of a step dispatches with the same identity, so a capability that keeps per-attempt state — a read budget, a scratchpad — cannot tell a retry from the first try. `stepVisit` says how many times the run had already run the step when this visit began (0 the first time, 1 when a loop or bounded-retry edge brings the walk back to it); `stepAttempt` restarts at 0 on each visit, so key per-attempt state on `(workflowExecutionId, stepId, stepVisit, stepAttempt)` (#1143; HCE Hub's Triage agent read budget was the case). `stepVisit` is counted from the trace, so a resume agrees with the live run.
 
-**Across a crash-resume the number continues.** A resumed run replays the interrupted attempt's saved turns, so it is still that attempt: the engine stores the attempt on the running-step row (`AiWorkflowRunningStep.attempt`, written with each retry's turn-clear) and resumes it — including the step's retry count, so a resume does not get a fresh set of retries. Branches of a `parallel` step are re-run from scratch on resume and start again at 0. Both fields are absent outside a workflow.
+**Across a crash-resume the number continues.** A resumed run replays the interrupted attempt's saved turns, so it is still that attempt: the engine stores the attempt on the running-step row (`AiWorkflowRunningStep.attempt`, written with each retry's turn-clear) and resumes it — including the step's retry count, so a resume does not get a fresh set of retries. The next attempt is recorded before the retry backoff, so a crash during the wait resumes into it rather than the attempt that failed. Branches of a `parallel` step are re-run from scratch on resume and start again at 0. All three fields are absent outside a workflow.
+
+**`orchestrator` delegations** dispatch through `agent_call` under a synthetic step id, `<step>_delegate_<agentSlug>`, with the orchestrator step's own visit and attempt. So every planner round's delegation to one agent shares a key; a capability whose per-attempt state must be per delegation cannot get that from these fields yet.
 
 ### The metadata carrier (`CapabilityContext.costLogMetadata`)
 
