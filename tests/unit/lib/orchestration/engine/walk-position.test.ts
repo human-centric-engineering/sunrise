@@ -17,6 +17,7 @@ import type { ExecutionTraceEntry } from '@/types/orchestration';
 const position: WalkPosition = {
   v: 1,
   inFlight: ['b'],
+  batch: false,
   done: {},
   pending: ['d'],
   visited: ['a', 'b'],

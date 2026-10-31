@@ -4915,6 +4915,7 @@ describe('OrchestrationEngine', () => {
         walkState: {
           v: 1,
           inFlight: [inFlight],
+          batch: false,
           done: {},
           pending: [],
           visited,
@@ -5657,7 +5658,8 @@ describe('OrchestrationEngine', () => {
     async function crashRun(
       def: WorkflowDefinition,
       impl: StepImpl,
-      crashed: (moment: { starting?: string; wrote?: Record<string, unknown> }) => boolean
+      crashed: (moment: { starting?: string; wrote?: Record<string, unknown> }) => boolean,
+      options: { budgetLimitUsd?: number } = {}
     ) {
       let at: number | null = null;
       const writes = recordRowWrites((data) => {
@@ -5672,7 +5674,7 @@ describe('OrchestrationEngine', () => {
       registerStepType('llm_call', run);
       registerStepType('route', run);
       registerStepType('parallel', run);
-      await collect(new OrchestrationEngine(), makeWorkflow(def));
+      await collect(new OrchestrationEngine(), makeWorkflow(def), { userId: USER_ID, ...options });
       if (at === null) throw new Error('the run never reached the crash point');
       return rowAfter(writes, at);
     }
@@ -5682,11 +5684,12 @@ describe('OrchestrationEngine', () => {
       def: WorkflowDefinition,
       crashedRow: { walkState: unknown; executionTrace: unknown },
       impl: StepImpl,
-      currentStep: string
+      currentStep: string,
+      row: Record<string, unknown> = {}
     ) {
       vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 });
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ status: 'running', currentStep, ...crashedRow }) as never
+        makeResumeRow({ status: 'running', currentStep, ...crashedRow, ...row }) as never
       );
       const ran: string[] = [];
       const run = async (step: { id: string }) => {
@@ -5908,32 +5911,140 @@ describe('OrchestrationEngine', () => {
     });
 
     it('crash-resume: a run already over budget fails rather than re-running the step that took it over', async () => {
-      // b's cost took the run past its cap; its checkpoint landed (cost and
-      // trace) without recording it done, and the host died before finalise.
-      const def = linearDefinition();
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('b', {
-          executionTrace: [
-            ...stepACompletedTrace,
-            { ...stepACompletedTrace[0], stepId: 'b', label: 'Step B', costUsd: 2 },
-          ],
-          totalCostUsd: 2,
-          budgetLimitUsd: 1,
-        }) as never
-      );
-      const ran: string[] = [];
-      registerStepType('llm_call', async (step) => {
-        ran.push(step.id);
-        return { output: 'ok', tokensUsed: 0, costUsd: 1 };
+      // b's cost took the run past its $1.50 cap; its checkpoint landed and
+      // the host died before the run was finalised.
+      const costly: StepImpl = async (step) => ({ output: step.id, tokensUsed: 0, costUsd: 1 });
+      const row = await crashRun(linearDefinition(), costly, (m) => doneHas(m.wrote, 'b'), {
+        budgetLimitUsd: 1.5,
+      });
+      const { ran, types } = await resumeRun(linearDefinition(), row, costly, 'b', {
+        totalCostUsd: 2,
+        budgetLimitUsd: 1.5,
       });
 
-      const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+      expect(ran).toEqual([]);
+      // As live: the specific event first, then the failure.
+      expect(types).toContain('workflow_budget_exceeded');
+      expect(types.indexOf('workflow_budget_exceeded')).toBeLessThan(
+        types.indexOf('workflow_failed')
+      );
+    });
+
+    it('crash-resume: a step that ended the run is not run again; the run finishes as it was about to', async () => {
+      // b is terminal; the host died after its checkpoint, before finalise.
+      // c, after it, must not run, and b must not run (or bill) twice.
+      const bTerminal: StepImpl = async (step) =>
+        step.id === 'b'
+          ? ({ output: 'b', tokensUsed: 0, costUsd: 0, terminal: true } as never)
+          : plain(step);
+      const row = await crashRun(abcDefinition(), bTerminal, (m) => doneHas(m.wrote, 'b'));
+      const { ran, types } = await resumeRun(abcDefinition(), row, bTerminal, 'b');
+
+      expect(ran).toEqual([]);
+      expect(types).toContain('workflow_completed');
+    });
+
+    it("crash-resume: a parallel batch with a failed branch fails, without running the healthy branch's successors", async () => {
+      // p → {x, y}; y → z. x fails (errorStrategy fail) and y succeeds; both
+      // checkpoints land, then the host dies before the run is failed. The
+      // live run never runs z: a failed batch stops the walk.
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'Parallel',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'x' }, { targetStepId: 'y' }],
+          },
+          { id: 'x', name: 'X', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'y', name: 'Y', type: 'llm_call', config: {}, nextSteps: [{ targetStepId: 'z' }] },
+          { id: 'z', name: 'Z', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+      const xFails: StepImpl = async (step) => {
+        if (step.id === 'x') throw new ExecutorError('x', 'boom', 'x broke', undefined, false);
+        return plain(step);
+      };
+      const bothWritten = (data: Record<string, unknown> | undefined) =>
+        Array.isArray(data?.executionTrace) &&
+        (data.executionTrace as Array<{ stepId: string }>).some((e) => e.stepId === 'x') &&
+        doneHas(data, 'y');
+      const row = await crashRun(def, xFails, (m) => bothWritten(m.wrote));
+      const { ran, types } = await resumeRun(def, row, xFails, 'y');
+
+      expect(ran).toEqual([]);
+      expect(types).toContain('workflow_failed');
+    });
+
+    it('a failed checkpoint makes the next position save write the trace too', async () => {
+      // a's checkpoint fails; the save at b's start must carry the trace, or
+      // the position would name a visited step the row's trace never had.
+      const writes: Array<Record<string, unknown>> = [];
+      let failedOnce = false;
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (arg: {
+        data: Record<string, unknown>;
+      }) => {
+        if (!failedOnce && doneHas(arg.data, 'a')) {
+          failedOnce = true;
+          throw new Error('pool timeout');
+        }
+        writes.push(structuredClone(arg.data));
+        return { count: 1 };
+      }) as never);
+      registerStepType('llm_call', plain);
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      const saveAtB = writes.find(
+        (d) =>
+          (d.walkState as { inFlight?: string[] } | undefined)?.inFlight?.[0] === 'b' &&
+          Object.keys((d.walkState as { done: object }).done).length === 0
+      );
+      expect(saveAtB).toBeDefined();
+      expect(saveAtB?.executionTrace).toEqual(
+        expect.arrayContaining([expect.objectContaining({ stepId: 'a', status: 'completed' })])
+      );
+    });
+
+    it('a resumed batch of one saves itself as a batch, so a second crash resumes it the same way', async () => {
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'Parallel',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }, { targetStepId: 'c' }],
+          },
+          { id: 'b', name: 'B', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'c', name: 'C', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+      const row = await crashRun(
+        def,
+        plain,
+        (m) => doneHas(m.wrote, 'b') && !doneHas(m.wrote, 'c')
+      );
+      const writes = recordRowWrites();
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ status: 'running', currentStep: 'c', ...row }) as never
+      );
+      registerStepType('llm_call', plain);
+      registerStepType('parallel', plain);
+      await collect(new OrchestrationEngine(), makeWorkflow(def), {
         userId: USER_ID,
         resumeFromExecutionId: EXEC_ID,
       });
 
-      expect(ran).toEqual([]);
-      expect(events.map((e) => e.type)).toContain('workflow_failed');
+      const saved = writes
+        .map((d) => d.walkState as { inFlight: string[]; batch: boolean } | undefined)
+        .find((w) => w?.inFlight.length === 1 && w.inFlight[0] === 'c');
+      expect(saved?.batch).toBe(true);
     });
 
     it('crash-resume: warns when the saved position cannot be read, before falling back to the cursor', async () => {
