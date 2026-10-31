@@ -236,6 +236,7 @@ describe('executeToolCall', () => {
         workflowExecutionId: 'exec_1',
         stepId: 'step1',
         stepAttempt: 0,
+        stepVisit: 0,
         scope: { projectId: 'proj-42' },
         costLogMetadata: { stepId: 'step1' },
       }
@@ -266,6 +267,7 @@ describe('executeToolCall', () => {
       workflowExecutionId: 'exec_1',
       stepId: 'step1',
       stepAttempt: 0,
+      stepVisit: 0,
       costLogMetadata: { stepId: 'step1' },
     });
   });
@@ -274,10 +276,10 @@ describe('executeToolCall', () => {
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
 
     const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
-    await executeToolCall(step, makeCtx({ stepAttempt: 2 }));
+    await executeToolCall(step, makeCtx({ stepAttempt: 2, stepVisit: 1 }));
 
     const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
-    expect(context).toMatchObject({ stepId: 'step1', stepAttempt: 2 });
+    expect(context).toMatchObject({ stepId: 'step1', stepAttempt: 2, stepVisit: 1 });
   });
 
   it('carries the run-level costLogMetadata through, with stepId added', async () => {
