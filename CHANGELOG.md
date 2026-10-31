@@ -18,18 +18,17 @@ release process.
 
 ### Added
 
-- **`CapabilityContext.stepId`, `stepVisit` and `stepAttempt`**: the
-  workflow step a capability was dispatched from, how many times the run had
-  already run it (a loop or bounded-retry edge brings the walk back), and
-  which attempt of this visit (0 first, 1 the first retry). Set by the
-  `tool_call` and `agent_call` executors, so a capability keeping
-  per-attempt state can key it on
-  `(workflowExecutionId, stepId, stepVisit, stepAttempt)`. A crash-resume
-  continues the attempt it was interrupted in, stored on the new
-  `AiWorkflowRunningStep.attempt` column (migration included); the retry
-  loop starts from it, so a resumed step no longer gets a fresh set of
-  retries. `orchestrator` delegations carry a synthetic step id shared
-  across planner rounds (#1143, t-965).
+- **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
+  workflow step a capability was dispatched from, which retry of it this is
+  (0 first), and an opaque id for this attempt. Set by the `tool_call` and
+  `agent_call` executors. Key per-attempt state on `stepAttemptId`: the
+  engine mints a new one every time it runs a step's executor (each retry,
+  loop visit, operator retry-step, parallel branch and `orchestrator`
+  delegation), so no two attempts share it. A crash-resume continues the
+  attempt it was interrupted in — same number, same id, and its retry count,
+  so a resumed step no longer gets a fresh set of retries — from the new
+  `AiWorkflowRunningStep.attempt` and `attemptId` columns (migrations
+  included) (#1143, t-965).
 - **`<SaveError>`** (`components/forms/form-error.tsx`) and **`readSaveError()`
   / `applyFieldErrors()`** (`lib/errors/save-error.ts`): the one way a form
   shows a save the server refused. The form places it beside the Save button

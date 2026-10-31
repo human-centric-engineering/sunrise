@@ -1305,11 +1305,11 @@ export class OrchestrationEngine {
     // so retry attempts start fresh — see `onAttemptStart`.
     //
     // `ctx.resumeTurns` STAYS on the live context across `runStepWithStrategy`
-    // so attempt 0's snapshot (taken lazily inside `invokeExecutor`) carries
-    // it through to the executor. We clear it after the call so subsequent
-    // steps don't see stale resume state, and `onAttemptStart` clears it
-    // between retry attempts so retries start fresh (no resume replay on
-    // attempt 1+).
+    // so the first attempt's snapshot (taken lazily inside `invokeExecutor`) —
+    // attempt 0, or the attempt a crash-resume continues — carries it through
+    // to the executor. We clear it after the call so subsequent steps don't
+    // see stale resume state, and `onAttemptStart` clears it between retry
+    // attempts so retries start fresh (no resume replay on a later attempt).
     const stepTurns: TurnEntry[] = [...(ctx.resumeTurns ?? [])];
     ctx.recordTurn = async (turn: TurnEntry) => {
       stepTurns.push(turn);
