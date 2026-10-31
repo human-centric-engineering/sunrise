@@ -211,7 +211,14 @@ The global test setup file (`tests/setup.ts`) runs before all tests and configur
    `RATE_LIMIT_BYPASS='true'` (see below — it has a real trap in it)
 2. **Next.js Mocks**: Pre-mocks `next/navigation` and `next/headers` for component testing
 3. **Analytics Mocks**: Mocks analytics hooks to allow component testing without providers
-4. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
+4. **Fork-seam pins**: Pins `lib/app/brand`, `emails`, `llm-providers`, `admin-tier`,
+   `user-created` and `erasure` to Sunrise's shipped default, so a fork that fills one
+   does not fail core tests it cannot fix. A test that needs a seam filled mocks it
+   itself. A test that judges a fork's REAL seam restores it with
+   `vi.mock('@/lib/app/<seam>', (importOriginal) => importOriginal())`, as
+   `defaults.test.ts`, `stale-writers.test.ts` and `admin-tier-roster.test.ts` do.
+   Without that, the guard reads the pin and passes a fork entry it exists to refuse.
+5. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
 
 **Key setup features**:
 
