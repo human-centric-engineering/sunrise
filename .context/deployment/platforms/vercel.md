@@ -207,11 +207,11 @@ none of that work happens. See
 [Unified Maintenance Tick](../../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-required-preferred).
 
 Vercel Cron only sends a `GET`, with `Authorization: Bearer $CRON_SECRET`. The
-tick route accepts that `GET` when the bearer token is an **admin API key**, so
-the setup is:
+tick route checks that bearer against the `CRON_SECRET` environment variable
+itself, with no database call (#1130), so the setup is:
 
-1. Sign in as a platform admin and mint an API key with the `admin` scope (see
-   [API Keys](../../orchestration/api-keys.md)). Copy the `sk_...` value.
+1. Generate a random secret of at least 32 characters:
+   `openssl rand -base64 32`. **Not** an `sk_` API key (see below).
 2. In Project Settings > Environment Variables, set `CRON_SECRET` to that
    value, for the Production environment.
 3. Add `vercel.json` at the project root:
@@ -235,12 +235,23 @@ the setup is:
 
 - **Per-minute crons need the Pro plan.** On Hobby, a cron that runs more than
   once a day fails the deployment. On Hobby, call the tick from an external
-  scheduler that can send a `POST` with the key in the `Authorization` header
+  scheduler that sends a `GET` with `Authorization: Bearer <CRON_SECRET>`
   (cron-job.org, a GitHub Actions `schedule`). The `curl` is in
-  [hosting requirements](../../orchestration/meta/hosting-requirements.md).
-- **The GET refuses a browser session.** Only an admin API key works on it, so
-  opening the URL while signed in returns `403`. That is deliberate: a session
-  cookie travels with a cross-site link, a bearer header does not.
+  [Unified Maintenance Tick](../../orchestration/scheduling.md#every-production-host-needs-an-external-cron).
+- **Why not an `sk_` key.** Setting `CRON_SECRET` to an admin API key was the
+  setup before #1130, and it still works, but on Neon or another scale-to-zero
+  database it keeps the database awake: the proxy's rate limiter looks up any
+  `Bearer sk_…` on the orchestration admin routes, and caches the answer for
+  60 seconds, so nearly every tick queries before the idle gate can answer. A
+  random secret is checked in memory. If you have the old setup, generate a
+  secret, set `CRON_SECRET` to it, redeploy, and then revoke the key.
+- **A short secret is ignored.** Below 32 characters, `CRON_SECRET` matches
+  nothing and the route falls back to the admin-key check, so the cron gets a
+  `401`.
+- **The GET refuses a browser session.** Only `CRON_SECRET` or an admin API key
+  works on it, so opening the URL while signed in returns `403`. That is
+  deliberate: a session cookie travels with a cross-site link, a bearer header
+  does not.
 - **The work after the response is kept alive.** The route returns `202` as
   soon as due schedules are claimed and passes the rest to Next's `after()`,
   which Vercel runs under `waitUntil`. The route sets `maxDuration = 300`, the
@@ -257,10 +268,10 @@ the setup is:
   step uses one of its three recovery attempts each time, so a step that
   needs longer than the budget fails as recovery exhausted.
 - **A `HEAD` request is refused with `405`**, so an uptime probe that holds the
-  key cannot fire a tick.
-- **Rotating the key.** Mint a new key, update `CRON_SECRET`, redeploy, then
-  revoke the old key. The key stops working if its owner stops being a
-  platform admin.
+  secret cannot fire a tick.
+- **Rotating the secret.** Generate a new one, update `CRON_SECRET`, redeploy.
+  The old value stops working with the redeploy. The secret belongs to no
+  user, so it keeps working whoever the platform admins are.
 - **Crons run on the production deployment only**, not on previews.
 
 ### Preview Deployments

@@ -188,17 +188,17 @@ The scheduler is **stateless and pull-driven**:
 | `/api/v1/admin/orchestration/maintenance/tick` | Every minute      | **Preferred — one entry covers everything.** Claims due schedules synchronously, then runs eight housekeeping tasks in the background: webhook retries, hook retries, orphan sweep, zombie reaper, embedding backfill, retention pruning, orphaned-pending recovery, evaluation runs. Each has its own minimum interval, and a tick with nothing to do returns without touching the database at all. |
 | `/api/v1/admin/orchestration/schedules/tick`   | Every minute      | **Legacy.** Only runs `processDueSchedules()`. Use only if you want the housekeeping tasks driven from a separate cron entry.                                                                                                                                                                                                                                                                        |
 
-A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints take an HTTP POST, require admin auth (session or API key with admin scope), and are idempotent within a tick window. `/maintenance/tick` also takes a GET with an admin API key only, because Vercel Cron can send nothing else (see [Vercel](../../deployment/platforms/vercel.md#maintenance-tick-cron)). **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
+A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints take an HTTP POST, require admin auth (session or API key with admin scope), and are idempotent within a tick window. `/maintenance/tick` also takes a GET, authenticated by `Authorization: Bearer $CRON_SECRET` (checked with no database call) or an admin API key, because Vercel Cron can send nothing else (see [Vercel](../../deployment/platforms/vercel.md#maintenance-tick-cron)). Use the GET with a random `CRON_SECRET` from any cron: an `sk_` key queries the database on every call, which keeps a scale-to-zero database awake (#1130). **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
 
 ```bash
-* * * * * curl -fsS -X POST \
-  -H "Authorization: Bearer sk_..." \
+* * * * * curl -fsS \
+  -H "Authorization: Bearer $CRON_SECRET" \
   https://yourdomain/api/v1/admin/orchestration/maintenance/tick
 ```
 
 `/maintenance/tick` returns **`202 Accepted`** as soon as due schedules have been claimed; the housekeeping chain runs to completion in the background under a module-level overlap guard with a 5-minute watchdog. A short HTTP timeout on the cron caller (e.g. 30s) is therefore safe — the response never blocks on retention sweeps or embedding backfill — and a long-running tick will not stack up against the next minute's tick. A tick the idle gate skipped returns **200** `{ skipped: true, reason: 'idle' }` instead, having issued no queries; `?force=1` sweeps regardless.
 
-**On a scale-to-zero database.** If your Postgres autosuspends when idle (Neon, Aurora Serverless v2), keep the every-minute cadence — the idle gate means those ticks cost nothing once a sweep has proved there is no work, so the compute can reach its autosuspend timer while schedules stay punctual. The knob is `MAINTENANCE_IDLE_MAX_SKIP_MS` (default 30 min; lower it if you run more than one instance, since each keeps its own gate). Full discussion, including what a slower cron costs you, in [Cadence on a scale-to-zero database](../scheduling.md#cadence-on-a-scale-to-zero-database).
+**On a scale-to-zero database.** If your Postgres autosuspends when idle (Neon, Aurora Serverless v2), keep the every-minute cadence — the idle gate means those ticks cost nothing once a sweep has proved there is no work, so the compute can reach its autosuspend timer while schedules stay punctual. That holds when the cron authenticates with a random `CRON_SECRET` on the `GET`; an `sk_` API key queries the database on every call before the gate can answer (#1130). The knob is `MAINTENANCE_IDLE_MAX_SKIP_MS` (default 30 min; lower it if you run more than one instance, since each keeps its own gate). Full discussion, including what a slower cron costs you, in [Cadence on a scale-to-zero database](../scheduling.md#cadence-on-a-scale-to-zero-database).
 
 The scheduler does **not** require a singleton instance — the optimistic-lock claim in `processDueSchedules()` makes it safe to fire from multiple ticks racing each other.
 
@@ -339,7 +339,7 @@ For a reader who hasn't deployed before, the difference between platforms is mos
 3. In the project settings, set the build command to `npm run build && npm run db:migrate:deploy`.
 4. Provision a database: in Vercel's Storage tab, click "Create Postgres" — it auto-fills `DATABASE_URL`. Or paste a connection string from Neon / Supabase.
 5. Add the other env vars from `.env.example` (`BETTER_AUTH_SECRET`, etc.).
-6. Add a Vercel Cron entry hitting `/api/v1/admin/orchestration/maintenance/tick` every minute, with `CRON_SECRET` set to an admin API key — see [the Vercel guide](../../deployment/platforms/vercel.md#maintenance-tick-cron). A per-minute cron needs the Pro plan.
+6. Add a Vercel Cron entry hitting `/api/v1/admin/orchestration/maintenance/tick` every minute, with `CRON_SECRET` set to a random secret (`openssl rand -base64 32`), not an API key — see [the Vercel guide](../../deployment/platforms/vercel.md#maintenance-tick-cron). A per-minute cron needs the Pro plan.
 7. Push to `main`. It deploys.
 
 You do not need to know what nginx, Docker, or supervisord are.
