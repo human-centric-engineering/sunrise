@@ -462,6 +462,11 @@ async function runSingleTurn(
             // the run. No FK hazard: unlike `tool_call`, this dispatches under
             // the real `agent.id`, and the execution row exists before any step.
             workflowExecutionId: ctx.executionId,
+            // Which step, and which attempt of it, so a capability keeping
+            // per-attempt state can tell a retry from the first try (#1143).
+            stepId: step.id,
+            stepAttempt: ctx.stepAttempt ?? 0,
+            ...(ctx.stepAttemptId ? { stepAttemptId: ctx.stepAttemptId } : {}),
             costLogMetadata: { ...(ctx.costLogMetadata ?? {}), stepId: step.id },
           });
         }

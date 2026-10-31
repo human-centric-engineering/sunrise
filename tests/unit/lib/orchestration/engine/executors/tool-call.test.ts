@@ -234,6 +234,8 @@ describe('executeToolCall', () => {
         userId: 'user_1',
         agentId: 'workflow:wf_tool',
         workflowExecutionId: 'exec_1',
+        stepId: 'step1',
+        stepAttempt: 0,
         scope: { projectId: 'proj-42' },
         costLogMetadata: { stepId: 'step1' },
       }
@@ -262,7 +264,23 @@ describe('executeToolCall', () => {
       userId: 'user_1',
       agentId: 'workflow:wf_tool',
       workflowExecutionId: 'exec_1',
+      stepId: 'step1',
+      stepAttempt: 0,
       costLogMetadata: { stepId: 'step1' },
+    });
+  });
+
+  it('tells the capability which attempt of the step it runs in (#1143)', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
+    await executeToolCall(step, makeCtx({ stepAttempt: 2, stepAttemptId: 'attempt-id-1' }));
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toMatchObject({
+      stepId: 'step1',
+      stepAttempt: 2,
+      stepAttemptId: 'attempt-id-1',
     });
   });
 

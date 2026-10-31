@@ -49,6 +49,41 @@ export interface CapabilityContext {
    */
   workflowExecutionId?: string;
   /**
+   * The workflow step this dispatch came from — `WorkflowStep.id`, except an
+   * `orchestrator` delegation's synthetic id, `<step>_delegate_<agentSlug>`. Set beside
+   * {@link CapabilityContext.workflowExecutionId} by the `agent_call` and
+   * `tool_call` executors; absent outside a workflow.
+   */
+  stepId?: string;
+  /**
+   * Which attempt of {@link CapabilityContext.stepId} this dispatch runs in:
+   * 0 for the first, 1 for the first retry under `errorStrategy: 'retry'`, and
+   * so on. Every attempt of a step otherwise dispatches with the same identity,
+   * so this says which retry it is. To key per-attempt state, use
+   * {@link CapabilityContext.stepAttemptId}: the number restarts at 0 each
+   * time a loop brings the walk back to the step, or an operator retries it.
+   *
+   * A run resumed after a crash **continues** the attempt it stopped in — it
+   * replays that attempt's turns — so the number carries across the resume
+   * rather than restarting at 0. Branches of a `parallel` step are re-run from
+   * scratch on resume and start again at 0. Absent outside a workflow. (#1143)
+   *
+   * An `orchestrator` step's delegations dispatch under a synthetic step id,
+   * `<step>_delegate_<agentSlug>`, with the orchestrator's attempt number.
+   */
+  stepAttempt?: number;
+  /**
+   * An id for the attempt this dispatch runs in, unique in the run. Key
+   * per-attempt state (a read budget, a scratchpad) on it: every run of a
+   * step's executor — a retry, a loop's next visit, an operator's retry-step,
+   * a parallel branch, each `orchestrator` delegation — gets a new one, so no
+   * two attempts share it. The one exception is deliberate: a crash-resume
+   * continues the attempt the run stopped in (it replays that attempt's
+   * turns), so it keeps that attempt's id. Opaque — compare it, do not parse
+   * it. Absent outside a workflow. (#1143)
+   */
+  stepAttemptId?: string;
+  /**
    * Extra keys the caller wants on this dispatch's `AiCostLog.metadata` row.
    *
    * Two things ride on this, and both are about where an operator can SEE the

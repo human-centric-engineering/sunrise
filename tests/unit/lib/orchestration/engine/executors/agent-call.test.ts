@@ -723,6 +723,8 @@ describe('executeAgentCall', () => {
         // set it; only the capability dispatch beside it did not, so a tool an
         // agent invoked mid-workflow never appeared against the run (#600).
         workflowExecutionId: 'exec_1',
+        stepId: 'step1',
+        stepAttempt: 0,
         costLogMetadata: { stepId: 'step1' },
       }
     );
@@ -767,9 +769,40 @@ describe('executeAgentCall', () => {
         agentId: 'agent_1',
         scope: { projectId: 'proj-42' },
         workflowExecutionId: 'exec_1',
+        stepId: 'step1',
+        stepAttempt: 0,
         costLogMetadata: { stepId: 'step1' },
       }
     );
+  });
+
+  it('tells a capability the agent dispatches which attempt of the step it runs in (#1143)', async () => {
+    mockChat.mockResolvedValueOnce({
+      content: 'Let me search...',
+      toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+      usage: { inputTokens: 50, outputTokens: 30 },
+      finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'done.',
+      usage: { inputTokens: 80, outputTokens: 60 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await executeAgentCall(makeStep(), makeCtx({ stepAttempt: 2, stepAttemptId: 'attempt-id-1' }));
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toMatchObject({
+      stepId: 'step1',
+      stepAttempt: 2,
+      stepAttemptId: 'attempt-id-1',
+    });
   });
 
   it('links a capability an agent dispatches to the workflow execution', async () => {

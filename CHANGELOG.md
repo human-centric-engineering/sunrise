@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
+  workflow step a capability was dispatched from, which retry of it this is
+  (0 first), and an opaque id for this attempt. Set by the `tool_call` and
+  `agent_call` executors. Key per-attempt state on `stepAttemptId`: the
+  engine mints a new one every time it runs a step's executor (each retry,
+  loop visit, operator retry-step, parallel branch and `orchestrator`
+  delegation), so no two attempts share it. A crash-resume continues the
+  attempt it was interrupted in — same number, same id, and its retry count,
+  so a resumed step no longer gets a fresh set of retries — from the new
+  `AiWorkflowRunningStep.attempt` and `attemptId` columns (one migration)
+  (#1143, t-965).
 - **`<SaveError>`** (`components/forms/form-error.tsx`) and **`readSaveError()`
   / `applyFieldErrors()`** (`lib/errors/save-error.ts`): the one way a form
   shows a save the server refused. The form places it beside the Save button
