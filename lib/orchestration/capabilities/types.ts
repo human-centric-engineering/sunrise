@@ -49,6 +49,25 @@ export interface CapabilityContext {
    */
   workflowExecutionId?: string;
   /**
+   * The workflow step this dispatch came from — `WorkflowStep.id`. Set beside
+   * {@link CapabilityContext.workflowExecutionId} by the `agent_call` and
+   * `tool_call` executors; absent outside a workflow.
+   */
+  stepId?: string;
+  /**
+   * Which attempt of {@link CapabilityContext.stepId} this dispatch runs in:
+   * 0 for the first, 1 for the first retry under `errorStrategy: 'retry'`, and
+   * so on. Every attempt of a step otherwise dispatches with the same identity,
+   * so a capability keeping per-attempt state (a read budget, a scratchpad)
+   * keys it on `(workflowExecutionId, stepId, stepAttempt)`.
+   *
+   * A run resumed after a crash **continues** the attempt it stopped in — it
+   * replays that attempt's turns — so the number carries across the resume
+   * rather than restarting at 0. Branches of a `parallel` step are re-run from
+   * scratch on resume and start again at 0. Absent outside a workflow. (#1143)
+   */
+  stepAttempt?: number;
+  /**
    * Extra keys the caller wants on this dispatch's `AiCostLog.metadata` row.
    *
    * Two things ride on this, and both are about where an operator can SEE the

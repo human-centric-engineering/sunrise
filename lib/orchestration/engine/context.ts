@@ -91,6 +91,21 @@ export interface ExecutionContext {
    */
   resumeTurns?: TurnEntry[];
   /**
+   * The attempt the resume target was on when the run stopped, read from its
+   * `AiWorkflowRunningStep.attempt`. `resumeTurns` belong to that attempt, so
+   * the engine continues it rather than restarting the step's attempt count
+   * at 0 (#1143). Set and cleared alongside `resumeTurns`.
+   */
+  resumeAttempt?: number;
+  /**
+   * Which attempt of the current step this snapshot runs in: 0 for the first,
+   * 1 for the first retry, and so on, continuing across a resume. Set only on
+   * the snapshot handed to an executor — the live context is shared by
+   * parallel branches, so it never carries one. The executors that dispatch
+   * capabilities forward it as `CapabilityContext.stepAttempt`.
+   */
+  stepAttempt?: number;
+  /**
    * Mid-step checkpoint hook. Multi-turn executors call this after each
    * completed turn to persist progress. The engine's implementation appends
    * to an in-memory accumulator AND writes the full array to the
@@ -218,15 +233,20 @@ export function mergeStepResult(
  * `telemetryOut` and reads the entries back after the executor returns.
  * Callers that don't pass `telemetryOut` (e.g., test harnesses) still get
  * a correctly-typed empty array — pushes are silently discarded.
+ *
+ * `stepAttempt` is the attempt this snapshot runs in (see
+ * `ExecutionContext.stepAttempt`); the engine passes it on every executor call.
  */
 export function snapshotContext(
   ctx: ExecutionContext,
-  telemetryOut?: LlmTelemetryEntry[]
+  telemetryOut?: LlmTelemetryEntry[],
+  stepAttempt?: number
 ): Readonly<ExecutionContext> {
   return Object.freeze({
     ...ctx,
     stepOutputs: Object.freeze({ ...ctx.stepOutputs }),
     variables: Object.freeze({ ...ctx.variables }),
     stepTelemetry: telemetryOut ?? [],
+    ...(stepAttempt !== undefined ? { stepAttempt } : {}),
   });
 }

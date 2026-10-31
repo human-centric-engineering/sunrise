@@ -5149,9 +5149,10 @@ describe('OrchestrationEngine', () => {
       expect(upsertArgs.create.stepId).toBe('a');
       expect(upsertArgs.create.label).toBe('Step A');
       expect(upsertArgs.create.stepType).toBe('llm_call');
-      // Update clause: ONLY startedAt. No `turns` so a retry re-entry
-      // preserves the running-step row's prior turns.
-      expect(Object.keys(upsertArgs.update)).toEqual(['startedAt']);
+      // Update clause: startedAt and the starting attempt. No `turns` so a
+      // retry re-entry preserves the running-step row's prior turns.
+      expect(Object.keys(upsertArgs.update).sort()).toEqual(['attempt', 'startedAt']);
+      expect(upsertArgs.create.attempt).toBe(0);
     });
 
     // ── initRun resume path (5 tests) ──────────────────────────────────────
@@ -5776,6 +5777,209 @@ describe('OrchestrationEngine', () => {
         .data.turns;
       expect(turnsWritten).toEqual([turn1]);
       expect(turnsWritten).not.toContainEqual(turn0);
+    });
+
+    // ── step attempt numbering (#1143) ─────────────────────────────────────
+    // Capabilities key per-attempt state on the attempt the engine hands the
+    // executor, so the number must count retries, be persisted with the
+    // retry-clear write, and carry across a resume.
+
+    /** The `attempt` written on each running-step `updateMany`, in order, where one was. */
+    function attemptWrites(): number[] {
+      return vi
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
+        .mock.calls.map(([arg]) => (arg as { data: Record<string, unknown> }).data.attempt)
+        .filter((a): a is number => typeof a === 'number');
+    }
+
+    /** The `attempt` the running-step upsert created step `stepId` with. */
+    function upsertedAttempt(stepId: string): unknown {
+      const call = vi
+        .mocked(prisma.aiWorkflowRunningStep.upsert)
+        .mock.calls.find(
+          ([arg]) =>
+            (arg as { where: { executionId_stepId: { stepId: string } } }).where.executionId_stepId
+              .stepId === stepId
+        );
+      if (!call) throw new Error(`No running-step upsert for step ${stepId}`);
+      return (call[0] as { create: { attempt?: unknown } }).create.attempt;
+    }
+
+    /** a → b, where b retries `retryCount` times. */
+    function retryingBDefinition(retryCount: number): WorkflowDefinition {
+      const def = linearDefinition();
+      def.steps[1].config = { ...def.steps[1].config, errorStrategy: 'retry', retryCount };
+      return def;
+    }
+
+    it('stepAttempt: each retry hands the executor the next attempt number, and the retry-clear write stores it', async () => {
+      const seen: Array<number | undefined> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push(ctx.stepAttempt);
+        if (seen.length < 3) throw new ExecutorError(step.id, 'executor_threw', 'transient');
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'Step A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 2 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      expect(seen).toEqual([0, 1, 2]);
+      expect(upsertedAttempt('a')).toBe(0);
+      // One retry-clear write per retry, each carrying the attempt about to run.
+      expect(attemptWrites()).toEqual([1, 2]);
+    });
+
+    it('stepAttempt: a step with no retry strategy runs as attempt 0', async () => {
+      const seen: Array<number | undefined> = [];
+      registerStepType('llm_call', async (_step, ctx) => {
+        seen.push(ctx.stepAttempt);
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      expect(seen).toEqual([0, 0]);
+      expect(attemptWrites()).toEqual([]);
+    });
+
+    it('stepAttempt: a resume continues the attempt the replayed turns belong to', async () => {
+      // The run stopped in b's attempt 1 with one turn recorded.
+      const storedTurns = [makeTurn(0)];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStep: 'b' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: storedTurns,
+        attempt: 1,
+      } as never);
+
+      const seen: Array<{ attempt: number | undefined; resumeTurns: TurnEntry[] | undefined }> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push({ attempt: ctx.stepAttempt, resumeTurns: ctx.resumeTurns });
+        if (seen.length === 1) throw new ExecutorError(step.id, 'executor_threw', 'transient');
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(retryingBDefinition(2)), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Attempt 1 replays its own turns; the retry after it is attempt 2.
+      expect(seen).toEqual([
+        { attempt: 1, resumeTurns: storedTurns },
+        { attempt: 2, resumeTurns: undefined },
+      ]);
+      // The re-created running-step row says attempt 1, not 0, so a second
+      // crash before the retry would resume into the right attempt again.
+      expect(upsertedAttempt('b')).toBe(1);
+      expect(attemptWrites()).toEqual([2]);
+    });
+
+    it('stepAttempt: a resume does not hand the step a fresh set of retries', async () => {
+      // b allows one retry, and the run stopped while that retry (attempt 1) ran.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStep: 'b' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: null,
+        attempt: 1,
+      } as never);
+
+      const seen: Array<number | undefined> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push(ctx.stepAttempt);
+        throw new ExecutorError(step.id, 'executor_threw', 'still failing');
+      });
+
+      const events = await collect(
+        new OrchestrationEngine(),
+        makeWorkflow(retryingBDefinition(1)),
+        { userId: USER_ID, resumeFromExecutionId: EXEC_ID }
+      );
+
+      // Only the interrupted attempt re-runs. Restarting the count would run
+      // attempts 0 and 1 here, two more calls.
+      expect(seen).toEqual([1]);
+      expect(events.map((e) => e.type)).toContain('workflow_failed');
+    });
+
+    it('stepAttempt: the attempt a resume restored applies to the resumed step only', async () => {
+      // Resume into b at attempt 2; c, which runs after it, starts at 0.
+      const def = retryingBDefinition(3);
+      def.steps[1].nextSteps = [{ targetStepId: 'c' }];
+      def.steps.push({ id: 'c', name: 'Step C', type: 'llm_call', config: {}, nextSteps: [] });
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStep: 'b' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: null,
+        attempt: 2,
+      } as never);
+
+      const seen: Record<string, number | undefined> = {};
+      registerStepType('llm_call', async (step, ctx) => {
+        seen[step.id] = ctx.stepAttempt;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(def), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      expect(seen).toEqual({ b: 2, c: 0 });
+      expect(upsertedAttempt('c')).toBe(0);
+    });
+
+    it('stepAttempt: a parallel branch numbers its retries from 0', async () => {
+      registerStepType('parallel', async () => ({ output: {}, tokensUsed: 0, costUsd: 0 }));
+      const seen: Array<number | undefined> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push(ctx.stepAttempt);
+        if (seen.length === 1) throw new ExecutorError(step.id, 'executor_threw', 'transient');
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'p',
+              name: 'Parallel',
+              type: 'parallel',
+              config: {},
+              nextSteps: [{ targetStepId: 'a' }],
+            },
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 1 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'p',
+          errorStrategy: 'fail',
+        })
+      );
+
+      expect(seen).toEqual([0, 1]);
     });
   });
 

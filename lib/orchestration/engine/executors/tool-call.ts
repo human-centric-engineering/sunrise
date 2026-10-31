@@ -141,6 +141,10 @@ export async function executeToolCall(
     // The real FK. `agentId` above is a label the dispatcher uses for scoping;
     // this is what its cost log can actually persist against.
     workflowExecutionId: ctx.executionId,
+    // Which step, and which attempt of it, so a capability keeping
+    // per-attempt state can tell a retry from the first try (#1143).
+    stepId: step.id,
+    stepAttempt: ctx.stepAttempt ?? 0,
     // The run's scope AND its authority. Forwarding only the values left the
     // binding disarmed for every workflow, schedule, trigger and resume while
     // the docs said otherwise (#586).
