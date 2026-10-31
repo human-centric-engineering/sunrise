@@ -140,11 +140,17 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 `POST /api/v1/admin/orchestration/schedules/tick` — runs `processDueSchedules()` through the same per-org runner as the unified tick (§108), so its response is the sweep's counters at `single` and the fold across orgs at `multi`. Legacy single-purpose endpoint.
 
-### Unified Maintenance Tick (admin-auth required, **preferred**)
+### Unified Maintenance Tick (admin auth or cron secret, **preferred**)
 
 `POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining ten tasks run as a background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
 
-`GET` on the same path does the same, but accepts **an admin API key only** and refuses a browser session with `403`. It exists for Vercel Cron, which can send nothing but a `GET` with `Authorization: Bearer $CRON_SECRET`. A session is refused because a session cookie travels with a cross-site link, so a `GET` that accepted one would let any page make a signed-in admin's browser fire a tick.
+`GET` on the same path does the same for a cron. It accepts `Authorization: Bearer $CRON_SECRET`, checked against the `CRON_SECRET` environment variable with no database call (#1130), or an admin API key, and refuses a browser session with `403`. It exists for Vercel Cron, which can send nothing but a `GET` with `Authorization: Bearer $CRON_SECRET`, and any other cron can use it the same way. A session is refused because a session cookie travels with a cross-site link, so a `GET` that accepted one would let any page make a signed-in admin's browser fire a tick.
+
+**Set `CRON_SECRET` to a random value** (`openssl rand -base64 32`), at least 32 characters. A shorter one, or one with leading or trailing whitespace (a trailing newline from a piped `vercel env add` counts), is ignored: the request falls through to the admin-key check and gets a `401`, and the tick logs `CRON_SECRET is set but ignored` once per process, saying why. It is read from `process.env`, not the core env schema, so a fork that already declares `CRON_SECRET` in `lib/app/env.ts` keeps working. **On a fork that already sets `CRON_SECRET` for its own cron routes, that value now also runs this tick**; on Vercel the variable is project-wide anyway.
+
+An `sk_` API key is never matched as the secret, even when `CRON_SECRET` holds one, which was the setup before #1130. It goes through the admin-key check instead, so revoking the key or demoting its owner still stops it (#746). That check queries: the proxy's rate limiter looks up any `Bearer sk_…` on `/api/v1/admin/orchestration/` and caches the answer for only 60 seconds, and `resolveApiKey` reads the key and writes `lastUsedAt`. So an idle tick is not free with an `sk_` key, in `CRON_SECRET` or anywhere else.
+
+The secret is checked before `withAdminAuth`, so the authorization policy's `canAdminister` is not asked about a request that carries it; see [What is not behind the seam yet](../auth/authorization.md#what-is-not-behind-the-seam-yet).
 
 **The background chain runs under `after()` (t-844).** On a serverless host the invocation can be frozen as soon as the response is sent, which would silently stop every task below. `runMaintenanceTick()` returns the chain as `background`, and the route passes it to Next's `after()`, which keeps the invocation alive until it settles (Vercel runs it under `waitUntil`). The route sets `maxDuration = 300` (Vercel's Fluid default and the Hobby ceiling). That is the whole invocation's budget, sweep and chain together, whereas the watchdog gives each of them five minutes, so on a host that enforces `maxDuration` a slow sweep shortens the chain. `HEAD` answers `405`, because Next would otherwise run the `GET` handler for it. `after()` is not called inside `run-tick.ts` because the dev ticker in `instrumentation.ts` runs outside any request, where `after()` throws; there the chain runs on the long-lived process. A caller of `runMaintenanceTick()` from a request handler must hand `background` to `after()` the same way. The chain never rejects.
 
@@ -156,15 +162,19 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 The in-process ticker in `instrumentation.ts` runs **only in development**. In production nothing calls the tick unless something outside the app does, on every host: Vercel, a container, or a VPS. Without it the app serves traffic and `/api/health` reports OK, but schedules never fire, retries never drain, stuck runs are never reaped and retention never runs.
 
-Call it every minute with an admin API key (`admin` scope, minted by a platform admin — see [API Keys](./api-keys.md)):
+Call the `GET` every minute with `CRON_SECRET` (see above):
 
 ```bash
-# crontab on a VPS or container host, or any external scheduler that can POST
-* * * * * curl -fsS -X POST -H "Authorization: Bearer sk_..." \
+# crontab on a VPS or container host. cron runs with almost no environment,
+# so set the secret in the crontab itself (or source it in a wrapper script):
+CRON_SECRET=your-random-secret
+* * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" \
   https://yourdomain/api/v1/admin/orchestration/maintenance/tick
 ```
 
-On Vercel, set `CRON_SECRET` to the key and add the cron to `vercel.json` — see [Vercel: Maintenance tick cron](../deployment/platforms/vercel.md#maintenance-tick-cron), which also covers the Hobby plan's once-a-day limit. Per-platform notes are in [hosting requirements](./meta/hosting-requirements.md).
+An admin API key (`admin` scope, minted by a platform admin; see [API Keys](./api-keys.md)) works too, on the `GET` or the `POST`, but each call then queries the database before the idle gate can answer.
+
+On Vercel, set `CRON_SECRET` and add the cron to `vercel.json` — see [Vercel: Maintenance tick cron](../deployment/platforms/vercel.md#maintenance-tick-cron), which also covers the Hobby plan's once-a-day limit. Per-platform notes are in [hosting requirements](./meta/hosting-requirements.md).
 
 1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
 2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_
@@ -292,31 +302,32 @@ State is per-process by necessity: persisting a `lastTickAt` would cost exactly 
 **Deployment:** Configure one external cron to call this endpoint every 60 seconds:
 
 ```bash
-* * * * * curl -s -X POST -H "Authorization: Bearer sk_..." https://your-app/api/v1/admin/orchestration/maintenance/tick
+* * * * * curl -s -H "Authorization: Bearer $CRON_SECRET" https://your-app/api/v1/admin/orchestration/maintenance/tick
 ```
 
 #### Cadence on a scale-to-zero database
 
 If your Postgres autosuspends when idle (Neon, Aurora Serverless v2, paused Supabase), the tick used to bill you for a database that was never allowed to sleep: it did a fixed amount of work every 60 seconds whether or not there was anything to do, and autosuspend keys off compute idle time, so **one** query a minute defeats a 5-minute timer exactly as effectively as twenty. A deployment with near-zero traffic was billed as if it ran continuously — ~730 h/month.
 
-The idle gate above is the fix, and it works at the documented 60s cadence: the ticks still fire, they just cost nothing. Keep `* * * * *` and you get punctual workflow schedules **and** an idle database.
+The idle gate above is the fix, and it works at the documented 60s cadence: the ticks still fire, they just cost nothing, **provided the cron authenticates with a random `CRON_SECRET`**. An `sk_` key, as `CRON_SECRET` or in a `POST`, queries the database on the way in and keeps it awake (#1130). Keep `* * * * *` with a random secret and you get punctual workflow schedules **and** an idle database.
 
 Slow the cron down only for the _other_ cost — one serverless invocation per minute:
 
 ```bash
-*/5 * * * * curl -s -X POST -H "Authorization: Bearer sk_..." https://your-app/api/v1/admin/orchestration/maintenance/tick
+*/5 * * * * curl -s -H "Authorization: Bearer $CRON_SECRET" https://your-app/api/v1/admin/orchestration/maintenance/tick
 ```
 
 State the price plainly before choosing this: **a workflow schedule can only be as punctual as the cron that drives it.** At `*/5`, a schedule set to run every minute fires every five, and any schedule fires up to 5 minutes late. Nothing is lost — the sweeps are idempotent and catch up on the next fire — but "why did my 9:00 report arrive at 9:04?" has this as its answer.
 
 Checklist for a scale-to-zero deployment:
 
-| Setting                        | Value                                                         |
-| ------------------------------ | ------------------------------------------------------------- |
-| Cron cadence                   | `* * * * *` — the gate makes idle ticks free                  |
-| `MAINTENANCE_IDLE_MAX_SKIP_MS` | default (30 min), or above your autosuspend timer             |
-| Instances                      | one, or lower the cap — each instance keeps its own gate      |
-| Admin tabs left open           | fine — `useHealthCheck` pauses `SELECT 1` polling when hidden |
+| Setting                        | Value                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Cron cadence                   | `* * * * *` — the gate makes idle ticks free                                                       |
+| Cron credential                | a random `CRON_SECRET` on the `GET`, never an `sk_` key                                            |
+| `MAINTENANCE_IDLE_MAX_SKIP_MS` | default (30 min), or above your autosuspend timer                                                  |
+| Instances                      | one, or lower the cap — each instance keeps its own gate, and a fresh one sweeps on its first tick |
+| Admin tabs left open           | fine — `useHealthCheck` pauses `SELECT 1` polling when hidden                                      |
 
 Verify it works the way any query-count claim should be verified — enable Prisma query logging and watch an idle deployment. After the first sweep arms the gate you should see **no** queries until the horizon, then one short burst.
 

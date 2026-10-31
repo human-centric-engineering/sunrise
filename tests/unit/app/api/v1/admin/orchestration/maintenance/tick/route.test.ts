@@ -410,6 +410,92 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — HEAD never ticks
     });
 
+    describe('authenticated by CRON_SECRET (#1130)', () => {
+      const SECRET = 'q3Jx8m2Vt9Lw4Rz7Nc1Hb6Pk0Yd5Gf3S';
+      const saved = process.env.CRON_SECRET;
+      afterEach(() => {
+        if (saved === undefined) delete process.env.CRON_SECRET;
+        else process.env.CRON_SECRET = saved;
+      });
+
+      function cronRequest(bearer: string, query = ''): NextRequest {
+        return new NextRequest(
+          `http://localhost:3000/api/v1/admin/orchestration/maintenance/tick${query}`,
+          { method: 'GET', headers: { authorization: `Bearer ${bearer}` } }
+        );
+      }
+
+      it('runs the tick without consulting the API-key or session guard', async () => {
+        process.env.CRON_SECRET = SECRET;
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+        const response = await GET(cronRequest(SECRET));
+
+        expect(response.status).toBe(202);
+        expect(processDueSchedules).toHaveBeenCalledTimes(1);
+        expect(mockAfter).toHaveBeenCalledWith(expect.any(Promise));
+        expect(mockResolveApiKey).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the secret is checked before the guard
+        expect(auth.api.getSession).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the secret is checked before the guard
+      });
+
+      it('honours ?force=1', async () => {
+        process.env.CRON_SECRET = SECRET;
+        mockIdleSweep();
+        await GET(cronRequest(SECRET));
+        await (mockAfter.mock.calls[0][0] as Promise<void>);
+
+        expect((await GET(cronRequest(SECRET))).status).toBe(200);
+        expect((await GET(cronRequest(SECRET, '?force=1'))).status).toBe(202);
+      });
+
+      it('falls through to the guard for a wrong secret, and runs nothing', async () => {
+        process.env.CRON_SECRET = SECRET;
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+        const response = await GET(cronRequest(`${SECRET.slice(0, -1)}X`));
+
+        expect(response.status).toBe(401);
+        expect(mockResolveApiKey).toHaveBeenCalledTimes(1);
+        expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the tick
+      });
+
+      it('still accepts an admin API key when CRON_SECRET is set to something else', async () => {
+        process.env.CRON_SECRET = SECRET;
+        mockResolveApiKey.mockResolvedValue(adminApiKey());
+
+        const response = await GET(cronRequest(`sk_${'b'.repeat(64)}`));
+
+        expect(response.status).toBe(202);
+      });
+
+      it('still refuses a browser session when CRON_SECRET is set', async () => {
+        process.env.CRON_SECRET = SECRET;
+
+        const response = await GET(makeRequest('', 'GET'));
+
+        expect(response.status).toBe(403);
+        expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the tick
+      });
+
+      it('wraps a tick failure in the standard error envelope', async () => {
+        process.env.CRON_SECRET = SECRET;
+        const runTick = await import('@/lib/orchestration/maintenance/run-tick');
+        const spy = vi
+          .spyOn(runTick, 'runMaintenanceTick')
+          .mockRejectedValue(new Error('tick blew up'));
+        try {
+          const response = await GET(cronRequest(SECRET));
+          const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+
+          expect(response.status).toBe(500);
+          expect(body.success).toBe(false);
+          expect(body.error.code).toBe('INTERNAL_ERROR');
+        } finally {
+          spy.mockRestore();
+        }
+      });
+    });
+
     it('returns 401 with neither a key nor a session', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 

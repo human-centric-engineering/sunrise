@@ -741,7 +741,7 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 ### `message-embedder.ts` — async embedding for semantic search
 
 - `queueMessageEmbedding(messageId, content)` — fire-and-forget. Called after writing an assistant `AiMessage` row; returns immediately and runs the actual embed on a detached promise. Failures are logged but never surfaced to the chat stream. Messages shorter than 20 chars are skipped.
-- `backfillMissingEmbeddings(batchSize = 25)` — called from the unified maintenance tick (see [`scheduling.md`](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)). Finds assistant messages without a matching `AiMessageEmbedding` row (via `LEFT JOIN`) and re-embeds up to `batchSize` entries per invocation.
+- `backfillMissingEmbeddings(batchSize = 25)` — called from the unified maintenance tick (see [`scheduling.md`](./scheduling.md#unified-maintenance-tick-admin-auth-or-cron-secret-preferred)). Finds assistant messages without a matching `AiMessageEmbedding` row (via `LEFT JOIN`) and re-embeds up to `batchSize` entries per invocation.
 - Internally `generateAndStoreEmbedding` truncates content above 8000 chars (cost control) and upserts through a raw `INSERT ... ON CONFLICT` so double-invocations are idempotent.
 - Powers `POST /conversations/search` (pgvector semantic search) — without the embedder those endpoints return empty results. See [`orchestration-conversations.md`](../admin/orchestration-conversations.md).
 

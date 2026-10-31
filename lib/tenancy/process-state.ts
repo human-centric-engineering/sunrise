@@ -655,6 +655,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "The fork's one credential resolver and its init gate, registered from code. It holds no credential: a resolver is asked per call, in the caller's org context, and what it returns is cached by the provider manager under the credential's identity (§120 t-744).",
   },
   {
+    file: 'lib/orchestration/maintenance/cron-secret.ts',
+    holders: ['warned'],
+    posture: 'no-tenant-data',
+    why: 'Whether this process has already logged that a set CRON_SECRET is unusable (#1130). The secret is install configuration, not an org value, and the flag holds no part of it.',
+  },
+  {
     file: 'lib/orchestration/maintenance/app-jobs.ts',
     holders: ['jobs', 'appInit', 'clock'],
     posture: 'no-tenant-data',

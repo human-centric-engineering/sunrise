@@ -100,6 +100,21 @@ release process.
 
 ### Fixed
 
+- **An idle maintenance tick still queried the database when its cron used an
+  API key, so a scale-to-zero database never suspended.** Before the idle gate
+  could answer, the proxy's rate limiter looked up the `sk_` key and
+  `resolveApiKey` read it and wrote `lastUsedAt`. The tick's `GET` now also
+  accepts `Authorization: Bearer $CRON_SECRET`, the variable Vercel Cron sends,
+  checked in constant time with no database call; admin API keys still work.
+  **Action for operators:** set `CRON_SECRET` to a random value of at least 32
+  characters (`openssl rand -base64 32`), not an `sk_` key, and revoke the old
+  cron key. An `sk_` value is never matched as the secret: it still works
+  through the admin-key check, so revoking it still stops it, but it queries.
+  The value is read from `process.env`, not the core env schema, so a fork that
+  declares `CRON_SECRET` in `lib/app/env.ts` still boots; **a fork that already
+  sets `CRON_SECRET` for its own cron routes now also lets that value run this
+  tick**. The secret is checked before `withAdminAuth`, so `canAdminister` is
+  not asked about it (#1130, t-969).
 - **A workflow run resumed after a crash skipped the step it crashed in.**
   The engine records a run's current step when the step starts and never
   moved it on, so the orphan sweep resumed after the step that was in flight:

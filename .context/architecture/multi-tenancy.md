@@ -62,7 +62,7 @@ is on:
   (or once under the audited system scope, for the two audit tables that
   have no org); a tick fired from an admin's session sweeps every org, not
   the admin's ([`tenancy/context.md` → Background work](../tenancy/context.md#who-enters-it--the-read-rule),
-  [`scheduling.md`](../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)).
+  [`scheduling.md`](../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-or-cron-secret-preferred)).
 - **Sunrise's own agents and templates in every org** — each org gets its
   own instance of the platform's tenant-facing agents (`mcp-system`, the
   evaluation judges, the case generator and the clean-up agent), made when
