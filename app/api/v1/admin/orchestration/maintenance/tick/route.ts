@@ -24,14 +24,16 @@
  * 405 instead.
  *
  * **Why a GET.** Vercel Cron only sends GET, with `Authorization: Bearer
- * $CRON_SECRET`. Setting `CRON_SECRET` to an admin API key lets it call this
- * route with no proxy in between. The GET refuses a browser session: a session
- * cookie rides along on a top-level cross-site navigation, so a GET that
- * accepted one would let any page make an admin's browser fire a tick. A
- * bearer header cannot be set that way.
+ * $CRON_SECRET`. The GET accepts that secret itself, checked with no database
+ * call, so an idle tick stays query-free on a scale-to-zero database (#1130,
+ * `lib/orchestration/maintenance/cron-secret.ts`). Otherwise it takes an admin
+ * API key, as before. The GET refuses a browser session: a session cookie
+ * rides along on a top-level cross-site navigation, so a GET that accepted one
+ * would let any page make an admin's browser fire a tick. A bearer header
+ * cannot be set that way.
  *
- * Auth: Admin role required (session or API key with admin scope; GET takes
- * the API key only).
+ * Auth: Admin role required (session or API key with admin scope). The GET
+ * takes `CRON_SECRET` or an admin API key, never a session.
  */
 
 import type { NextRequest } from 'next/server';
@@ -39,7 +41,8 @@ import { withAdminAuth, type AuthenticatedSession } from '@/lib/auth/guards';
 import { isApiKeySession } from '@/lib/auth/api-keys';
 import { successResponse } from '@/lib/api/responses';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
-import { ForbiddenError } from '@/lib/api/errors';
+import { ForbiddenError, handleAPIError } from '@/lib/api/errors';
+import { isMaintenanceCronRequest } from '@/lib/orchestration/maintenance/cron-secret';
 import {
   BACKGROUND_TASK_NAMES,
   runMaintenanceTick,
@@ -91,12 +94,25 @@ async function tick(request: NextRequest): Promise<Response> {
 
 export const POST = withAdminAuth(tick);
 
-export const GET = withAdminAuth((request, session: AuthenticatedSession) => {
+const getWithAdminKey = withAdminAuth((request, session: AuthenticatedSession) => {
   if (!isApiKeySession(session)) {
-    throw new ForbiddenError('GET accepts an admin API key only; use POST from a browser session');
+    throw new ForbiddenError(
+      'GET accepts CRON_SECRET or an admin API key only; use POST from a browser session'
+    );
   }
   return tick(request);
 });
+
+export async function GET(request: NextRequest): Promise<Response> {
+  if (!isMaintenanceCronRequest(request)) return getWithAdminKey(request);
+  // The cron secret enters no org, as an admin API key does not; the tick
+  // scopes each task itself. Same error envelope as the guard's.
+  try {
+    return await tick(request);
+  } catch (error) {
+    return handleAPIError(error);
+  }
+}
 
 export function HEAD(): Response {
   return new Response(null, { status: 405, headers: { Allow: 'GET, POST' } });
