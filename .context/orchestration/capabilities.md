@@ -51,7 +51,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                                                              |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                                                      |
 | `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                                                              |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, workflowExecutionId?, entityContext?, scope?, customConfig?, isEnabled? }`                          |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, workflowExecutionId?, stepId?, stepAttempt?, entityContext?, scope?, customConfig?, isEnabled? }`   |
 | `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                                                            |
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                                                           |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                                                          |
@@ -186,6 +186,12 @@ Dispatch step 9 therefore writes `agentId` only when it is a real agent, and `wo
 **Where the row then shows up.** It persists, is queryable by execution, is counted by the per-capability stats route (which filters on `operation: 'tool_call'` and `metadata.slug`), **and** appears against its step in the execution detail and live cost panels — because `CapabilityContext.costLogMetadata` carries a `stepId`, which is what both readers filter on (`if (!stepId) continue;`). Before #600 the dispatcher wrote `{ slug, success }` only, so every row was dropped by both panels.
 
 `agent_call` dispatches carry `workflowExecutionId` too. Until #600 only `tool_call` did, and the asymmetry sat inside one file: the `agent_call` executor's own LLM `logCost` set it while the capability dispatch beside it did not, so a tool an agent invoked mid-workflow recorded an `agentId` and a null execution link and never appeared against the run.
+
+### Step and attempt (`CapabilityContext.stepId`, `stepAttempt`)
+
+Beside `workflowExecutionId`, the `tool_call` and `agent_call` executors set `stepId` (the `WorkflowStep.id` the dispatch came from) and `stepAttempt`: 0 for the step's first attempt, 1 for the first retry under `errorStrategy: 'retry'`, and so on. Without it every attempt of a step dispatches with the same identity, so a capability that keeps per-attempt state — a read budget, a scratchpad — cannot tell a retry from the first try. Key that state on `(workflowExecutionId, stepId, stepAttempt)` (#1143; HCE Hub's Triage agent read budget was the case).
+
+**Across a crash-resume the number continues.** A resumed run replays the interrupted attempt's saved turns, so it is still that attempt: the engine stores the attempt on the running-step row (`AiWorkflowRunningStep.attempt`, written with each retry's turn-clear) and resumes it — including the step's retry count, so a resume does not get a fresh set of retries. Branches of a `parallel` step are re-run from scratch on resume and start again at 0. Both fields are absent outside a workflow.
 
 ### The metadata carrier (`CapabilityContext.costLogMetadata`)
 
