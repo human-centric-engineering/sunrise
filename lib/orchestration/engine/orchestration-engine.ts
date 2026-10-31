@@ -40,6 +40,10 @@
  * The client is expected to POST to `/executions/:id/approve` and then
  * reconnect via `?resumeFromExecutionId=` to continue — resume plumbing
  * is provided by the route layer.
+ *
+ * Tenancy posture: row-keyed — `walkPositions` is keyed by a run's own live
+ * context object, which no other run in any org holds, and keeps only that
+ * run's step ids and counts.
  */
 
 import { Prisma } from '@prisma/client';
