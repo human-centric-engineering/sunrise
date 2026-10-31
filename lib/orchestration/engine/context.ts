@@ -91,6 +91,12 @@ export interface ExecutionContext {
    */
   resumeTurns?: TurnEntry[];
   /**
+   * The step `resumeTurns` and `resumeAttempt` were recorded by.
+   * `executeSingleStep` hands them only to that step and drops them for any
+   * other, so a resume never replays one step's state into the next (t-966).
+   */
+  resumeStepId?: string;
+  /**
    * The attempt the resume target was on when the run stopped, read from its
    * `AiWorkflowRunningStep.attempt`. `resumeTurns` belong to that attempt, so
    * the engine continues it rather than restarting the step's attempt count

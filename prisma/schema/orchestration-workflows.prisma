@@ -191,6 +191,13 @@ model AiWorkflowExecution {
   // the resume path and as a short pointer for the in-flight banner.
   currentStep          String?
   executionTrace       Json // array of step execution logs
+  // Where the DAG walk had got to: the steps of the iteration in flight, the
+  // steps waiting on predecessors, the visited set, bounded-retry counts. Saved
+  // at the start of every walk iteration and with every checkpoint, and read by
+  // a crash-resume so it continues exactly where the run stopped (t-966). Step
+  // ids and counts only — no step output, so erasure has nothing to scrub here.
+  // Shape: `walkPositionSchema` in lib/orchestration/engine/walk-position.ts.
+  walkState            Json?
   totalTokensUsed      Int       @default(0)
   totalCostUsd         Float     @default(0)
   budgetLimitUsd       Float?

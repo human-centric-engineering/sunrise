@@ -40,6 +40,10 @@
  * The client is expected to POST to `/executions/:id/approve` and then
  * reconnect via `?resumeFromExecutionId=` to continue — resume plumbing
  * is provided by the route layer.
+ *
+ * Tenancy posture: row-keyed — `walkPositions` is keyed by a run's own live
+ * context object, which no other run in any org holds, and keeps only that
+ * run's step ids and counts.
  */
 
 import { Prisma } from '@prisma/client';
@@ -116,6 +120,11 @@ import {
   workflowStarted,
 } from '@/lib/orchestration/engine/events';
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
+import {
+  parseWalkPosition,
+  retryContextFromTrace,
+  type WalkPosition,
+} from '@/lib/orchestration/engine/walk-position';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import {
@@ -151,6 +160,25 @@ const BUDGET_WARN_FRACTION = 0.8;
 
 /** Hard cap on steps walked in a single run — guards against pathological loops. */
 const MAX_STEPS_PER_RUN = 1000;
+
+/**
+ * The walk position of each run in flight, keyed by its live context, so
+ * `checkpoint()` can add the step it records to `done` and save the position
+ * in the same write as the trace (t-966). Kept off `ExecutionContext` because
+ * executors receive a copy of the context and have no business with it.
+ */
+const walkPositions = new WeakMap<
+  ExecutionContext,
+  {
+    position: WalkPosition;
+    /** The last checkpoint failed, so the trace in the row is behind; the next save must write it. */
+    traceStale: boolean;
+  }
+>();
+
+/** What a checkpoint records in the walk position about the step it writes. */
+type WalkRecord =
+  { done: { stepId: string; nextIds: string[] } } | { ended: NonNullable<WalkPosition['ended']> };
 
 /**
  * Format a deterministic "Budget exceeded" reason string. Persisted to
@@ -256,7 +284,7 @@ export class OrchestrationEngine {
     // --------------------------------------------------------------
     // 1. Row creation / resume
     // --------------------------------------------------------------
-    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId, lease } =
+    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId, resumePosition, lease } =
       await this.initRun(workflow, inputData, options, baseLogger);
 
     yield workflowStarted(executionId, workflow.id);
@@ -294,7 +322,8 @@ export class OrchestrationEngine {
             ctx,
             resumeAfterStepId,
             baseLogger,
-            options
+            options,
+            resumePosition ?? null
           ),
         { manualStatus: true }
       );
@@ -320,7 +349,8 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     resumeAfterStepId: string | undefined,
     baseLogger: Logger,
-    options: ExecuteOptions
+    options: ExecuteOptions,
+    resumePosition: WalkPosition | null = null
   ): AsyncGenerator<ExecutionEvent, void, unknown> {
     const { executionId } = lease;
     let workflowSpanError: unknown = undefined;
@@ -337,13 +367,17 @@ export class OrchestrationEngine {
       const visited = new Set<string>();
       // Bounded retry tracking: key = "sourceStepId→targetStepId", value = attempts used.
       const retryCount = new Map<string, number>();
-      const queue: string[] = resumeAfterStepId
-        ? this.nextIdsAfter(byId, resumeAfterStepId)
-        : [workflow.definition.entryStepId];
+      // A crash-resume with a saved position restores the walk below, once
+      // its state exists; every other resume continues after its cursor.
+      const queue: string[] = resumePosition
+        ? []
+        : resumeAfterStepId
+          ? this.nextIdsAfter(byId, resumeAfterStepId)
+          : [workflow.definition.entryStepId];
 
-      // On resume, seed visited with steps already recorded in the trace
-      // so the in-degree check doesn't block successors of completed steps.
-      if (resumeAfterStepId) {
+      // On a cursor resume, seed visited with steps already recorded in the
+      // trace so the in-degree check doesn't block successors of completed steps.
+      if (resumeAfterStepId && !resumePosition) {
         for (const entry of trace) {
           visited.add(entry.stepId);
         }
@@ -379,6 +413,238 @@ export class OrchestrationEngine {
 
       let stepCount = 0;
       let finalOutput: unknown = null;
+      // Walk-position bookkeeping (t-966): where `__retryContext` came from,
+      // and whether the trace changed outside a checkpoint (a retry attached
+      // to it) so the next save must write it too.
+      let retryContextAt: WalkPosition['retryContextAt'];
+      let traceDirty = false;
+      // The unfinished branches of a parallel batch a crash-resume re-runs.
+      let resumeBatch: Set<string> | null = null;
+
+      // What runs after a step the walk ran on its own: the next steps it
+      // chose, with a bounded-retry edge re-queueing a target already visited.
+      // Run live after each such step, and on a crash-resume for one that
+      // finished before the crash (t-966).
+      const advanceAfterStep = function* (
+        step: WorkflowStep,
+        nextIds: string[],
+        output: unknown
+      ): Generator<ExecutionEvent, void, unknown> {
+        for (const id of nextIds) {
+          if (!visited.has(id)) {
+            queue.push(id);
+            continue;
+          }
+
+          // The target was already visited — check if the originating edge
+          // has a maxRetries cap that allows re-execution.
+          const retryEdge = step.nextSteps.find(
+            (e) => e.targetStepId === id && e.maxRetries && e.maxRetries > 0 && e.condition
+          );
+          if (!retryEdge) continue;
+
+          const edgeKey = `${step.id}\u2192${id}`;
+          const attempts = retryCount.get(edgeKey) ?? 0;
+          if (attempts >= retryEdge.maxRetries!) {
+            // Retry budget exhausted. If the source step has a sibling
+            // edge with the same condition but no maxRetries, route
+            // there as the exhaustion handler. Otherwise fall through
+            // to the legacy silent-halt behaviour.
+            const fallbackEdge = step.nextSteps.find(
+              (e) =>
+                e.targetStepId !== id &&
+                e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
+                (!e.maxRetries || e.maxRetries === 0)
+            );
+            if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
+              const exhaustionReason =
+                typeof output === 'object' && output !== null && 'reason' in output
+                  ? (output as Record<string, unknown>).reason
+                  : output;
+              const reasonStr =
+                typeof exhaustionReason === 'string'
+                  ? exhaustionReason
+                  : exhaustionReason !== undefined && exhaustionReason !== null
+                    ? JSON.stringify(exhaustionReason)
+                    : '';
+              queue.push(fallbackEdge.targetStepId);
+              traceDirty = true;
+              attachRetryToTrace(trace, step.id, {
+                attempt: retryEdge.maxRetries! + 1,
+                maxRetries: retryEdge.maxRetries!,
+                reason: reasonStr,
+                targetStepId: fallbackEdge.targetStepId,
+                exhausted: true,
+              });
+              yield stepRetry(
+                step.id,
+                fallbackEdge.targetStepId,
+                retryEdge.maxRetries! + 1,
+                retryEdge.maxRetries!,
+                reasonStr,
+                true
+              );
+            }
+            continue;
+          }
+
+          // Under the retry limit — re-queue the target.
+          retryCount.set(edgeKey, attempts + 1);
+
+          // Store retry context so the target step's prompt can reference
+          // the failure reason via {{__retryContext.failureReason}}.
+          ctx.variables.__retryContext = {
+            fromStep: step.id,
+            attempt: attempts + 1,
+            maxRetries: retryEdge.maxRetries,
+            failureReason:
+              typeof output === 'object' && output !== null && 'reason' in output
+                ? (output as Record<string, unknown>).reason
+                : String(output),
+          };
+
+          // Cascade-clear visited for the retry target and all its
+          // downstream dependents so the engine re-executes them.
+          const toClear = new Set<string>([id]);
+          const clearQueue = [id];
+          while (clearQueue.length > 0) {
+            const current = clearQueue.shift()!;
+            const currentStep = byId.get(current);
+            if (!currentStep) continue;
+            for (const edge of currentStep.nextSteps) {
+              if (visited.has(edge.targetStepId) && !toClear.has(edge.targetStepId)) {
+                toClear.add(edge.targetStepId);
+                clearQueue.push(edge.targetStepId);
+              }
+            }
+          }
+          for (const clearId of toClear) {
+            visited.delete(clearId);
+            pending.delete(clearId);
+          }
+
+          queue.push(id);
+
+          const retryReason = (() => {
+            if (
+              typeof ctx.variables.__retryContext === 'object' &&
+              ctx.variables.__retryContext !== null
+            ) {
+              const reason = (ctx.variables.__retryContext as Record<string, unknown>)
+                .failureReason;
+              if (typeof reason === 'string') return reason;
+              if (reason !== undefined && reason !== null) return JSON.stringify(reason);
+            }
+            return '';
+          })();
+          // The retry now lives in the trace, which the next walk save writes
+          // with it; a crash-resume rebuilds `__retryContext` from it.
+          retryContextAt = attachRetryToTrace(trace, step.id, {
+            attempt: attempts + 1,
+            maxRetries: retryEdge.maxRetries!,
+            reason: retryReason,
+            targetStepId: id,
+          });
+          traceDirty = true;
+          yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
+        }
+      };
+
+      // Save where the walk is before an iteration's steps run, so a crash
+      // during them resumes here (t-966). Checkpoints add each step that
+      // finishes to `done`. A trace a retry changed since the last checkpoint
+      // goes in the same write, so the rebuilt `__retryContext` can find it.
+      const startIteration = async (inFlight: string[], batch: boolean): Promise<void> => {
+        const position: WalkPosition = {
+          v: 1,
+          inFlight,
+          batch,
+          done: {},
+          pending: [...pending],
+          visited: [...visited],
+          retryCounts: Object.fromEntries(retryCount),
+          stepCount,
+          budgetWarned: ctx.variables.__budgetWarned === true,
+          ...(retryContextAt ? { retryContextAt } : {}),
+        };
+        const traceStale = walkPositions.get(ctx)?.traceStale === true;
+        walkPositions.set(ctx, { position, traceStale });
+        if (traceDirty || traceStale) {
+          traceDirty = false;
+          await this.checkpoint(lease, ctx, trace);
+        } else {
+          await this.saveWalkPosition(lease, position, ctx.logger);
+        }
+      };
+
+      if (resumePosition) {
+        // Restore the saved walk, re-queue the in-flight steps that had not
+        // finished, and replay what runs after the ones that had.
+        for (const id of resumePosition.visited) visited.add(id);
+        for (const id of resumePosition.pending) pending.add(id);
+        for (const [key, count] of Object.entries(resumePosition.retryCounts)) {
+          retryCount.set(key, count);
+        }
+        stepCount = resumePosition.stepCount;
+        if (resumePosition.budgetWarned) ctx.variables.__budgetWarned = true;
+        retryContextAt = resumePosition.retryContextAt;
+        const retryContext = retryContextFromTrace(trace, retryContextAt);
+        if (retryContext) ctx.variables.__retryContext = retryContext;
+
+        const ranAlone = !resumePosition.batch;
+        // Branches of an interrupted parallel batch re-run as a batch, even
+        // one left alone: the batch path is how they ran (it ignores
+        // `terminal` and bounded-retry edges), so they hand on the same way.
+        if (!ranAlone) resumeBatch = new Set<string>();
+        for (const id of resumePosition.inFlight) {
+          const next = resumePosition.done[id];
+          if (next === undefined) {
+            // Still running at the crash: run it again. It was counted when
+            // it started, and is counted again when it does.
+            visited.delete(id);
+            stepCount -= 1;
+            queue.push(id);
+            resumeBatch?.add(id);
+            continue;
+          }
+          const step = byId.get(id);
+          const output = trace.findLast((e) => e.stepId === id)?.output;
+          if (output !== undefined) finalOutput = output;
+          if (ranAlone && step) {
+            yield* advanceAfterStep(step, next, output);
+          } else {
+            for (const nextId of next) if (!visited.has(nextId)) queue.push(nextId);
+          }
+        }
+
+        // A step ended the run before the host died: finalise it the way the
+        // live run was about to, rather than re-running the step (and paying
+        // for it twice) or running what a failed batch would never reach.
+        const ended = resumePosition.ended;
+        if (ended) {
+          queue.length = 0;
+          pending.clear();
+          if (ended.kind === 'terminal') {
+            finalOutput = trace.findLast((e) => e.stepId === ended.stepId)?.output ?? finalOutput;
+          } else if (ended.kind === 'budget' && budgetLimitUsd) {
+            failureReason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
+            yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, ended.stepId, {
+              executionId,
+              workflowId: ctx.workflowId,
+              userId: ctx.userId,
+            });
+            yield workflowFailed(failureReason, ended.stepId, ctx);
+            failed = true;
+          } else {
+            failureReason =
+              ended.message ??
+              trace.findLast((e) => e.stepId === ended.stepId && e.status === 'failed')?.error ??
+              `Step "${ended.stepId}" failed`;
+            yield workflowFailed(failureReason, ended.stepId, ctx);
+            failed = true;
+          }
+        }
+      }
 
       while (queue.length > 0 || pending.size > 0) {
         if (options.signal?.aborted) {
@@ -431,9 +697,11 @@ export class OrchestrationEngine {
         const ready = [...readySet];
 
         if (ready.length === 0) continue;
+        const resumingBatch = resumeBatch?.has(ready[0]) ?? false;
+        resumeBatch = null;
 
         // ── Single step (sequential path — unchanged semantics) ──────
-        if (ready.length === 1) {
+        if (ready.length === 1 && !resumingBatch) {
           const stepId = ready[0];
           if (stepCount++ >= MAX_STEPS_PER_RUN) {
             failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
@@ -450,6 +718,7 @@ export class OrchestrationEngine {
             break;
           }
           visited.add(stepId);
+          await startIteration([stepId], false);
 
           // `withSpanGenerator` activates the workflow.step span as the
           // OTEL active context across yields, so nested helper-`withSpan`
@@ -475,125 +744,7 @@ export class OrchestrationEngine {
           if (singleResult.output !== undefined) finalOutput = singleResult.output;
           if (singleResult.terminal) break;
 
-          // Enqueue next steps (with bounded retry support).
-          for (const id of singleResult.nextIds) {
-            if (!visited.has(id)) {
-              queue.push(id);
-              continue;
-            }
-
-            // The target was already visited — check if the originating edge
-            // has a maxRetries cap that allows re-execution.
-            const retryEdge = step.nextSteps.find(
-              (e) => e.targetStepId === id && e.maxRetries && e.maxRetries > 0 && e.condition
-            );
-            if (!retryEdge) continue;
-
-            const edgeKey = `${step.id}\u2192${id}`;
-            const attempts = retryCount.get(edgeKey) ?? 0;
-            if (attempts >= retryEdge.maxRetries!) {
-              // Retry budget exhausted. If the source step has a sibling
-              // edge with the same condition but no maxRetries, route
-              // there as the exhaustion handler. Otherwise fall through
-              // to the legacy silent-halt behaviour.
-              const fallbackEdge = step.nextSteps.find(
-                (e) =>
-                  e.targetStepId !== id &&
-                  e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
-                  (!e.maxRetries || e.maxRetries === 0)
-              );
-              if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
-                const exhaustionReason =
-                  typeof singleResult.output === 'object' &&
-                  singleResult.output !== null &&
-                  'reason' in singleResult.output
-                    ? (singleResult.output as Record<string, unknown>).reason
-                    : singleResult.output;
-                const reasonStr =
-                  typeof exhaustionReason === 'string'
-                    ? exhaustionReason
-                    : exhaustionReason !== undefined && exhaustionReason !== null
-                      ? JSON.stringify(exhaustionReason)
-                      : '';
-                queue.push(fallbackEdge.targetStepId);
-                attachRetryToTrace(trace, step.id, {
-                  attempt: retryEdge.maxRetries! + 1,
-                  maxRetries: retryEdge.maxRetries!,
-                  reason: reasonStr,
-                  targetStepId: fallbackEdge.targetStepId,
-                  exhausted: true,
-                });
-                yield stepRetry(
-                  step.id,
-                  fallbackEdge.targetStepId,
-                  retryEdge.maxRetries! + 1,
-                  retryEdge.maxRetries!,
-                  reasonStr,
-                  true
-                );
-              }
-              continue;
-            }
-
-            // Under the retry limit — re-queue the target.
-            retryCount.set(edgeKey, attempts + 1);
-
-            // Store retry context so the target step's prompt can reference
-            // the failure reason via {{__retryContext.failureReason}}.
-            ctx.variables.__retryContext = {
-              fromStep: step.id,
-              attempt: attempts + 1,
-              maxRetries: retryEdge.maxRetries,
-              failureReason:
-                typeof singleResult.output === 'object' &&
-                singleResult.output !== null &&
-                'reason' in singleResult.output
-                  ? (singleResult.output as Record<string, unknown>).reason
-                  : String(singleResult.output),
-            };
-
-            // Cascade-clear visited for the retry target and all its
-            // downstream dependents so the engine re-executes them.
-            const toClear = new Set<string>([id]);
-            const clearQueue = [id];
-            while (clearQueue.length > 0) {
-              const current = clearQueue.shift()!;
-              const currentStep = byId.get(current);
-              if (!currentStep) continue;
-              for (const edge of currentStep.nextSteps) {
-                if (visited.has(edge.targetStepId) && !toClear.has(edge.targetStepId)) {
-                  toClear.add(edge.targetStepId);
-                  clearQueue.push(edge.targetStepId);
-                }
-              }
-            }
-            for (const clearId of toClear) {
-              visited.delete(clearId);
-              pending.delete(clearId);
-            }
-
-            queue.push(id);
-
-            const retryReason = (() => {
-              if (
-                typeof ctx.variables.__retryContext === 'object' &&
-                ctx.variables.__retryContext !== null
-              ) {
-                const reason = (ctx.variables.__retryContext as Record<string, unknown>)
-                  .failureReason;
-                if (typeof reason === 'string') return reason;
-                if (reason !== undefined && reason !== null) return JSON.stringify(reason);
-              }
-              return '';
-            })();
-            attachRetryToTrace(trace, step.id, {
-              attempt: attempts + 1,
-              maxRetries: retryEdge.maxRetries!,
-              reason: retryReason,
-              targetStepId: id,
-            });
-            yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
-          }
+          yield* advanceAfterStep(step, singleResult.nextIds, singleResult.output);
           continue;
         }
 
@@ -623,6 +774,7 @@ export class OrchestrationEngine {
           visited.add(stepId);
         }
         if (!batchValid) break;
+        await startIteration([...ready], true);
 
         // Execute all branch steps concurrently.
         const batchResult = await this.executeParallelBatch(
@@ -1117,6 +1269,13 @@ export class OrchestrationEngine {
   > {
     const { executionId } = lease;
     yield stepStarted(step.id, step.type, step.name, step.description);
+    // Resume state — the saved turns and attempt — replays only into the step
+    // that recorded it (t-966).
+    if (ctx.resumeStepId !== step.id) {
+      ctx.resumeTurns = undefined;
+      ctx.resumeAttempt = undefined;
+    }
+    ctx.resumeStepId = undefined;
     // The attempt this step starts on: the one a resume left it in, else 0.
     const startAttempt = ctx.resumeAttempt ?? 0;
     await this.markCurrentStep(lease, step, baseLogger, startAttempt);
@@ -1193,12 +1352,12 @@ export class OrchestrationEngine {
           ...rollupTelemetry(telemetryOut),
           ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
         });
-        // The pause path keeps the running-step row alive on purpose:
-        // `pauseForApproval` doesn't call `clearRunningStep`, so the row
-        // (with its `turns`) survives the pause and approval-resume's
-        // initRun reads it back into `ctx.resumeTurns`. The trace entry's
-        // `turns` field is for observability; the running-step row is for
-        // resume.
+        // The pause path does not call `clearRunningStep`, so the row
+        // survives the pause and the live view keeps showing the step as
+        // waiting. Approval-resume continues AFTER this step (the approve
+        // route marks it completed), so its turns are not replayed — the
+        // resume drops them (`ctx.resumeStepId`, t-966) and deletes the
+        // row. The trace entry's `turns` field is the record.
         //
         // Clearing both context fields here prevents the next step's executor
         // — or, more dangerously, sibling code paths like `runStepToCompletion`
@@ -1283,7 +1442,7 @@ export class OrchestrationEngine {
       ctx.resumeTurns = undefined;
       ctx.recordTurn = undefined;
       ctx.resumeAttempt = undefined;
-      await this.checkpoint(lease, ctx, trace);
+      await this.checkpoint(lease, ctx, trace, { ended: { stepId: step.id, kind: 'failed' } });
       await this.clearRunningStep(executionId, step.id, baseLogger);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id, ctx);
@@ -1324,7 +1483,14 @@ export class OrchestrationEngine {
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
     ctx.resumeAttempt = undefined;
-    await this.checkpoint(lease, ctx, trace);
+    const nextIds = chosenNextIds(step, result);
+    const ending = runEndingAfter(step.id, result, ctx, budgetLimitUsd, true);
+    await this.checkpoint(
+      lease,
+      ctx,
+      trace,
+      ending ? { ended: ending } : { done: { stepId: step.id, nextIds } }
+    );
     await this.clearRunningStep(executionId, step.id, baseLogger);
 
     // Budget check — runs BEFORE step_completed so the event stream's
@@ -1368,11 +1534,6 @@ export class OrchestrationEngine {
       ctx.variables.__budgetWarned = true;
       yield budgetWarning(ctx.totalCostUsd, budgetLimitUsd);
     }
-
-    const nextIds =
-      result.nextStepIds && result.nextStepIds.length > 0
-        ? result.nextStepIds
-        : step.nextSteps.map((edge) => edge.targetStepId);
 
     // `failWorkflow` is the explicit "this step authored a failure
     // termination" signal — used by `send_notification` with
@@ -1446,6 +1607,11 @@ export class OrchestrationEngine {
     for (const step of steps) {
       void this.markCurrentStep(lease, step, baseLogger);
     }
+    // Branches share `ctx`, and turn replay is single-cursor, so no branch
+    // replays resume turns or continues a saved attempt (see `initRun`).
+    ctx.resumeTurns = undefined;
+    ctx.resumeAttempt = undefined;
+    ctx.resumeStepId = undefined;
 
     // Run all steps concurrently. Each step runs its full strategy
     // (including retries) independently.
@@ -1627,7 +1793,7 @@ export class OrchestrationEngine {
           input: step.config,
           ...rollupTelemetry(telemetryOut),
         });
-        await this.checkpoint(lease, ctx, trace);
+        await this.checkpoint(lease, ctx, trace, { ended: { stepId: step.id, kind: 'failed' } });
         await this.clearRunningStep(executionId, step.id, baseLogger);
         allEvents.push(workflowFailed(sanitizeError(error), step.id, ctx));
         batchFailed = true;
@@ -1665,7 +1831,14 @@ export class OrchestrationEngine {
         ...rollupTelemetry(telemetryOut),
         ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
-      await this.checkpoint(lease, ctx, trace);
+      const nextIds = chosenNextIds(step, stepResult);
+      const ending = runEndingAfter(step.id, stepResult, ctx, budgetLimitUsd, false);
+      await this.checkpoint(
+        lease,
+        ctx,
+        trace,
+        ending ? { ended: ending } : { done: { stepId: step.id, nextIds } }
+      );
       await this.clearRunningStep(executionId, step.id, baseLogger);
 
       if (stepResult.skipped) {
@@ -1696,10 +1869,6 @@ export class OrchestrationEngine {
         continue;
       }
 
-      const nextIds =
-        stepResult.nextStepIds && stepResult.nextStepIds.length > 0
-          ? stepResult.nextStepIds
-          : step.nextSteps.map((edge) => edge.targetStepId);
       allNextIds.push(...nextIds);
 
       // Budget check after merging branch cost. Push the specific
@@ -1917,6 +2086,8 @@ export class OrchestrationEngine {
     budgetLimitUsd?: number;
     ctx: ExecutionContext;
     resumeAfterStepId?: string;
+    /** The walk position a crash-resume continues from (t-966). */
+    resumePosition?: WalkPosition | null;
     lease: LeaseHandle;
   }> {
     if (options.resumeFromExecutionId) {
@@ -1984,23 +2155,27 @@ export class OrchestrationEngine {
       // results without re-firing.
       //
       // We look up turns on the running-step row keyed by `currentStep` (the
-      // resume cursor). Note: this is a single-cursor resume — a `parallel`
-      // step's siblings are intentionally discarded by the `deleteMany` below,
-      // and the engine re-walks the DAG. No seeded workflow today nests
-      // multi-turn executors (`agent_call`/`orchestrator`/`reflect`) inside a
-      // `parallel`, so the single-cursor strategy is sufficient. A future
-      // contributor combining the two would need a multi-cursor resume.
+      // resume cursor), and they are replayed into that step only
+      // (`ctx.resumeStepId`). Turn replay is single-cursor: a `parallel`
+      // batch's branches are re-run (see `inFlight` below) but without
+      // replay. No seeded workflow today nests multi-turn executors
+      // (`agent_call`/`orchestrator`/`reflect`) inside a `parallel`; a
+      // future contributor combining the two would need per-branch replay.
       if (row.currentStep) {
         const runningRow = await prisma.aiWorkflowRunningStep.findUnique({
           where: { executionId_stepId: { executionId: row.id, stepId: row.currentStep } },
           select: { turns: true, attempt: true },
         });
         // The turns below belong to this attempt, so the step continues it.
-        if (runningRow && runningRow.attempt > 0) ctx.resumeAttempt = runningRow.attempt;
+        if (runningRow && runningRow.attempt > 0) {
+          ctx.resumeAttempt = runningRow.attempt;
+          ctx.resumeStepId = row.currentStep;
+        }
         if (runningRow && runningRow.turns !== null && runningRow.turns !== undefined) {
           const parsedTurns = turnEntriesSchema.safeParse(runningRow.turns);
           if (parsedTurns.success && parsedTurns.data.length > 0) {
             ctx.resumeTurns = parsedTurns.data;
+            ctx.resumeStepId = row.currentStep;
             baseLogger.info('Resume: restoring multi-turn step state', {
               executionId: row.id,
               currentStep: row.currentStep,
@@ -2024,14 +2199,41 @@ export class OrchestrationEngine {
           }
         }
       }
+      // A crash-resume continues from the walk position the run saved
+      // (t-966); see `walk-position.ts`. A row with none — written before the
+      // column existed — falls back to continuing after `currentStep`.
+      //
+      // Approval and retry-step resumes continue after their cursor, which
+      // both point at a step the trace records as finished. Their saved
+      // position is stale (the pause, or the retry's truncated trace), so it
+      // is cleared below: should this run crash before saving its own, the
+      // orphan resume then takes the cursor path, which is right for them.
+      const resumePosition = reason === 'orphan-resume' ? parseWalkPosition(row.walkState) : null;
+      if (reason === 'orphan-resume' && !resumePosition && row.walkState !== null) {
+        // Saved by an engine this one cannot read (a rollback, a later shape):
+        // the cursor path is a fallback that can skip the step in flight.
+        baseLogger.warn('Resume: saved walk position unreadable, continuing after the cursor', {
+          executionId: row.id,
+          currentStep: row.currentStep,
+        });
+      }
+      if (resumePosition) {
+        baseLogger.info('Resume: continuing from the saved walk position', {
+          executionId: row.id,
+          inFlight: resumePosition.inFlight,
+          finished: Object.keys(resumePosition.done),
+        });
+      }
       // Clear all running-step rows for this execution before re-entry. The
-      // engine is about to call `markCurrentStep` on the resume target, which
-      // will INSERT a fresh row; any stale siblings from a pre-crash parallel
-      // fan-out are intentionally discarded.
+      // engine re-creates a row for each step as it runs it.
       await prisma.aiWorkflowRunningStep.deleteMany({ where: { executionId: row.id } });
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: row.id, leaseToken },
-        data: { status: WorkflowStatus.RUNNING, startedAt: row.startedAt ?? new Date() },
+        data: {
+          status: WorkflowStatus.RUNNING,
+          startedAt: row.startedAt ?? new Date(),
+          ...(reason === 'orphan-resume' ? {} : { walkState: Prisma.DbNull }),
+        },
       });
       return {
         executionId: row.id,
@@ -2039,6 +2241,7 @@ export class OrchestrationEngine {
         budgetLimitUsd: ctx.budgetLimitUsd,
         ctx,
         resumeAfterStepId: row.currentStep ?? undefined,
+        resumePosition,
         lease: { executionId: row.id, token: leaseToken },
       };
     }
@@ -2123,12 +2326,12 @@ export class OrchestrationEngine {
       });
       if (refreshed.count === 0) return;
 
-      // Upsert keyed on (executionId, stepId). A retry or approval-resume
-      // re-enters the same stepId and trips the unique constraint; the
-      // `update` clause deliberately leaves `turns` alone — it is
-      // preserved across re-entries so a multi-turn step resumes from its
-      // last recorded turn rather than restarting at turn 0. `attempt` is
-      // the caller's starting attempt either way (the resumed one, else 0).
+      // Upsert keyed on (executionId, stepId). A step revisited by a loop
+      // edge re-enters the same stepId and trips the unique constraint; the
+      // `update` clause deliberately leaves `turns` alone — it is preserved
+      // across re-entries so a multi-turn step resumes from its last
+      // recorded turn rather than restarting at turn 0. `attempt` is the
+      // caller's starting attempt either way (the resumed one, else 0).
       // Parallel branches arrive with distinct stepIds so no collision:
       // each branch lands its own row, which is the whole reason this is a
       // side table.
@@ -2304,13 +2507,51 @@ export class OrchestrationEngine {
     }
   }
 
+  /**
+   * Save the walk position on its own, lease-guarded, at the start of an
+   * iteration whose trace has not changed since the last checkpoint (t-966).
+   * Non-fatal like the other progress writes: a failure leaves the previous
+   * position, and a crash-resume then re-runs from there.
+   */
+  private async saveWalkPosition(
+    lease: LeaseHandle,
+    position: WalkPosition,
+    logger: Logger
+  ): Promise<void> {
+    try {
+      await prisma.aiWorkflowExecution.updateMany({
+        where: { id: lease.executionId, leaseToken: lease.token },
+        data: { walkState: position },
+      });
+    } catch (err) {
+      logger.warn('saveWalkPosition: DB update failed (non-fatal)', {
+        executionId: lease.executionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * `record` says what the step this checkpoint writes means for the walk,
+   * in the same update as its trace entry (t-966): `done` with the next steps
+   * it chose, or `ended` when it ends the run, so a crash-resume continues
+   * past it or finalises the run the same way rather than re-running it. The
+   * first `ended` in an iteration wins, as it does live.
+   */
   private async checkpoint(
     lease: LeaseHandle,
     ctx: ExecutionContext,
-    trace: ExecutionTraceEntry[]
+    trace: ExecutionTraceEntry[],
+    record?: WalkRecord
   ): Promise<void> {
     const { executionId, token } = lease;
     const contextPatchData = drainContextPatch(ctx);
+    const walk = walkPositions.get(ctx);
+    const position = walk?.position;
+    if (position && record) {
+      if ('done' in record) position.done[record.done.stepId] = record.done.nextIds;
+      else position.ended ??= record.ended;
+    }
     try {
       const result = await prisma.$transaction(async (tx) => {
         await archivePriorVerdict(tx, executionId, contextPatchData);
@@ -2322,6 +2563,7 @@ export class OrchestrationEngine {
             totalCostUsd: ctx.totalCostUsd,
             leaseExpiresAt: leaseExpiry(),
             lastHeartbeatAt: new Date(),
+            ...(position ? { walkState: position } : {}),
             ...contextPatchData,
           },
         });
@@ -2332,6 +2574,7 @@ export class OrchestrationEngine {
         }
         return written;
       }, RUN_ROW_WRITE_OPTIONS);
+      if (walk) walk.traceStale = false;
       if (result.count === 0) {
         // Lease lost — another host has claimed this run. The orphan sweep handed it off
         // because our heartbeat lapsed. Future writes from this run will keep no-opping;
@@ -2341,6 +2584,9 @@ export class OrchestrationEngine {
         });
       }
     } catch (err) {
+      // The row's trace is now behind the walk; the next position save must
+      // write it too, or the position could name a step the trace never had.
+      if (walk) walk.traceStale = true;
       ctx.logger.error('Checkpoint failed — in-memory trace may diverge from DB', {
         executionId,
         error: err instanceof Error ? err.message : String(err),
@@ -2696,14 +2942,44 @@ function attachRetryToTrace(
   trace: ExecutionTraceEntry[],
   stepId: string,
   retry: NonNullable<ExecutionTraceEntry['retries']>[number]
-): void {
+): WalkPosition['retryContextAt'] {
   for (let i = trace.length - 1; i >= 0; i--) {
     if (trace[i].stepId === stepId) {
       const existing = trace[i].retries ?? [];
       trace[i] = { ...trace[i], retries: [...existing, retry] };
-      return;
+      // Where it went, for the walk position (t-966).
+      return { entry: i, retry: existing.length, step: stepId };
     }
   }
+  return undefined;
+}
+
+/** The steps a finished step hands on to: the ones it chose, else every outgoing edge. */
+function chosenNextIds(step: WorkflowStep, result: StepResult): string[] {
+  return result.nextStepIds && result.nextStepIds.length > 0
+    ? result.nextStepIds
+    : step.nextSteps.map((edge) => edge.targetStepId);
+}
+
+/**
+ * How a finished step ends the run, if it does, for its checkpoint to record
+ * in the walk position (see `checkpoint`). Checked in the order the live walk
+ * acts on them. A parallel batch ignores `terminal` live, so its branches pass
+ * `honoursTerminal: false`.
+ */
+function runEndingAfter(
+  stepId: string,
+  result: StepResult,
+  ctx: ExecutionContext,
+  budgetLimitUsd: number | undefined,
+  honoursTerminal: boolean
+): WalkPosition['ended'] {
+  if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) return { stepId, kind: 'budget' };
+  if (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) {
+    return { stepId, kind: 'failWorkflow', message: result.failWorkflow };
+  }
+  if (honoursTerminal && result.terminal === true) return { stepId, kind: 'terminal' };
+  return undefined;
 }
 
 function sleep(ms: number): Promise<void> {
