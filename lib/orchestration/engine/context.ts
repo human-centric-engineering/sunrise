@@ -103,6 +103,8 @@ export interface ExecutionContext {
    * at 0 (#1143). Set and cleared alongside `resumeTurns`.
    */
   resumeAttempt?: number;
+  /** The id of that attempt (`AiWorkflowRunningStep.attemptId`), set alongside `resumeAttempt`. */
+  resumeAttemptId?: string;
   /**
    * Which attempt of the current step this snapshot runs in: 0 for the first,
    * 1 for the first retry, and so on, continuing across a resume. Set only on
@@ -112,13 +114,13 @@ export interface ExecutionContext {
    */
   stepAttempt?: number;
   /**
-   * How many times this run had already run the current step when this visit
-   * began: 0 for its first visit, 1 when a loop or bounded-retry edge brings
-   * the walk back to it, and so on. Counted from the trace, so a crash-resume
-   * gets the same number. With `stepAttempt` it makes a per-attempt key unique
-   * across visits. Set only on executor snapshots, like `stepAttempt`.
+   * An id for this attempt of the current step, unique in the run: minted
+   * fresh each time the engine runs a step's executor, and reused only when
+   * a crash-resume continues the attempt the run stopped in. Set only on
+   * executor snapshots. The capability-dispatching executors forward it as
+   * `CapabilityContext.stepAttemptId` (#1143).
    */
-  stepVisit?: number;
+  stepAttemptId?: string;
   /**
    * Mid-step checkpoint hook. Multi-turn executors call this after each
    * completed turn to persist progress. The engine's implementation appends
@@ -248,15 +250,15 @@ export function mergeStepResult(
  * Callers that don't pass `telemetryOut` (e.g., test harnesses) still get
  * a correctly-typed empty array — pushes are silently discarded.
  *
- * `stepAttempt` and `stepVisit` say which attempt of which visit to the step
- * this snapshot runs in (see `ExecutionContext`); the engine passes both on
- * every executor call.
+ * `stepAttempt` and `stepAttemptId` say which attempt of the step this
+ * snapshot runs in (see `ExecutionContext`); the engine passes both on every
+ * executor call.
  */
 export function snapshotContext(
   ctx: ExecutionContext,
   telemetryOut?: LlmTelemetryEntry[],
   stepAttempt?: number,
-  stepVisit?: number
+  stepAttemptId?: string
 ): Readonly<ExecutionContext> {
   return Object.freeze({
     ...ctx,
@@ -264,6 +266,6 @@ export function snapshotContext(
     variables: Object.freeze({ ...ctx.variables }),
     stepTelemetry: telemetryOut ?? [],
     ...(stepAttempt !== undefined ? { stepAttempt } : {}),
-    ...(stepVisit !== undefined ? { stepVisit } : {}),
+    ...(stepAttemptId !== undefined ? { stepAttemptId } : {}),
   });
 }

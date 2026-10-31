@@ -23,6 +23,7 @@
  *   - `budgetLimitUsd?: number`               (optional) — sub-budget for this step
  */
 
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { OrchestratorTurn, StepResult, WorkflowStep } from '@/types/orchestration';
@@ -171,6 +172,11 @@ async function runDelegation(
     },
     resumeTurns: undefined,
     recordTurn: undefined,
+    // Each delegation is its own attempt for the capabilities it dispatches:
+    // delegations share a synthetic step id, run concurrently within a round
+    // and repeat across rounds, so the orchestrator's own id would be shared
+    // by all of them (#1143).
+    stepAttemptId: randomUUID(),
   };
 
   // Capture the telemetry array length BEFORE the delegation so we can
