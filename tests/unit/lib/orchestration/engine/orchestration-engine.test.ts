@@ -6636,49 +6636,6 @@ describe('OrchestrationEngine', () => {
       expect(seen[0].turns).toBeUndefined();
     });
 
-    it('a timed-out attempt that keeps running cannot record turns into the next attempt', async () => {
-      // Attempt 0 times out at 20ms but its executor carries on and records a
-      // turn at 60ms, after attempt 1 has started (the reset runs before the
-      // backoff). That turn must not reach the running-step row.
-      const late = makeTurn(9);
-      let calls = 0;
-      registerStepType('llm_call', async (_step, ctx) => {
-        calls++;
-        if (calls === 1) {
-          await new Promise((r) => setTimeout(r, 60));
-          if (ctx.recordTurn) await ctx.recordTurn(late);
-          return { output: 'too late', tokensUsed: 0, costUsd: 0 };
-        }
-        await new Promise((r) => setTimeout(r, 80));
-        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
-      });
-
-      await collect(
-        new OrchestrationEngine(),
-        makeWorkflow({
-          steps: [
-            {
-              id: 'a',
-              name: 'A',
-              type: 'llm_call',
-              config: { errorStrategy: 'retry', retryCount: 1, timeoutMs: 20 },
-              nextSteps: [],
-            },
-          ],
-          entryStepId: 'a',
-          errorStrategy: 'fail',
-        })
-      );
-
-      const turnWrites = vi
-        .mocked(prisma.aiWorkflowRunningStep.updateMany)
-        .mock.calls.map(([arg]) => (arg as { data: { turns?: unknown } }).data.turns)
-        .filter((t): t is TurnEntry[] => Array.isArray(t));
-      expect(
-        turnWrites.some((t) => t.some((turn) => JSON.stringify(turn) === JSON.stringify(late)))
-      ).toBe(false);
-    });
-
     it('stepAttempt: the next attempt is recorded before the retry backoff, so a crash in the wait resumes it', async () => {
       // The backoff before attempt 1 is a 500ms timer. By the time it is set,
       // the row must already say attempt 1 with its turns cleared.

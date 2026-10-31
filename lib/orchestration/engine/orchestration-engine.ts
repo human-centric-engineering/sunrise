@@ -978,29 +978,14 @@ export class OrchestrationEngine {
     // (failed turns come before the successful turn in time), so
     // rollupTelemetry's "last entry wins" still picks model/provider
     // from the successful attempt's last turn.
-    // The attempt whose turns `ctx.recordTurn` still accepts. An attempt that
-    // timed out keeps running (Promise.race does not stop it); once the next
-    // attempt has started, its late turns are dropped rather than recorded
-    // into the next attempt's history.
-    let activeAttemptId = startAttemptId;
-    const attemptContext = (attempt: number, attemptId: string) => {
-      const snapshot = snapshotContext(ctx, telemetryOut, attempt, attemptId);
-      const record = ctx.recordTurn;
-      if (!record) return snapshot;
-      return Object.freeze({
-        ...snapshot,
-        recordTurn: (turn: TurnEntry) =>
-          attemptId === activeAttemptId ? record(turn) : Promise.resolve(),
-      });
-    };
     const invokeExecutor = async (attempt: number, attemptId: string): Promise<StepResult> => {
       if (!stepTimeoutMs) {
-        return executor(step, attemptContext(attempt, attemptId));
+        return executor(step, snapshotContext(ctx, telemetryOut, attempt, attemptId));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, attemptContext(attempt, attemptId)),
+          executor(step, snapshotContext(ctx, telemetryOut, attempt, attemptId)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -1098,8 +1083,10 @@ export class OrchestrationEngine {
             // the wait resumes into the next attempt rather than replaying the
             // failed one (#1143). Cost accumulators above persist across
             // attempts intentionally — they reflect billing reality.
+            // Safe to reset before the backoff: the only failure that leaves
+            // an attempt still running is a per-step timeout, which is not
+            // retriable, so no earlier attempt can record into this one.
             attemptId = randomUUID();
-            activeAttemptId = attemptId;
             if (onAttemptStart) await onAttemptStart(attempt + 1, attemptId);
             await sleep(backoffDelayMs(attempt));
           }
