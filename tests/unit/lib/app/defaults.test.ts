@@ -645,7 +645,15 @@ describe('lib/app/ seams ship empty', () => {
     //
     // A `vi.mock(seam, (importOriginal) => importOriginal())` restores the real
     // seam just as `importActual` does, so it is matched too. Only the files
-    // listed as a seam's readers may do either.
+    // listed as a seam's readers may do either, and the seam's own test: a fork
+    // that fills `lib/app/erasure.ts` tests its hook in
+    // `tests/unit/lib/app/erasure.test.ts` (or `erasure.<aspect>.test.ts`), and
+    // that file has to read the real seam. Sunrise ships none for these seams.
+    const ownTest = new RegExp(
+      '^' +
+        path.join('tests', 'unit', 'lib', 'app', seam).replaceAll('\\', '\\\\') +
+        String.raw`(\.[\w-]+)?\.test\.tsx?$`
+    );
     const seamPath = String.raw`['"\`]@/lib/app/` + seam + String.raw`['"\`]`;
     const unmockRe = new RegExp(String.raw`\bvi\s*\.\s*(?:do)?[Uu]nmock\s*\(\s*` + seamPath);
     const actualRe = new RegExp(String.raw`importActual[\s\S]{0,80}?` + seamPath);
@@ -670,7 +678,11 @@ describe('lib/app/ seams ship empty', () => {
         if (unmockRe.test(src)) {
           offenders.push(`${rel}: unmocks the pin instead of restoring it`);
         }
-        if ((actualRe.test(src) || restoreRe.test(src)) && !mayRead.has(rel)) {
+        if (
+          (actualRe.test(src) || restoreRe.test(src)) &&
+          !mayRead.has(rel) &&
+          !ownTest.test(rel)
+        ) {
           offenders.push(`${rel}: reads the real seam past the pin`);
         }
       }

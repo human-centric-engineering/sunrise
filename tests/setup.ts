@@ -354,8 +354,9 @@ vi.mock('@/lib/app/emails', () => ({ emailOverrides: {} }));
  * `admin-tier-roster.test.ts` (judges the fork's org-tier pages). A test that
  * needs a seam filled mocks it itself, as `org-tier-admin-pages.test.ts`,
  * `user-created-hooks.test.ts` and `erasure-hooks-seam.test.ts` do.
- * `defaults.test.ts` fails any other file that reads a pinned seam past its
- * pin, or unmocks one.
+ * A fork tests its own filled seam in `tests/unit/lib/app/<seam>.test.ts`,
+ * which may read the real seam too. `defaults.test.ts` fails any other file
+ * that reads a pinned seam past its pin, or unmocks one.
  *
  * Six seams are pinned, not every lazy init in `lib/app/`: these are the ones
  * a measured fill failed. The rest are #636's sweep.

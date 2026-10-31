@@ -219,7 +219,8 @@ The global test setup file (`tests/setup.ts`) runs before all tests and configur
    `admin-tier-roster.test.ts` (admin-tier), each with
    `vi.mock('@/lib/app/<seam>', (importOriginal) => importOriginal())`. Without
    that, the guard reads the pin and passes a fork entry it exists to refuse.
-   `defaults.test.ts` fails any other test file that reads past a pin or unmocks one.
+   A fork's test of its own filled seam, `tests/unit/lib/app/<seam>.test.ts`, may read
+   it too. `defaults.test.ts` fails any other test file that reads past a pin or unmocks one.
 5. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
 
 **Key setup features**:
