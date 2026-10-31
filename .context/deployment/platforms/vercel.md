@@ -239,15 +239,18 @@ itself, with no database call (#1130), so the setup is:
   (cron-job.org, a GitHub Actions `schedule`). The `curl` is in
   [Unified Maintenance Tick](../../orchestration/scheduling.md#every-production-host-needs-an-external-cron).
 - **Why not an `sk_` key.** Setting `CRON_SECRET` to an admin API key was the
-  setup before #1130, and it still works, but on Neon or another scale-to-zero
-  database it keeps the database awake: the proxy's rate limiter looks up any
-  `Bearer sk_…` on the orchestration admin routes, and caches the answer for
-  60 seconds, so nearly every tick queries before the idle gate can answer. A
-  random secret is checked in memory. If you have the old setup, generate a
-  secret, set `CRON_SECRET` to it, redeploy, and then revoke the key.
-- **A short secret is ignored.** Below 32 characters, `CRON_SECRET` matches
-  nothing and the route falls back to the admin-key check, so the cron gets a
-  `401`.
+  setup before #1130. It still works, through the admin-key check, so revoking
+  the key still stops it. But that check queries, so on Neon or another
+  scale-to-zero database it keeps the database awake: the proxy's rate limiter
+  looks up any `Bearer sk_…` on the orchestration admin routes and caches the
+  answer for 60 seconds, and the route reads the key. A random secret is
+  checked in memory. If you have the old setup, generate a secret, set
+  `CRON_SECRET` to it, redeploy, and then revoke the key.
+- **A short or padded secret is ignored.** Below 32 characters, or with
+  leading or trailing whitespace (piping `openssl` into `vercel env add` can
+  store a trailing newline), `CRON_SECRET` matches nothing and the cron gets a
+  `401`. The runtime logs show `CRON_SECRET is set but ignored`, with the
+  reason. Vercel itself accepts 16 characters; this route wants 32.
 - **The GET refuses a browser session.** Only `CRON_SECRET` or an admin API key
   works on it, so opening the URL while signed in returns `403`. That is
   deliberate: a session cookie travels with a cross-site link, a bearer header

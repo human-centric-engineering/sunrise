@@ -146,7 +146,11 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 `GET` on the same path does the same for a cron. It accepts `Authorization: Bearer $CRON_SECRET`, checked against the `CRON_SECRET` environment variable with no database call (#1130), or an admin API key, and refuses a browser session with `403`. It exists for Vercel Cron, which can send nothing but a `GET` with `Authorization: Bearer $CRON_SECRET`, and any other cron can use it the same way. A session is refused because a session cookie travels with a cross-site link, so a `GET` that accepted one would let any page make a signed-in admin's browser fire a tick.
 
-**Set `CRON_SECRET` to a random value** (`openssl rand -base64 32`), at least 32 characters; a shorter one is ignored and the request falls through to the admin-key check. It is read from `process.env`, not the core env schema, so a fork that already declares `CRON_SECRET` in `lib/app/env.ts` keeps working. Do not set it to an `sk_` API key: the proxy's rate limiter looks up any `Bearer sk_…` on `/api/v1/admin/orchestration/`, and caches the answer for only 60 seconds, so an `sk_` value costs a query on nearly every tick. An admin API key still authenticates the `GET`, but costs that lookup plus the key read and `lastUsedAt` write in `resolveApiKey`, so an idle tick is not free with one.
+**Set `CRON_SECRET` to a random value** (`openssl rand -base64 32`), at least 32 characters. A shorter one, or one with leading or trailing whitespace (a trailing newline from a piped `vercel env add` counts), is ignored: the request falls through to the admin-key check and gets a `401`, and the tick logs `CRON_SECRET is set but ignored` once per process, saying why. It is read from `process.env`, not the core env schema, so a fork that already declares `CRON_SECRET` in `lib/app/env.ts` keeps working. **On a fork that already sets `CRON_SECRET` for its own cron routes, that value now also runs this tick**; on Vercel the variable is project-wide anyway.
+
+An `sk_` API key is never matched as the secret, even when `CRON_SECRET` holds one, which was the setup before #1130. It goes through the admin-key check instead, so revoking the key or demoting its owner still stops it (#746). That check queries: the proxy's rate limiter looks up any `Bearer sk_…` on `/api/v1/admin/orchestration/` and caches the answer for only 60 seconds, and `resolveApiKey` reads the key and writes `lastUsedAt`. So an idle tick is not free with an `sk_` key, in `CRON_SECRET` or anywhere else.
+
+The secret is checked before `withAdminAuth`, so the authorization policy's `canAdminister` is not asked about a request that carries it; see [What is not behind the seam yet](../auth/authorization.md#what-is-not-behind-the-seam-yet).
 
 **The background chain runs under `after()` (t-844).** On a serverless host the invocation can be frozen as soon as the response is sent, which would silently stop every task below. `runMaintenanceTick()` returns the chain as `background`, and the route passes it to Next's `after()`, which keeps the invocation alive until it settles (Vercel runs it under `waitUntil`). The route sets `maxDuration = 300` (Vercel's Fluid default and the Hobby ceiling). That is the whole invocation's budget, sweep and chain together, whereas the watchdog gives each of them five minutes, so on a host that enforces `maxDuration` a slow sweep shortens the chain. `HEAD` answers `405`, because Next would otherwise run the `GET` handler for it. `after()` is not called inside `run-tick.ts` because the dev ticker in `instrumentation.ts` runs outside any request, where `after()` throws; there the chain runs on the long-lived process. A caller of `runMaintenanceTick()` from a request handler must hand `background` to `after()` the same way. The chain never rejects.
 
@@ -161,7 +165,9 @@ The in-process ticker in `instrumentation.ts` runs **only in development**. In p
 Call the `GET` every minute with `CRON_SECRET` (see above):
 
 ```bash
-# crontab on a VPS or container host, or any external scheduler
+# crontab on a VPS or container host. cron runs with almost no environment,
+# so set the secret in the crontab itself (or source it in a wrapper script):
+CRON_SECRET=your-random-secret
 * * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" \
   https://yourdomain/api/v1/admin/orchestration/maintenance/tick
 ```

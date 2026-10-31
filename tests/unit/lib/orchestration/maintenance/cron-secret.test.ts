@@ -9,10 +9,17 @@
  * @see lib/orchestration/maintenance/cron-secret.ts
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { logger } from '@/lib/logging';
 import {
   MIN_CRON_SECRET_LENGTH,
+  __resetCronSecretWarningForTests,
   isMaintenanceCronRequest,
 } from '@/lib/orchestration/maintenance/cron-secret';
 
@@ -26,6 +33,10 @@ function request(authorization?: string): NextRequest {
 
 describe('isMaintenanceCronRequest', () => {
   const saved = process.env.CRON_SECRET;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetCronSecretWarningForTests();
+  });
   afterEach(() => {
     if (saved === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = saved;
@@ -36,10 +47,25 @@ describe('isMaintenanceCronRequest', () => {
     expect(isMaintenanceCronRequest(request(`Bearer ${SECRET}`))).toBe(true);
   });
 
-  it('accepts an sk_ key set as the secret, so existing Vercel setups keep working', () => {
+  it('never matches an sk_ key, so revoking it or demoting its owner still stops it (#746)', () => {
+    // The pre-#1130 setup. The admin-key guard verifies the key; this cannot.
     const key = `sk_${'0123456789abcdef'.repeat(4)}`;
     process.env.CRON_SECRET = key;
-    expect(isMaintenanceCronRequest(request(`Bearer ${key}`))).toBe(true);
+    expect(isMaintenanceCronRequest(request(`Bearer ${key}`))).toBe(false);
+    // Still a supported setup, so nothing is logged for it.
+    expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an sk_ value is not misconfigured
+  });
+
+  it.each([
+    ['a trailing newline', `${SECRET}\n`],
+    ['a leading space', ` ${SECRET}`],
+  ])('ignores a CRON_SECRET with %s, even when the bearer matches it', (_label, padded) => {
+    process.env.CRON_SECRET = padded;
+    expect(isMaintenanceCronRequest(request(`Bearer ${padded}`))).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('starts or ends with whitespace'),
+      expect.any(Object)
+    );
   });
 
   it.each([
@@ -74,6 +100,24 @@ describe('isMaintenanceCronRequest', () => {
     const short = SECRET.slice(0, MIN_CRON_SECRET_LENGTH - 1);
     process.env.CRON_SECRET = short;
     expect(isMaintenanceCronRequest(request(`Bearer ${short}`))).toBe(false);
+  });
+
+  it('says once per process why a set CRON_SECRET is ignored, since the cron only sees a 401', () => {
+    process.env.CRON_SECRET = 'too-short';
+    isMaintenanceCronRequest(request('Bearer too-short'));
+    isMaintenanceCronRequest(request('Bearer too-short'));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      `Maintenance tick: CRON_SECRET is set but ignored, because it is shorter than ${MIN_CRON_SECRET_LENGTH} characters`,
+      { hint: 'Set CRON_SECRET to a random value: openssl rand -base64 32' }
+    );
+  });
+
+  it('logs nothing for a request with no bearer, whatever CRON_SECRET holds', () => {
+    process.env.CRON_SECRET = 'too-short';
+    expect(isMaintenanceCronRequest(request())).toBe(false);
+    expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — only a cron request is worth a warning
   });
 
   it(`honours a CRON_SECRET of exactly ${MIN_CRON_SECRET_LENGTH} characters`, () => {

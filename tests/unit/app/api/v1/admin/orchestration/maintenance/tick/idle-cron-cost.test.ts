@@ -9,10 +9,9 @@
  * recorder: any model a query reaches is noted, and the test asserts on the
  * list.
  *
- * `auth.api.getSession` is mocked to "no session". The proxy calls it on the
- * cookie-keyed rule, and better-auth returns null without a database read when
- * the request carries no session cookie (`api/routes/session.mjs`: no signed
- * session cookie → `return null`), which is what a cron request is.
+ * better-auth is real too, over the same recorder: the proxy's cookie-keyed
+ * rule calls `auth.api.getSession`, so a better-auth change that read the
+ * bearer (a `bearer` or `jwt` plugin) would show up here as a query.
  *
  * The contrast cases are what make the zero mean something: an `sk_` bearer is
  * looked up, and the recorder sees it.
@@ -44,8 +43,6 @@ vi.mock('@/lib/db/client', () => {
   };
 });
 
-vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn(async () => null) } } }));
-
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
 
 vi.mock('@/lib/logging', () => {
@@ -65,11 +62,9 @@ vi.mock('@/lib/env', async (importOriginal) => {
   };
 });
 
+import { auth } from '@/lib/auth/config';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
-import {
-  resetRateLimitCredentialBudget,
-  resetRateLimitCredentialCache,
-} from '@/lib/security/rate-limit-credentials';
+import { resetRateLimitCredentialCache } from '@/lib/security/rate-limit-credentials';
 import { __resetIdleGateForTests, armIdleGate } from '@/lib/orchestration/maintenance/idle-gate';
 import { GET } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
 
@@ -103,8 +98,9 @@ describe('an idle cron tick (#1130)', () => {
     touched.length = 0;
     // tests/setup.ts bypasses rate limiting; the dispatcher is what is measured here.
     delete process.env.RATE_LIMIT_BYPASS;
+    // Each request also comes from a fresh IP (`cronRequest`), so no
+    // credential-lookup budget carries over between cases.
     resetRateLimitCredentialCache();
-    resetRateLimitCredentialBudget('10.9.0.0');
     __resetIdleGateForTests();
     // What a previous sweep that found nothing leaves behind.
     armIdleGate({ now: Date.now(), nextWorkAtMs: null });
@@ -124,38 +120,42 @@ describe('an idle cron tick (#1130)', () => {
 
     it('makes no query when authenticated by a random CRON_SECRET', async () => {
       process.env.CRON_SECRET = RANDOM_SECRET;
+      // Watched, not replaced: the real better-auth must run and still not query.
+      const getSession = vi.spyOn(auth.api, 'getSession');
 
       const response = await callTick(RANDOM_SECRET);
       const body = (await response.json()) as { data: { skipped: boolean; reason: string } };
 
       expect(response.status).toBe(200);
       expect(body.data).toMatchObject({ skipped: true, reason: 'idle' });
+      expect(getSession).toHaveBeenCalled();
       expect(touched).toEqual([]);
     });
 
-    it('still pays the proxy’s key lookup when CRON_SECRET is an sk_ key', async () => {
-      // The contrast that shows the recorder sees a query: the proxy's
-      // orchestration rule looks up any `Bearer sk_…`. The route itself
-      // matches the secret without one, so the lookup is the proxy's.
+    it('sends an sk_ CRON_SECRET through the admin-key check, which queries', async () => {
+      // The pre-#1130 setup. The secret check refuses an sk_ value, so the
+      // guard can still refuse a revoked key (#746); that costs the proxy's
+      // lookup and `resolveApiKey`'s. Unknown to the recorder, so 401.
       process.env.CRON_SECRET = SK_SECRET;
 
-      const response = await callTick(SK_SECRET);
+      const request = cronRequest(SK_SECRET);
+      expect(await applyRateLimit(request)).toBeNull();
+      const response = await GET(request);
 
-      expect(response.status).toBe(200);
-      expect(touched).toEqual(['aiApiKey']);
+      expect(response.status).toBe(401);
+      expect(touched.filter((m) => m === 'aiApiKey').length).toBeGreaterThanOrEqual(2);
     });
 
     it('looks up an admin API key on the old path, before the gate can answer', async () => {
       // No CRON_SECRET: the route falls through to `withAdminAuth`, whose
-      // `resolveApiKey` reads the key row. Unknown here, so 401 after a query.
+      // `resolveApiKey` reads the key row, after the proxy's own lookup.
       delete process.env.CRON_SECRET;
 
       const request = cronRequest(SK_SECRET);
-      await applyRateLimit(request);
+      expect(await applyRateLimit(request)).toBeNull();
       const response = await GET(request);
 
       expect(response.status).toBe(401);
-      expect(touched).toContain('aiApiKey');
       expect(touched.filter((m) => m === 'aiApiKey').length).toBeGreaterThanOrEqual(2);
     });
   });

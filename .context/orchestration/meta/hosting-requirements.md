@@ -191,6 +191,8 @@ The scheduler is **stateless and pull-driven**:
 A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints take an HTTP POST, require admin auth (session or API key with admin scope), and are idempotent within a tick window. `/maintenance/tick` also takes a GET, authenticated by `Authorization: Bearer $CRON_SECRET` (checked with no database call) or an admin API key, because Vercel Cron can send nothing else (see [Vercel](../../deployment/platforms/vercel.md#maintenance-tick-cron)). Use the GET with a random `CRON_SECRET` from any cron: an `sk_` key queries the database on every call, which keeps a scale-to-zero database awake (#1130). **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
 
 ```bash
+# cron runs with almost no environment: set the secret in the crontab itself
+CRON_SECRET=your-random-secret
 * * * * * curl -fsS \
   -H "Authorization: Bearer $CRON_SECRET" \
   https://yourdomain/api/v1/admin/orchestration/maintenance/tick

@@ -612,6 +612,17 @@ in the roster the moment they exist, and a fork declares its exceptions in
 `appOwnerlessSurfaceExceptions` (`lib/app/ci.ts`) rather than editing the core
 list.
 
+**One admin route answers a credential the guard never sees.** The maintenance
+tick's `GET` (`app/api/v1/admin/orchestration/maintenance/tick/route.ts`) runs
+the tick for `Authorization: Bearer $CRON_SECRET` before `withAdminAuth`, so a
+request carrying the secret never reaches `canAdminister` (#1130). The check has
+to come first: the guard reads the database, and the point of the secret is an
+idle tick that does not. The secret grants that one route and nothing else, and
+any other credential goes through the guard as before. So a fork policy that
+narrows `canAdminister` (refusing the tick in safe mode, say) does not narrow
+the cron; that fork unsets `CRON_SECRET` and drives the tick with an admin API
+key instead, which the guard decides.
+
 ---
 
 ## Owner-scoped reads: the recipe
