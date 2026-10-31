@@ -936,9 +936,12 @@ export class OrchestrationEngine {
    * Yields `step_failed` events for retries so the client sees them.
    * Returns the successful `StepResult` or throws an `ExecutorError`.
    *
-   * Per-step timeout: if `config.timeoutMs` is set, the executor is
-   * aborted after that many milliseconds. The timeout wraps the entire
-   * step (including all retry attempts).
+   * Per-step timeout: if `config.timeoutMs` is set, each executor call
+   * (each attempt) races a timer of that many milliseconds. A timeout
+   * throws a non-retriable `step_timeout` but does not stop the executor,
+   * which runs on — so the step's turn recorder goes inert once the visit
+   * ends (see `executeSingleStep`), and the reset before a retry's backoff
+   * cannot be overtaken by a timed-out attempt, since none is retried.
    */
   private async *runStepWithStrategy(
     step: WorkflowStep,
@@ -1289,7 +1292,14 @@ export class OrchestrationEngine {
     // new one (#1143).
     const startAttempt = ctx.resumeAttempt ?? 0;
     const startAttemptId = ctx.resumeAttemptId ?? randomUUID();
-    await this.markCurrentStep(lease, step, baseLogger, startAttempt, startAttemptId);
+    await this.markCurrentStep(
+      lease,
+      step,
+      baseLogger,
+      startAttempt,
+      startAttemptId,
+      ctx.resumeTurns
+    );
 
     const started = Date.now();
     const telemetryOut: LlmTelemetryEntry[] = [];
@@ -1311,7 +1321,13 @@ export class OrchestrationEngine {
     // see stale resume state, and `onAttemptStart` clears it between retry
     // attempts so retries start fresh (no resume replay on a later attempt).
     const stepTurns: TurnEntry[] = [...(ctx.resumeTurns ?? [])];
+    // An executor that timed out keeps running after this visit has ended
+    // (skip / fallback strategies carry on). Once the visit is over its turns
+    // must not reach the row, which a loop's next visit to this step will
+    // own under a new attempt id (#1143).
+    let visitLive = true;
     ctx.recordTurn = async (turn: TurnEntry) => {
+      if (!visitLive) return;
       stepTurns.push(turn);
       await this.recordStepTurn(lease, step.id, stepTurns, baseLogger);
     };
@@ -1378,6 +1394,7 @@ export class OrchestrationEngine {
         // step's `stepTurns` array and lease. The contract is: `ctx.recordTurn`
         // is bound by `executeSingleStep` for the duration of one step only.
         ctx.resumeTurns = undefined;
+        visitLive = false;
         ctx.recordTurn = undefined;
         ctx.resumeAttempt = undefined;
         ctx.resumeAttemptId = undefined;
@@ -1397,6 +1414,8 @@ export class OrchestrationEngine {
         // cost before committing it). Emit the specific event first so
         // the webhook subscriber path is identical regardless of which
         // of the four cap-check sites triggered the breach.
+        visitLive = false;
+        ctx.recordTurn = undefined;
         const reason = formatBudgetExceededReason(err.usedUsd, err.limitUsd);
         yield workflowBudgetExceeded(err.usedUsd, err.limitUsd, step.id, {
           executionId: lease.executionId,
@@ -1454,6 +1473,7 @@ export class OrchestrationEngine {
         ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
       });
       ctx.resumeTurns = undefined;
+      visitLive = false;
       ctx.recordTurn = undefined;
       ctx.resumeAttempt = undefined;
       ctx.resumeAttemptId = undefined;
@@ -1496,6 +1516,7 @@ export class OrchestrationEngine {
       ...(completedProvenance ? { provenance: completedProvenance } : {}),
     });
     ctx.resumeTurns = undefined;
+    visitLive = false;
     ctx.recordTurn = undefined;
     ctx.resumeAttempt = undefined;
     ctx.resumeAttemptId = undefined;
@@ -2346,7 +2367,13 @@ export class OrchestrationEngine {
     step: { id: string; type: string; name: string },
     logger: Logger,
     attempt = 0,
-    attemptId: string | null = null
+    attemptId: string | null = null,
+    /**
+     * The turns of an attempt a crash-resume continues: written with the new
+     * row, so a second crash before the attempt records another turn still
+     * finds the history its attempt id belongs to (#1143).
+     */
+    continuedTurns?: TurnEntry[]
   ): Promise<void> {
     const { executionId, token } = lease;
     try {
@@ -2382,6 +2409,9 @@ export class OrchestrationEngine {
           stepType: step.type,
           attempt,
           attemptId,
+          ...(continuedTurns && continuedTurns.length > 0
+            ? { turns: continuedTurns as unknown as Prisma.InputJsonValue }
+            : {}),
         },
         update: { startedAt: new Date(), attempt, attemptId, turns: Prisma.DbNull },
       });

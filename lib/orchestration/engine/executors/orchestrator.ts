@@ -23,7 +23,7 @@
  *   - `budgetLimitUsd?: number`               (optional) — sub-budget for this step
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { OrchestratorTurn, StepResult, WorkflowStep } from '@/types/orchestration';
@@ -127,7 +127,9 @@ async function runDelegation(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>,
   agentSlug: string,
-  message: string
+  message: string,
+  round: number,
+  index: number
 ): Promise<DelegationResult> {
   const syntheticStep: WorkflowStep = {
     id: `${step.id}_delegate_${agentSlug}`,
@@ -175,8 +177,15 @@ async function runDelegation(
     // Each delegation is its own attempt for the capabilities it dispatches:
     // delegations share a synthetic step id, run concurrently within a round
     // and repeat across rounds, so the orchestrator's own id would be shared
-    // by all of them (#1143).
-    stepAttemptId: randomUUID(),
+    // by all of them (#1143). Derived from the orchestrator's attempt id, the
+    // round and the delegation's place in it, so a crash-resume continuing
+    // the orchestrator's attempt re-runs each delegation under the same id.
+    stepAttemptId: ctx.stepAttemptId
+      ? createHash('sha256')
+          .update(`${ctx.stepAttemptId}:${round}:${index}:${agentSlug}`)
+          .digest('hex')
+          .slice(0, 32)
+      : randomUUID(),
   };
 
   // Capture the telemetry array length BEFORE the delegation so we can
@@ -566,8 +575,8 @@ export async function executeOrchestrator(
       agents: delegationsToRun.map((d) => d.agentSlug),
     });
 
-    const delegationPromises = delegationsToRun.map((d) =>
-      runDelegation(step, ctx, d.agentSlug, d.message)
+    const delegationPromises = delegationsToRun.map((d, i) =>
+      runDelegation(step, ctx, d.agentSlug, d.message, round, i)
     );
 
     const delegationResults = await Promise.allSettled(delegationPromises);
