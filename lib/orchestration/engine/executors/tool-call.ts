@@ -145,6 +145,7 @@ export async function executeToolCall(
     // per-attempt state can tell a retry from the first try (#1143).
     stepId: step.id,
     stepAttempt: ctx.stepAttempt ?? 0,
+    stepVisit: ctx.stepVisit ?? 0,
     // The run's scope AND its authority. Forwarding only the values left the
     // binding disarmed for every workflow, schedule, trigger and resume while
     // the docs said otherwise (#586).

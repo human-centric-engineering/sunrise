@@ -49,7 +49,8 @@ export interface CapabilityContext {
    */
   workflowExecutionId?: string;
   /**
-   * The workflow step this dispatch came from — `WorkflowStep.id`. Set beside
+   * The workflow step this dispatch came from — `WorkflowStep.id`, except an
+   * `orchestrator` delegation's synthetic id (see `stepAttempt`). Set beside
    * {@link CapabilityContext.workflowExecutionId} by the `agent_call` and
    * `tool_call` executors; absent outside a workflow.
    */
@@ -59,14 +60,26 @@ export interface CapabilityContext {
    * 0 for the first, 1 for the first retry under `errorStrategy: 'retry'`, and
    * so on. Every attempt of a step otherwise dispatches with the same identity,
    * so a capability keeping per-attempt state (a read budget, a scratchpad)
-   * keys it on `(workflowExecutionId, stepId, stepAttempt)`.
+   * keys it on `(workflowExecutionId, stepId, stepVisit, stepAttempt)`.
    *
    * A run resumed after a crash **continues** the attempt it stopped in — it
    * replays that attempt's turns — so the number carries across the resume
    * rather than restarting at 0. Branches of a `parallel` step are re-run from
    * scratch on resume and start again at 0. Absent outside a workflow. (#1143)
+   *
+   * An `orchestrator` step's delegations dispatch under a synthetic step id,
+   * `<step>_delegate_<agentSlug>`, with the orchestrator's attempt: every
+   * planner round's delegation to one agent shares that key.
    */
   stepAttempt?: number;
+  /**
+   * How many times the run had already run {@link CapabilityContext.stepId}
+   * when this visit began: 0 the first time, 1 when a loop or bounded-retry
+   * edge brings the walk back to it. `stepAttempt` restarts at 0 on each
+   * visit, so the two together identify one attempt. Absent outside a
+   * workflow. (#1143)
+   */
+  stepVisit?: number;
   /**
    * Extra keys the caller wants on this dispatch's `AiCostLog.metadata` row.
    *

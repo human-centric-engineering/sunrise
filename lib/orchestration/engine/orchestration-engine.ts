@@ -944,8 +944,8 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     telemetryOut: LlmTelemetryEntry[],
     /**
-     * Called BEFORE each retry attempt (i.e. after the first attempt this call makes fails,
-     * before the next runs; never before the first). Lets callers reset per-attempt state —
+     * Called after an attempt fails and before the backoff that precedes the next one (never
+     * before the first attempt), with the next attempt's number. Lets callers reset per-attempt state —
      * multi-turn checkpoint accumulators in `executeSingleStep` use this to clear the running-step
      * row's `turns` so failed attempts' turns don't leak into the next attempt's history, and to
      * persist the new attempt number.
@@ -956,7 +956,9 @@ export class OrchestrationEngine {
      * when the run stopped, so the replayed turns keep their attempt number and the retry
      * count carries on rather than starting over (#1143).
      */
-    startAttempt = 0
+    startAttempt = 0,
+    /** How many times the run had already run this step (`ExecutionContext.stepVisit`). */
+    stepVisit = 0
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -977,12 +979,12 @@ export class OrchestrationEngine {
     // from the successful attempt's last turn.
     const invokeExecutor = async (attempt: number): Promise<StepResult> => {
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx, telemetryOut, attempt));
+        return executor(step, snapshotContext(ctx, telemetryOut, attempt, stepVisit));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx, telemetryOut, attempt)),
+          executor(step, snapshotContext(ctx, telemetryOut, attempt, stepVisit)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -1014,16 +1016,10 @@ export class OrchestrationEngine {
       let accumulatedTokens = 0;
       let accumulatedCost = 0;
       // A resumed attempt past the step's retry budget (only possible if the
-      // count was persisted under a larger one) still gets its one run.
-      const firstAttempt = Math.min(startAttempt, retryCount);
-      for (let attempt = firstAttempt; attempt <= retryCount; attempt++) {
-        if (attempt > firstAttempt && onAttemptStart) {
-          // Reset per-attempt accumulators (e.g. the running-step row's
-          // `turns` column) so the next attempt starts fresh. Cost accumulators
-          // above persist across attempts intentionally — they reflect billing
-          // reality.
-          await onAttemptStart(attempt);
-        }
+      // budget shrank since it was saved) still gets its one run, under its
+      // own number — the one stored, and the one its replayed turns belong to.
+      const lastAttempt = Math.max(retryCount, startAttempt);
+      for (let attempt = startAttempt; attempt <= lastAttempt; attempt++) {
         try {
           const result = await invokeExecutor(attempt);
           result.tokensUsed += accumulatedTokens;
@@ -1078,8 +1074,14 @@ export class OrchestrationEngine {
               accumulatedCost
             );
           }
-          if (attempt < retryCount) {
+          if (attempt < lastAttempt) {
             yield stepFailed(step.id, sanitizeError(lastError), true);
+            // Reset per-attempt state (e.g. the running-step row's `turns`)
+            // and record the next attempt BEFORE the backoff, so a crash during
+            // the wait resumes into the next attempt rather than replaying the
+            // failed one (#1143). Cost accumulators above persist across
+            // attempts intentionally — they reflect billing reality.
+            if (onAttemptStart) await onAttemptStart(attempt + 1);
             await sleep(backoffDelayMs(attempt));
           }
         }
@@ -1278,6 +1280,8 @@ export class OrchestrationEngine {
     ctx.resumeStepId = undefined;
     // The attempt this step starts on: the one a resume left it in, else 0.
     const startAttempt = ctx.resumeAttempt ?? 0;
+    // Earlier visits to this step left one trace entry each (#1143).
+    const stepVisit = trace.filter((e) => e.stepId === step.id).length;
     await this.markCurrentStep(lease, step, baseLogger, startAttempt);
 
     const started = Date.now();
@@ -1325,7 +1329,8 @@ export class OrchestrationEngine {
         ctx,
         telemetryOut,
         onAttemptStart,
-        startAttempt
+        startAttempt,
+        stepVisit
       );
     } catch (err) {
       if (err instanceof PausedForApproval) {
@@ -1639,7 +1644,12 @@ export class OrchestrationEngine {
           allEvents.push(stepStarted(step.id, step.type, step.name, step.description));
 
           try {
-            const result = await this.runStepToCompletion(step, ctx, telemetryOut);
+            const result = await this.runStepToCompletion(
+              step,
+              ctx,
+              telemetryOut,
+              trace.filter((e) => e.stepId === step.id).length
+            );
             // Capture endedAt *inside* the callback — once per branch, at the
             // real finish moment. The post-`Promise.allSettled` loop runs
             // sequentially long after the slowest branch ends, so writing
@@ -1915,7 +1925,8 @@ export class OrchestrationEngine {
   private async runStepToCompletion(
     step: WorkflowStep,
     ctx: ExecutionContext,
-    telemetryOut: LlmTelemetryEntry[]
+    telemetryOut: LlmTelemetryEntry[],
+    stepVisit: number
   ): Promise<StepResult> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -1929,12 +1940,12 @@ export class OrchestrationEngine {
     // align with the summed tokensUsed/costUsd the retry loop produces.
     const invokeExecutor = async (attempt: number): Promise<StepResult> => {
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx, telemetryOut, attempt));
+        return executor(step, snapshotContext(ctx, telemetryOut, attempt, stepVisit));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx, telemetryOut, attempt)),
+          executor(step, snapshotContext(ctx, telemetryOut, attempt, stepVisit)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -2327,14 +2338,13 @@ export class OrchestrationEngine {
       if (refreshed.count === 0) return;
 
       // Upsert keyed on (executionId, stepId). A step revisited by a loop
-      // edge re-enters the same stepId and trips the unique constraint; the
-      // `update` clause deliberately leaves `turns` alone — it is preserved
-      // across re-entries so a multi-turn step resumes from its last
-      // recorded turn rather than restarting at turn 0. `attempt` is the
-      // caller's starting attempt either way (the resumed one, else 0).
-      // Parallel branches arrive with distinct stepIds so no collision:
-      // each branch lands its own row, which is the whole reason this is a
-      // side table.
+      // edge (or a row whose delete failed) re-enters the same stepId and
+      // trips the unique constraint. Every resume deletes the rows before it
+      // re-enters, so a conflict is always a NEW visit: it starts at the
+      // caller's attempt with no turns, rather than inheriting the last
+      // visit's turns under a different attempt number (#1143). Parallel
+      // branches arrive with distinct stepIds so no collision: each branch
+      // lands its own row, which is the whole reason this is a side table.
       await prisma.aiWorkflowRunningStep.upsert({
         where: { executionId_stepId: { executionId, stepId: step.id } },
         create: {
@@ -2344,7 +2354,7 @@ export class OrchestrationEngine {
           stepType: step.type,
           attempt,
         },
-        update: { startedAt: new Date(), attempt },
+        update: { startedAt: new Date(), attempt, turns: Prisma.DbNull },
       });
     } catch (err) {
       // Non-fatal — but emit a warn so a connection-pool exhaustion or driver error doesn't
