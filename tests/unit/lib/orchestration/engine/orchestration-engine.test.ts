@@ -5717,10 +5717,12 @@ describe('OrchestrationEngine', () => {
       return def;
     }
 
+    /** Whether a row write carried a trace recording `id` finished — its checkpoint landed. */
     const doneHas = (data: Record<string, unknown> | undefined, id: string) =>
-      typeof data?.walkState === 'object' &&
-      data.walkState !== null &&
-      id in (data.walkState as { done: Record<string, unknown> }).done;
+      Array.isArray(data?.executionTrace) &&
+      (data.executionTrace as Array<{ stepId: string; status: string }>).some(
+        (e) => e.stepId === id && (e.status === 'completed' || e.status === 'skipped')
+      );
 
     it('crash-resume: re-runs the step that was in flight, then the rest of the run', async () => {
       const row = await crashRun(abcDefinition(), plain, (m) => m.starting === 'b');
