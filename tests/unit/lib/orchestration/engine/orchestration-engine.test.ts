@@ -5182,7 +5182,12 @@ describe('OrchestrationEngine', () => {
       expect(upsertArgs.create.stepType).toBe('llm_call');
       // A conflict is always a new visit (every resume deletes the rows
       // first), so it starts at the caller's attempt with no turns.
-      expect(Object.keys(upsertArgs.update).sort()).toEqual(['attempt', 'startedAt', 'turns']);
+      expect(Object.keys(upsertArgs.update).sort()).toEqual([
+        'attempt',
+        'attemptId',
+        'startedAt',
+        'turns',
+      ]);
       expect(upsertArgs.create.attempt).toBe(0);
     });
 
@@ -6472,14 +6477,56 @@ describe('OrchestrationEngine', () => {
       expect(upsertedAttempt('c')).toBe(0);
     });
 
-    it('stepVisit: a step a bounded-retry edge brings the walk back to gets a new visit number', async () => {
+    /** The `attemptId` written on each running-step `updateMany`, in order, where one was. */
+    function attemptIdWrites(): string[] {
+      return vi
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
+        .mock.calls.map(([arg]) => (arg as { data: Record<string, unknown> }).data.attemptId)
+        .filter((a): a is string => typeof a === 'string');
+    }
+
+    it('stepAttemptId: every attempt of a step gets its own id, and the retry-clear write stores the next one', async () => {
+      const seen: Array<string | undefined> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push(ctx.stepAttemptId);
+        if (seen.length < 3) throw new ExecutorError(step.id, 'executor_threw', 'transient');
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'Step A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 2 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      expect(new Set(seen).size).toBe(3);
+      // The row is created with the first id, and each retry-clear stores the
+      // id the next attempt then runs under — what a crash-resume reads back.
+      const upsert = vi.mocked(prisma.aiWorkflowRunningStep.upsert).mock.calls[0]?.[0] as {
+        create: { attemptId?: unknown };
+      };
+      expect(upsert.create.attemptId).toBe(seen[0]);
+      expect(attemptIdWrites()).toEqual([seen[1], seen[2]]);
+    });
+
+    it('stepAttemptId: each visit a bounded-retry edge brings the walk back for is a new attempt', async () => {
       // a → b, with b → a a bounded retry edge (maxRetries 2): a runs three
-      // times. Each visit restarts stepAttempt at 0, so only stepVisit tells
-      // them apart (#1143 review round 1).
-      const seen: Array<[number | undefined, number | undefined]> = [];
+      // times, each at stepAttempt 0 — only the id tells them apart.
+      const seen: Array<[string | undefined, number | undefined]> = [];
       let bCalls = 0;
       registerStepType('llm_call', async (_step, ctx) => {
-        seen.push([ctx.stepVisit, ctx.stepAttempt]);
+        seen.push([ctx.stepAttemptId, ctx.stepAttempt]);
         return { output: 'ok', tokensUsed: 0, costUsd: 0 };
       });
       registerStepType('guard', async () => {
@@ -6516,11 +6563,120 @@ describe('OrchestrationEngine', () => {
         })
       );
 
-      expect(seen).toEqual([
-        [0, 0],
-        [1, 0],
-        [2, 0],
-      ]);
+      expect(seen.map(([, attempt]) => attempt)).toEqual([0, 0, 0]);
+      expect(new Set(seen.map(([id]) => id)).size).toBe(3);
+    });
+
+    it('stepAttemptId: a crash-resume continues the interrupted attempt under its stored id', async () => {
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeCrashRow('b') as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: null,
+        attempt: 1,
+        attemptId: 'interrupted-attempt',
+      } as never);
+      const seen: Array<string | undefined> = [];
+      registerStepType('llm_call', async (step, ctx) => {
+        seen.push(ctx.stepAttemptId);
+        if (seen.length === 1) throw new ExecutorError(step.id, 'executor_threw', 'transient');
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(retryingBDefinition(2)), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      expect(seen[0]).toBe('interrupted-attempt');
+      expect(seen[1]).not.toBe('interrupted-attempt');
+    });
+
+    it("stepAttemptId: a row that outlived a finished step is not continued by the step's next visit", async () => {
+      // b finished (its checkpoint recorded it done, choosing to loop back to
+      // itself) but its running-step row survived a failed delete. The loop's
+      // next visit to b is a new attempt: fresh id, attempt 0, no old turns.
+      const def = linearDefinition();
+      def.steps[1].nextSteps = [{ targetStepId: 'b', maxRetries: 1, condition: 'retry' }];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeCrashRow('b', {
+          executionTrace: [...stepACompletedTrace, { ...stepACompletedTrace[0], stepId: 'b' }],
+          walkState: {
+            v: 1,
+            inFlight: ['b'],
+            batch: false,
+            done: { b: ['b'] },
+            pending: [],
+            visited: ['a', 'b'],
+            retryCounts: {},
+            stepCount: 2,
+            budgetWarned: false,
+          },
+        }) as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: [makeTurn(0)],
+        attempt: 2,
+        attemptId: 'finished-visit',
+      } as never);
+      const seen: Array<{ id?: string; attempt?: number; turns?: TurnEntry[] }> = [];
+      registerStepType('llm_call', async (_step, ctx) => {
+        seen.push({ id: ctx.stepAttemptId, attempt: ctx.stepAttempt, turns: ctx.resumeTurns });
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(def), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0].id).not.toBe('finished-visit');
+      expect(seen[0].attempt).toBe(0);
+      expect(seen[0].turns).toBeUndefined();
+    });
+
+    it('a timed-out attempt that keeps running cannot record turns into the next attempt', async () => {
+      // Attempt 0 times out at 20ms but its executor carries on and records a
+      // turn at 60ms, after attempt 1 has started (the reset runs before the
+      // backoff). That turn must not reach the running-step row.
+      const late = makeTurn(9);
+      let calls = 0;
+      registerStepType('llm_call', async (_step, ctx) => {
+        calls++;
+        if (calls === 1) {
+          await new Promise((r) => setTimeout(r, 60));
+          if (ctx.recordTurn) await ctx.recordTurn(late);
+          return { output: 'too late', tokensUsed: 0, costUsd: 0 };
+        }
+        await new Promise((r) => setTimeout(r, 80));
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 1, timeoutMs: 20 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      const turnWrites = vi
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
+        .mock.calls.map(([arg]) => (arg as { data: { turns?: unknown } }).data.turns)
+        .filter((t): t is TurnEntry[] => Array.isArray(t));
+      expect(
+        turnWrites.some((t) => t.some((turn) => JSON.stringify(turn) === JSON.stringify(late)))
+      ).toBe(false);
     });
 
     it('stepAttempt: the next attempt is recorded before the retry backoff, so a crash in the wait resumes it', async () => {

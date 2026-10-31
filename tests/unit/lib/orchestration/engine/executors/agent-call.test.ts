@@ -725,7 +725,6 @@ describe('executeAgentCall', () => {
         workflowExecutionId: 'exec_1',
         stepId: 'step1',
         stepAttempt: 0,
-        stepVisit: 0,
         costLogMetadata: { stepId: 'step1' },
       }
     );
@@ -772,7 +771,6 @@ describe('executeAgentCall', () => {
         workflowExecutionId: 'exec_1',
         stepId: 'step1',
         stepAttempt: 0,
-        stepVisit: 0,
         costLogMetadata: { stepId: 'step1' },
       }
     );
@@ -797,10 +795,14 @@ describe('executeAgentCall', () => {
       data: { results: [] },
     });
 
-    await executeAgentCall(makeStep(), makeCtx({ stepAttempt: 2, stepVisit: 1 }));
+    await executeAgentCall(makeStep(), makeCtx({ stepAttempt: 2, stepAttemptId: 'attempt-id-1' }));
 
     const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
-    expect(context).toMatchObject({ stepId: 'step1', stepAttempt: 2, stepVisit: 1 });
+    expect(context).toMatchObject({
+      stepId: 'step1',
+      stepAttempt: 2,
+      stepAttemptId: 'attempt-id-1',
+    });
   });
 
   it('links a capability an agent dispatches to the workflow execution', async () => {

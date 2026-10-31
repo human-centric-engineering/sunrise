@@ -387,6 +387,27 @@ describe('executeOrchestrator', () => {
     expect(executeAgentCall).toHaveBeenCalledTimes(2);
   });
 
+  it('gives each delegation its own attempt id, so capabilities never share per-attempt state across them (#1143)', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ delegations: [] }));
+    vi.mocked(executeAgentCall)
+      .mockResolvedValueOnce({ output: 'a', tokensUsed: 0, costUsd: 0 })
+      .mockResolvedValueOnce({ output: 'b', tokensUsed: 0, costUsd: 0 });
+    vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    await executeOrchestrator(
+      makeStep({ selectionMode: 'all' }),
+      makeCtx({ stepAttemptId: 'orchestrator-attempt' })
+    );
+
+    const ids = vi
+      .mocked(executeAgentCall)
+      .mock.calls.map(([, childCtx]) => (childCtx as { stepAttemptId?: string }).stepAttemptId);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).not.toContain('orchestrator-attempt');
+    expect(ids.every((id) => typeof id === 'string' && id.length > 0)).toBe(true);
+  });
+
   it('throws ZodError when plannerPrompt is empty (schema rejects before executor)', async () => {
     await expect(executeOrchestrator(makeStep({ plannerPrompt: '' }), makeCtx())).rejects.toThrow();
 
