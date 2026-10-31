@@ -114,7 +114,11 @@ release process.
   declares `CRON_SECRET` in `lib/app/env.ts` still boots; **a fork that already
   sets `CRON_SECRET` for its own cron routes now also lets that value run this
   tick**. The secret is checked before `withAdminAuth`, so `canAdminister` is
-  not asked about it (#1130, t-969).
+  not asked about it. That is by design: the tick is system work, and a policy
+  in safe mode must not stop it. A fork that wants its policy to decide sets
+  `CRON_SECRET` to an admin `sk_` key, which the secret check never matches, so
+  the guard decides; that costs the idle tick its queries again (#1130, t-969,
+  t-970).
 - **A workflow run resumed after a crash skipped the step it crashed in.**
   The engine records a run's current step when the step starts and never
   moved it on, so the orphan sweep resumed after the step that was in flight:

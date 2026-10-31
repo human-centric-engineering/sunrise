@@ -376,6 +376,44 @@ down every core `withAuth` route** — the arm exists precisely so "the route
 declared no resource" is answerable without being confused for "the row has no
 owner". Permit `'nothing'` unless you have migrated every route to a resolver.
 
+### Outside the seam by design: the maintenance cron
+
+One admin route answers a credential the policy is never asked about. The
+maintenance tick's `GET` (`app/api/v1/admin/orchestration/maintenance/tick/route.ts`)
+runs the tick for `Authorization: Bearer $CRON_SECRET` before `withAdminAuth`,
+so `canAdminister` never sees that request (#1130). In Sunrise the secret opens
+that one route, and every other credential on it goes through the guard as
+before. A fork that also checks `CRON_SECRET` on its own cron routes has
+widened that: there the same value opens those routes too.
+
+This is a decision, not a gap waiting to close (owner ruling, 2026-10-31):
+
+- **The tick is system work, not an administrative act by a person.** It acts
+  for no one (`lib/auth/subject-context.ts` gives it no subject), the dev
+  ticker runs it with no guard, and each task scopes itself. Who may trigger
+  maintenance is an operational question, like who holds the deploy key.
+- **Safe mode must not stop maintenance.** A fork policy whose registration
+  throws puts the process in safe mode for the rest of its life, where nobody
+  administers anything ([What a failure does](#what-a-failure-does)). Asked
+  through the policy, the cron would stop too: schedules, retries, recovery,
+  and `processPendingErasures`, which owes account erasures on a legal clock.
+- **No userless principal on the seam.** A principal's `credential` is
+  `'session' | 'api-key'`, and fork policies branch on it. A `'cron'` kind with
+  no user behind it would be a breaking change for every one of them.
+- **The check has to come first anyway.** The guard reads the database, and
+  the point of the secret is an idle tick that does not.
+
+A fork that wants its policy to decide who runs the tick sets `CRON_SECRET` to
+an admin API key (`sk_…`). The secret check never matches an `sk_` value, so
+the request goes through the guard, which checks the key and asks the policy.
+This works on Vercel, whose cron can send nothing but `Bearer $CRON_SECRET`;
+unsetting `CRON_SECRET` there leaves the cron no credential at all, and every
+tick gets a `401`. It costs what the secret was added to avoid: the key is
+looked up on every tick, so an idle tick queries the database (#1130). And it
+brings back the outage above, knowingly: in safe mode the policy refuses the
+key, and maintenance stops, erasures included, until the policy is fixed and
+the process restarts.
+
 ### Registering a policy
 
 `getAuthorizationPolicy()` runs `initAppAuthorizationPolicy()` once, lazily,
@@ -612,16 +650,9 @@ in the roster the moment they exist, and a fork declares its exceptions in
 `appOwnerlessSurfaceExceptions` (`lib/app/ci.ts`) rather than editing the core
 list.
 
-**One admin route answers a credential the guard never sees.** The maintenance
-tick's `GET` (`app/api/v1/admin/orchestration/maintenance/tick/route.ts`) runs
-the tick for `Authorization: Bearer $CRON_SECRET` before `withAdminAuth`, so a
-request carrying the secret never reaches `canAdminister` (#1130). The check has
-to come first: the guard reads the database, and the point of the secret is an
-idle tick that does not. The secret grants that one route and nothing else, and
-any other credential goes through the guard as before. So a fork policy that
-narrows `canAdminister` (refusing the tick in safe mode, say) does not narrow
-the cron; that fork unsets `CRON_SECRET` and drives the tick with an admin API
-key instead, which the guard decides.
+**One admin route is outside the seam on purpose, not yet to be closed:** the
+maintenance tick's `GET` runs for `CRON_SECRET` without asking `canAdminister`.
+See [Outside the seam by design](#outside-the-seam-by-design-the-maintenance-cron).
 
 ---
 
