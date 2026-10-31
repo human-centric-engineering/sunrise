@@ -195,7 +195,7 @@ Beside `workflowExecutionId`, the `tool_call` and `agent_call` executors set `st
 
 **A crash-resume continues the attempt it stopped in**, because it replays that attempt's saved turns: it keeps the attempt's number, its id and its retry count (the stored `AiWorkflowRunningStep.attempt` / `attemptId`), so a resumed step gets no fresh set of retries. That reuse is the one deliberate exception to "a new id per run", and it is decided in one place: only for a step the saved walk position says was running alone and had not finished. A row that outlived a finished step is a finished visit, and the step's next visit is a new attempt. The next attempt's number and id are recorded before the retry backoff, so a crash during the wait resumes into it. Parallel branches are re-run from scratch on resume, as new attempts. All three fields are absent outside a workflow.
 
-**`orchestrator` delegations** dispatch through `agent_call` under a synthetic step id, `<step>_delegate_<agentSlug>`, with the orchestrator's attempt number, and each delegation gets its own `stepAttemptId` — delegations to one agent repeat across planner rounds and run concurrently within one.
+**`orchestrator` delegations** dispatch through `agent_call` under a synthetic step id, `<step>_delegate_<agentSlug>`, with the orchestrator's attempt number, and each delegation gets its own `stepAttemptId` — delegations to one agent repeat across planner rounds and run concurrently within one. The id is derived from the orchestrator's attempt id, the round and the delegation's place in it, so when a crash-resume continues the orchestrator's attempt, each delegation it re-runs comes back under the same id.
 
 ### The metadata carrier (`CapabilityContext.costLogMetadata`)
 
