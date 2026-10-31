@@ -23,7 +23,7 @@
  * its own cron route), and a core key of the same name fails its boot.
  *
  * Fails closed: unset, shorter than {@link MIN_CRON_SECRET_LENGTH}, padded with
- * whitespace or an `sk_` key, and no bearer matches, so the request falls
+ * whitespace or starting `sk_` in any case, and no bearer matches, so the request falls
  * through to the admin-key guard. A set value that is ignored is logged once
  * per process, since the cron then gets a bare 401.
  */
@@ -45,8 +45,10 @@ function unusableBecause(secret: string): string | null {
     return `it is shorter than ${MIN_CRON_SECRET_LENGTH} characters`;
   }
   if (secret !== secret.trim()) return 'it starts or ends with whitespace';
-  if (secret.startsWith(API_KEY_PREFIX)) {
-    return 'it is an API key, which the admin-key check verifies instead';
+  // Any case: the proxy looks up `Bearer sk_…` case-insensitively
+  // (`rate-limit-policy.ts`), so an `SK_` value would still cost that query.
+  if (secret.toLowerCase().startsWith(API_KEY_PREFIX)) {
+    return `it starts with "${API_KEY_PREFIX}", which the rate limiter looks up as an API key`;
   }
   return null;
 }
@@ -71,7 +73,8 @@ export function isMaintenanceCronRequest(request: NextRequest): boolean {
 
   const reason = unusableBecause(secret);
   if (reason) {
-    // An sk_ value is the pre-#1130 setup and still works through the guard.
+    // A real sk_ key is the pre-#1130 setup and still works through the guard,
+    // so it is not reported; an `SK_…` value works nowhere, so it is.
     if (!warned && !secret.startsWith(API_KEY_PREFIX)) {
       warned = true;
       logger.warn(`Maintenance tick: CRON_SECRET is set but ignored, because ${reason}`, {

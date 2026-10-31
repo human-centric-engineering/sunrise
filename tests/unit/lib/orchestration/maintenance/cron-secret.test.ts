@@ -56,6 +56,17 @@ describe('isMaintenanceCronRequest', () => {
     expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an sk_ value is not misconfigured
   });
 
+  it('never matches an SK_ value either, since the proxy looks one up whatever its case', () => {
+    const upper = `SK_${'q3Jx8m2Vt9Lw4Rz7'.repeat(3)}`;
+    process.env.CRON_SECRET = upper;
+    expect(isMaintenanceCronRequest(request(`Bearer ${upper}`))).toBe(false);
+    // No route accepts it, so the operator is told.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Maintenance tick: CRON_SECRET is set but ignored, because it starts with "sk_", which the rate limiter looks up as an API key',
+      expect.any(Object)
+    );
+  });
+
   it.each([
     ['a trailing newline', `${SECRET}\n`],
     ['a leading space', ` ${SECRET}`],

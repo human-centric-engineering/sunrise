@@ -204,7 +204,7 @@ workflows, delivery retries, the stuck-execution reaper, retention and every
 other maintenance task run only when something calls the maintenance tick. Miss
 this and the app still serves traffic and `/api/health` still reports OK, but
 none of that work happens. See
-[Unified Maintenance Tick](../../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-required-preferred).
+[Unified Maintenance Tick](../../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-or-cron-secret-preferred).
 
 Vercel Cron only sends a `GET`, with `Authorization: Bearer $CRON_SECRET`. The
 tick route checks that bearer against the `CRON_SECRET` environment variable
@@ -228,8 +228,12 @@ itself, with no database call (#1130), so the setup is:
 }
 ```
 
-4. Redeploy. The job is listed under Settings > Cron Jobs, and each run shows
-   in the runtime logs as `Maintenance tick background tasks completed`.
+4. Redeploy. The job is listed under Settings > Cron Jobs. A run that swept
+   shows in the runtime logs as `Maintenance tick background tasks completed`.
+   On an idle install most runs log nothing: the idle gate answers them `200
+{ skipped: true, reason: 'idle' }`, for up to `MAINTENANCE_IDLE_MAX_SKIP_MS`
+   (30 minutes by default) at a time. A cron that is failing gets a `401`
+   instead, shown against each run under Settings > Cron Jobs.
 
 **Things to know:**
 

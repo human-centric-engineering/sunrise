@@ -140,7 +140,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 `POST /api/v1/admin/orchestration/schedules/tick` — runs `processDueSchedules()` through the same per-org runner as the unified tick (§108), so its response is the sweep's counters at `single` and the fold across orgs at `multi`. Legacy single-purpose endpoint.
 
-### Unified Maintenance Tick (admin-auth required, **preferred**)
+### Unified Maintenance Tick (admin auth or cron secret, **preferred**)
 
 `POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining ten tasks run as a background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
 

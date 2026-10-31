@@ -6,7 +6,7 @@ resolved in `lib/orchestration/retention-windows.ts`), each a task of the unifie
 maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`, called
 ~every 60s by an external cron) and each throttled to **at most once an hour**
 per process, since every window here is measured in days — see
-[per-task minimum intervals](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred):
+[per-task minimum intervals](./scheduling.md#unified-maintenance-tick-admin-auth-or-cron-secret-preferred):
 
 - **`enforceRetentionPolicies()`** — the tenant sweep (task `retention`). Every
   table it prunes is tenant-owned, so it runs **once per org, inside that org's

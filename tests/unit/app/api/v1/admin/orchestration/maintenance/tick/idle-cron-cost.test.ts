@@ -4,7 +4,7 @@
  * The idle gate (#442) lets an idle tick answer with no query, so a
  * scale-to-zero database can suspend. That only holds if nothing on the way to
  * the gate queries either. This drives a Vercel Cron request through what runs
- * before the tick: the proxy's rate-limit dispatcher (`applyRateLimit`), then
+ * before the tick: the whole proxy (`proxy.ts`, rate limiting included), then
  * the route's GET with its real guard and real `resolveApiKey`. Prisma is a
  * recorder: any model a query reaches is noted, and the test asserts on the
  * list.
@@ -64,6 +64,7 @@ vi.mock('@/lib/env', async (importOriginal) => {
 
 import { auth } from '@/lib/auth/config';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
+import { proxy } from '@/proxy';
 import { resetRateLimitCredentialCache } from '@/lib/security/rate-limit-credentials';
 import { __resetIdleGateForTests, armIdleGate } from '@/lib/orchestration/maintenance/idle-gate';
 import { GET } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
@@ -82,11 +83,15 @@ function cronRequest(bearer: string): NextRequest {
   });
 }
 
-/** The proxy, then the route: everything a cron request meets before the gate answers. */
+/**
+ * The whole proxy, then the route: everything a cron request meets before the
+ * gate answers. A proxy that let the request through answers `next()`, which
+ * is not a 4xx.
+ */
 async function callTick(bearer: string): Promise<Response> {
   const request = cronRequest(bearer);
-  const limited = await applyRateLimit(request);
-  expect(limited).toBeNull();
+  const passed = await proxy(request);
+  expect(passed.status).toBeLessThan(400);
   return GET(request);
 }
 
