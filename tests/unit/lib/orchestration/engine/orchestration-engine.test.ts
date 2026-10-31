@@ -107,6 +107,7 @@ import {
 } from '@/lib/orchestration/engine/errors';
 import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
+import { Prisma } from '@prisma/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import type { ExecutionEvent, TurnEntry, WorkflowDefinition } from '@/types/orchestration';
@@ -4904,7 +4905,25 @@ describe('OrchestrationEngine', () => {
      * step in flight — `markCurrentStep` writes it when a step starts.
      */
     function makeCrashRow(inFlight: string, overrides: Record<string, unknown> = {}) {
-      return makeResumeRow({ status: 'running', currentStep: inFlight, ...overrides });
+      // The walk position the run saved as `inFlight` started: every step in
+      // the trace visited, and `inFlight` visited and running.
+      const trace = (overrides.executionTrace ?? stepACompletedTrace) as Array<{ stepId: string }>;
+      const visited = [...new Set([...trace.map((e) => e.stepId), inFlight])];
+      return makeResumeRow({
+        status: 'running',
+        currentStep: inFlight,
+        walkState: {
+          v: 1,
+          inFlight: [inFlight],
+          done: {},
+          pending: [],
+          visited,
+          retryCounts: {},
+          stepCount: visited.length,
+          budgetWarned: false,
+        },
+        ...overrides,
+      });
     }
 
     /**
@@ -5594,10 +5613,101 @@ describe('OrchestrationEngine', () => {
       expect(observedResumeTurns['a']).toBeUndefined();
     });
 
-    // ── crash-resume re-runs what was in flight (t-966) ────────────────────
-    // `currentStep` is written when a step STARTS, so on a run the orphan
-    // sweep resumes it names the step in flight. Continuing after it skipped
-    // that step and everything downstream of it, and the run still completed.
+    // ── crash-resume continues from the saved walk position (t-966) ───────
+    // Each test crashes a real run at a chosen moment, takes the walk position
+    // and trace it had written by then, and resumes a second run from them —
+    // so the position under test is the one the engine actually saves, not a
+    // hand-written guess at it.
+
+    /** Every write to the execution row, deep-copied as it is made. */
+    function recordRowWrites(onWrite?: (data: Record<string, unknown>) => void) {
+      const writes: Array<Record<string, unknown>> = [];
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (arg: {
+        data: Record<string, unknown>;
+      }) => {
+        writes.push(structuredClone(arg.data));
+        onWrite?.(arg.data);
+        return { count: 1 };
+      }) as never);
+      return writes;
+    }
+
+    /** The walk position and trace the row held after the first `n` writes. */
+    function rowAfter(writes: Array<Record<string, unknown>>, n = writes.length) {
+      let walkState: unknown = null;
+      let executionTrace: unknown = [];
+      for (const data of writes.slice(0, n)) {
+        if ('walkState' in data) walkState = data.walkState;
+        if ('executionTrace' in data) executionTrace = data.executionTrace;
+      }
+      return structuredClone({ walkState, executionTrace });
+    }
+
+    type StepImpl = (step: { id: string }) => Promise<{
+      output: unknown;
+      tokensUsed: number;
+      costUsd: number;
+      nextStepIds?: string[];
+    }>;
+
+    /**
+     * Run `def` until `crashed()` says the host died — checked as each step
+     * starts, and after each row write — and return the row as it stood then.
+     */
+    async function crashRun(
+      def: WorkflowDefinition,
+      impl: StepImpl,
+      crashed: (moment: { starting?: string; wrote?: Record<string, unknown> }) => boolean
+    ) {
+      let at: number | null = null;
+      const writes = recordRowWrites((data) => {
+        if (at === null && crashed({ wrote: data })) at = writes.length;
+      });
+      const run = async (step: { id: string }) => {
+        if (at === null && crashed({ starting: step.id })) at = writes.length;
+        if (at !== null)
+          throw new ExecutorError(step.id, 'host_died', 'host died', undefined, false);
+        return impl(step);
+      };
+      registerStepType('llm_call', run);
+      registerStepType('route', run);
+      registerStepType('parallel', run);
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+      if (at === null) throw new Error('the run never reached the crash point');
+      return rowAfter(writes, at);
+    }
+
+    /** Resume the crashed row with `impl`, recording which steps run, in order. */
+    async function resumeRun(
+      def: WorkflowDefinition,
+      crashedRow: { walkState: unknown; executionTrace: unknown },
+      impl: StepImpl,
+      currentStep: string
+    ) {
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ status: 'running', currentStep, ...crashedRow }) as never
+      );
+      const ran: string[] = [];
+      const run = async (step: { id: string }) => {
+        ran.push(step.id);
+        return impl(step);
+      };
+      registerStepType('llm_call', run);
+      registerStepType('route', run);
+      registerStepType('parallel', run);
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+      return { ran, types: events.map((e) => e.type) };
+    }
+
+    const plain: StepImpl = async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    });
 
     /** a→b→c, every step an llm_call. */
     function abcDefinition(): WorkflowDefinition {
@@ -5607,100 +5717,67 @@ describe('OrchestrationEngine', () => {
       return def;
     }
 
-    function traceEntry(stepId: string, status = 'completed') {
-      return { ...stepACompletedTrace[0], stepId, label: `Step ${stepId}`, status };
-    }
-
-    /** Register an llm_call that records which steps ran, in order. */
-    function recordRuns(): string[] {
-      const ran: string[] = [];
-      registerStepType('llm_call', async (step) => {
-        ran.push(step.id);
-        return { output: `out:${step.id}`, tokensUsed: 0, costUsd: 0 };
-      });
-      return ran;
-    }
+    const doneHas = (data: Record<string, unknown> | undefined, id: string) =>
+      typeof data?.walkState === 'object' &&
+      data.walkState !== null &&
+      id in (data.walkState as { done: Record<string, unknown> }).done;
 
     it('crash-resume: re-runs the step that was in flight, then the rest of the run', async () => {
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('b') as never
-      );
-      vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValueOnce([
-        { stepId: 'b' },
-      ] as never);
-      const ran = recordRuns();
-
-      const events = await collect(new OrchestrationEngine(), makeWorkflow(abcDefinition()), {
-        userId: USER_ID,
-        resumeFromExecutionId: EXEC_ID,
-      });
+      const row = await crashRun(abcDefinition(), plain, (m) => m.starting === 'b');
+      const { ran, types } = await resumeRun(abcDefinition(), row, plain, 'b');
 
       expect(ran).toEqual(['b', 'c']);
-      expect(events.map((e) => e.type)).toContain('workflow_completed');
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'Resume: re-running steps in flight at the crash',
-        { executionId: EXEC_ID, stepIds: ['b'] }
-      );
+      expect(types).toContain('workflow_completed');
     });
 
     it('crash-resume: re-runs an in-flight last step rather than completing without it', async () => {
-      // Before the fix this run emitted workflow_started → workflow_completed
-      // with 'b' never run.
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('b') as never
-      );
-      const ran = recordRuns();
+      // Before t-966 this resume emitted workflow_started → workflow_completed
+      // and b never ran.
+      const row = await crashRun(linearDefinition(), plain, (m) => m.starting === 'b');
+      const { ran } = await resumeRun(linearDefinition(), row, plain, 'b');
 
-      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
-        userId: USER_ID,
-        resumeFromExecutionId: EXEC_ID,
-      });
-
-      // No running-step row (its insert failed, or it was swept), and the
-      // trace's last entry is not 'b' — the cursor alone says it was in flight.
       expect(ran).toEqual(['b']);
     });
 
-    it('crash-resume: a cursor the trace records as finished is continued after, not re-run', async () => {
-      // The crash fell after b's checkpoint and before c started. b's row is
-      // still there because the delete after its checkpoint failed.
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('b', { executionTrace: [traceEntry('a'), traceEntry('b')] }) as never
-      );
-      vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValueOnce([
-        { stepId: 'b' },
-      ] as never);
-      const ran = recordRuns();
-
-      await collect(new OrchestrationEngine(), makeWorkflow(abcDefinition()), {
-        userId: USER_ID,
-        resumeFromExecutionId: EXEC_ID,
-      });
+    it('crash-resume: a step whose checkpoint landed is not run again', async () => {
+      // The host died after b's checkpoint and before c started. b's
+      // running-step row may survive (its delete is non-fatal); the walk
+      // position, not the rows, says b is done.
+      const row = await crashRun(abcDefinition(), plain, (m) => doneHas(m.wrote, 'b'));
+      const { ran } = await resumeRun(abcDefinition(), row, plain, 'b');
 
       expect(ran).toEqual(['c']);
     });
 
-    it('crash-resume: re-runs a step a loop was revisiting, though the trace has its earlier visit', async () => {
-      // b ran once, then a (reached again by a loop edge) ran, and the host
-      // died during b's second visit: b's own entry is not the last one.
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('b', {
-          executionTrace: [traceEntry('a'), traceEntry('b'), traceEntry('a')],
-        }) as never
-      );
-      const ran = recordRuns();
+    it('crash-resume: continues only along the branch a route step chose', async () => {
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'r',
+            name: 'Route',
+            type: 'route',
+            config: {},
+            nextSteps: [{ targetStepId: 'x' }, { targetStepId: 'y' }],
+          },
+          { id: 'x', name: 'X', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'y', name: 'Y', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'r',
+        errorStrategy: 'fail',
+      };
+      const routeToX: StepImpl = async (step) =>
+        step.id === 'r'
+          ? { output: 'x', tokensUsed: 0, costUsd: 0, nextStepIds: ['x'] }
+          : plain(step);
+      const row = await crashRun(def, routeToX, (m) => doneHas(m.wrote, 'r'));
+      const { ran } = await resumeRun(def, row, routeToX, 'r');
 
-      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
-        userId: USER_ID,
-        resumeFromExecutionId: EXEC_ID,
-      });
-
-      expect(ran).toEqual(['b']);
+      expect(ran).toEqual(['x']);
     });
 
-    it('crash-resume: re-runs every branch of a parallel batch in flight, not only the cursor', async () => {
-      registerStepType('parallel', async () => ({ output: {}, tokensUsed: 0, costUsd: 0 }));
-      const ran = recordRuns();
+    it('crash-resume: keeps the successors of a parallel branch checkpointed before the crash', async () => {
+      // p → {b, c}; b → d and c → e never join. The host died after b's
+      // checkpoint and before c's, so c re-runs and both d and e still run.
       const def: WorkflowDefinition = {
         steps: [
           {
@@ -5708,42 +5785,117 @@ describe('OrchestrationEngine', () => {
             name: 'Parallel',
             type: 'parallel',
             config: {},
-            nextSteps: [{ targetStepId: 'x' }, { targetStepId: 'y' }],
+            nextSteps: [{ targetStepId: 'b' }, { targetStepId: 'c' }],
           },
-          { id: 'x', name: 'X', type: 'llm_call', config: {}, nextSteps: [{ targetStepId: 'j' }] },
-          { id: 'y', name: 'Y', type: 'llm_call', config: {}, nextSteps: [{ targetStepId: 'j' }] },
-          { id: 'j', name: 'Join', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: {}, nextSteps: [{ targetStepId: 'd' }] },
+          { id: 'c', name: 'C', type: 'llm_call', config: {}, nextSteps: [{ targetStepId: 'e' }] },
+          { id: 'd', name: 'D', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'e', name: 'E', type: 'llm_call', config: {}, nextSteps: [] },
         ],
         entryStepId: 'p',
         errorStrategy: 'fail',
       };
-      // The batch marks every branch; the cursor holds whichever was marked last.
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeCrashRow('y', {
-          executionTrace: [{ ...traceEntry('p'), stepType: 'parallel' }],
-        }) as never
+      const row = await crashRun(
+        def,
+        plain,
+        (m) => doneHas(m.wrote, 'b') && !doneHas(m.wrote, 'c')
       );
-      vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValueOnce([
-        { stepId: 'x' },
-        { stepId: 'y' },
-      ] as never);
+      const { ran, types } = await resumeRun(def, row, plain, 'c');
 
+      expect([...ran].sort()).toEqual(['c', 'd', 'e']);
+      expect(types).toContain('workflow_completed');
+    });
+
+    it('crash-resume: a loop re-run continues downstream, keeps its retry count and its failure reason', async () => {
+      // draft → check, with check → draft a bounded retry edge (maxRetries 1).
+      // check rejects the first draft; the host dies during the second draft.
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'draft',
+            name: 'Draft',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'check' }],
+          },
+          {
+            id: 'check',
+            name: 'Check',
+            type: 'route',
+            config: {},
+            nextSteps: [
+              { targetStepId: 'draft', maxRetries: 1, condition: 'retry' },
+              { targetStepId: 'done' },
+            ],
+          },
+          { id: 'done', name: 'Done', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'draft',
+        errorStrategy: 'fail',
+      };
+      const rejectAlways: StepImpl = async (step) =>
+        step.id === 'check'
+          ? { output: { reason: 'too short' }, tokensUsed: 0, costUsd: 0, nextStepIds: ['draft'] }
+          : plain(step);
+      let drafts = 0;
+      const row = await crashRun(def, rejectAlways, (m) => {
+        if (m.starting === 'draft') drafts += 1;
+        return m.starting === 'draft' && drafts === 2;
+      });
+
+      const seenRetryContext: unknown[] = [];
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ status: 'running', currentStep: 'draft', ...row }) as never
+      );
+      const ran: string[] = [];
+      const record = async (step: { id: string }, ctx: { variables: Record<string, unknown> }) => {
+        ran.push(step.id);
+        if (step.id === 'draft') seenRetryContext.push(ctx.variables.__retryContext);
+        return rejectAlways(step);
+      };
+      registerStepType('llm_call', record);
+      registerStepType('route', record);
       const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
         userId: USER_ID,
         resumeFromExecutionId: EXEC_ID,
       });
 
-      expect([...ran].sort()).toEqual(['j', 'x', 'y']);
-      expect(ran.at(-1)).toBe('j');
+      // The re-run draft is checked again (before t-966's position, check
+      // stayed visited and was skipped), and check's one retry is spent, so
+      // it does not loop a third time.
+      expect(ran).toEqual(['draft', 'check']);
+      expect(seenRetryContext).toEqual([
+        { fromStep: 'check', attempt: 1, maxRetries: 1, failureReason: 'too short' },
+      ]);
       expect(events.map((e) => e.type)).toContain('workflow_completed');
     });
 
-    it('approval resume: still continues after the approved step, and does not hand it its turns', async () => {
+    it('crash-resume: a row with no saved position continues after its cursor, as before', async () => {
+      // A run in flight across the deploy that added the column.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeCrashRow('a', { walkState: null }) as never
+      );
+      const ran: string[] = [];
+      registerStepType('llm_call', async (step) => {
+        ran.push(step.id);
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      expect(ran).toEqual(['b']);
+    });
+
+    it('approval resume: continues after the approved step, drops its turns, and clears the stale position', async () => {
       // A paused row is a fresh-resume: the approve route has marked the
       // cursor step completed, so the run continues after it. Turns left on
       // that step's row belong to it, not to the step that runs next.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow() as never
+        makeResumeRow({ walkState: { v: 1 } }) as never
       );
       mockRunningStepFind({ turns: [makeTurn(0)] });
       const seen: Record<string, TurnEntry[] | undefined> = {};
@@ -5759,7 +5911,12 @@ describe('OrchestrationEngine', () => {
 
       expect(Object.keys(seen)).toEqual(['b']);
       expect(seen.b).toBeUndefined();
-      expect(vi.mocked(prisma.aiWorkflowRunningStep.findMany)).not.toHaveBeenCalled();
+      // The pause's position is stale; clearing it means a crash before this
+      // run saves its own falls back to the cursor, which is right here.
+      findUpdateMany(
+        (data) => data.status === 'running' && data.walkState === Prisma.DbNull,
+        'resume status flip clears walkState'
+      );
     });
 
     // ── runStepWithStrategy: onAttemptStart callback (3 tests) ─────────────
