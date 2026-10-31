@@ -354,18 +354,29 @@ vi.mock('@/lib/app/emails', () => ({ emailOverrides: {} }));
  * `admin-tier-roster.test.ts` (judges the fork's org-tier pages). A test that
  * needs a seam filled mocks it itself, as `org-tier-admin-pages.test.ts`,
  * `user-created-hooks.test.ts` and `erasure-hooks-seam.test.ts` do.
+ * `defaults.test.ts` fails any other file that reads a pinned seam past its
+ * pin, or unmocks one.
+ *
+ * Six seams are pinned, not every lazy init in `lib/app/`: these are the ones
+ * a measured fill failed. The rest are #636's sweep.
  */
-vi.mock('@/lib/app/admin-tier', () => ({
+// Each keeps the module's other exports, as the brand pin derives its keys: a
+// fork may export more from these files, and a mock that dropped it would fail
+// any core test whose imports reach it. Only the init is replaced.
+vi.mock('@/lib/app/admin-tier', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   initAppOrgTierAdminPages: () => {
     // Opens no page and closes no section: Sunrise's shipped default.
   },
 }));
-vi.mock('@/lib/app/user-created', () => ({
+vi.mock('@/lib/app/user-created', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   initAppUserCreatedHooks: () => {
     // Registers no hook: Sunrise's shipped default.
   },
 }));
-vi.mock('@/lib/app/erasure', () => ({
+vi.mock('@/lib/app/erasure', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   initAppErasureHooks: () => {
     // Registers no hook and declares no writer: Sunrise's shipped default.
   },

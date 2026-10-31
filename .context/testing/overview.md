@@ -214,10 +214,12 @@ The global test setup file (`tests/setup.ts`) runs before all tests and configur
 4. **Fork-seam pins**: Pins `lib/app/brand`, `emails`, `llm-providers`, `admin-tier`,
    `user-created` and `erasure` to Sunrise's shipped default, so a fork that fills one
    does not fail core tests it cannot fix. A test that needs a seam filled mocks it
-   itself. A test that judges a fork's REAL seam restores it with
-   `vi.mock('@/lib/app/<seam>', (importOriginal) => importOriginal())`, as
-   `defaults.test.ts`, `stale-writers.test.ts` and `admin-tier-roster.test.ts` do.
-   Without that, the guard reads the pin and passes a fork entry it exists to refuse.
+   itself. Only the guards that judge a fork's REAL seam read past a pin:
+   `defaults.test.ts` (every seam), `stale-writers.test.ts` (erasure) and
+   `admin-tier-roster.test.ts` (admin-tier), each with
+   `vi.mock('@/lib/app/<seam>', (importOriginal) => importOriginal())`. Without
+   that, the guard reads the pin and passes a fork entry it exists to refuse.
+   `defaults.test.ts` fails any other test file that reads past a pin or unmocks one.
 5. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
 
 **Key setup features**:
