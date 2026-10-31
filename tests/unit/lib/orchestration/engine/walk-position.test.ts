@@ -70,7 +70,7 @@ describe('retryContextFromTrace', () => {
   it('rebuilds the context from the retry it points at', () => {
     const trace = [entry('draft'), entry('check', [retry, exhausted])];
 
-    expect(retryContextFromTrace(trace, { entry: 1, retry: 0 })).toEqual({
+    expect(retryContextFromTrace(trace, { entry: 1, retry: 0, step: 'check' })).toEqual({
       fromStep: 'check',
       attempt: 1,
       maxRetries: 2,
@@ -82,7 +82,19 @@ describe('retryContextFromTrace', () => {
     const trace = [entry('draft')];
 
     expect(retryContextFromTrace(trace, undefined)).toBeUndefined();
-    expect(retryContextFromTrace(trace, { entry: 0, retry: 0 })).toBeUndefined();
-    expect(retryContextFromTrace(trace, { entry: 5, retry: 0 })).toBeUndefined();
+    expect(retryContextFromTrace(trace, { entry: 0, retry: 0, step: 'draft' })).toBeUndefined();
+    expect(retryContextFromTrace(trace, { entry: 5, retry: 0, step: 'check' })).toBeUndefined();
+  });
+
+  it('finds the retry by step when a dropped corrupt entry has shifted the index', () => {
+    // Saved as entry 2; the resume dropped an unparseable entry before it.
+    const trace = [entry('draft'), entry('check', [retry, exhausted])];
+
+    expect(retryContextFromTrace(trace, { entry: 2, retry: 0, step: 'check' })).toEqual({
+      fromStep: 'check',
+      attempt: 1,
+      maxRetries: 2,
+      failureReason: 'too short',
+    });
   });
 });

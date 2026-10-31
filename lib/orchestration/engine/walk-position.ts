@@ -43,7 +43,12 @@ export const walkPositionSchema = z.object({
   budgetWarned: z.boolean(),
   /** Where the retry that set `__retryContext` sits: its trace entry, and its index in that entry's `retries`. */
   retryContextAt: z
-    .object({ entry: z.number().int().nonnegative(), retry: z.number().int().nonnegative() })
+    .object({
+      entry: z.number().int().nonnegative(),
+      retry: z.number().int().nonnegative(),
+      /** The step whose entry it is, checked on read: a resume drops trace entries it cannot parse, which shifts the index. */
+      step: z.string(),
+    })
     .optional(),
 });
 
@@ -67,8 +72,18 @@ export function retryContextFromTrace(
   at: WalkPosition['retryContextAt']
 ): Record<string, unknown> | undefined {
   if (at === undefined) return undefined;
-  const entry = trace[at.entry];
-  const retry = entry?.retries?.[at.retry];
+  // The index is where the entry was when the retry attached. If a corrupt
+  // earlier entry was dropped on resume it has moved: find the step's latest
+  // entry carrying a retry instead.
+  const atIndex = trace[at.entry];
+  const entry =
+    atIndex?.stepId === at.step
+      ? atIndex
+      : trace.findLast((e) => e.stepId === at.step && (e.retries?.length ?? 0) > 0);
+  const retry =
+    atIndex?.stepId === at.step
+      ? entry?.retries?.[at.retry]
+      : entry?.retries?.findLast((r) => r.exhausted !== true);
   if (!entry || !retry) return undefined;
   return {
     fromStep: entry.stepId,

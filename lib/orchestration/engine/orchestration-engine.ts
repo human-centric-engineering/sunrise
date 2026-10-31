@@ -407,6 +407,8 @@ export class OrchestrationEngine {
       // to it) so the next save must write it too.
       let retryContextAt: WalkPosition['retryContextAt'];
       let traceDirty = false;
+      // The unfinished branches of a parallel batch a crash-resume re-runs.
+      let resumeBatch: Set<string> | null = null;
 
       // What runs after a step the walk ran on its own: the next steps it
       // chose, with a bounded-retry edge re-queueing a target already visited.
@@ -524,15 +526,14 @@ export class OrchestrationEngine {
             }
             return '';
           })();
-          attachRetryToTrace(trace, step.id, {
+          // The retry now lives in the trace, which the next walk save writes
+          // with it; a crash-resume rebuilds `__retryContext` from it.
+          retryContextAt = attachRetryToTrace(trace, step.id, {
             attempt: attempts + 1,
             maxRetries: retryEdge.maxRetries!,
             reason: retryReason,
             targetStepId: id,
           });
-          // The retry now lives in the trace, which the next walk save writes
-          // with it; a crash-resume rebuilds `__retryContext` from it.
-          retryContextAt = attachedRetryAt(trace, step.id);
           traceDirty = true;
           yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
         }
@@ -578,6 +579,10 @@ export class OrchestrationEngine {
         if (retryContext) ctx.variables.__retryContext = retryContext;
 
         const ranAlone = resumePosition.inFlight.length === 1;
+        // Branches of an interrupted parallel batch re-run as a batch, even
+        // one left alone: the batch path is how they ran (it ignores
+        // `terminal` and bounded-retry edges), so they hand on the same way.
+        if (!ranAlone) resumeBatch = new Set<string>();
         for (const id of resumePosition.inFlight) {
           const next = resumePosition.done[id];
           if (next === undefined) {
@@ -586,16 +591,28 @@ export class OrchestrationEngine {
             visited.delete(id);
             stepCount -= 1;
             queue.push(id);
+            resumeBatch?.add(id);
             continue;
           }
           const step = byId.get(id);
-          const output = lastTraceOutput(trace, id);
+          const output = trace.findLast((e) => e.stepId === id)?.output;
           if (output !== undefined) finalOutput = output;
           if (ranAlone && step) {
             yield* advanceAfterStep(step, next, output);
           } else {
             for (const nextId of next) if (!visited.has(nextId)) queue.push(nextId);
           }
+        }
+
+        // A step that took the run over budget is not recorded as done, so it
+        // would otherwise run again — a second paid call past the cap. The
+        // run had already failed on budget when the host died; say so now.
+        if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
+          failureReason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
+          yield workflowFailed(failureReason, undefined, ctx);
+          failed = true;
+          queue.length = 0;
+          pending.clear();
         }
       }
 
@@ -650,9 +667,11 @@ export class OrchestrationEngine {
         const ready = [...readySet];
 
         if (ready.length === 0) continue;
+        const resumingBatch = resumeBatch?.has(ready[0]) ?? false;
+        resumeBatch = null;
 
         // ── Single step (sequential path — unchanged semantics) ──────
-        if (ready.length === 1) {
+        if (ready.length === 1 && !resumingBatch) {
           const stepId = ready[0];
           if (stepCount++ >= MAX_STEPS_PER_RUN) {
             failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
@@ -1277,12 +1296,12 @@ export class OrchestrationEngine {
           ...rollupTelemetry(telemetryOut),
           ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
         });
-        // The pause path keeps the running-step row alive on purpose:
-        // `pauseForApproval` doesn't call `clearRunningStep`, so the row
-        // (with its `turns`) survives the pause and approval-resume's
-        // initRun reads it back into `ctx.resumeTurns`. The trace entry's
-        // `turns` field is for observability; the running-step row is for
-        // resume.
+        // The pause path does not call `clearRunningStep`, so the row
+        // survives the pause and the live view keeps showing the step as
+        // waiting. Approval-resume continues AFTER this step (the approve
+        // route marks it completed), so its turns are not replayed — the
+        // resume drops them (`ctx.resumeStepId`, t-966) and deletes the
+        // row. The trace entry's `turns` field is the record.
         //
         // Clearing both context fields here prevents the next step's executor
         // — or, more dangerously, sibling code paths like `runStepToCompletion`
@@ -1405,15 +1424,8 @@ export class OrchestrationEngine {
     });
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
-    const nextIds =
-      result.nextStepIds && result.nextStepIds.length > 0
-        ? result.nextStepIds
-        : step.nextSteps.map((edge) => edge.targetStepId);
-    // A step that ends the run is not recorded as finished — see `checkpoint`.
-    const endsRun =
-      result.terminal === true ||
-      (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) ||
-      (budgetLimitUsd ? ctx.totalCostUsd > budgetLimitUsd : false);
+    const nextIds = chosenNextIds(step, result);
+    const endsRun = endsRunAfter(result, ctx, budgetLimitUsd, true);
     await this.checkpoint(lease, ctx, trace, endsRun ? undefined : { stepId: step.id, nextIds });
     await this.clearRunningStep(executionId, step.id, baseLogger);
 
@@ -1754,14 +1766,8 @@ export class OrchestrationEngine {
         ...rollupTelemetry(telemetryOut),
         ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
-      const nextIds =
-        stepResult.nextStepIds && stepResult.nextStepIds.length > 0
-          ? stepResult.nextStepIds
-          : step.nextSteps.map((edge) => edge.targetStepId);
-      // A branch that ends the run is not recorded as finished — see `checkpoint`.
-      const endsRun =
-        (typeof stepResult.failWorkflow === 'string' && stepResult.failWorkflow.length > 0) ||
-        (budgetLimitUsd ? ctx.totalCostUsd > budgetLimitUsd : false);
+      const nextIds = chosenNextIds(step, stepResult);
+      const endsRun = endsRunAfter(stepResult, ctx, budgetLimitUsd, false);
       await this.checkpoint(lease, ctx, trace, endsRun ? undefined : { stepId: step.id, nextIds });
       await this.clearRunningStep(executionId, step.id, baseLogger);
 
@@ -2125,6 +2131,14 @@ export class OrchestrationEngine {
       // is cleared below: should this run crash before saving its own, the
       // orphan resume then takes the cursor path, which is right for them.
       const resumePosition = reason === 'orphan-resume' ? parseWalkPosition(row.walkState) : null;
+      if (reason === 'orphan-resume' && !resumePosition && row.walkState !== null) {
+        // Saved by an engine this one cannot read (a rollback, a later shape):
+        // the cursor path is a fallback that can skip the step in flight.
+        baseLogger.warn('Resume: saved walk position unreadable, continuing after the cursor', {
+          executionId: row.id,
+          currentStep: row.currentStep,
+        });
+      }
       if (resumePosition) {
         baseLogger.info('Resume: continuing from the saved walk position', {
           executionId: row.id,
@@ -2233,8 +2247,8 @@ export class OrchestrationEngine {
       });
       if (refreshed.count === 0) return;
 
-      // Upsert keyed on (executionId, stepId). A retry or approval-resume
-      // re-enters the same stepId and trips the unique constraint; the
+      // Upsert keyed on (executionId, stepId). A step revisited by a loop
+      // edge re-enters the same stepId and trips the unique constraint; the
       // `update` clause deliberately touches only `startedAt` —
       // `turns` is preserved across re-entries so a multi-turn step
       // resumes from its last recorded turn rather than restarting at
@@ -2834,36 +2848,41 @@ function attachRetryToTrace(
   trace: ExecutionTraceEntry[],
   stepId: string,
   retry: NonNullable<ExecutionTraceEntry['retries']>[number]
-): void {
+): WalkPosition['retryContextAt'] {
   for (let i = trace.length - 1; i >= 0; i--) {
     if (trace[i].stepId === stepId) {
       const existing = trace[i].retries ?? [];
       trace[i] = { ...trace[i], retries: [...existing, retry] };
-      return;
+      // Where it went, for the walk position (t-966).
+      return { entry: i, retry: existing.length, step: stepId };
     }
-  }
-}
-
-/** The output of the latest trace entry for `stepId`, or `undefined` if it has none. */
-function lastTraceOutput(trace: ExecutionTraceEntry[], stepId: string): unknown {
-  for (let i = trace.length - 1; i >= 0; i--) {
-    if (trace[i].stepId === stepId) return trace[i].output;
   }
   return undefined;
 }
 
-/** Where `attachRetryToTrace` put its last retry for `stepId`: the trace entry and its index in `retries`. */
-function attachedRetryAt(
-  trace: ExecutionTraceEntry[],
-  stepId: string
-): WalkPosition['retryContextAt'] {
-  for (let i = trace.length - 1; i >= 0; i--) {
-    if (trace[i].stepId === stepId) {
-      const retries = trace[i].retries ?? [];
-      return retries.length > 0 ? { entry: i, retry: retries.length - 1 } : undefined;
-    }
-  }
-  return undefined;
+/** The steps a finished step hands on to: the ones it chose, else every outgoing edge. */
+function chosenNextIds(step: WorkflowStep, result: StepResult): string[] {
+  return result.nextStepIds && result.nextStepIds.length > 0
+    ? result.nextStepIds
+    : step.nextSteps.map((edge) => edge.targetStepId);
+}
+
+/**
+ * Whether a finished step ends the run rather than handing on, so its
+ * checkpoint does not record it as done (see `checkpoint`). A parallel batch
+ * ignores `terminal` live, so its branches pass `honoursTerminal: false`.
+ */
+function endsRunAfter(
+  result: StepResult,
+  ctx: ExecutionContext,
+  budgetLimitUsd: number | undefined,
+  honoursTerminal: boolean
+): boolean {
+  return (
+    (honoursTerminal && result.terminal === true) ||
+    (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) ||
+    (budgetLimitUsd ? ctx.totalCostUsd > budgetLimitUsd : false)
+  );
 }
 
 function sleep(ms: number): Promise<void> {
