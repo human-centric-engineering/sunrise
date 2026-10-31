@@ -6636,6 +6636,71 @@ describe('OrchestrationEngine', () => {
       expect(seen[0].turns).toBeUndefined();
     });
 
+    it("stepAttemptId: a continued attempt's re-created row carries its replayed turns", async () => {
+      // The resume deletes the running-step rows and re-creates b's. If that
+      // row started empty, a second crash before b recorded another turn would
+      // find the attempt's id with none of its history.
+      const turns = [makeTurn(0), makeTurn(1)];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeCrashRow('b') as never
+      );
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns,
+        attempt: 1,
+        attemptId: 'continued',
+      } as never);
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      const created = vi
+        .mocked(prisma.aiWorkflowRunningStep.upsert)
+        .mock.calls.map(([arg]) => (arg as { create: Record<string, unknown> }).create)
+        .find((c) => c.stepId === 'b');
+      expect(created).toMatchObject({ attempt: 1, attemptId: 'continued', turns });
+    });
+
+    it('a step timed out under a skip strategy cannot record turns after its visit ends', async () => {
+      // The timeout ends the visit (the step is skipped) but the executor runs
+      // on, and records a turn at 60ms. The row is no longer that visit's.
+      const late = makeTurn(7);
+      let recorded = false;
+      registerStepType('llm_call', async (_step, ctx) => {
+        await new Promise((r) => setTimeout(r, 60));
+        if (ctx.recordTurn) await ctx.recordTurn(late);
+        recorded = true;
+        return { output: 'too late', tokensUsed: 0, costUsd: 0 };
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: { errorStrategy: 'skip', timeoutMs: 20 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(recorded).toBe(true);
+      const turnWrites = vi
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
+        .mock.calls.map(([arg]) => (arg as { data: { turns?: unknown } }).data.turns)
+        .filter((t): t is TurnEntry[] => Array.isArray(t));
+      expect(turnWrites).toEqual([]);
+    });
+
     it('stepAttempt: the next attempt is recorded before the retry backoff, so a crash in the wait resumes it', async () => {
       // The backoff before attempt 1 is a 500ms timer. By the time it is set,
       // the row must already say attempt 1 with its turns cleared.

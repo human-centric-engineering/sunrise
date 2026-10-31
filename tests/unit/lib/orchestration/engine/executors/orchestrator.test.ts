@@ -408,6 +408,33 @@ describe('executeOrchestrator', () => {
     expect(ids.every((id) => typeof id === 'string' && id.length > 0)).toBe(true);
   });
 
+  it('re-runs each delegation under the same attempt id when the orchestrator attempt is continued', async () => {
+    // A crash-resume continues the orchestrator's attempt (same parent id);
+    // its delegations must come back under the ids they had, or a capability
+    // keyed on the id would hand a re-run delegation a fresh budget (#1143).
+    const run = async () => {
+      vi.mocked(executeAgentCall).mockClear();
+      vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ delegations: [] }));
+      vi.mocked(executeAgentCall)
+        .mockResolvedValueOnce({ output: 'a', tokensUsed: 0, costUsd: 0 })
+        .mockResolvedValueOnce({ output: 'b', tokensUsed: 0, costUsd: 0 });
+      vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+      await executeOrchestrator(
+        makeStep({ selectionMode: 'all' }),
+        makeCtx({ stepAttemptId: 'continued-attempt' })
+      );
+      return vi
+        .mocked(executeAgentCall)
+        .mock.calls.map(([, childCtx]) => (childCtx as { stepAttemptId?: string }).stepAttemptId);
+    };
+
+    const first = await run();
+    const again = await run();
+
+    expect(again).toEqual(first);
+    expect(new Set(first).size).toBe(2);
+  });
+
   it('throws ZodError when plannerPrompt is empty (schema rejects before executor)', async () => {
     await expect(executeOrchestrator(makeStep({ plannerPrompt: '' }), makeCtx())).rejects.toThrow();
 
