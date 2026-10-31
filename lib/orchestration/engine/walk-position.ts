@@ -15,8 +15,9 @@
  * batch, so every rebuild missed a case — loops, a branch's successors, a
  * route's untaken edge, a bounded retry's count.
  *
- * Step ids and counts only. Nothing here is step output, so erasure has
- * nothing to scrub; the bounded-retry failure reason is rebuilt from the trace
+ * Step ids and counts only, plus a `failWorkflow` step's authored message.
+ * Nothing here is step output, so erasure has nothing to scrub; the
+ * bounded-retry failure reason is rebuilt from the trace
  * (`retryContextFromTrace`), which erasure does scrub.
  */
 
@@ -29,8 +30,29 @@ export const walkPositionSchema = z.object({
   v: z.literal(1),
   /** The steps of the iteration that was running: one, or a parallel batch's branches. */
   inFlight: z.array(z.string()),
+  /**
+   * Whether that iteration ran on the parallel-batch path, which hands on
+   * differently (it ignores `terminal` and bounded-retry edges). Usually
+   * `inFlight.length > 1`, but a resume re-runs a batch's lone unfinished
+   * branch as a batch too.
+   */
+  batch: z.boolean(),
   /** In-flight steps that finished, each with the next steps it chose. */
   done: z.record(z.string(), z.array(z.string())),
+  /**
+   * Set when a step ended the run — its checkpoint is the last write before
+   * the run is finalised — so a crash-resume finalises it the same way
+   * instead of re-running the step (and paying for it twice). `kind` says how;
+   * the failure text is read back from the trace, except a `failWorkflow`
+   * message, which is the step's own authored text and is kept here.
+   */
+  ended: z
+    .object({
+      stepId: z.string(),
+      kind: z.enum(['terminal', 'failed', 'failWorkflow', 'budget']),
+      message: z.string().optional(),
+    })
+    .optional(),
   /** Steps waiting on a predecessor. */
   pending: z.array(z.string()),
   /** Steps the walk has visited, the in-flight ones included. */
@@ -75,15 +97,18 @@ export function retryContextFromTrace(
   // The index is where the entry was when the retry attached. If a corrupt
   // earlier entry was dropped on resume it has moved: find the step's latest
   // entry carrying a retry instead.
-  const atIndex = trace[at.entry];
-  const entry =
-    atIndex?.stepId === at.step
-      ? atIndex
-      : trace.findLast((e) => e.stepId === at.step && (e.retries?.length ?? 0) > 0);
-  const retry =
-    atIndex?.stepId === at.step
-      ? entry?.retries?.[at.retry]
-      : entry?.retries?.findLast((r) => r.exhausted !== true);
+  let entry: ExecutionTraceEntry | undefined;
+  let retry: NonNullable<ExecutionTraceEntry['retries']>[number] | undefined;
+  if (trace[at.entry]?.stepId === at.step) {
+    entry = trace[at.entry];
+    retry = entry.retries?.[at.retry];
+  } else {
+    for (let i = trace.length - 1; i >= 0 && !retry; i--) {
+      if (trace[i].stepId !== at.step) continue;
+      entry = trace[i];
+      retry = entry.retries?.findLast((r) => r.exhausted !== true);
+    }
+  }
   if (!entry || !retry) return undefined;
   return {
     fromStep: entry.stepId,

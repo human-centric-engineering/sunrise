@@ -167,7 +167,18 @@ const MAX_STEPS_PER_RUN = 1000;
  * in the same write as the trace (t-966). Kept off `ExecutionContext` because
  * executors receive a copy of the context and have no business with it.
  */
-const walkPositions = new WeakMap<ExecutionContext, WalkPosition>();
+const walkPositions = new WeakMap<
+  ExecutionContext,
+  {
+    position: WalkPosition;
+    /** The last checkpoint failed, so the trace in the row is behind; the next save must write it. */
+    traceStale: boolean;
+  }
+>();
+
+/** What a checkpoint records in the walk position about the step it writes. */
+type WalkRecord =
+  { done: { stepId: string; nextIds: string[] } } | { ended: NonNullable<WalkPosition['ended']> };
 
 /**
  * Format a deterministic "Budget exceeded" reason string. Persisted to
@@ -543,10 +554,11 @@ export class OrchestrationEngine {
       // during them resumes here (t-966). Checkpoints add each step that
       // finishes to `done`. A trace a retry changed since the last checkpoint
       // goes in the same write, so the rebuilt `__retryContext` can find it.
-      const startIteration = async (inFlight: string[]): Promise<void> => {
+      const startIteration = async (inFlight: string[], batch: boolean): Promise<void> => {
         const position: WalkPosition = {
           v: 1,
           inFlight,
+          batch,
           done: {},
           pending: [...pending],
           visited: [...visited],
@@ -555,8 +567,9 @@ export class OrchestrationEngine {
           budgetWarned: ctx.variables.__budgetWarned === true,
           ...(retryContextAt ? { retryContextAt } : {}),
         };
-        walkPositions.set(ctx, position);
-        if (traceDirty) {
+        const traceStale = walkPositions.get(ctx)?.traceStale === true;
+        walkPositions.set(ctx, { position, traceStale });
+        if (traceDirty || traceStale) {
           traceDirty = false;
           await this.checkpoint(lease, ctx, trace);
         } else {
@@ -578,7 +591,7 @@ export class OrchestrationEngine {
         const retryContext = retryContextFromTrace(trace, retryContextAt);
         if (retryContext) ctx.variables.__retryContext = retryContext;
 
-        const ranAlone = resumePosition.inFlight.length === 1;
+        const ranAlone = !resumePosition.batch;
         // Branches of an interrupted parallel batch re-run as a batch, even
         // one left alone: the batch path is how they ran (it ignores
         // `terminal` and bounded-retry edges), so they hand on the same way.
@@ -604,15 +617,32 @@ export class OrchestrationEngine {
           }
         }
 
-        // A step that took the run over budget is not recorded as done, so it
-        // would otherwise run again — a second paid call past the cap. The
-        // run had already failed on budget when the host died; say so now.
-        if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-          failureReason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
-          yield workflowFailed(failureReason, undefined, ctx);
-          failed = true;
+        // A step ended the run before the host died: finalise it the way the
+        // live run was about to, rather than re-running the step (and paying
+        // for it twice) or running what a failed batch would never reach.
+        const ended = resumePosition.ended;
+        if (ended) {
           queue.length = 0;
           pending.clear();
+          if (ended.kind === 'terminal') {
+            finalOutput = trace.findLast((e) => e.stepId === ended.stepId)?.output ?? finalOutput;
+          } else if (ended.kind === 'budget' && budgetLimitUsd) {
+            failureReason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
+            yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, ended.stepId, {
+              executionId,
+              workflowId: ctx.workflowId,
+              userId: ctx.userId,
+            });
+            yield workflowFailed(failureReason, ended.stepId, ctx);
+            failed = true;
+          } else {
+            failureReason =
+              ended.message ??
+              trace.findLast((e) => e.stepId === ended.stepId && e.status === 'failed')?.error ??
+              `Step "${ended.stepId}" failed`;
+            yield workflowFailed(failureReason, ended.stepId, ctx);
+            failed = true;
+          }
         }
       }
 
@@ -688,7 +718,7 @@ export class OrchestrationEngine {
             break;
           }
           visited.add(stepId);
-          await startIteration([stepId]);
+          await startIteration([stepId], false);
 
           // `withSpanGenerator` activates the workflow.step span as the
           // OTEL active context across yields, so nested helper-`withSpan`
@@ -744,7 +774,7 @@ export class OrchestrationEngine {
           visited.add(stepId);
         }
         if (!batchValid) break;
-        await startIteration([...ready]);
+        await startIteration([...ready], true);
 
         // Execute all branch steps concurrently.
         const batchResult = await this.executeParallelBatch(
@@ -1384,7 +1414,7 @@ export class OrchestrationEngine {
       });
       ctx.resumeTurns = undefined;
       ctx.recordTurn = undefined;
-      await this.checkpoint(lease, ctx, trace);
+      await this.checkpoint(lease, ctx, trace, { ended: { stepId: step.id, kind: 'failed' } });
       await this.clearRunningStep(executionId, step.id, baseLogger);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id, ctx);
@@ -1425,8 +1455,13 @@ export class OrchestrationEngine {
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
     const nextIds = chosenNextIds(step, result);
-    const endsRun = endsRunAfter(result, ctx, budgetLimitUsd, true);
-    await this.checkpoint(lease, ctx, trace, endsRun ? undefined : { stepId: step.id, nextIds });
+    const ending = runEndingAfter(step.id, result, ctx, budgetLimitUsd, true);
+    await this.checkpoint(
+      lease,
+      ctx,
+      trace,
+      ending ? { ended: ending } : { done: { stepId: step.id, nextIds } }
+    );
     await this.clearRunningStep(executionId, step.id, baseLogger);
 
     // Budget check — runs BEFORE step_completed so the event stream's
@@ -1728,7 +1763,7 @@ export class OrchestrationEngine {
           input: step.config,
           ...rollupTelemetry(telemetryOut),
         });
-        await this.checkpoint(lease, ctx, trace);
+        await this.checkpoint(lease, ctx, trace, { ended: { stepId: step.id, kind: 'failed' } });
         await this.clearRunningStep(executionId, step.id, baseLogger);
         allEvents.push(workflowFailed(sanitizeError(error), step.id, ctx));
         batchFailed = true;
@@ -1767,8 +1802,13 @@ export class OrchestrationEngine {
         ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
       const nextIds = chosenNextIds(step, stepResult);
-      const endsRun = endsRunAfter(stepResult, ctx, budgetLimitUsd, false);
-      await this.checkpoint(lease, ctx, trace, endsRun ? undefined : { stepId: step.id, nextIds });
+      const ending = runEndingAfter(step.id, stepResult, ctx, budgetLimitUsd, false);
+      await this.checkpoint(
+        lease,
+        ctx,
+        trace,
+        ending ? { ended: ending } : { done: { stepId: step.id, nextIds } }
+      );
       await this.clearRunningStep(executionId, step.id, baseLogger);
 
       if (stepResult.skipped) {
@@ -2446,22 +2486,26 @@ export class OrchestrationEngine {
   }
 
   /**
-   * `finished` names a step the walk will continue past — written into the
-   * walk position's `done`, in the same update as its trace entry, so a
-   * crash-resume knows it finished and which steps it chose (t-966). A step
-   * that ends the run is not passed: a crash before the run is finalised
-   * re-runs it rather than guessing how the run ended.
+   * `record` says what the step this checkpoint writes means for the walk,
+   * in the same update as its trace entry (t-966): `done` with the next steps
+   * it chose, or `ended` when it ends the run, so a crash-resume continues
+   * past it or finalises the run the same way rather than re-running it. The
+   * first `ended` in an iteration wins, as it does live.
    */
   private async checkpoint(
     lease: LeaseHandle,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
-    finished?: { stepId: string; nextIds: string[] }
+    record?: WalkRecord
   ): Promise<void> {
     const { executionId, token } = lease;
     const contextPatchData = drainContextPatch(ctx);
-    const position = walkPositions.get(ctx);
-    if (position && finished) position.done[finished.stepId] = finished.nextIds;
+    const walk = walkPositions.get(ctx);
+    const position = walk?.position;
+    if (position && record) {
+      if ('done' in record) position.done[record.done.stepId] = record.done.nextIds;
+      else position.ended ??= record.ended;
+    }
     try {
       const result = await prisma.$transaction(async (tx) => {
         await archivePriorVerdict(tx, executionId, contextPatchData);
@@ -2484,6 +2528,7 @@ export class OrchestrationEngine {
         }
         return written;
       }, RUN_ROW_WRITE_OPTIONS);
+      if (walk) walk.traceStale = false;
       if (result.count === 0) {
         // Lease lost — another host has claimed this run. The orphan sweep handed it off
         // because our heartbeat lapsed. Future writes from this run will keep no-opping;
@@ -2493,6 +2538,9 @@ export class OrchestrationEngine {
         });
       }
     } catch (err) {
+      // The row's trace is now behind the walk; the next position save must
+      // write it too, or the position could name a step the trace never had.
+      if (walk) walk.traceStale = true;
       ctx.logger.error('Checkpoint failed — in-memory trace may diverge from DB', {
         executionId,
         error: err instanceof Error ? err.message : String(err),
@@ -2868,21 +2916,24 @@ function chosenNextIds(step: WorkflowStep, result: StepResult): string[] {
 }
 
 /**
- * Whether a finished step ends the run rather than handing on, so its
- * checkpoint does not record it as done (see `checkpoint`). A parallel batch
- * ignores `terminal` live, so its branches pass `honoursTerminal: false`.
+ * How a finished step ends the run, if it does, for its checkpoint to record
+ * in the walk position (see `checkpoint`). Checked in the order the live walk
+ * acts on them. A parallel batch ignores `terminal` live, so its branches pass
+ * `honoursTerminal: false`.
  */
-function endsRunAfter(
+function runEndingAfter(
+  stepId: string,
   result: StepResult,
   ctx: ExecutionContext,
   budgetLimitUsd: number | undefined,
   honoursTerminal: boolean
-): boolean {
-  return (
-    (honoursTerminal && result.terminal === true) ||
-    (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) ||
-    (budgetLimitUsd ? ctx.totalCostUsd > budgetLimitUsd : false)
-  );
+): WalkPosition['ended'] {
+  if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) return { stepId, kind: 'budget' };
+  if (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) {
+    return { stepId, kind: 'failWorkflow', message: result.failWorkflow };
+  }
+  if (honoursTerminal && result.terminal === true) return { stepId, kind: 'terminal' };
+  return undefined;
 }
 
 function sleep(ms: number): Promise<void> {
