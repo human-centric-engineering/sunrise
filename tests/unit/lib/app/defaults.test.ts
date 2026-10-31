@@ -65,7 +65,7 @@ import {
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { appOwnModules } from '@/lib/app/own-modules';
 import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
-import { initAppUserCreatedHooks } from '@/lib/app/user-created';
+import * as userCreatedHooks from '@/lib/auth/user-created-hooks';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
   getAppSubjectSources,
@@ -80,6 +80,7 @@ import {
 } from '@/lib/privacy/org-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
 import {
+  getAppStaleWriters,
   getErasureCleanupHooks,
   __resetErasureCleanupHooksForTests,
 } from '@/lib/privacy/erasure-hooks';
@@ -130,6 +131,14 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 
+// tests/setup.ts pins these three seams for every file (#1125, #1139). This
+// file asserts what Sunrise really ships, so it puts the real scaffolds back:
+// their rows below read them through the registries' own lazy wiring, which a
+// per-row `importActual` would bypass.
+vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/user-created', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
+
 /**
  * One row per `lib/app/*` seam.
  *
@@ -149,8 +158,10 @@ interface SeamDefault {
  * Seam files deliberately absent from the table below, with the reason. The
  * drift guard at the bottom of this file allows exactly these two.
  */
-/** This file's own repo-relative path — the one place importActual is allowed. */
+/** This file's own repo-relative path: it reads every pinned seam's real scaffold. */
 const THIS_FILE = path.join('tests', 'unit', 'lib', 'app', 'defaults.test.ts');
+/** Where the suite-wide seam pins are defined. */
+const SETUP_FILE = path.join('tests', 'setup.ts');
 
 const UNASSERTED_SEAMS = new Set([
   // Asserted behaviourally instead — see tests/unit/lib/db/drift-probes.test.ts.
@@ -377,12 +388,36 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       __resetErasureCleanupHooksForTests();
       // getErasureCleanupHooks() triggers the lazy init, so this exercises the REAL seam.
       expect(getErasureCleanupHooks()).toEqual([]);
+      // The same init declares stale writers too.
+      expect(getAppStaleWriters()).toEqual([]);
     },
   },
   {
     seam: 'lib/app/user-created.ts',
     risk: 'a stray hook would run on every signup on every install',
-    assert: () => expect(initAppUserCreatedHooks()).toBeUndefined(),
+    assert: async () => {
+      // The registry has no reader, and a hook need leave no trace when it
+      // runs, so watch for the registration itself. A filled init returns
+      // undefined too, which is all this row used to assert (#1139).
+      userCreatedHooks.__resetUserCreatedHooksForTests();
+      // Records without registering, so a fork's hook never runs against u1.
+      const register = vi
+        .spyOn(userCreatedHooks, 'registerUserCreatedHook')
+        .mockImplementation(() => {});
+      try {
+        // Dispatch runs the lazy init, so this exercises the REAL seam.
+        await userCreatedHooks.dispatchUserCreated({
+          userId: 'u1',
+          email: 'new@example.com',
+          name: 'New',
+          signupMethod: 'email',
+          viaInvitation: false,
+        });
+        expect(register).not.toHaveBeenCalled();
+      } finally {
+        register.mockRestore();
+      }
+    },
   },
   {
     seam: 'lib/app/mcp-resources.ts',
@@ -567,18 +602,28 @@ describe('lib/app/ seams ship empty', () => {
     await assert();
   });
 
+  // The guards that judge a fork's REAL seam read it past the pin, and only
+  // they may (#1125, #1139). tests/setup.ts defines the pins, so it reads the
+  // real module too: the brand pin derives its keys from it.
+  const ROSTER = path.join('tests', 'unit', 'scripts', 'ci', 'admin-tier-roster.test.ts');
+  const STALE = path.join('tests', 'unit', 'lib', 'privacy', 'stale-writers.test.ts');
   it.each([
-    ['brand', 'brand'],
-    ['emails', 'email-override'],
-  ])('nothing but this file escapes the suite-wide %s-seam pin', (seam, label) => {
+    ['brand', 'brand', []],
+    ['emails', 'email-override', []],
+    ['llm-providers', 'provider-eligibility', []],
+    ['admin-tier', 'org-tier admin', [ROSTER]],
+    ['user-created', 'user-created', []],
+    ['erasure', 'erasure', [STALE]],
+  ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so
     // that no core test can read a fork's brand and fail for a reason the fork
     // cannot fix (#660/#661). That guarantee holds across all ~1095 test files
     // by construction, but only while nothing escapes the mock.
     //
-    // `vi.importActual` is legitimate here and nowhere else: it is what makes
-    // the brand row above assert the REAL scaffold rather than the mock, which
-    // is what keeps "seams ship empty" able to fail in a fork.
+    // `vi.importActual` is legitimate here: it is what makes the brand row
+    // above assert the REAL scaffold rather than the mock, which is what keeps
+    // "seams ship empty" able to fail in a fork. Elsewhere, only a guard that
+    // judges a fork's real seam may read past its pin, and it is listed.
     //
     // `vi.doUnmock` is never right. It REMOVES the pin instead of restoring it,
     // so every later case in that file sees the real seam. That is not
@@ -595,11 +640,29 @@ describe('lib/app/ seams ship empty', () => {
     // instance per round. vitest exposes exactly `unmock` and `doUnmock` for
     // removing a mock, so anchoring on `(?:do)?unmock` is exhaustive over the API
     // rather than over the spellings someone happened to think of.
-    // The emails pin (#895) is the same shape and the same hazard, so both
-    // seams share the guard.
+    // The emails pin (#895) is the same shape and the same hazard, and so are
+    // the later pins, so every seam setup.ts pins shares the guard.
+    //
+    // A `vi.mock(seam, (importOriginal) => importOriginal())` restores the real
+    // seam just as `importActual` does, so it is matched too. Only the files
+    // listed as a seam's readers may do either, and the seam's own test: a fork
+    // that fills `lib/app/erasure.ts` tests its hook in
+    // `tests/unit/lib/app/erasure.test.ts` (or `erasure.<aspect>.test.ts`), and
+    // that file has to read the real seam. Sunrise ships none for these seams.
+    const ownTest = new RegExp(
+      '^' +
+        path.join('tests', 'unit', 'lib', 'app', seam).replaceAll('\\', '\\\\') +
+        String.raw`(\.[\w-]+)?\.test\.tsx?$`
+    );
     const seamPath = String.raw`['"\`]@/lib/app/` + seam + String.raw`['"\`]`;
     const unmockRe = new RegExp(String.raw`\bvi\s*\.\s*(?:do)?[Uu]nmock\s*\(\s*` + seamPath);
     const actualRe = new RegExp(String.raw`importActual[\s\S]{0,80}?` + seamPath);
+    const restoreRe = new RegExp(
+      String.raw`\bvi\s*\.\s*(?:do)?[Mm]ock\s*\(\s*` +
+        seamPath +
+        String.raw`[\s\S]{0,120}?importOriginal`
+    );
+    const mayRead = new Set([THIS_FILE, SETUP_FILE, ...readers]);
 
     const offenders: string[] = [];
     const walk = (dir: string): void => {
@@ -615,7 +678,11 @@ describe('lib/app/ seams ship empty', () => {
         if (unmockRe.test(src)) {
           offenders.push(`${rel}: unmocks the pin instead of restoring it`);
         }
-        if (actualRe.test(src) && rel !== THIS_FILE) {
+        if (
+          (actualRe.test(src) || restoreRe.test(src)) &&
+          !mayRead.has(rel) &&
+          !ownTest.test(rel)
+        ) {
           offenders.push(`${rel}: reads the real seam past the pin`);
         }
       }
@@ -627,7 +694,7 @@ describe('lib/app/ seams ship empty', () => {
       `These test files escape the ${label}-seam pin in tests/setup.ts. A fork that ` +
         `fills lib/app/${seam}.ts would see its own values here and fail a core test ` +
         'it cannot fix — the exact class #660 is about. Re-doMock the pinned values ' +
-        'instead of unmocking, and leave importActual to this file.'
+        'instead of unmocking, and leave reading the real seam to the guards that judge it.'
     ).toEqual([]);
   });
 

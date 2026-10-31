@@ -59,7 +59,8 @@ const hooks = new Map<string, UserCreatedHook>();
 /**
  * Register a user-creation hook. Idempotent by `key` — re-registering the same
  * key replaces the prior hook (safe under HMR / repeated module imports). Call
- * at module-import time from `lib/app/user-created.ts`.
+ * it inside `initAppUserCreatedHooks()` in `lib/app/user-created.ts`, not at
+ * that module's top level, so a throw part-way through rolls back.
  */
 export function registerUserCreatedHook(key: string, hook: UserCreatedHook): void {
   hooks.set(key, hook);
