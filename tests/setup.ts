@@ -334,6 +334,44 @@ vi.mock('@/lib/app/brand', async (importOriginal) => {
 vi.mock('@/lib/app/emails', () => ({ emailOverrides: {} }));
 
 /**
+ * Pin the org-tier admin seam, the user-created seam and the erasure seam to
+ * "registers nothing", for every test file (#1125, #1139).
+ *
+ * Same class as the pins above. Each scaffold is a lazy init that a core
+ * registry runs on its first read, and a test-only reset re-arms it, so a fork
+ * that fills one has its registrations live inside the CORE suite. Measured on
+ * a fork-shaped fill of all three (orchestration closed to org admins, a
+ * user-created hook that throws as one reaching a mocked database would, an
+ * erasure cleanup hook): 40 failures across eight core files, beside the
+ * `defaults.test.ts` rows a fork is meant to fail. Five of those files failed
+ * for the closed section alone, where the issue had named three. That is the
+ * enumerating failure the brand pin describes, so these are global too.
+ *
+ * Three files judge a fork's REAL seams and restore them with their own
+ * `vi.mock(…, (importOriginal) => importOriginal())`: `defaults.test.ts`
+ * ("seams ship empty", which must be able to fail in a fork),
+ * `stale-writers.test.ts` (reads the fork's `registerStaleWriter()` calls) and
+ * `admin-tier-roster.test.ts` (judges the fork's org-tier pages). A test that
+ * needs a seam filled mocks it itself, as `org-tier-admin-pages.test.ts`,
+ * `user-created-hooks.test.ts` and `erasure-hooks-seam.test.ts` do.
+ */
+vi.mock('@/lib/app/admin-tier', () => ({
+  initAppOrgTierAdminPages: () => {
+    // Opens no page and closes no section: Sunrise's shipped default.
+  },
+}));
+vi.mock('@/lib/app/user-created', () => ({
+  initAppUserCreatedHooks: () => {
+    // Registers no hook: Sunrise's shipped default.
+  },
+}));
+vi.mock('@/lib/app/erasure', () => ({
+  initAppErasureHooks: () => {
+    // Registers no hook and declares no writer: Sunrise's shipped default.
+  },
+}));
+
+/**
  * Mock Analytics
  *
  * Analytics hooks require AnalyticsProvider context.

@@ -44,6 +44,9 @@ import { describe, it, expect, vi } from 'vitest';
 // A fork's erasure hooks may import the Prisma client at module scope; this
 // file never runs them.
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
+// tests/setup.ts pins the erasure seam to empty for every file (#1139); this
+// one must read the fork's real `registerStaleWriter()` calls.
+vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
 
 const { SCRUBBED_COLUMNS, STALE_WRITERS } = await import('@/lib/privacy/stale-writers');
 const { getAppStaleWriters } = await import('@/lib/privacy/erasure-hooks');

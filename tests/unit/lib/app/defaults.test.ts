@@ -65,7 +65,7 @@ import {
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { appOwnModules } from '@/lib/app/own-modules';
 import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
-import { initAppUserCreatedHooks } from '@/lib/app/user-created';
+import * as userCreatedHooks from '@/lib/auth/user-created-hooks';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
   getAppSubjectSources,
@@ -129,6 +129,14 @@ import {
   hasAppAuthorizationPolicy,
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
+
+// tests/setup.ts pins these three seams for every file (#1125, #1139). This
+// file asserts what Sunrise really ships, so it puts the real scaffolds back:
+// their rows below read them through the registries' own lazy wiring, which a
+// per-row `importActual` would bypass.
+vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/user-created', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -382,7 +390,26 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   {
     seam: 'lib/app/user-created.ts',
     risk: 'a stray hook would run on every signup on every install',
-    assert: () => expect(initAppUserCreatedHooks()).toBeUndefined(),
+    assert: async () => {
+      // The registry has no reader, and a hook need leave no trace when it
+      // runs, so watch for the registration itself. A filled init returns
+      // undefined too, which is all this row used to assert (#1139).
+      userCreatedHooks.__resetUserCreatedHooksForTests();
+      const register = vi.spyOn(userCreatedHooks, 'registerUserCreatedHook');
+      try {
+        // Dispatch runs the lazy init, so this exercises the REAL seam.
+        await userCreatedHooks.dispatchUserCreated({
+          userId: 'u1',
+          email: 'new@example.com',
+          name: 'New',
+          signupMethod: 'email',
+          viaInvitation: false,
+        });
+        expect(register).not.toHaveBeenCalled();
+      } finally {
+        register.mockRestore();
+      }
+    },
   },
   {
     seam: 'lib/app/mcp-resources.ts',

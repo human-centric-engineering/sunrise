@@ -23,7 +23,7 @@
  * admin may not open — so fix that entry rather than this file. Pin your
  * values in `tests/unit/lib/app/defaults.test.ts`.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
@@ -49,6 +49,10 @@ import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
 import { defaultOrgAdminLanding, orgAdminLandingProblem } from '@/lib/auth/admin-landing';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
+
+// tests/setup.ts pins the org-tier admin seam to empty for every file (#1125);
+// this one judges the fork's real pages, as the FORK NOTE above promises.
+vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
 
 function tracked(dir: string): string[] {
   return execSync(`git ls-files --cached --others --exclude-standard -- ${dir}`, {
