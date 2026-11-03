@@ -18,6 +18,23 @@ release process.
 
 ### Added
 
+- **Waitlist (§125, in progress — joining only)**: a new seam,
+  `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
+  `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes
+  answer 404. Filled in, it declares the form's extra fields, named lists, the
+  consent text's version and a `screen()` check, and turns on
+  `GET`/`POST /api/v1/waitlist`, the `<Waitlist />` and `<WaitlistForm>`
+  components (`components/waitlist/`), and the Art. 15 / 17 and org-export
+  wiring. Two new tenant-owned models, `WaitlistEntry` and `WaitlistListState`
+  (one migration, with their `org_isolation` policies). **At
+  `TENANCY_MODE=multi` the migration also enables and forces RLS on the two new
+  tables**, because the install's switch is already on; nothing to re-run. A new
+  per-flow sub-cap `waitlistLimiter` (`RATE_LIMIT_WAITLIST`, 5/hour per IP) and a
+  `TenantContextSource` value, `'public-form'`. A fork filling the seam fails
+  its row in `tests/unit/lib/app/defaults.test.ts`, as expected: pin your
+  value. Confirmation, the admin page and invites follow; don't switch it on in
+  production until confirmation lands. Guide: `.context/waitlist/overview.md`.
+
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
   (0 first), and an opaque id for this attempt. Set by the `tool_call` and

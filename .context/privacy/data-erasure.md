@@ -378,12 +378,22 @@ transaction):
    address). Where verification is required (the production default) the only unverified
    accounts are sign-ups that never clicked their link — those, and every
    account where verification is off, are the ones this affects.
+
+   **Waitlist entries (§125) follow the same rule**, through
+   `waitlistEntriesOf()` in `lib/waitlist/subject.ts`: an entry linked to the
+   account (`userId`, set when a waitlist invitation is redeemed) is deleted,
+   and so is one under the address once the account has verified it. An
+   unverified account leaves the address's entries in place, counted in a
+   `waitlistEntriesLeft` warning. Entries are tenant-owned and may sit in
+   several orgs; at `multi` the step runs in the system scope `eraseUser()`
+   already enters.
    Deleted rather than anonymised, because the export already hands these rows
    over as the subject's personal data. It is a system model, so no org scope
    is needed at either tenancy mode. It is matched on the account's current
    address only: messages sent from an address the person used before are not
    linked to them by anything. See the export doc's
    [Tables With No `User` FK](./data-export.md#tables-with-no-user-fk).
+
 5. **Redact their address from webhook deliveries** (§109 t-739) — described
    [above](#erase-vs-retain-model): an email-channel delivery sent to the
    subject's verified address keeps the row and loses the address.
