@@ -576,27 +576,24 @@ export async function userCreateAfterHook(
     });
   }
 
-  // Check if this is an invitation acceptance (for password flow)
-  let isPasswordInvitation = false;
-  let passwordInvitation: InvitationMetadata | null = null;
-
-  try {
-    if (!isOAuthSignup) {
-      // Check for password invitation acceptance (non-expired invitation)
-      const invitation = await getValidInvitation(user.email);
-
-      if (invitation) {
-        isPasswordInvitation = true;
-        passwordInvitation = invitation.metadata;
-        logger.info('Detected password invitation acceptance', {
-          userId: user.id,
-          email: user.email,
-        });
-      }
-    }
-  } catch (error) {
-    // Log but don't fail user creation
-    logger.error('Error processing invitation in database hook', error, {
+  // Whether this signup redeemed an invitation, from the two signals that
+  // prove a token was presented (#1136): the acceptance the before hook
+  // recorded (the OAuth path, which consumed the token, and accept-invite),
+  // and the accept-invite route's own context, which it enters only after
+  // validating the token. NOT "an invitation is pending for this address": a
+  // public email/password signup for an invited address presented no token,
+  // and reporting it as invited let a fork grant that invitation's roles to
+  // whoever claimed the address first.
+  const viaInvitation = (await wasInvitationAccepted().catch(() => false)) || isInvitedSignup();
+  // Which one: recorded by the before hook, which on the Google path held the
+  // only copy; accept-invite's own metadata otherwise.
+  const accepted = invitedSignupInvitation();
+  const redeemed = viaInvitation
+    ? ((await getRedeemedInvitation().catch(() => null)) ??
+      (accepted ? redeemedInvitation(accepted) : null))
+    : null;
+  if (viaInvitation && !isOAuthSignup) {
+    logger.info('Detected password invitation acceptance', {
       userId: user.id,
       email: user.email,
     });
@@ -605,14 +602,14 @@ export async function userCreateAfterHook(
   // Determine if welcome email should be sent immediately
   const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
 
-  const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
+  const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || viaInvitation;
 
   if (shouldSendWelcomeNow) {
     logger.info('Sending welcome email to new user', {
       userId: user.id,
       userEmail: user.email,
       signupMethod,
-      isInvitation: isPasswordInvitation,
+      isInvitation: viaInvitation,
     });
 
     await sendEmail({
@@ -644,16 +641,6 @@ export async function userCreateAfterHook(
   // email decided. Never throws: `dispatchUserCreated` logs and swallows a
   // failing hook, because the user row already exists by this point and failing
   // here would report a successful signup to the caller as an error.
-  // The OAuth before hook consumed its invitation token, so the lookup above
-  // cannot see it; it recorded the acceptance on the request state (#688).
-  const viaInvitation = isPasswordInvitation || (await wasInvitationAccepted().catch(() => false));
-  // Which one (#1136): recorded by the before hook, which on the Google path
-  // held the only copy; on the password path the token outlives the account,
-  // so the record read above is the fallback.
-  const redeemed = viaInvitation
-    ? ((await getRedeemedInvitation().catch(() => null)) ??
-      (passwordInvitation ? redeemedInvitation(passwordInvitation) : null))
-    : null;
   await dispatchUserCreated({
     userId: user.id,
     email: user.email,
