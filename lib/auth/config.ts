@@ -818,19 +818,19 @@ export async function sendVerificationEmailHook({
   // that assumes "this address is being verified for the first time by its
   // owner-to-be" is reading a different situation than it thinks.
   //
-  // Concretely, the invitation skip immediately below would strand the change:
-  // an existing user moving to an address that happens to hold a pending
-  // invitation would get no verification email, no error, and an account stuck
-  // mid-change. The invitation skip exists for signup (where the accept-invite
+  // Concretely, the invitation skip immediately below is about signup: an
+  // existing user moving to a new address must get a verification email for
+  // it, whatever else is true of that address. The invitation skip exists for signup (where the accept-invite
   // route marks the address verified itself), and a change is not that.
   const emailChange = await parseEmailChangeToken(token);
 
   if (!emailChange) {
-    // Check if this is an invitation acceptance - if so, skip verification email
-    // The invitation acceptance flow marks email as verified immediately
-    const invitation = await getValidInvitation(user.email);
-
-    if (invitation) {
+    // Skip the verification email for accept-invite, which marks the address
+    // verified itself, having validated the token. Its own context says so —
+    // not "an invitation is pending for this address": a public signup for an
+    // invited address presented no token and must be verified like any other
+    // (#1136).
+    if (isInvitedSignup()) {
       logger.info('Skipping verification email for invitation acceptance', {
         userId: user.id,
         email: user.email,
