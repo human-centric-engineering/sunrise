@@ -185,11 +185,11 @@ describe('rate-limit-policy', () => {
     });
 
     it("the waitlist paths use the 'api' tier with 'ip' keying, and only they do", () => {
-      // Arrange — join, confirm and leave are anonymous public routes (§125);
+      // Arrange — the waitlist routes are anonymous public routes (§125);
       // a session-user key would put every visitor in the IP fallback bucket
       // anyway, but saying so keeps the keying explicit. The matcher must not
       // catch a sibling that merely shares the prefix.
-      const waitlist = ['/api/v1/waitlist', '/api/v1/waitlist/confirm', '/api/v1/waitlist?x=1'];
+      const waitlist = ['/api/v1/waitlist', '/api/v1/waitlist/confirm'];
 
       for (const pathname of waitlist) {
         // Act

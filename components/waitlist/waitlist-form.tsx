@@ -241,6 +241,11 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
                       typeof control.value === 'string' && control.value ? control.value : undefined
                     }
                     onValueChange={control.onChange}
+                    // Closing the menu is the select's blur: it marks the field
+                    // touched, as the text fields' blur does under onTouched.
+                    onOpenChange={(open) => {
+                      if (!open) control.onBlur();
+                    }}
                     disabled={isLoading}
                   >
                     <SelectTrigger id={id}>

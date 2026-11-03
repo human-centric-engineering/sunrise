@@ -122,6 +122,23 @@ describe('WaitlistForm', () => {
     Object.defineProperty(document, 'referrer', { value: '', configurable: true });
   });
 
+  it('an optional select left unchosen does not block the submit', async () => {
+    const user = userEvent.setup();
+    render(
+      <WaitlistForm
+        fields={[
+          { key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] },
+        ]}
+        list="default"
+      />
+    );
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+  });
+
   it('a required select left unchosen blocks the submit', async () => {
     const user = userEvent.setup();
     render(

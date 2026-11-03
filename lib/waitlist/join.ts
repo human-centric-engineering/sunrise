@@ -173,8 +173,15 @@ export async function joinWaitlist(
 
     // Confirmed: fill only what is empty. Conditional on the row being as read,
     // so two concurrent repeats cannot both "fill" the same answer.
+    //
+    // The repeat's screen() verdict is deliberately not applied here. The
+    // owner has proved the address; a stranger re-submitting it from a
+    // suspicious IP must not be able to flag the owner's entry and so hold it
+    // out of bulk invites. Before confirmation nothing is proved, so a flag
+    // from any submission stands (above).
     const stored = storedAnswers(existing.details);
-    const added = Object.entries(join.details).filter(([k]) => stored[k] === undefined);
+    // Own keys only: a field keyed `constructor` must not read the prototype.
+    const added = Object.entries(join.details).filter(([k]) => !Object.hasOwn(stored, k));
     const fillName = existing.name === null && join.name !== null;
     if (added.length === 0 && !fillName) return 'unchanged';
     const { count } = await prisma.waitlistEntry.updateMany({

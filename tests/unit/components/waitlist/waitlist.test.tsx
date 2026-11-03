@@ -10,12 +10,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockServerFetch, mockLogger } = vi.hoisted(() => ({
+const { mockServerFetch, mockLogger, incoming } = vi.hoisted(() => ({
   mockServerFetch: vi.fn(),
+  incoming: { headers: new Headers() },
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('@/lib/api/server-fetch', () => ({ serverFetch: mockServerFetch }));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
+vi.mock('next/headers', () => ({ headers: () => Promise.resolve(incoming.headers) }));
 
 import { Waitlist } from '@/components/waitlist/waitlist';
 
@@ -33,13 +35,36 @@ function answer(data: unknown, status = 200) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  incoming.headers = new Headers();
 });
 
 describe('<Waitlist />', () => {
-  it('asks the public waitlist API', async () => {
+  it('asks the public waitlist API as the visitor, so the IP-keyed limit is theirs', async () => {
+    // Arrange — the visitor's request reached the page through a proxy
+    incoming.headers = new Headers({ 'x-forwarded-for': '203.0.113.7, 10.0.0.1', cookie: 'x=1' });
     answer({ lists: [{ key: 'default', open: true }], fields: [] });
+
+    // Act
     await Waitlist({});
-    expect(mockServerFetch).toHaveBeenCalledWith('/api/v1/waitlist');
+
+    // Assert — the address headers, and nothing else of the visitor's
+    expect(mockServerFetch).toHaveBeenCalledWith('/api/v1/waitlist', {
+      headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
+    });
+  });
+
+  it('renders nothing and logs when the API cannot be reached', async () => {
+    mockServerFetch.mockRejectedValue(new TypeError('fetch failed'));
+    expect(await Waitlist({})).toBeNull();
+    expect(mockLogger.error).toHaveBeenCalledWith('<Waitlist> could not reach the waitlist API', {
+      error: 'fetch failed',
+    });
+  });
+
+  it('renders nothing for a 200 that is not JSON (an HTML proxy page)', async () => {
+    mockServerFetch.mockResolvedValue(new Response('<html>oops</html>', { status: 200 }));
+    expect(await Waitlist({})).toBeNull();
+    expect(mockLogger.error).toHaveBeenCalled();
   });
 
   it('renders nothing, and logs nothing, when the app has no waitlist (404)', async () => {

@@ -293,11 +293,12 @@ export const RATE_LIMIT_POLICY: readonly RateLimitRule[] = [
     tier: 'api',
     key: 'ip',
   },
-  // Waitlist join, confirm and leave (§125) are unauthenticated public
-  // routes. Per-flow waitlistLimiter inside the join handler enforces the
-  // tight 5/hour cap; the section tier is the defense-in-depth bound.
+  // The public waitlist routes (§125) are unauthenticated. Per-flow
+  // waitlistLimiter inside the join handler enforces the tight 5/hour cap;
+  // the section tier is the defense-in-depth bound. Matched on the pathname,
+  // so the segment boundary is all it needs.
   {
-    match: /^\/api\/v1\/waitlist(\/|$|\?)/,
+    match: /^\/api\/v1\/waitlist(\/|$)/,
     tier: 'api',
     key: 'ip',
   },

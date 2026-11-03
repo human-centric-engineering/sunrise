@@ -201,11 +201,8 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   // The settings row is cached in-process (#442); a list just rewritten should
   // not be served stale to the settings page.
   if (receipt.escalationListsChanged > 0) invalidateOrchestrationSettingsCache();
-  // An unverified address matched nothing, so contact messages sent under it
-  // are still there, and only a person can decide whether they were this
-  // subject's. The address itself is gone with the user row and is not
-  // logged; the operator finds the rows through the receipt's
-  // `subjectEmailHash`, which hashes the same trimmed, lower-cased form.
+  // Waitlist entries under an unverified address: the same case as the
+  // contact messages below, for the same reason.
   if (receipt.waitlistEntriesLeft > 0) {
     logger.warn('Waitlist entries not erased: the account never verified its address', {
       userId,
@@ -213,6 +210,11 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       waitlistEntriesLeft: receipt.waitlistEntriesLeft,
     });
   }
+  // An unverified address matched nothing, so contact messages sent under it
+  // are still there, and only a person can decide whether they were this
+  // subject's. The address itself is gone with the user row and is not
+  // logged; the operator finds the rows through the receipt's
+  // `subjectEmailHash`, which hashes the same trimmed, lower-cased form.
   if (receipt.contactSubmissionsLeft > 0) {
     logger.warn('Contact messages not erased: the account never verified its address', {
       userId,

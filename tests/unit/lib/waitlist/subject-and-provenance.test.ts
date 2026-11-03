@@ -130,6 +130,18 @@ describe('buildWaitlistJoinSchema', () => {
     ).toBe(false);
   });
 
+  it('an optional select left unanswered is no answer, not an invalid choice', () => {
+    const withSelect = buildWaitlistJoinSchema(
+      [{ key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] }],
+      ['default']
+    );
+    expect(withSelect.parse({ email: 'a@b.com', details: { role: '' } }).details).toEqual({});
+    expect(withSelect.parse({ email: 'a@b.com', details: {} }).details).toEqual({});
+    expect(withSelect.safeParse({ email: 'a@b.com', details: { role: 'astronaut' } }).success).toBe(
+      false
+    );
+  });
+
   it('caps attribution values', () => {
     expect(
       schema.safeParse({ email: 'a@b.com', details: { role: 'x' }, utm_source: 'u'.repeat(101) })

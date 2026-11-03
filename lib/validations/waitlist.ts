@@ -45,7 +45,10 @@ function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> 
     const choice = z.string().refine((v) => values.includes(v), {
       message: `Choose one of the options for ${field.label}`,
     });
-    return field.required ? choice : choice.optional();
+    if (field.required) return choice;
+    // Unanswered is '' from the form (every field defaults to it) or absent
+    // from an API caller; either is no answer, not an invalid choice.
+    return z.preprocess((v) => (v === '' ? undefined : v), choice.optional());
   }
   const max = field.maxLength ?? WAITLIST_FIELD_MAX_LENGTH[field.kind];
   const text = z.string().trim().max(max, `${field.label} must be ${max} characters or fewer`);
