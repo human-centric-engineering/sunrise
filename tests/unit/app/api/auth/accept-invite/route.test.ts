@@ -45,9 +45,12 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
   validateInvitationToken: vi.fn(),
   deleteInvitationToken: vi.fn(),
+  // The real hash: the route matches the row by the token presented (#1136).
+  hashInvitationToken: (await importOriginal<typeof import('@/lib/utils/invitation-token')>())
+    .hashInvitationToken,
 }));
 
 vi.mock('@/lib/auth/config', () => ({
@@ -199,8 +202,16 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Verify invitation metadata was fetched
+      // From the row the token was validated against, matched by that token:
+      // not the newest row, which a resend in between would swap, nor an
+      // expired invitation lying beside it (#1136).
+      const { createHash } = await import('node:crypto');
       expect(prisma.verification.findFirst).toHaveBeenCalledWith({
-        where: { identifier: `invitation:${validInvitationData.email}` },
+        where: {
+          identifier: `invitation:${validInvitationData.email}`,
+          value: createHash('sha256').update(validInvitationData.token).digest('hex'),
+          expiresAt: { gt: expect.any(Date) },
+        },
       });
 
       // Verify better-auth signup was called with correct body

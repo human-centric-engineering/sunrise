@@ -111,10 +111,15 @@ export async function membershipForNewUser(
   invitation: AcceptedInvitation | null,
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<InitialMembership> {
-  const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
+  const orgId = invitedOrgId(invitation);
   const existingMembers =
     orgId === INSTALL_ORG_ID ? null : await db.orgMembership.count({ where: { orgId } });
   return membershipGiven(user, invitation, existingMembers);
+}
+
+/** The org an invitation admits its invitee to: the one it names, else the install org. */
+export function invitedOrgId(invitation: AcceptedInvitation | null): string {
+  return invitation?.orgId ?? INSTALL_ORG_ID;
 }
 
 /**
@@ -129,7 +134,7 @@ function membershipGiven(
   invitation: AcceptedInvitation | null,
   existingMembers: number | null
 ): InitialMembership {
-  const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
+  const orgId = invitedOrgId(invitation);
   if (orgId === INSTALL_ORG_ID) return installMembershipForNewUser(user, invitation);
   const role = existingMembers === 0 ? ORG_OWNER_ROLE : (invitation?.orgRole ?? DEFAULT_ORG_ROLE);
   return { orgId, role };

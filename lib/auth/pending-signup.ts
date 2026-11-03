@@ -33,6 +33,7 @@
 import { defineRequestState, hasRequestState } from '@better-auth/core/context';
 import { logger } from '@/lib/logging';
 import type { InitialMembership } from '@/lib/tenancy/membership';
+import type { RedeemedInvitation } from '@/lib/auth/user-created-hooks';
 
 /** What the before hook records for the hooks that follow it. */
 export interface PendingSignup {
@@ -73,17 +74,37 @@ export async function getPendingSignup(): Promise<PendingSignup | null> {
  */
 const invitationAcceptedState = defineRequestState<boolean>(() => false);
 
-/** Record that this request's signup redeemed an invitation. */
-export async function setInvitationAccepted(): Promise<void> {
+/**
+ * Which invitation it redeemed (#1136), when the before hook could read it:
+ * on the Google path the hook consumes the token, and with it the only copy.
+ */
+const redeemedInvitationState = defineRequestState<RedeemedInvitation | null>(() => null);
+
+/**
+ * Record that this request's signup redeemed an invitation, and which one
+ * when it is known.
+ */
+export async function setInvitationAccepted(
+  redeemed: RedeemedInvitation | null = null
+): Promise<void> {
   if (!(await hasRequestState())) {
     logger.warn('setInvitationAccepted called outside a better-auth request; nothing recorded');
     return;
   }
   await invitationAcceptedState.set(true);
+  // Set even when null, so a later acceptance without one cannot report an
+  // earlier one.
+  await redeemedInvitationState.set(redeemed);
 }
 
 /** Whether this request's signup redeemed an invitation; `false` outside a request. */
 export async function wasInvitationAccepted(): Promise<boolean> {
   if (!(await hasRequestState())) return false;
   return invitationAcceptedState.get();
+}
+
+/** Which invitation this request's signup redeemed, when known; `null` outside a request. */
+export async function getRedeemedInvitation(): Promise<RedeemedInvitation | null> {
+  if (!(await hasRequestState())) return null;
+  return redeemedInvitationState.get();
 }

@@ -438,7 +438,8 @@ databaseHooks: {
 
       // after hook: writes the org membership the before hook decided
       // (carried on better-auth's request state — lib/auth/pending-signup.ts),
-      // then sets preferences, detects password invitations, sends welcome email
+      // then sets preferences, works out whether an invitation was redeemed,
+      // sends the welcome email
       // Does NOT handle OAuth invitation tokens — those are fully processed in the before hook.
       after: async (user, ctx) => {
         const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
@@ -449,17 +450,16 @@ databaseHooks: {
           data: { preferences: DEFAULT_USER_PREFERENCES },
         });
 
-        // Detect password invitation acceptance
-        let isPasswordInvitation = false;
-        if (!isOAuthSignup) {
-          const invitation = await getValidInvitation(user.email);
-          if (invitation) isPasswordInvitation = true;
-        }
+        // Was an invitation redeemed? Only token-proven signals: the
+        // acceptance the before hook recorded, or accept-invite's context —
+        // never a lookup by address (#1136).
+        const viaInvitation =
+          (await wasInvitationAccepted().catch(() => false)) || isInvitedSignup();
 
         // Send welcome email (OAuth and password-invitation users: immediately;
         // password signup with verification enabled: after email verification)
         const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
+        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || viaInvitation;
         if (shouldSendWelcomeNow) {
           await sendEmail({
             to: user.email,

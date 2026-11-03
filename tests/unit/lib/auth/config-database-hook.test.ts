@@ -70,6 +70,7 @@ const mockPendingSignup = vi.hoisted(() => ({
   getPendingSignup: vi.fn(),
   setInvitationAccepted: vi.fn(),
   wasInvitationAccepted: vi.fn(),
+  getRedeemedInvitation: vi.fn(),
 }));
 vi.mock('@/lib/auth/pending-signup', () => mockPendingSignup);
 
@@ -360,6 +361,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     // after hook takes its fallback arm.
     mockPendingSignup.getPendingSignup.mockResolvedValue(null);
     mockPendingSignup.wasInvitationAccepted.mockResolvedValue(false);
+    mockPendingSignup.getRedeemedInvitation.mockResolvedValue(null);
     mockPendingSignup.setPendingSignup.mockResolvedValue(undefined);
   });
 
@@ -781,6 +783,57 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
+      it('an accept-invite signup that is also the first human keeps its invitation (#1136)', async () => {
+        // The membership and the invitation reported to the seam must agree,
+        // so the bootstrap branch records the invitation too.
+        const mockUser = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2026-11-01T10:00:00.000Z',
+          orgId: 'org-acme',
+        };
+
+        const result = await runInvitedSignup(
+          () => userCreateBeforeHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(result.data.role).toBe('ADMIN');
+        expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledWith({
+          invitedAt: '2026-11-01T10:00:00.000Z',
+          invitedBy: 'admin-id',
+          orgId: 'org-acme',
+        });
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith(
+          expect.objectContaining({ membership: expect.objectContaining({ orgId: 'org-acme' }) })
+        );
+      });
+
+      it('an accept-invite first human invited into the install org owns it, as the promotion says', async () => {
+        // The role is the promotion's, not the invitation's USER: the first
+        // admin must own the install org (#1136 review round 3).
+        const mockUser = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2026-11-01T10:00:00.000Z',
+        };
+
+        await runInvitedSignup(
+          () => userCreateBeforeHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
+        });
+      });
+
       it('promotes the first human to ADMIN on OAuth signup with no invitation', async () => {
         // Arrange: OAuth first signup, no invitation state, empty database
         const mockUser = makeUserCreateData({
@@ -1020,8 +1073,14 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       await userCreateBeforeHook(user, { path: '/api/auth/callback/google' });
 
       // The OAuth before hook consumed the token, so it records the
-      // acceptance for the after hook (#688).
+      // acceptance for the after hook (#688), and which invitation it was:
+      // the token is gone after this (#1136).
       expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledTimes(1);
+      expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledWith({
+        invitedAt: expect.any(String),
+        invitedBy: 'admin-id',
+        orgId: OTHER_ORG,
+      });
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
@@ -1083,6 +1142,27 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+      });
+    });
+
+    it('the password path records which invitation it redeemed, in the install org when it named none (#1136)', async () => {
+      const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+      const metadata = {
+        name: 'Invitee',
+        role: 'USER',
+        invitedBy: 'admin-id',
+        invitedAt: '2026-11-01T10:00:00.000Z',
+      };
+
+      await runInvitedSignup(
+        () => userCreateBeforeHook(user, { path: '/sign-up/email' }),
+        metadata
+      );
+
+      expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledWith({
+        invitedAt: '2026-11-01T10:00:00.000Z',
+        invitedBy: 'admin-id',
+        orgId: INSTALL_ORG_ID,
       });
     });
 
@@ -1898,6 +1978,143 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           expect.objectContaining({ signupMethod: 'oauth', viaInvitation: false }),
         ]);
       });
+
+      // ── Which invitation (#1136) ────────────────────────────────────────
+      const REDEEMED = {
+        invitedAt: '2026-11-01T10:00:00.000Z',
+        invitedBy: 'admin-id',
+        orgId: 'org-acme',
+      };
+
+      it('names the invitation an OAuth signup redeemed, from the request state', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(REDEEMED);
+        const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(seen).toEqual([
+          expect.objectContaining({ viaInvitation: true, invitation: REDEEMED }),
+        ]);
+      });
+
+      it('names a password signup’s invitation from accept-invite’s own context when the request state has none', async () => {
+        // The route validated the token, then ran the signup inside
+        // `runInvitedSignup`; the install org when the invitation named none.
+        const mockUser = makeUserCreateData({ id: 'pw-invitee', email: 'p@example.com' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: REDEEMED.invitedAt,
+        };
+
+        await runInvitedSignup(
+          () => userCreateAfterHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(seen).toEqual([
+          expect.objectContaining({
+            signupMethod: 'email',
+            viaInvitation: true,
+            invitation: { ...REDEEMED, orgId: INSTALL_ORG_ID },
+          }),
+        ]);
+      });
+
+      it('prefers the request state over accept-invite’s context', async () => {
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(REDEEMED);
+        const mockUser = makeUserCreateData({ id: 'pw-invitee', email: 'p@example.com' });
+        const metadata = { name: 'x', role: 'USER', invitedBy: 'other', invitedAt: 'later' };
+
+        await runInvitedSignup(
+          () => userCreateAfterHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(seen[0]?.invitation).toEqual(REDEEMED);
+      });
+
+      it('does not report a public signup for an invited address as invited (#1136 security review)', async () => {
+        // An invitation is pending for this address, but this signup came
+        // through the public sign-up endpoint and presented no token. The
+        // pending invitation is arranged so a reintroduced lookup by address
+        // would find it and fail this test. Reported
+        // as invited, a fork would grant that invitation's roles to whoever
+        // claimed the address first.
+        mocks.getValidInvitation.mockResolvedValue({
+          email: 'victim@example.com',
+          metadata: {
+            name: 'V',
+            role: 'USER',
+            invitedBy: 'admin-id',
+            invitedAt: REDEEMED.invitedAt,
+          },
+          expiresAt: new Date(Date.now() + 86400000),
+          createdAt: new Date(),
+        });
+        mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+        const mockUser = makeUserCreateData({ id: 'claimer', email: 'victim@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/sign-up/email' });
+
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
+        // Nor does it skip the verification gate for the welcome email.
+        expect(mocks.logger.info).toHaveBeenCalledWith(
+          'Skipping welcome email (will send after email verification)',
+          expect.any(Object)
+        );
+      });
+
+      it('names no invitation for an uninvited signup, even if stale state says one', async () => {
+        // Only an accepted invitation is reported: viaInvitation false wins.
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(REDEEMED);
+        const mockUser = makeUserCreateData({ id: 'stranger', email: 's@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
+      });
+
+      it('logs a failure to read whether the signup redeemed an invitation', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockRejectedValue(new Error('state gone'));
+        const mockUser = makeUserCreateData({ id: 'oauth-user', email: 'o@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to read whether a new user redeemed an invitation',
+          expect.any(Error),
+          { userId: 'oauth-user' }
+        );
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
+      });
+
+      it('logs a failure to read which invitation was redeemed, rather than pass it off as unknown', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        mockPendingSignup.getRedeemedInvitation.mockRejectedValue(new Error('state gone'));
+        const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to read which invitation a new user redeemed',
+          expect.any(Error),
+          { userId: 'oauth-invitee' }
+        );
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: true, invitation: null })]);
+      });
+
+      it('reports an invitation it cannot name as viaInvitation with a null invitation', async () => {
+        // A valid token whose record could not be read: invited, but unnamed.
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: true, invitation: null })]);
+      });
     });
 
     describe('Welcome email sending', () => {
@@ -2064,42 +2281,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         });
       });
 
-      it('should send welcome email even when invitation processing fails (password signup)', async () => {
-        // Invitation processing for password signups calls getValidInvitation — verify
-        // a failure there doesn't block the welcome email.
-        mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
-
-        const mockUser = makeUserCreateData({
-          id: 'invitation-fail-user',
-          email: 'invfail@example.com',
-        });
-
-        mocks.getValidInvitation.mockRejectedValue(new Error('Database error'));
-
-        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
-
-        // Act
-        await userCreateAfterHook(mockUser, ctx);
-
-        // Assert: invitation error was logged
-        expect(mocks.logger.error).toHaveBeenCalledWith(
-          'Error processing invitation in database hook',
-          expect.any(Error),
-          expect.any(Object)
-        );
-
-        // Assert: welcome email still sent
-        expect(mocks.sendEmail).toHaveBeenCalledWith(
-          expect.objectContaining({
-            to: mockUser.email,
-            subject: 'Welcome to Aurora Labs',
-          })
-        );
-      });
-
       it('should send welcome email immediately for password invitation acceptance even when REQUIRE_EMAIL_VERIFICATION is true', async () => {
         // Arrange: verification required globally, but this is an invited password user.
-        // The isPasswordInvitation disjunct in shouldSendWelcomeNow overrides the
+        // The viaInvitation disjunct in shouldSendWelcomeNow overrides the
         // verification gate — invited users accept via accept-invite route which marks
         // email verified, so we must not defer the welcome email.
         mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
@@ -2110,24 +2294,18 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           name: 'Invited User',
         });
 
-        // Arrange: getValidInvitation returns a non-null invitation (password invitation accepted)
-        const mockInvitation = {
-          email: 'invited@example.com',
-          expiresAt: new Date(Date.now() + 86400000),
-          createdAt: new Date(),
-          metadata: {
-            name: 'Invited User',
-            role: 'USER',
-            invitedBy: 'admin@example.com',
-            invitedAt: new Date().toISOString(),
-          },
+        // The accept-invite route runs the signup inside `runInvitedSignup`,
+        // having validated the token: that is what marks it invited (#1136).
+        const metadata = {
+          name: 'Invited User',
+          role: 'USER',
+          invitedBy: 'admin@example.com',
+          invitedAt: new Date().toISOString(),
         };
-        mocks.getValidInvitation.mockResolvedValue(mockInvitation);
-
         const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
 
         // Act
-        await userCreateAfterHook(mockUser, ctx);
+        await runInvitedSignup(() => userCreateAfterHook(mockUser, ctx), metadata);
 
         // Assert: 'Detected password invitation acceptance' was logged with userId + email
         expect(mocks.logger.info).toHaveBeenCalledWith('Detected password invitation acceptance', {

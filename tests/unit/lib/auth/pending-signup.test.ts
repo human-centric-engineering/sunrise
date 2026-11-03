@@ -16,6 +16,7 @@ vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
 import {
   getPendingSignup,
+  getRedeemedInvitation,
   setInvitationAccepted,
   setPendingSignup,
   wasInvitationAccepted,
@@ -100,5 +101,44 @@ describe('invitation accepted (#688)', () => {
     const other = await runWithRequestState(new WeakMap(), () => wasInvitationAccepted());
     expect(seen).toEqual({ accepted: true, pending: null });
     expect(other).toBe(false);
+  });
+});
+
+describe('which invitation was redeemed (#1136)', () => {
+  const redeemed = { invitedAt: '2026-11-01T10:00:00.000Z', invitedBy: 'admin-id', orgId: 'org-a' };
+
+  it('reads null outside a better-auth request', async () => {
+    await expect(getRedeemedInvitation()).resolves.toBeNull();
+  });
+
+  it('carries the invitation set with the acceptance to a reader on the same request', async () => {
+    await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted(redeemed);
+      await expect(wasInvitationAccepted()).resolves.toBe(true);
+      await expect(getRedeemedInvitation()).resolves.toEqual(redeemed);
+    });
+  });
+
+  it('records the acceptance alone when the invitation is not known', async () => {
+    await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted();
+      await expect(wasInvitationAccepted()).resolves.toBe(true);
+      await expect(getRedeemedInvitation()).resolves.toBeNull();
+    });
+  });
+
+  it('a later acceptance with no invitation clears an earlier one on the same request', async () => {
+    await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted(redeemed);
+      await setInvitationAccepted();
+      await expect(getRedeemedInvitation()).resolves.toBeNull();
+    });
+  });
+
+  it('does not leak to another request', async () => {
+    await runWithRequestState(new WeakMap(), () => setInvitationAccepted(redeemed));
+    await runWithRequestState(new WeakMap(), async () => {
+      await expect(getRedeemedInvitation()).resolves.toBeNull();
+    });
   });
 });

@@ -35,6 +35,10 @@ const IDENTIFIER_PREFIX = INVITATION_IDENTIFIER_PREFIX; // Prefix for invitation
  * @param token - The plain text token to hash
  * @returns The hashed token as a hex string
  */
+export function hashInvitationToken(token: string): string {
+  return hashToken(token);
+}
+
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }

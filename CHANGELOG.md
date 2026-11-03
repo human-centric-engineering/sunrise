@@ -91,6 +91,13 @@ release process.
 
 ### Changed
 
+- **The user-created seam says which invitation a signup redeemed.**
+  `UserCreatedContext` gains `invitation: { invitedAt, invitedBy, orgId } |
+  null` (`RedeemedInvitation`, `lib/auth/user-created-hooks.ts`), on both the
+  password and the Google path, where the token is consumed before the account
+  exists. `orgId` is the install org when the invitation named none.
+  **Breaking for code that builds a `UserCreatedContext` by hand** (a fork's
+  tests, say): add `invitation: null` (#1136, t-973).
 - **`StaleSaveNotice` is now red and moves into view** — it is the stale
   variant of `<SaveError>`, with the same props, Reload and Copy my changes.
   `StaleSaveNoticeProps` is now an alias of `StaleSaveProps` from
@@ -164,6 +171,24 @@ release process.
   accepting uploads. It now writes them. **Forks:** a switch you turned off
   was never stored, so Settings shows it on and uploads are still allowed. If
   you meant it off, turn it off again and save after this merge (t-963).
+
+### Security
+
+- **The user-created seam reported a public signup for an invited address as
+  invited.** On the email/password path `viaInvitation` was true whenever an
+  invitation was pending for the address, without a token being presented, so
+  under `SIGNUP_MODE=open` anyone who signed up first with an invited address
+  was reported as invited, and a fork hook acting on it (granting the
+  invitation's roles, say) acted for them. `viaInvitation` and the new
+  `invitation` now come only from signals that prove a token: the acceptance
+  the before hook records, and `accept-invite`'s own context. Such a signup
+  is now verified like any other: it gets its verification email, and its
+  welcome email waits for verification. `accept-invite` also reads the
+  invitation whose token it validated, not an expired one for the same
+  address.
+  **Forks:** a hook that granted anything on `viaInvitation` should be
+  re-checked against accounts created that way before this release (#1136,
+  t-973).
 
 ## [0.16.0] — 2026-10-27
 

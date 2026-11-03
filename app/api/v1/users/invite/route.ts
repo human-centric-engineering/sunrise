@@ -296,7 +296,9 @@ export const POST = withAdminAuth(async (request, session) => {
         role: body.role || DEFAULT_USER_ROLE,
         orgId: target.orgId ?? null,
         orgRole: target.orgRole ?? null,
-        invitedAt: new Date().toISOString(),
+        // The value stored on the invitation, which the user-created seam
+        // reports when it is redeemed (#1136); a second clock read differed.
+        invitedAt: invitationMetadata.invitedAt,
         expiresAt: delivered.expiresAt.toISOString(),
         link: delivered.link,
       },
