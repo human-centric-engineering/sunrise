@@ -182,7 +182,10 @@ release process.
   invitation's roles, say) acted for them. `viaInvitation` and the new
   `invitation` now come only from signals that prove a token: the acceptance
   the before hook records, and `accept-invite`'s own context. Such a signup
-  also no longer skips the verification gate for its welcome email.
+  is now verified like any other: it gets its verification email, and its
+  welcome email waits for verification. `accept-invite` also reads the
+  invitation whose token it validated, not an expired one for the same
+  address.
   **Forks:** a hook that granted anything on `viaInvitation` should be
   re-checked against accounts created that way before this release (#1136,
   t-973).
