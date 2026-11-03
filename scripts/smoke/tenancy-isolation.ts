@@ -169,6 +169,7 @@ import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 import { writeOrgProviderPolicy, writeOrgQuotas } from '@/lib/tenancy/org-settings';
 import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { hashApiKey } from '@/lib/auth/api-keys';
+import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from '@/lib/auth/user-api-keys';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { resolveEmbedToken } from '@/lib/embed/auth';
 import {
@@ -2465,6 +2466,91 @@ async function main(): Promise<void> {
     check(
       flagResponse.status === 201 && flagRow !== null,
       `a write declaring writesSharedSettings, with an unbound admin key, from no org, creates the flag (${flagResponse.status})`
+    );
+
+    // ── [16a] A platform admin's own admin key, from the install org (#1132)
+    // The self-service key routes run in the org the request entered. A
+    // platform (`admin`) key binds no org, so the policy refuses it from inside
+    // every org; the routes' store (`lib/auth/user-api-keys.ts`) goes outside
+    // the org for it, narrowed by hand to the caller.
+    console.log(
+      '\n[16a] a platform admin mints, lists and revokes their own admin key from the install org'
+    );
+    const asInstallSession = <T>(fn: () => Promise<T>) =>
+      runAsOrg(INSTALL_ORG_ID, fn, { source: 'session' });
+    const otherKeyAdmin = await prisma.user.create({
+      data: {
+        name: `${PREFIX} other key admin`,
+        email: `${PREFIX}-otherkeyadmin-${stamp}@example.com`,
+        role: PLATFORM_ADMIN_ROLE,
+      },
+    });
+    const platformKeyData = (userId: string, label: string) => ({
+      userId,
+      name: `${PREFIX} ${label}`,
+      keyHash: hashApiKey(`sk_${PREFIX}_${stamp}_${label}_${'c'.repeat(32)}`),
+      keyPrefix: 'sk_smoke',
+      scopes: ['admin'],
+      expiresAt: null,
+      orgId: null,
+    });
+    // What the routes did before #1132: the write from inside the org.
+    await rejects(
+      () =>
+        asInstallSession(() =>
+          prisma.aiApiKey.create({ data: platformKeyData(keyAdmin.id, 'raw') })
+        ),
+      /row-level security|42501/i,
+      'a NULL-org key written from inside the install org is refused by the policy'
+    );
+    const mine = await asInstallSession(() => mintUserApiKey(platformKeyData(keyAdmin.id, 'mine')));
+    const theirs = await asInstallSession(() =>
+      mintUserApiKey(platformKeyData(otherKeyAdmin.id, 'theirs'))
+    );
+    check(mine.orgId === null, 'the minted admin key binds no org');
+    const listedIds = (await asInstallSession(() => listUserApiKeys(keyAdmin.id))).map((k) => k.id);
+    check(
+      listedIds.includes(mine.id) && !listedIds.includes(theirs.id),
+      'the list, from the install org, holds the caller’s platform key and not another admin’s'
+    );
+    // The policy itself is unchanged: an org's own read sees no platform key.
+    const platformKeysSeenFromA = await runAsOrg(a.orgId, () =>
+      prisma.aiApiKey.findMany({ where: { id: { in: [mine.id, theirs.id] } } })
+    );
+    check(
+      platformKeysSeenFromA.length === 0,
+      'a plain read from inside A sees neither platform key'
+    );
+    // Platform keys are managed from the install org only (#1132 review).
+    const listedFromA = (await runAsOrg(a.orgId, () => listUserApiKeys(keyAdmin.id))).map(
+      (k) => k.id
+    );
+    check(!listedFromA.includes(mine.id), 'the list, from inside A, holds no platform key');
+    check(
+      (await runAsOrg(a.orgId, () => revokeUserApiKey(keyAdmin.id, mine.id))) === 'not-found',
+      'a platform key cannot be revoked from inside A'
+    );
+    check(
+      (await asInstallSession(() => revokeUserApiKey(keyAdmin.id, theirs.id))) === 'not-found',
+      'revoking another admin’s platform key answers not found'
+    );
+    check(
+      (await asInstallSession(() => revokeUserApiKey(keyAdmin.id, mine.id))) === 'revoked',
+      'the caller revokes their own platform key from the install org'
+    );
+    check(
+      (await asInstallSession(() => revokeUserApiKey(keyAdmin.id, mine.id))) === 'already-revoked',
+      'revoking it again reports it already revoked'
+    );
+    const [mineAfter, theirsAfter] = await runAsSystem('smoke: read the revoked keys', () =>
+      Promise.all([
+        prisma.aiApiKey.findUnique({ where: { id: mine.id } }),
+        prisma.aiApiKey.findUnique({ where: { id: theirs.id } }),
+      ])
+    );
+    check(
+      mineAfter?.revokedAt != null && theirsAfter?.revokedAt === null,
+      'only the caller’s key is revoked; the other admin’s is untouched'
     );
 
     const rowIds = (rows: unknown[] | undefined): string[] =>

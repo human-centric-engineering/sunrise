@@ -31,6 +31,7 @@ vi.mock('@/lib/db/client', () => ({
       create: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     orgMembership: { findUnique: vi.fn() },
   },
@@ -66,6 +67,7 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -119,18 +121,26 @@ describe('API Key Endpoints', () => {
 
   describe('GET /user/api-keys', () => {
     it('returns the current user keys', async () => {
-      vi.mocked(prisma.aiApiKey.findMany).mockResolvedValue([
-        {
-          id: KEY_ID,
-          name: 'My CI Key',
-          keyPrefix: 'sk_abc1',
-          scopes: ['chat'],
-          lastUsedAt: null,
-          expiresAt: null,
-          revokedAt: null,
-          createdAt: new Date(),
-        },
-      ] as never);
+      // Two reads since #1132: keys bound to an org, then platform keys. This
+      // user has one bound key and no platform key.
+      vi.mocked(prisma.aiApiKey.findMany).mockImplementation((async (args: {
+        where: { orgId: unknown };
+      }) =>
+        args.where.orgId === null
+          ? []
+          : [
+              {
+                id: KEY_ID,
+                name: 'My CI Key',
+                keyPrefix: 'sk_abc1',
+                scopes: ['chat'],
+                orgId: INSTALL_ORG_ID,
+                lastUsedAt: null,
+                expiresAt: null,
+                revokedAt: null,
+                createdAt: new Date(),
+              },
+            ]) as never);
 
       const res = await GET(makeGetRequest());
       const json = JSON.parse(await res.text());
@@ -442,27 +452,24 @@ describe('API Key Endpoints', () => {
   // ── DELETE — Revoke key ────────────────────────────────────────────────
 
   describe('DELETE /user/api-keys/:keyId', () => {
-    it('revokes an active key', async () => {
-      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
-        id: KEY_ID,
-        userId: USER_ID,
-        revokedAt: null,
-      } as never);
-      vi.mocked(prisma.aiApiKey.update).mockResolvedValue({} as never);
+    it('revokes an active key, in one write narrowed to the caller and to an unrevoked row', async () => {
+      vi.mocked(prisma.aiApiKey.updateMany).mockResolvedValue({ count: 1 });
 
       const res = await DELETE(makeDeleteRequest(), makeKeyParams());
       const json = JSON.parse(await res.text());
 
       expect(res.status).toBe(200);
       expect(json.data.message).toBe('API key revoked');
+      expect(prisma.aiApiKey.updateMany).toHaveBeenCalledWith({
+        where: { id: KEY_ID, userId: mockAuthenticatedUser().user.id, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
     });
 
     it('returns success for already-revoked key', async () => {
-      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
-        id: KEY_ID,
-        userId: USER_ID,
-        revokedAt: new Date(),
-      } as never);
+      // The conditional write matches nothing; the row is there, so it was revoked.
+      vi.mocked(prisma.aiApiKey.updateMany).mockResolvedValue({ count: 0 });
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({ id: KEY_ID } as never);
 
       const res = await DELETE(makeDeleteRequest(), makeKeyParams());
       const json = JSON.parse(await res.text());
@@ -510,14 +517,141 @@ describe('API Key Endpoints', () => {
         .mocked(prisma.aiApiKey.update)
         .mock.calls.filter(([arg]) => 'revokedAt' in (arg as { data: object }).data);
       expect(revokes).toEqual([]);
+      expect(prisma.aiApiKey.updateMany).not.toHaveBeenCalled();
     });
 
     it('returns 404 for unknown key', async () => {
+      vi.mocked(prisma.aiApiKey.updateMany).mockResolvedValue({ count: 0 });
       vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
 
       const res = await DELETE(makeDeleteRequest(), makeKeyParams());
 
       expect(res.status).toBe(404);
+    });
+  });
+  // ── Platform keys live in no org (#1132) ─────────────────────────────
+
+  describe('platform (admin) keys at TENANCY_MODE=multi (#1132)', () => {
+    const OTHER = 'cmorg000000000000000other';
+    const userId = () => mockAuthenticatedUser().user.id;
+    /** Where each call ran: 'system' under the bypass, else the entered org. */
+    const scopeNow = () => {
+      const ctx = getTenantContext();
+      return ctx?.source === 'system' ? 'system' : (ctx?.orgId ?? 'none');
+    };
+    /** findMany answering by the `orgId` filter, recording where each call ran. */
+    function keysByOrgFilter(calls: { where: unknown; scope: string }[]) {
+      vi.mocked(prisma.aiApiKey.findMany).mockImplementation((async (args: {
+        where: { orgId: unknown };
+      }) => {
+        calls.push({ where: args.where, scope: scopeNow() });
+        return args.where.orgId === null
+          ? [{ id: 'platform', orgId: null, createdAt: new Date('2026-10-02') }]
+          : [{ id: 'bound', orgId: INSTALL_ORG_ID, createdAt: new Date('2026-10-01') }];
+      }) as never);
+    }
+
+    beforeEach(() => {
+      mockEnv.TENANCY_MODE = 'multi';
+    });
+
+    it('mints an admin key under the system scope, and an org key in the org', async () => {
+      // The policy refuses a NULL-org row from inside an org, so the mint
+      // has to be written outside it.
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(INSTALL_ORG_ID, 'ADMIN'));
+      const scopes: string[] = [];
+      vi.mocked(prisma.aiApiKey.create).mockImplementation((async () => {
+        scopes.push(scopeNow());
+        return { id: KEY_ID };
+      }) as never);
+
+      expect((await POST(makePostRequest({ name: 'P', scopes: ['admin'] }))).status).toBe(201);
+      expect((await POST(makePostRequest({ name: 'C', scopes: ['chat'] }))).status).toBe(201);
+
+      expect(scopes).toEqual(['system', INSTALL_ORG_ID]);
+    });
+
+    it('lists the caller’s platform keys beside the install org’s, newest first', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(INSTALL_ORG_ID, 'ADMIN'));
+      const calls: { where: unknown; scope: string }[] = [];
+      keysByOrgFilter(calls);
+
+      const res = await GET(makeGetRequest());
+      const json = JSON.parse(await res.text()) as { data: { keys: { id: string }[] } };
+
+      expect(json.data.keys.map((k) => k.id)).toEqual(['platform', 'bound']);
+      expect(calls).toEqual([
+        { where: { userId: userId(), orgId: { not: null } }, scope: INSTALL_ORG_ID },
+        { where: { userId: userId(), orgId: null }, scope: 'system' },
+      ]);
+    });
+
+    it('lists no platform key to a caller acting in a customer org', async () => {
+      // A session there, or a key bound there: either way not where platform
+      // keys are managed, so a leaked customer-org key cannot list them.
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(OTHER, 'ADMIN'));
+      const calls: { where: unknown; scope: string }[] = [];
+      keysByOrgFilter(calls);
+
+      const res = await GET(makeGetRequest());
+      const json = JSON.parse(await res.text()) as { data: { keys: { id: string }[] } };
+
+      expect(json.data.keys.map((k) => k.id)).toEqual(['bound']);
+      expect(calls).toEqual([{ where: { userId: userId(), orgId: { not: null } }, scope: OTHER }]);
+    });
+
+    it('revokes the caller’s own platform key under the system scope, narrowed to them', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(INSTALL_ORG_ID, 'ADMIN'));
+      const writes: { where: unknown; scope: string }[] = [];
+      vi.mocked(prisma.aiApiKey.updateMany).mockImplementation((async (args: {
+        where: { orgId: unknown };
+      }) => {
+        writes.push({ where: args.where, scope: scopeNow() });
+        // Not bound to an org: only the platform write matches.
+        return { count: args.where.orgId === null ? 1 : 0 };
+      }) as never);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+
+      const res = await DELETE(makeDeleteRequest(), makeKeyParams());
+      const json = JSON.parse(await res.text());
+
+      expect(json.data.message).toBe('API key revoked');
+      expect(writes).toEqual([
+        {
+          where: { id: KEY_ID, userId: userId(), orgId: { not: null }, revokedAt: null },
+          scope: INSTALL_ORG_ID,
+        },
+        // Under the bypass the filter is the only fence: the caller's own row.
+        { where: { id: KEY_ID, userId: userId(), orgId: null, revokedAt: null }, scope: 'system' },
+      ]);
+    });
+
+    it('does not reach a platform key from a customer org: 404, no system scope', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(OTHER, 'ADMIN'));
+      const scopes: string[] = [];
+      vi.mocked(prisma.aiApiKey.updateMany).mockImplementation((async () => {
+        scopes.push(scopeNow());
+        return { count: 0 };
+      }) as never);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+
+      const res = await DELETE(makeDeleteRequest(), makeKeyParams());
+
+      expect(res.status).toBe(404);
+      expect(scopes).toEqual([OTHER]);
+    });
+
+    it('reports an already-revoked platform key without moving its time', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(INSTALL_ORG_ID, 'ADMIN'));
+      vi.mocked(prisma.aiApiKey.updateMany).mockResolvedValue({ count: 0 });
+      vi.mocked(prisma.aiApiKey.findFirst).mockImplementation((async (args: {
+        where: { orgId: unknown };
+      }) => (args.where.orgId === null ? { id: KEY_ID } : null)) as never);
+
+      const res = await DELETE(makeDeleteRequest(), makeKeyParams());
+      const json = JSON.parse(await res.text());
+
+      expect(json.data.message).toBe('API key already revoked');
     });
   });
 });

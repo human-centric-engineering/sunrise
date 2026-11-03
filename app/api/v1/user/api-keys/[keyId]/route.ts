@@ -10,7 +10,7 @@
 
 import { withAuth } from '@/lib/auth/guards';
 import type { AuthSession } from '@/lib/auth/guards';
-import { prisma } from '@/lib/db/client';
+import { revokeUserApiKey } from '@/lib/auth/user-api-keys';
 import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
@@ -42,22 +42,13 @@ export const DELETE = withAuth<Params>(
     if (!parsed.success)
       throw new ValidationError('Invalid key id', { keyId: ['Must be a valid CUID'] });
 
-    const apiKey = await prisma.aiApiKey.findFirst({
-      where: {
-        id: parsed.data,
-        userId: session.user.id,
-      },
-    });
-    if (!apiKey) throw new NotFoundError('API key not found');
-
-    if (apiKey.revokedAt) {
+    // The caller's own key, bound to this org or a platform key of theirs,
+    // which lives in no org and is revoked outside it (#1132).
+    const outcome = await revokeUserApiKey(session.user.id, parsed.data);
+    if (outcome === 'not-found') throw new NotFoundError('API key not found');
+    if (outcome === 'already-revoked') {
       return successResponse({ message: 'API key already revoked' });
     }
-
-    await prisma.aiApiKey.update({
-      where: { id: apiKey.id },
-      data: { revokedAt: new Date() },
-    });
 
     return successResponse({ message: 'API key revoked' });
   },
@@ -65,7 +56,8 @@ export const DELETE = withAuth<Params>(
     // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
     ownership: {
       decidedBy: 'self',
-      because: 'The key is fetched by `{ id, userId: session.user.id }` before it is revoked.',
+      because:
+        'The revoke is one conditional write filtered by `{ id, userId: session.user.id }` (lib/auth/user-api-keys.ts); a platform key, from a browser session in the install org, is revoked under `runAsSystem`, where that filter, with `orgId: null`, is the only fence.',
     },
   }
 );
