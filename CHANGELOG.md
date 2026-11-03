@@ -100,6 +100,12 @@ release process.
 
 ### Fixed
 
+- **`db:tenancy:role --create` failed on Neon.** Neon's control plane accepts
+  only the password itself, not the SCRAM-SHA-256 verifier the script sends,
+  so the role was never created. A new `--plaintext-password` flag sends the
+  password as written, on create and on reset; without it the verifier is
+  sent, as before. **On Neon, pass the flag**: a server that logs DDL then
+  writes the password to its log, which the script warns of (#1131, t-972).
 - **At `TENANCY_MODE=multi`, a platform admin could not mint, list or revoke an
   admin API key.** An `admin` key binds no org (`orgId` NULL), and the
   `ai_api_key` isolation policy refuses such a row from inside every org, so

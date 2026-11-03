@@ -284,6 +284,7 @@ first statement covers the rest.
 
 ```bash
 TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
+TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create --plaintext-password  # on Neon
 npm run db:tenancy:role -- --drop
 ```
 
@@ -301,7 +302,20 @@ privileges and every grant **first**, then drops the role — Neon refuses
 anywhere. The password comes only from the environment, never an argument,
 and is sent as a SCRAM-SHA-256 verifier computed locally
 (`scramSha256Verifier`), so the cleartext never crosses the wire or lands in
-a server's DDL log. The script refuses to touch the role running it, a
+a server's DDL log.
+
+**On Neon, pass `--plaintext-password`** (#1131). Neon's control plane
+refuses a verifier and accepts only the password itself, so without the flag
+`--create` fails at `COMMIT`. With it, the password is sent as written, on
+create and on reset, over the TLS connection Neon requires, and the server
+still stores it hashed. What it gives up is the DDL-log protection above: a
+server with `log_statement = 'ddl'` writes the statement, password included,
+to its log, and the script cannot switch that off (setting `log_statement`
+needs a superuser, which Neon's owner is not). So the flag is the operator's
+explicit choice, never inferred from the host or retried on an error (owner
+ruling, 2026-11-03), and the script warns when it is used. Rotate the
+password by re-running `--create`; use the flag nowhere a verifier is
+accepted. The script refuses to touch the role running it, a
 superuser, a `BYPASSRLS` role, or a table owner — `TENANCY_APP_ROLE=postgres`
 would otherwise demote and re-password the operator's own login.
 

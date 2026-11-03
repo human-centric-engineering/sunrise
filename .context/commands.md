@@ -55,6 +55,7 @@ with `MIGRATE_DATABASE_URL` when set, else `DATABASE_URL`:
 npm run db:tenancy:enable                                   # ENABLE + FORCE RLS on every tenant-owned table (backfills NULL orgId first)
 npm run db:tenancy:disable                                  # DISABLE + NO FORCE — both flags
 TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create   # the NOBYPASSRLS app role + grants (idempotent)
+#   …add --plaintext-password on Neon, which refuses the SCRAM verifier (#1131)
 npm run db:tenancy:role -- --drop                           # revoke, then drop it
 ```
 
