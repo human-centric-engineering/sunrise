@@ -64,7 +64,9 @@ import type { OrgRole, SupportGrantLevel } from '@/lib/tenancy/roles';
  * HMAC token over an execution id), where the org is the ROW's, read under a
  * system scope before it is entered. And `support` (§121 t-824): a platform
  * admin's session admitted to an org they are not a member of, under that
- * org's open support grant.
+ * org's open support grant. And `public-form` (§125): an anonymous public
+ * write — a waitlist join — that names no row and no credential, entered into
+ * the org the route decides (the install org).
  */
 export type TenantContextSource =
   | 'session'
@@ -75,6 +77,7 @@ export type TenantContextSource =
   | 'resolver'
   | 'inbound-trigger'
   | 'approval-token'
+  | 'public-form'
   | 'system'
   | 'job'
   | 'implicit';

@@ -30,6 +30,11 @@ export interface UniqueConstraint {
 /** The unique constraints application code tells apart on a P2002. */
 export const UNIQUE_CONSTRAINTS = {
   userEmail: { index: 'user_email_key', model: 'User', fields: ['email'] },
+  waitlistEntryEmail: {
+    index: 'waitlist_entry_orgId_list_email_key',
+    model: 'WaitlistEntry',
+    fields: ['orgId', 'list', 'email'],
+  },
   agentSlug: { index: 'ai_agent_orgId_slug_key', model: 'AiAgent', fields: ['orgId', 'slug'] },
   agentVersion: {
     index: 'ai_agent_version_agentId_version_key',

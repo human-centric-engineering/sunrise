@@ -293,6 +293,14 @@ export const RATE_LIMIT_POLICY: readonly RateLimitRule[] = [
     tier: 'api',
     key: 'ip',
   },
+  // Waitlist join, confirm and leave (§125) are unauthenticated public
+  // routes. Per-flow waitlistLimiter inside the join handler enforces the
+  // tight 5/hour cap; the section tier is the defense-in-depth bound.
+  {
+    match: /^\/api\/v1\/waitlist(\/|$|\?)/,
+    tier: 'api',
+    key: 'ip',
+  },
 
   // ── General authenticated API ────────────────────────────────────────────
   // Catch-all for every other route under /api/v1/. Default 100/min,

@@ -84,6 +84,8 @@ model Org {
   aiWorkflowStepDispatchs           AiWorkflowStepDispatch[]
   aiWorkflowRunningSteps            AiWorkflowRunningStep[]
   aiWorkflowExecutionLeaseEvents    AiWorkflowExecutionLeaseEvent[]
+  waitlistEntries                   WaitlistEntry[]
+  waitlistListStates                WaitlistListState[]
 
   @@map("org")
 }

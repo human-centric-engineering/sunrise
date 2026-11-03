@@ -211,6 +211,20 @@ export const contactLimiter = createRateLimiter({
 });
 
 /**
+ * Rate limiter for waitlist joins (§125)
+ * Limit: 5 joins per hour per IP
+ *
+ * The join form is public and unverified; the cap bounds how many addresses one
+ * caller can put on a list. Its 429 is the same for every address, so it says
+ * nothing about who is on the list.
+ */
+export const waitlistLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.WAITLIST_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.WAITLIST,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Rate limiter for verification email requests
  * Limit: 3 requests per 15 minutes per IP
  *

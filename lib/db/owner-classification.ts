@@ -124,6 +124,17 @@ export const OWNER_CLASSIFICATION = {
     because:
       "The org's consent record for vendor support; grantedBy / revokedBy record who acted. Read by the org's OWNER/ADMINs and platform admins, not owner-scoped.",
   },
+  // ── platform: waitlist (§125) ───────────────────────────────────────────────
+  WaitlistEntry: {
+    kind: 'not-personal',
+    because:
+      "The org's waitlist, written by a public form before any account exists; userId records which account the entry became. Read by the org's admins on /admin/waitlist, not owner-scoped.",
+  },
+  WaitlistListState: {
+    kind: 'not-personal',
+    because:
+      "Whether one of the org's lists is taking joins; changedBy records which admin last opened or closed it.",
+  },
   AiApiKey: {
     kind: 'personal',
     owner: { column: 'userId' },

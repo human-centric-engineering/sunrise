@@ -41,6 +41,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
+import { waitlistEntriesOf } from '@/lib/waitlist/subject';
 import {
   normaliseAddress,
   webhookDeliveriesAddressedTo,
@@ -302,6 +303,23 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     },
   },
   {
+    model: 'WaitlistEntry',
+    section: 'waitlistEntries',
+    disposition: 'export',
+    description:
+      'Places on a waitlist: the address and answers given when joining, where the visit came from, when consent was given and under which version of the notice, and whether the entry was confirmed, removed, invited or turned into this account. Entries joined under the subject’s address are included only once the account has verified it; an entry linked to the account is always included.',
+    // ⚠️ Keyed by address as well as by `userId`, like `ContactSubmission`
+    // above: an entry is written by a public form before any account exists,
+    // and is linked to one only when a waitlist invitation is redeemed. The
+    // address arm trusts a verified address only — `waitlistEntriesOf()` says
+    // why, and erasure deletes through the same matcher. Every org and list.
+    fetch: ({ userId, email, emailVerified }: SubjectQuery) =>
+      prisma.waitlistEntry.findMany({
+        where: waitlistEntriesOf({ userId, email, emailVerified }),
+        orderBy: byCreatedAt,
+      }),
+  },
+  {
     model: 'AiWebhookDelivery',
     section: 'webhookDeliveries',
     disposition: 'export',
@@ -448,6 +466,27 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
           orderBy: byCreatedAt,
         })
       ),
+  },
+  {
+    model: 'WaitlistListState',
+    section: 'waitlistListChanges',
+    disposition: 'attribution',
+    description:
+      'Waitlists the subject last opened or closed to new sign-ups, as an administrator.',
+    // Only the last change of each list is kept, so this is "the subject is the
+    // last person who changed this list", not a history.
+    fetch: async ({ userId }: SubjectQuery): Promise<AttributionRow[]> => {
+      const rows = await prisma.waitlistListState.findMany({
+        where: { changedById: userId },
+        select: { id: true, list: true, open: true, changedAt: true },
+        orderBy: { changedAt: 'asc' },
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        label: `${row.open ? 'Opened' : 'Closed'} the ${row.list} waitlist`,
+        createdAt: row.changedAt,
+      }));
+    },
   },
   {
     // Two `User` FKs, both `SetNull`: the grant is the org's consent record,

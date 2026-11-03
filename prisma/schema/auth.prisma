@@ -73,6 +73,10 @@ model User {
   supportGrantsGranted OrgSupportGrant[] @relation("OrgSupportGrantGrantedBy")
   supportGrantsRevoked OrgSupportGrant[] @relation("OrgSupportGrantRevokedBy")
 
+  // Waitlist (§125)
+  waitlistEntries          WaitlistEntry[]     @relation("WaitlistEntryUser")
+  waitlistListStateChanges WaitlistListState[] @relation("WaitlistListStateChangedBy")
+
   // Agent Orchestration relations
   aiAgents                          AiAgent[]                          @relation("AiAgentCreator")
   aiAgentProfiles                   AiAgentProfile[]                   @relation("AiAgentProfileCreator")

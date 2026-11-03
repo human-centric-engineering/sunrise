@@ -334,6 +334,20 @@ vi.mock('@/lib/app/brand', async (importOriginal) => {
 vi.mock('@/lib/app/emails', () => ({ emailOverrides: {} }));
 
 /**
+ * Pin the waitlist config seam to "no waitlist", for every test file (§125).
+ *
+ * Same class as the emails pin: `waitlistConfig` is read from
+ * `lib/app/waitlist-config.ts`, a committed file a fork fills, so a fork that
+ * has a waitlist would turn on the routes, the admin page and the erasure step
+ * inside the CORE suite, and red every core test that asserts they are off.
+ * Tests that need a waitlist `vi.doMock` their own config (and call
+ * `__resetWaitlistConfigForTests()`); restore this pin with another
+ * `vi.doMock`, never `vi.doUnmock`. `defaults.test.ts` reads the real scaffold
+ * through `vi.importActual`.
+ */
+vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
+
+/**
  * Pin the org-tier admin seam, the user-created seam and the erasure seam to
  * "registers nothing", for every test file (#1125, #1139).
  *

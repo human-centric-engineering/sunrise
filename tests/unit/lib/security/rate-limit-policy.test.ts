@@ -184,6 +184,24 @@ describe('rate-limit-policy', () => {
       expect(rule?.key).toBe('ip');
     });
 
+    it("the waitlist paths use the 'api' tier with 'ip' keying, and only they do", () => {
+      // Arrange — join, confirm and leave are anonymous public routes (§125);
+      // a session-user key would put every visitor in the IP fallback bucket
+      // anyway, but saying so keeps the keying explicit. The matcher must not
+      // catch a sibling that merely shares the prefix.
+      const waitlist = ['/api/v1/waitlist', '/api/v1/waitlist/confirm', '/api/v1/waitlist?x=1'];
+
+      for (const pathname of waitlist) {
+        // Act
+        const rule = findRateLimitRule(pathname);
+
+        // Assert
+        expect(rule?.tier, pathname).toBe('api');
+        expect(rule?.key, pathname).toBe('ip');
+      }
+      expect(findRateLimitRule('/api/v1/waitlisted-things')?.key).toBe('session-user');
+    });
+
     it('returns null for non-API paths (page routes, static assets, root)', () => {
       // Arrange — middleware should never rate-limit page routes; these paths must
       // fall through all rules and return null so the dispatcher is a no-op.
@@ -231,6 +249,8 @@ describe('rate-limit-policy', () => {
         ['/api/v1/embed/chat', 'embed-token'],
         ['/api/v1/inbound/slack/agent-slug', 'ip'],
         ['/api/v1/contact', 'ip'],
+        ['/api/v1/waitlist', 'ip'],
+        ['/api/v1/waitlist/confirm', 'ip'],
       ];
 
       for (const [pathname, expectedKey] of cases) {
@@ -271,14 +291,15 @@ describe('rate-limit-policy', () => {
       expect(RATE_LIMIT_POLICY[7]).toMatchObject({ tier: 'api', key: 'embed-token' }); // embed
       expect(RATE_LIMIT_POLICY[8]).toMatchObject({ tier: 'api', key: 'ip' }); // inbound
       expect(RATE_LIMIT_POLICY[9]).toMatchObject({ tier: 'api', key: 'ip' }); // contact
+      expect(RATE_LIMIT_POLICY[10]).toMatchObject({ tier: 'api', key: 'ip' }); // waitlist
       // Catch-all — must remain LAST so the consumer rules above it have a chance to match.
-      expect(RATE_LIMIT_POLICY[10]).toMatchObject({ tier: 'api', key: 'session-user' });
+      expect(RATE_LIMIT_POLICY[11]).toMatchObject({ tier: 'api', key: 'session-user' });
     });
 
-    it('has exactly 11 rules (catches unintended additions or deletions)', () => {
+    it('has exactly 12 rules (catches unintended additions or deletions)', () => {
       // A length change is a signal that the policy changed. This test surfaces
       // that signal without being prescriptive about what was added/removed.
-      expect(RATE_LIMIT_POLICY).toHaveLength(11);
+      expect(RATE_LIMIT_POLICY).toHaveLength(12);
     });
   });
 
