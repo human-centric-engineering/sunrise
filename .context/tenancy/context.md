@@ -71,6 +71,7 @@ interface TenantContext {
     | 'resolver'
     | 'inbound-trigger'
     | 'approval-token' // a signed token naming a ROW (t-708)
+    | 'public-form' // an anonymous public write the route places (a waitlist join, §125)
     | 'system'
     | 'job'
     | 'implicit';
