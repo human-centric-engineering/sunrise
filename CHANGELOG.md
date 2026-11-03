@@ -26,9 +26,10 @@ release process.
   `GET`/`POST /api/v1/waitlist`, the `<Waitlist />` and `<WaitlistForm>`
   components (`components/waitlist/`), and the Art. 15 / 17 and org-export
   wiring. Two new tenant-owned models, `WaitlistEntry` and `WaitlistListState`
-  (one migration, with their `org_isolation` policies). **At
-  `TENANCY_MODE=multi` the migration also enables and forces RLS on the two new
-  tables**, because the install's switch is already on; nothing to re-run. A new
+  (one migration, with their `org_isolation` policies). **On an
+  install whose tenancy switch is already on, the migration also enables and
+  forces RLS on the two new tables**, so there is nothing to re-run after
+  `migrate deploy`. A new
   per-flow sub-cap `waitlistLimiter` (`RATE_LIMIT_WAITLIST`, 5/hour per IP) and a
   `TenantContextSource` value, `'public-form'`. A fork filling the seam fails
   its row in `tests/unit/lib/app/defaults.test.ts`, as expected: pin your
