@@ -104,8 +104,10 @@ release process.
   only the password itself, not the SCRAM-SHA-256 verifier the script sends,
   so the role was never created. A new `--plaintext-password` flag sends the
   password as written, on create and on reset; without it the verifier is
-  sent, as before. **On Neon, pass the flag**: a server that logs DDL then
-  writes the password to its log, which the script warns of (#1131, t-972).
+  sent, as before. **On Neon, pass the flag.** It is refused over an
+  unencrypted connection, and the server can then keep the statement,
+  password included (a DDL log, `pg_stat_statements`), which the script warns
+  of. An unknown argument is now an error rather than ignored (#1131, t-972).
 - **At `TENANCY_MODE=multi`, a platform admin could not mint, list or revoke an
   admin API key.** An `admin` key binds no org (`orgId` NULL), and the
   `ai_api_key` isolation policy refuses such a row from inside every org, so

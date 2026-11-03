@@ -15,15 +15,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockConnect = vi.hoisted(() => vi.fn());
 const mockEnd = vi.hoisted(() => vi.fn());
-vi.mock('pg', () => ({
-  Client: vi.fn(function (this: Record<string, unknown>) {
-    this.query = mockQuery;
-    this.connect = mockConnect;
-    this.end = mockEnd;
-    this.escapeIdentifier = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    this.escapeLiteral = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  }),
-}));
+vi.mock('pg', async (importOriginal) => {
+  // pg's own escaping, not a stand-in: the plaintext form sends operator-chosen
+  // text, so a backslash or quote must be quoted exactly as pg quotes it.
+  const actual = await importOriginal<typeof import('pg')>();
+  return {
+    Client: vi.fn(function (this: Record<string, unknown>) {
+      this.query = mockQuery;
+      this.connect = mockConnect;
+      this.end = mockEnd;
+      this.escapeIdentifier = actual.Client.prototype.escapeIdentifier;
+      this.escapeLiteral = actual.Client.prototype.escapeLiteral;
+    }),
+  };
+});
 
 const mockInfo = vi.hoisted(() => vi.fn());
 const mockError = vi.hoisted(() => vi.fn());
@@ -90,17 +95,23 @@ describe('scripts/db/tenancy-role', () => {
         return Promise.resolve({ rows: [{ n: exists ? '1' : '0' }] });
       if (sql.includes('AS schema')) return Promise.resolve({ rows: [{ schema: 'public' }] });
       if (sql.includes('AS present')) return Promise.resolve({ rows: [{ present: ledger }] });
+      if (sql.includes('pg_stat_ssl')) return Promise.resolve({ rows: [{ ssl: encrypted }] });
       return Promise.resolve({ rows: [] });
     });
   }
   let ledger = true;
+  let encrypted = true;
 
   /** The statements that change something — the catalog reads filtered out. */
   const statements = () =>
     mockQuery.mock.calls
       .map((c) => c[0] as string)
       .filter(
-        (s) => !s.includes('FROM pg_roles') && !s.includes('AS schema') && !s.includes('AS present')
+        (s) =>
+          !s.includes('FROM pg_roles') &&
+          !s.includes('AS schema') &&
+          !s.includes('AS present') &&
+          !s.includes('pg_stat_ssl')
       );
 
   const SCRAM = /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
@@ -181,6 +192,74 @@ describe('scripts/db/tenancy-role', () => {
 
     expect(statements()[1]).not.toContain('pw-plain');
     expect(mockWarn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the default path has nothing to warn of
+  });
+
+  it('quotes a backslash in a plaintext password as pg does, as one literal', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = String.raw`a\b'c`;
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      String.raw`CREATE ROLE "sunrise_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD  E'a\\b''c'`
+    );
+  });
+
+  it('refuses --plaintext-password over an unencrypted connection, writing nothing', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    encrypted = false;
+    answer(false);
+    await run('--create', '--plaintext-password');
+    encrypted = true;
+
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('needs an encrypted connection')
+    );
+    expect(statements().some((st) => st.includes('pw-plain'))).toBe(false);
+    expect(statements().at(-1)).toBe('ROLLBACK');
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it.each([
+    ['an md5 hash', `md5${'0123456789abcdef'.repeat(2)}`],
+    ['a SCRAM verifier', 'SCRAM-SHA-256$4096:c2FsdA==$a2V5:a2V5'],
+  ])(
+    'refuses a plaintext password shaped like %s, which Postgres would store as the hash',
+    async (_l, pw) => {
+      process.env.TENANCY_APP_ROLE_PASSWORD = pw;
+      answer(false);
+      await run('--create', '--plaintext-password');
+
+      expect(mockError).toHaveBeenCalledWith(expect.stringContaining('looks like a password hash'));
+      expect(statements().some((st) => st.startsWith('CREATE ROLE'))).toBe(false);
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    }
+  );
+
+  it('exits 2 without connecting for an unknown argument, so a misspelt flag cannot fall back', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    await run('--create', '--plaintext');
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('unknown argument "--plaintext"')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('logs "created" only after COMMIT, so a host refusing at COMMIT leaves no success line', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    answer(false);
+    const base = mockQuery.getMockImplementation()!;
+    mockQuery.mockImplementation((sql: string) =>
+      sql === 'COMMIT' ? Promise.reject(new Error('refused at commit')) : base(sql)
+    );
+    await run('--create');
+
+    const infos = mockInfo.mock.calls.flat().map(String).join('\n');
+    expect(infos).not.toContain('created');
+    expect(infos).not.toContain('grants on schema');
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('refused at commit'));
+    expect(exitSpy).toHaveBeenCalledWith(2);
   });
 
   it('refuses --plaintext-password with --drop, without connecting', async () => {
