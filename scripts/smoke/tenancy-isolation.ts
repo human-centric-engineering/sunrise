@@ -2468,27 +2468,6 @@ async function main(): Promise<void> {
       `a write declaring writesSharedSettings, with an unbound admin key, from no org, creates the flag (${flagResponse.status})`
     );
 
-    const rowIds = (rows: unknown[] | undefined): string[] =>
-      (rows ?? []).flatMap((r) =>
-        typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
-      );
-    /**
-     * How each section's run is entered: the person's own session in A, and an
-     * admin API key (no org), as the self-service and admin routes ask.
-     */
-    const askers = [
-      [
-        'from inside A',
-        <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' }),
-        'self_service',
-      ],
-      ['from no org (an admin API key)', <T>(fn: () => Promise<T>) => fn(), 'admin_action'],
-    ] as const;
-
-    // ── [17] A person's export: their rows in every org (§107 t-748) ──────
-    // A person belongs to A and B, with a conversation and a memory in each.
-    // The self-service route runs in their session's active org, and an admin
-    // API key enters none; either way the bundle must hold both orgs' rows.
     // ── [16a] A platform admin's own admin key, from the install org (#1132)
     // The self-service key routes run in the org the request entered. A
     // platform (`admin`) key binds no org, so the policy refuses it from inside
@@ -2521,7 +2500,7 @@ async function main(): Promise<void> {
         asInstallSession(() =>
           prisma.aiApiKey.create({ data: platformKeyData(keyAdmin.id, 'raw') })
         ),
-      /row-level security/i,
+      /row-level security|42501/i,
       'a NULL-org key written from inside the install org is refused by the policy'
     );
     const mine = await asInstallSession(() => mintUserApiKey(platformKeyData(keyAdmin.id, 'mine')));
@@ -2541,6 +2520,15 @@ async function main(): Promise<void> {
     check(
       platformKeysSeenFromA.length === 0,
       'a plain read from inside A sees neither platform key'
+    );
+    // Platform keys are managed from the install org only (#1132 review).
+    const listedFromA = (await runAsOrg(a.orgId, () => listUserApiKeys(keyAdmin.id))).map(
+      (k) => k.id
+    );
+    check(!listedFromA.includes(mine.id), 'the list, from inside A, holds no platform key');
+    check(
+      (await runAsOrg(a.orgId, () => revokeUserApiKey(keyAdmin.id, mine.id))) === 'not-found',
+      'a platform key cannot be revoked from inside A'
     );
     check(
       (await asInstallSession(() => revokeUserApiKey(keyAdmin.id, theirs.id))) === 'not-found',
@@ -2565,6 +2553,27 @@ async function main(): Promise<void> {
       'only the caller’s key is revoked; the other admin’s is untouched'
     );
 
+    const rowIds = (rows: unknown[] | undefined): string[] =>
+      (rows ?? []).flatMap((r) =>
+        typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
+      );
+    /**
+     * How each section's run is entered: the person's own session in A, and an
+     * admin API key (no org), as the self-service and admin routes ask.
+     */
+    const askers = [
+      [
+        'from inside A',
+        <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' }),
+        'self_service',
+      ],
+      ['from no org (an admin API key)', <T>(fn: () => Promise<T>) => fn(), 'admin_action'],
+    ] as const;
+
+    // ── [17] A person's export: their rows in every org (§107 t-748) ──────
+    // A person belongs to A and B, with a conversation and a memory in each.
+    // The self-service route runs in their session's active org, and an admin
+    // API key enters none; either way the bundle must hold both orgs' rows.
     // ── [16b] Two members of A: neither reads the other's memory (§115 t-801)
     // Same org, same agent, different owners. RLS lets both rows through for
     // anyone in A; the owner layer is what has to say no.
