@@ -44,7 +44,7 @@ export const GET = withAuth(
     ownership: {
       decidedBy: 'self',
       because:
-        'Lists keys by `where.userId = session.user.id`; a caller cannot name another owner.',
+        'Lists keys by `where.userId = session.user.id`; a caller cannot name another owner. From a browser session in the install org at `multi`, the platform-key read runs under `runAsSystem` (lib/auth/user-api-keys.ts), where that filter, with `orgId: null`, is the only fence.',
     },
   }
 );

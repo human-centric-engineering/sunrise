@@ -57,7 +57,7 @@ export const DELETE = withAuth<Params>(
     ownership: {
       decidedBy: 'self',
       because:
-        'The key is fetched by `{ id, userId: session.user.id }` before it is revoked (lib/auth/user-api-keys.ts).',
+        'The revoke is one conditional write filtered by `{ id, userId: session.user.id }` (lib/auth/user-api-keys.ts); a platform key, from a browser session in the install org, is revoked under `runAsSystem`, where that filter, with `orgId: null`, is the only fence.',
     },
   }
 );

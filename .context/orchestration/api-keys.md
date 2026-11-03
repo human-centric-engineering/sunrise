@@ -54,7 +54,7 @@ All endpoints require session auth (`withAuth`). Users can only manage their own
 
 ### `GET /api/v1/user/api-keys`
 
-List the current user's API keys (without raw key values), newest first: those bound to the org the request is acting in and, when it is acting in the default organisation, the caller's platform (`admin`) keys. Keys bound to another org are listed from that org, and a caller acting in a customer org (a session there, or a key bound there) sees none of their platform keys.
+List the current user's API keys (without raw key values), newest first: those bound to the org the request is acting in and, from a browser session acting in the default organisation, the caller's platform (`admin`) keys. Keys bound to another org are listed from that org, and any other caller (a session in a customer org, or an API key wherever it is bound) sees none of their platform keys, so a leaked key cannot list its owner's `admin` credentials.
 
 Returns: `{ keys: [{ id, name, keyPrefix, scopes, orgId, lastUsedAt, expiresAt, revokedAt, createdAt }], availableScopes: string[] }`
 
@@ -110,8 +110,8 @@ where the screen and the credential agree. A platform key lives in no org,
 so at `TENANCY_MODE=multi` the `ai_api_key` isolation policy refuses it from
 inside every org. The self-service routes therefore mint, list and revoke it
 outside the org, under `runAsSystem`, narrowed by hand to the caller's own
-row (`lib/auth/user-api-keys.ts`, #1132), and only while acting in the
-default organisation, the same rule as minting one. The policy itself has no
+row (`lib/auth/user-api-keys.ts`, #1132), and only from a browser session
+acting in the default organisation, the same rule as minting one. The policy itself has no
 platform-row arm: an org's own reads of `ai_api_key` never see a platform
 key. Both guards refuse a key that
 carries both `admin` and an org — `withAdminAuth` at its scope floor,
@@ -136,7 +136,7 @@ deployed from `main` between them could.
 
 ### `DELETE /api/v1/user/api-keys/:keyId`
 
-Revoke one of your own keys by setting `revokedAt`: one bound to the org the request is acting in or, from the default organisation, a platform key of yours. Soft-delete — record preserved for audit. Another user's key, or one bound to another org, answers `404`.
+Revoke one of your own keys by setting `revokedAt`: one bound to the org the request is acting in or, from a browser session in the default organisation, a platform key of yours. Soft-delete — record preserved for audit. Another user's key, or one bound to another org, answers `404`.
 
 ## Using API Keys
 

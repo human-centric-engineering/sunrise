@@ -107,9 +107,10 @@ release process.
   self-service routes now handle a platform key outside the org, under
   `runAsSystem`, narrowed to the caller's own row
   (`lib/auth/user-api-keys.ts`); the policy is unchanged, so an org's reads
-  still see no platform key. From the default organisation, where platform
-  keys are minted, the list includes the caller's platform keys beside the
-  org's and revoke reaches them; from a customer org it does neither. Revoke
+  still see no platform key. From a browser session in the default
+  organisation, where platform keys are minted, the list includes the
+  caller's platform keys beside the org's and revoke reaches them; from a
+  customer org, or from any API key, it does neither. Revoke
   is now one conditional write, so concurrent revokes cannot move the recorded
   time (#1132, t-971).
 - **An idle maintenance tick still queried the database when its cron used an

@@ -27,6 +27,8 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from '@/lib/auth/user-api-keys';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const base = {
   userId: 'u1',
@@ -85,5 +87,56 @@ describe('user API key store', () => {
       data: { revokedAt: expect.any(Date) },
     });
     expect(prisma.aiApiKey.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a matched write needs no read
+  });
+
+  describe('at multi', () => {
+    beforeEach(() => {
+      mockEnv.TENANCY_MODE = 'multi';
+    });
+
+    it('lists no platform key to an API key, even one bound to the install org', async () => {
+      // A leaked narrow key bound there must not list its owner's admin keys.
+      vi.mocked(prisma.aiApiKey.findMany).mockResolvedValue([]);
+
+      await runAsOrg(INSTALL_ORG_ID, () => listUserApiKeys('u1'), { source: 'api-key' });
+
+      expect(prisma.aiApiKey.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.aiApiKey.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'u1', orgId: { not: null } } })
+      );
+    });
+
+    it('lists platform keys to a browser session in the install org', async () => {
+      vi.mocked(prisma.aiApiKey.findMany).mockResolvedValue([]);
+
+      await runAsOrg(INSTALL_ORG_ID, () => listUserApiKeys('u1'), { source: 'session' });
+
+      expect(prisma.aiApiKey.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'u1', orgId: null } })
+      );
+    });
+
+    it('answers an empty list, not a refusal, when no org was entered (an admin key)', async () => {
+      // Every tenant-owned read throws without a context at multi; with no
+      // org there is no org-bound key to list, and a key manages no platform key.
+      await expect(listUserApiKeys('u1')).resolves.toEqual([]);
+      expect(prisma.aiApiKey.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to read with no org entered
+    });
+
+    it('answers not found for a revoke with no org entered, touching nothing', async () => {
+      await expect(revokeUserApiKey('u1', 'k1')).resolves.toBe('not-found');
+      expect(prisma.aiApiKey.updateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to reach with no org entered
+    });
+
+    it('passes only the known fields to the database on mint', async () => {
+      vi.mocked(prisma.aiApiKey.create).mockResolvedValue({ id: 'k1' } as never);
+      const wider = { ...base, scopes: ['chat'], orgId: 'org-a', role: 'ADMIN' };
+
+      await runAsOrg('org-a', () => mintUserApiKey(wider), { source: 'session' });
+
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { ...base, scopes: ['chat'], orgId: 'org-a' } })
+      );
+    });
   });
 });
