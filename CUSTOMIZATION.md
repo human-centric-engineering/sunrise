@@ -580,9 +580,13 @@ export function initAppUserCreatedHooks(): void {
 
 better-auth's `user.create.after` hook calls the initializer once, then
 dispatches every registered hook. The context is
-`{ userId, email, name, signupMethod, viaInvitation }` — `signupMethod`
-distinguishes OAuth (address already verified) from email/password (not yet),
-and `viaInvitation` tells you the address was already proven.
+`{ userId, email, name, signupMethod, viaInvitation, invitation }` —
+`signupMethod` distinguishes OAuth (address already verified) from
+email/password (not yet), `viaInvitation` tells you the address was already
+proven, and `invitation` says which invitation was redeemed:
+`{ invitedAt, invitedBy, orgId }`, where `orgId` is the install org when the invitation named none, or `null` when none was. Match your own rows on it rather than on the
+address: on the Google path the invitation token is consumed before the
+account exists, so this is the only record of it (#1136).
 
 Hooks run **after** the user row exists, so one **cannot reject a signup**: a
 throw is logged and ignored rather than failing account creation, because the

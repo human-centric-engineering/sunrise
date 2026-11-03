@@ -18,6 +18,13 @@ release process.
 
 ### Added
 
+- **The user-created seam says which invitation a signup redeemed.**
+  `UserCreatedContext` gains `invitation: { invitedAt, invitedBy, orgId } |
+  null` (`RedeemedInvitation`, `lib/auth/user-created-hooks.ts`), on both the
+  password and the Google path, where the token is consumed before the account
+  exists. `orgId` is the install org when the invitation named none.
+  `viaInvitation` is unchanged. **Forks:** a test that builds a
+  `UserCreatedContext` by hand adds `invitation: null` (#1136, t-973).
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
   (0 first), and an opaque id for this attempt. Set by the `tool_call` and

@@ -549,13 +549,14 @@ export function initAppUserCreatedHooks(): void {
 
 The context is `UserCreatedContext`:
 
-| Field           | Meaning                                                       |
-| --------------- | ------------------------------------------------------------- |
-| `userId`        | The new `User.id`.                                            |
-| `email`         | The address on the account.                                   |
-| `name`          | Display name, if the signup supplied one.                     |
-| `signupMethod`  | OAuth (address already verified) vs email/password (not yet). |
-| `viaInvitation` | True when the address was already proven by the invitation.   |
+| Field           | Meaning                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `userId`        | The new `User.id`.                                                                                                                                                                                     |
+| `email`         | The address on the account.                                                                                                                                                                            |
+| `name`          | Display name, if the signup supplied one.                                                                                                                                                              |
+| `signupMethod`  | OAuth (address already verified) vs email/password (not yet).                                                                                                                                          |
+| `viaInvitation` | True when the address was already proven by the invitation.                                                                                                                                            |
+| `invitation`    | Which invitation was redeemed: `{ invitedAt, invitedBy, orgId }`, `orgId` the install org when it named none; `null` when none was, or (rarely) when a valid token's record could not be read (#1136). |
 
 **A hook cannot reject a signup.** It runs _after_ the user row exists, so a
 throw is logged and swallowed rather than failing account creation — the account
