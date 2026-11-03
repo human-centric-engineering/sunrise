@@ -54,9 +54,9 @@ All endpoints require session auth (`withAuth`). Users can only manage their own
 
 ### `GET /api/v1/user/api-keys`
 
-List the current user's API keys (without raw key values).
+List the current user's API keys (without raw key values): those bound to the org the request is acting in, and the caller's platform (`admin`) keys, newest first. Keys bound to another org are listed from that org.
 
-Returns: `{ keys: [{ id, name, keyPrefix, scopes, lastUsedAt, expiresAt, revokedAt, createdAt }], availableScopes: string[] }`
+Returns: `{ keys: [{ id, name, keyPrefix, scopes, orgId, lastUsedAt, expiresAt, revokedAt, createdAt }], availableScopes: string[] }`
 
 `availableScopes` is core plus whatever `lib/app/api-key-scopes.ts` declared — sourced from the same function `POST` validates against, so a key UI cannot drift from what the API will accept. Sunrise ships no self-service key UI; this exists so a fork's does not have to restate the list.
 
@@ -106,7 +106,13 @@ An `admin`-scoped key is the exception, in both directions. It is a platform
 credential — it reaches every org's admin routes — so it is stored with
 `orgId: null`, and asking for `admin` while acting in any org other than the
 install org is a `400`: mint platform keys from the default organisation,
-where the screen and the credential agree. Both guards refuse a key that
+where the screen and the credential agree. A platform key lives in no org,
+so at `TENANCY_MODE=multi` the `ai_api_key` isolation policy refuses it from
+inside every org. The self-service routes therefore mint, list and revoke it
+outside the org, under `runAsSystem`, narrowed by hand to the caller's own
+row (`lib/auth/user-api-keys.ts`, #1132). The policy itself has no
+platform-row arm: an org's own reads of `ai_api_key` never see a platform
+key. Both guards refuse a key that
 carries both `admin` and an org — `withAdminAuth` at its scope floor,
 `withAuth` through `enterApiKeyOrg` (`bound-admin-key`) — so the rule holds
 at the guard even for a row edited by hand, and such a row is admitted
@@ -129,7 +135,7 @@ deployed from `main` between them could.
 
 ### `DELETE /api/v1/user/api-keys/:keyId`
 
-Revoke a key by setting `revokedAt`. Soft-delete — record preserved for audit.
+Revoke one of your own keys by setting `revokedAt`: one bound to the org the request is acting in, or a platform key of yours. Soft-delete — record preserved for audit. Another user's key, or one bound to another org, answers `404`.
 
 ## Using API Keys
 
@@ -169,6 +175,7 @@ The `resolveApiKey()` function in `lib/auth/api-keys.ts` handles:
 ```
 lib/auth/api-keys.ts           # Key generation, hashing, resolution (imports Prisma)
 lib/auth/api-key-scopes.ts     # Scope vocabulary + validation (Prisma-free, client-safe)
+lib/auth/user-api-keys.ts      # A user's own keys: list, mint, revoke (platform keys outside the org)
 lib/app/api-key-scopes.ts      # Fork seam — extra scope names
 app/api/v1/user/api-keys/      # Self-service endpoints (list, create)
 app/api/v1/user/api-keys/[keyId]/ # Revoke endpoint
