@@ -26,8 +26,8 @@
  * at the moment the password is sent (owner ruling, 2026-11-03), never
  * guessed from the host or an error. It is refused over an unencrypted
  * connection, and it costs the protection the verifier exists for: the server
- * can keep the statement, password included (a DDL log, `pg_stat_statements`,
- * `pg_stat_activity` while it runs). The script refuses to touch a role that is the one running it, a
+ * can keep the statement, password included (its log if the statement fails
+ * or DDL is logged, `pg_stat_statements`, `pg_stat_activity` while it runs). The script refuses to touch a role that is the one running it, a
  * superuser, `BYPASSRLS`, or a table owner.
  *
  * `--create` is idempotent: an existing role has its password reset and its
@@ -43,6 +43,7 @@
  * @see .context/tenancy/isolation.md#the-role-split
  */
 
+import { TLSSocket } from 'node:tls';
 import { Client } from 'pg';
 import { logger } from '@/lib/logging';
 import { ownerDsn, scramSha256Verifier } from '@/lib/tenancy/isolation';
@@ -131,19 +132,23 @@ async function refuseIfPrivileged(client: Client, role: string): Promise<void> {
   }
 }
 
-/** Postgres stores a literal of this shape as the hash itself, not as a password to hash. */
-const LOOKS_PREHASHED = /^(md5[0-9a-f]{32}|SCRAM-SHA-256\$)/;
+/**
+ * Postgres stores a password literal of exactly these shapes as the hash
+ * itself, not as a password to hash: `md5` and 32 lowercase hex, or a whole
+ * SCRAM-SHA-256 verifier. Anything else it hashes.
+ */
+const LOOKS_PREHASHED =
+  /^(md5[0-9a-f]{32}|SCRAM-SHA-256\$\d+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+)$/;
 
 /**
- * Refuse to send the password itself over a connection that is not
- * encrypted. Neon requires TLS, so this costs Neon nothing; elsewhere it stops
- * the flag putting the cleartext on the wire.
+ * Refuse to send the password itself unless this client's own socket is TLS:
+ * the hop this script controls. Asked of the client, not the server, because
+ * a host may end TLS at a proxy (Neon routes through one), where the backend's own view
+ * (`pg_stat_ssl`) reports its hop from the proxy, not ours. With `sslmode`
+ * set, pg errors rather than fall back, so the socket is TLS or there is none.
  */
-async function refuseUnencryptedPlaintext(client: Client): Promise<void> {
-  const { rows } = await client.query<{ ssl: boolean }>(
-    'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()'
-  );
-  if (rows[0]?.ssl !== true) {
+function refuseUnencryptedPlaintext(client: Client): void {
+  if (!(client.connection.stream instanceof TLSSocket)) {
     throw new Error(
       '--plaintext-password needs an encrypted connection: add sslmode=require to the owner DSN, or drop the flag where the host accepts a verifier'
     );
@@ -160,14 +165,7 @@ async function create(
   passwordForm: PasswordForm
 ): Promise<Done> {
   const done: Done = [];
-  if (passwordForm === 'plaintext') {
-    if (LOOKS_PREHASHED.test(password)) {
-      throw new Error(
-        'TENANCY_APP_ROLE_PASSWORD looks like a password hash; sent as written, Postgres would store it as the hash and no password would log in'
-      );
-    }
-    await refuseUnencryptedPlaintext(client);
-  }
+  if (passwordForm === 'plaintext') refuseUnencryptedPlaintext(client);
   const r = client.escapeIdentifier(role);
   const pw = client.escapeLiteral(
     passwordForm === 'plaintext' ? password : scramSha256Verifier(password)
@@ -216,11 +214,10 @@ async function create(
   return done;
 }
 
-async function drop(client: Client, role: string): Promise<void> {
+async function drop(client: Client, role: string): Promise<Done> {
   const r = client.escapeIdentifier(role);
   if (!(await roleExists(client, role))) {
-    logger.info(`  role ${role}: absent — nothing to drop`);
-    return;
+    return [`  role ${role}: absent — nothing to drop`];
   }
   await refuseIfPrivileged(client, role);
   const s = await currentSchema(client);
@@ -232,7 +229,7 @@ async function drop(client: Client, role: string): Promise<void> {
   await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA ${s} FROM ${r}`);
   await client.query(`REVOKE ALL ON SCHEMA ${s} FROM ${r}`);
   await client.query(`DROP ROLE ${r}`);
-  logger.info(`  role ${role}: grants revoked, role dropped`);
+  return [`  role ${role}: grants revoked, role dropped`];
 }
 
 async function main(): Promise<void> {
@@ -247,22 +244,29 @@ async function main(): Promise<void> {
   if (action === 'create' && !password) {
     throw new Error('set TENANCY_APP_ROLE_PASSWORD (never pass a password as an argument)');
   }
+  if (passwordForm === 'plaintext' && password && LOOKS_PREHASHED.test(password)) {
+    throw new Error(
+      'TENANCY_APP_ROLE_PASSWORD looks like a password hash; sent as written, Postgres would store it as the hash and no password would log in'
+    );
+  }
 
   logger.info(`db:tenancy:role --${action} (${role})`);
   if (passwordForm === 'plaintext') {
     logger.warn(
-      '  --plaintext-password: sending the password itself, not its SCRAM-SHA-256 verifier. The statement, password included, can be kept by the server (a DDL log, pg_stat_statements, pg_stat_activity while it runs); rotate it if that matters. Use this only where the host refuses a verifier, as Neon does.'
+      '  --plaintext-password: sending the password itself, not its SCRAM-SHA-256 verifier. The statement, password included, can be kept by the server (its log if the statement fails or DDL is logged, pg_stat_statements, pg_stat_activity while it runs). Use this only where the host refuses a verifier, as Neon does; to rotate without that exposure, set the password outside SQL (on Neon, in its console).'
     );
   }
   const client = new Client({ connectionString: dsn });
   await client.connect();
   try {
     await client.query('BEGIN');
-    const done = action === 'create' ? await create(client, role, password!, passwordForm) : [];
-    if (action === 'drop') await drop(client, role);
+    const done =
+      action === 'create'
+        ? await create(client, role, password!, passwordForm)
+        : await drop(client, role);
     await client.query('COMMIT');
     // Only now: a host that refuses at COMMIT (Neon did, #1131) must not leave
-    // "created" in the log above its failure.
+    // a success line in the log above its failure.
     for (const line of done) logger.info(line);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);

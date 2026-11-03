@@ -15,12 +15,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockConnect = vi.hoisted(() => vi.fn());
 const mockEnd = vi.hoisted(() => vi.fn());
+/** Whether the mocked client's own socket is TLS, as pg leaves it after an upgrade. */
+const socket = vi.hoisted(() => ({ encrypted: true }));
 vi.mock('pg', async (importOriginal) => {
   // pg's own escaping, not a stand-in: the plaintext form sends operator-chosen
   // text, so a backslash or quote must be quoted exactly as pg quotes it.
   const actual = await importOriginal<typeof import('pg')>();
+  const { TLSSocket } = await import('node:tls');
   return {
     Client: vi.fn(function (this: Record<string, unknown>) {
+      this.connection = {
+        stream: socket.encrypted ? Object.create(TLSSocket.prototype) : {},
+      };
       this.query = mockQuery;
       this.connect = mockConnect;
       this.end = mockEnd;
@@ -52,6 +58,8 @@ describe('scripts/db/tenancy-role', () => {
     process.env.MIGRATE_DATABASE_URL = 'postgresql://owner:pw@localhost:5432/db';
     delete process.env.TENANCY_APP_ROLE;
     delete process.env.TENANCY_APP_ROLE_PASSWORD;
+    ledger = true;
+    socket.encrypted = true;
     mockConnect.mockResolvedValue(undefined);
     mockEnd.mockResolvedValue(undefined);
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -95,23 +103,17 @@ describe('scripts/db/tenancy-role', () => {
         return Promise.resolve({ rows: [{ n: exists ? '1' : '0' }] });
       if (sql.includes('AS schema')) return Promise.resolve({ rows: [{ schema: 'public' }] });
       if (sql.includes('AS present')) return Promise.resolve({ rows: [{ present: ledger }] });
-      if (sql.includes('pg_stat_ssl')) return Promise.resolve({ rows: [{ ssl: encrypted }] });
       return Promise.resolve({ rows: [] });
     });
   }
   let ledger = true;
-  let encrypted = true;
 
   /** The statements that change something — the catalog reads filtered out. */
   const statements = () =>
     mockQuery.mock.calls
       .map((c) => c[0] as string)
       .filter(
-        (s) =>
-          !s.includes('FROM pg_roles') &&
-          !s.includes('AS schema') &&
-          !s.includes('AS present') &&
-          !s.includes('pg_stat_ssl')
+        (s) => !s.includes('FROM pg_roles') && !s.includes('AS schema') && !s.includes('AS present')
       );
 
   const SCRAM = /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
@@ -206,10 +208,9 @@ describe('scripts/db/tenancy-role', () => {
 
   it('refuses --plaintext-password over an unencrypted connection, writing nothing', async () => {
     process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
-    encrypted = false;
+    socket.encrypted = false;
     answer(false);
     await run('--create', '--plaintext-password');
-    encrypted = true;
 
     expect(mockError).toHaveBeenCalledWith(
       expect.stringContaining('needs an encrypted connection')
@@ -230,10 +231,21 @@ describe('scripts/db/tenancy-role', () => {
       await run('--create', '--plaintext-password');
 
       expect(mockError).toHaveBeenCalledWith(expect.stringContaining('looks like a password hash'));
-      expect(statements().some((st) => st.startsWith('CREATE ROLE'))).toBe(false);
+      // Refused as input, before any connection.
+      expect(mockConnect).not.toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(2);
     }
   );
+
+  it('sends a password that only starts like a hash, which Postgres hashes as usual', async () => {
+    const pw = `md5${'0123456789abcdef'.repeat(2)}Xy!`;
+    process.env.TENANCY_APP_ROLE_PASSWORD = pw;
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toContain(`PASSWORD '${pw}'`);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
 
   it('exits 2 without connecting for an unknown argument, so a misspelt flag cannot fall back', async () => {
     process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
@@ -293,7 +305,6 @@ describe('scripts/db/tenancy-role', () => {
     ledger = false;
     answer(false);
     await run('--create');
-    ledger = true;
     expect(mockError).toHaveBeenCalledWith(expect.stringContaining('db:migrate:deploy'));
     expect(statements()).not.toContain('COMMIT');
     expect(statements().at(-1)).toBe('ROLLBACK');
