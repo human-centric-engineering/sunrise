@@ -27,8 +27,9 @@ vi.mock('pg', () => ({
 
 const mockInfo = vi.hoisted(() => vi.fn());
 const mockError = vi.hoisted(() => vi.fn());
+const mockWarn = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/logging', () => ({
-  logger: { info: mockInfo, error: mockError, warn: vi.fn(), debug: vi.fn() },
+  logger: { info: mockInfo, error: mockError, warn: mockWarn, debug: vi.fn() },
 }));
 
 import { Client } from 'pg';
@@ -137,6 +138,59 @@ describe('scripts/db/tenancy-role', () => {
       'COMMIT',
     ]);
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  // ── --plaintext-password: hosts that refuse a verifier (#1131) ─────────
+
+  it('--create --plaintext-password sends the password itself, and says so without logging it', async () => {
+    // Neon's control plane refuses a SCRAM verifier. The flag is the
+    // operator's explicit choice (owner ruling, 2026-11-03).
+    process.env.TENANCY_APP_ROLE_PASSWORD = "s3cret'quote";
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      "CREATE ROLE \"sunrise_app\" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 's3cret''quote'"
+    );
+    expect(statements().at(-1)).toBe('COMMIT');
+    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining('--plaintext-password'));
+    // The password never reaches a log line, whatever form it is sent in.
+    const logged = [...mockInfo.mock.calls, ...mockWarn.mock.calls, ...mockError.mock.calls]
+      .flat()
+      .map(String)
+      .join('\n');
+    expect(logged).not.toContain('s3cret');
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('--plaintext-password resets an existing role with the password itself too', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    answer(true);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      'ALTER ROLE "sunrise_app" WITH LOGIN NOCREATEDB NOCREATEROLE PASSWORD \'pw-plain\''
+    );
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('without the flag, never sends the password itself and warns of nothing', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    answer(true);
+    await run('--create');
+
+    expect(statements()[1]).not.toContain('pw-plain');
+    expect(mockWarn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the default path has nothing to warn of
+  });
+
+  it('refuses --plaintext-password with --drop, without connecting', async () => {
+    await run('--drop', '--plaintext-password');
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('--plaintext-password applies only to --create')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(2);
   });
 
   it('--create on an existing role resets it instead of failing, under the name TENANCY_APP_ROLE gives', async () => {

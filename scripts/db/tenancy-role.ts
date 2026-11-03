@@ -2,6 +2,7 @@
  * Create or remove the restricted app role row isolation needs (§107 t-707).
  *
  *   TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
+ *   TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create --plaintext-password  # Neon
  *   npm run db:tenancy:role -- --drop
  *
  * **Why a second role is required, not optional.** A table's owner is never
@@ -19,8 +20,14 @@
  * sequences, plus `ALTER DEFAULT PRIVILEGES` for the connecting (owner) role
  * so tables and sequences future migrations create are covered without
  * re-running this. The password is sent as a SCRAM-SHA-256 verifier computed
- * here, never as cleartext, and the script refuses to touch a role that is
- * the one running it, a superuser, `BYPASSRLS`, or a table owner.
+ * here, never as cleartext, unless `--plaintext-password` is passed (#1131):
+ * Neon's control plane refuses a verifier and accepts only the password
+ * itself, over its required TLS. That flag is the operator's explicit choice
+ * at the moment the password is sent (owner ruling, 2026-11-03), never
+ * guessed from the host or an error, and it costs the protection the
+ * verifier exists for: a server that logs DDL writes the cleartext to its
+ * log. The script refuses to touch a role that is the one running it, a
+ * superuser, `BYPASSRLS`, or a table owner.
  *
  * `--create` is idempotent: an existing role has its password reset and its
  * grants re-applied. `--drop` revokes the default privileges and every grant
@@ -43,11 +50,16 @@ const DEFAULT_ROLE = 'sunrise_app';
 const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
 type Action = 'create' | 'drop';
 
-function parseAction(argv: readonly string[]): Action {
+/** How the password reaches the server: its SCRAM-SHA-256 verifier, or itself (#1131). */
+type PasswordForm = 'verifier' | 'plaintext';
+
+function parseArgs(argv: readonly string[]): { action: Action; passwordForm: PasswordForm } {
   const create = argv.includes('--create');
   const drop = argv.includes('--drop');
   if (create === drop) throw new Error('Pass exactly one of --create or --drop');
-  return create ? 'create' : 'drop';
+  const plaintext = argv.includes('--plaintext-password');
+  if (plaintext && drop) throw new Error('--plaintext-password applies only to --create');
+  return { action: create ? 'create' : 'drop', passwordForm: plaintext ? 'plaintext' : 'verifier' };
 }
 
 async function roleExists(client: Client, role: string): Promise<boolean> {
@@ -108,9 +120,16 @@ async function refuseIfPrivileged(client: Client, role: string): Promise<void> {
   }
 }
 
-async function create(client: Client, role: string, password: string): Promise<void> {
+async function create(
+  client: Client,
+  role: string,
+  password: string,
+  passwordForm: PasswordForm
+): Promise<void> {
   const r = client.escapeIdentifier(role);
-  const pw = client.escapeLiteral(scramSha256Verifier(password));
+  const pw = client.escapeLiteral(
+    passwordForm === 'plaintext' ? password : scramSha256Verifier(password)
+  );
   const s = await currentSchema(client);
   await refuseIfPrivileged(client, role);
   // The app never reads or writes the migration ledger; a compromised app
@@ -174,7 +193,7 @@ async function drop(client: Client, role: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const action = parseAction(process.argv.slice(2));
+  const { action, passwordForm } = parseArgs(process.argv.slice(2));
   const role = process.env.TENANCY_APP_ROLE ?? DEFAULT_ROLE;
   if (!ROLE_NAME.test(role)) {
     throw new Error(`TENANCY_APP_ROLE "${role}" must match ${ROLE_NAME}`);
@@ -187,11 +206,16 @@ async function main(): Promise<void> {
   }
 
   logger.info(`db:tenancy:role --${action} (${role})`);
+  if (passwordForm === 'plaintext') {
+    logger.warn(
+      '  --plaintext-password: sending the password itself, not its SCRAM-SHA-256 verifier. A server that logs DDL (log_statement = ddl) writes it to its log; use this only where the host refuses a verifier, as Neon does.'
+    );
+  }
   const client = new Client({ connectionString: dsn });
   await client.connect();
   try {
     await client.query('BEGIN');
-    if (action === 'create') await create(client, role, password!);
+    if (action === 'create') await create(client, role, password!, passwordForm);
     else await drop(client, role);
     await client.query('COMMIT');
   } catch (err) {
