@@ -81,6 +81,91 @@ describe('WaitlistForm', () => {
     expect(body).not.toHaveProperty('utm_medium');
   });
 
+  it('sends a chosen select answer and the referring page', async () => {
+    // Arrange — the visitor arrived from another site
+    Object.defineProperty(document, 'referrer', {
+      value: 'https://news.example.org/story',
+      configurable: true,
+    });
+    const user = userEvent.setup();
+    render(
+      <WaitlistForm
+        fields={[
+          {
+            key: 'role',
+            label: 'Role',
+            kind: 'select',
+            required: true,
+            options: [
+              { value: 'dj', label: 'DJ' },
+              { value: 'producer', label: 'Producer' },
+            ],
+          },
+        ]}
+        list="default"
+      />
+    );
+
+    // Act
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'Producer' }));
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    // Assert
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    const [, { body }] = mockPost.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(body).toMatchObject({
+      details: { role: 'producer' },
+      referrer: 'https://news.example.org/story',
+    });
+    Object.defineProperty(document, 'referrer', { value: '', configurable: true });
+  });
+
+  it('a required select left unchosen blocks the submit', async () => {
+    const user = userEvent.setup();
+    render(
+      <WaitlistForm
+        fields={[
+          {
+            key: 'role',
+            label: 'Role',
+            kind: 'select',
+            required: true,
+            options: [{ value: 'dj', label: 'DJ' }],
+          },
+        ]}
+        list="default"
+      />
+    );
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    expect(await screen.findByText('Choose one of the options for Role')).toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('shows the submitting label and disables the button while the join is in flight', async () => {
+    // Arrange — a request that has not answered yet
+    let answer: (v: unknown) => void = () => undefined;
+    mockPost.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const user = userEvent.setup();
+    render(
+      <WaitlistForm fields={[]} list="default" copy={{ submittingLabel: 'Saving your place…' }} />
+    );
+
+    // Act
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    // Assert
+    const button = await screen.findByRole('button', { name: /Saving your place/ });
+    expect(button).toBeDisabled();
+    answer({ message: 'ok' });
+    expect(await screen.findByText('Thanks for joining')).toBeInTheDocument();
+  });
+
   it('refuses a missing required answer before sending anything', async () => {
     const user = userEvent.setup();
     render(<WaitlistForm fields={FIELDS} list="default" />);

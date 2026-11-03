@@ -46,6 +46,45 @@ describe('<Waitlist />', () => {
     expect(mockPrisma.waitlistListState.findFirst).not.toHaveBeenCalled();
   });
 
+  it('passes a named list and every optional field property through', async () => {
+    // Arrange
+    mockPrisma.waitlistListState.findFirst.mockResolvedValue({ open: true });
+    const Waitlist = await load({
+      consentVersion: 'v1',
+      fields: [
+        {
+          key: 'bio',
+          label: 'Bio',
+          kind: 'textarea',
+          help: 'Short',
+          required: true,
+          maxLength: 50,
+        },
+      ],
+      lists: [{ key: 'alpha' }, { key: 'beta', startsClosed: true }],
+    });
+
+    // Act
+    const element = await Waitlist({ list: 'beta', className: 'my-form' });
+
+    // Assert — the stored row opened the list the config starts closed
+    expect(element?.props).toMatchObject({
+      fields: [
+        {
+          key: 'bio',
+          label: 'Bio',
+          kind: 'textarea',
+          help: 'Short',
+          required: true,
+          maxLength: 50,
+        },
+      ],
+      list: 'beta',
+      closed: false,
+      className: 'my-form',
+    });
+  });
+
   it('renders nothing for a list the config does not declare', async () => {
     const Waitlist = await load({ consentVersion: 'v1' });
     expect(await Waitlist({ list: 'nope' })).toBeNull();
