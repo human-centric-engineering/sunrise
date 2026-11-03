@@ -71,6 +71,7 @@ async function main(): Promise<void> {
   let inboundExecutionId: string | null = null;
   let workflowId: string | null = null;
   let subjectContactId: string | null = null;
+  const waitlistIds: string[] = [];
   let strangerContactId: string | null = null;
 
   try {
@@ -247,6 +248,18 @@ async function main(): Promise<void> {
       },
     });
     strangerContactId = strangerContact.id;
+
+    // Waitlist entries (§125): one under the subject's address (no link yet),
+    // one linked to the account under another address, and a stranger's.
+    // Tenant-owned, written in the install org this script runs in.
+    const entry = (email: string, userId: string | null) =>
+      prisma.waitlistEntry.create({
+        data: { email, userId, consentedAt: new Date(), consentVersion: 'smoke' },
+      });
+    const subjectEntry = await entry(subject.email, null);
+    const linkedEntry = await entry(`${PREFIX}-linked@example.com`, subject.id);
+    const strangerEntry = await entry(strangerEmail, null);
+    waitlistIds.push(subjectEntry.id, linkedEntry.id, strangerEntry.id);
     // The rows are stored as the contact route stores them (`emailSchema`:
     // trimmed, lower-cased), which is the form erasure matches on. A fixture
     // address outside that form would fail the delete check for the wrong reason.
@@ -293,6 +306,20 @@ async function main(): Promise<void> {
     check(
       (await prisma.contactSubmission.findUnique({ where: { id: strangerContact.id } })) !== null,
       'stranger’s contact submission survives (exact match, not ILIKE)'
+    );
+
+    // Waitlist entries: by address (verified) and by link deleted; the stranger's kept.
+    check(
+      (await prisma.waitlistEntry.findUnique({ where: { id: subjectEntry.id } })) === null,
+      'subject’s waitlist entry deleted (joined under the verified address)'
+    );
+    check(
+      (await prisma.waitlistEntry.findUnique({ where: { id: linkedEntry.id } })) === null,
+      'waitlist entry linked to the account deleted'
+    );
+    check(
+      (await prisma.waitlistEntry.findUnique({ where: { id: strangerEntry.id } })) !== null,
+      'stranger’s waitlist entry survives (exact match, not ILIKE)'
     );
 
     // Org config retained, creator de-attributed.
@@ -367,6 +394,10 @@ async function main(): Promise<void> {
     if (contactIds.length > 0)
       await prisma.contactSubmission
         .deleteMany({ where: { id: { in: contactIds } } })
+        .catch(() => undefined);
+    if (waitlistIds.length > 0)
+      await prisma.waitlistEntry
+        .deleteMany({ where: { id: { in: waitlistIds } } })
         .catch(() => undefined);
     if (auditId)
       await prisma.aiAdminAuditLog.deleteMany({ where: { id: auditId } }).catch(() => undefined);

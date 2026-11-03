@@ -94,6 +94,7 @@ async function main(): Promise<void> {
   let agentId: string | null = null;
   let contactId: string | null = null;
   let strangerContactId: string | null = null;
+  const waitlistIds: string[] = [];
   let workflowId: string | null = null;
   let costLogId: string | null = null;
 
@@ -292,6 +293,18 @@ async function main(): Promise<void> {
     });
     strangerContactId = strangerContact.id;
 
+    // Waitlist entries (§125): the subject's by address, one linked by userId
+    // under another address, and the near-match stranger's. Tenant-owned, in
+    // the install org this script runs in.
+    const entry = (address: string, userId: string | null) =>
+      prisma.waitlistEntry.create({
+        data: { email: address, userId, consentedAt: new Date(), consentVersion: 'smoke' },
+      });
+    const subjectEntry = await entry(email.toLowerCase(), null);
+    const linkedEntry = await entry(`${PREFIX}-linked@example.com`, subject.id);
+    const strangerEntry = await entry(nearMatchEmail.toLowerCase(), null);
+    waitlistIds.push(subjectEntry.id, linkedEntry.id, strangerEntry.id);
+
     // ---------------------------------------------------------------------
     console.log('\nexporting…');
     const bundle = await exportUserData({
@@ -345,6 +358,12 @@ async function main(): Promise<void> {
     check(
       contacts?.[0]?.id === contact.id,
       "the exported contact submission is the subject's own, not a near-match"
+    );
+    const entries = bundle.personalData.waitlistEntries as Array<{ id: string }> | undefined;
+    check(
+      JSON.stringify((entries ?? []).map((e) => e.id).sort()) ===
+        JSON.stringify([subjectEntry.id, linkedEntry.id].sort()),
+      'waitlist entries: the one under the verified address and the linked one, not the near-match'
     );
     check(bundle.attributions.agents?.length === 1, 'created agent exported as attribution');
 
@@ -555,6 +574,10 @@ async function main(): Promise<void> {
     // webhook subscriptions all cascade from the user; the agent, the workflow
     // (and its executions) and the contact submission do not — the workflow is
     // SetNull-retained on the user, so it outlives the delete below.
+    if (waitlistIds.length > 0)
+      await prisma.waitlistEntry
+        .deleteMany({ where: { id: { in: waitlistIds } } })
+        .catch(() => undefined);
     const contactIds = [contactId, strangerContactId].filter((id): id is string => id !== null);
     if (contactIds.length > 0)
       await prisma.contactSubmission
