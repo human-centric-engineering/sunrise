@@ -208,6 +208,15 @@ describe('POST /api/v1/users/invite — org axis', () => {
     });
   });
 
+  it('returns the invitedAt it stored, the value the user-created seam later reports (#1136)', async () => {
+    const res = await POST(request({ ...invitee }));
+    const body = JSON.parse(await res.text());
+
+    const stored = vi.mocked(generateInvitationToken).mock.calls.at(-1)?.[1];
+    expect(stored?.invitedAt).toEqual(expect.any(String));
+    expect(body.data.invitation.invitedAt).toBe(stored?.invitedAt);
+  });
+
   it('the "already pending" response says where the pending invitation points', async () => {
     // A resend rewrites the metadata from the body, so an admin has to be
     // able to see the pending org before choosing to overwrite it.

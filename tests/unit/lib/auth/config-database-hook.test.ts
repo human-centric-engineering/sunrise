@@ -2024,6 +2024,21 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
       });
 
+      it('logs a failure to read which invitation was redeemed, rather than pass it off as unknown', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        mockPendingSignup.getRedeemedInvitation.mockRejectedValue(new Error('state gone'));
+        const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to read which invitation a new user redeemed',
+          expect.any(Error),
+          { userId: 'oauth-invitee' }
+        );
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: true, invitation: null })]);
+      });
+
       it('reports an invitation it cannot name as viaInvitation with a null invitation', async () => {
         // A valid token whose record could not be read: invited, but unnamed.
         mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);

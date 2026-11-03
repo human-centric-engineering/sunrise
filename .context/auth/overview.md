@@ -221,21 +221,18 @@ databaseHooks: {
           data: { preferences: DEFAULT_USER_PREFERENCES }
         });
 
-        // 2. Detect password invitation acceptance
-        let isPasswordInvitation = false;
-        if (!isOAuthSignup) {
-          const invitation = await getValidInvitation(user.email);
-          if (invitation) {
-            isPasswordInvitation = true;
-          }
-        }
+        // 2. Was an invitation redeemed? Only signals that prove a token:
+        // the acceptance the before hook recorded, or accept-invite's own
+        // context. NOT "an invitation is pending for this address" — a public
+        // signup for an invited address presented no token (#1136).
+        const viaInvitation = (await wasInvitationAccepted()) || isInvitedSignup();
 
         // 3. Send welcome email
         // - OAuth users: email auto-verified by provider, send immediately
         // - Password users: send after email verification (via emailVerification.afterEmailVerification)
         // - Password invitation users: send immediately (email verified by accept-invite route)
         const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
+        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || viaInvitation;
         if (shouldSendWelcomeNow) {
           await sendEmail({
             to: user.email,

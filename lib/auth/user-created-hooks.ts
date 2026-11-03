@@ -63,6 +63,8 @@ export interface UserCreatedContext {
  * Which invitation a signup redeemed. Sunrise holds at most one invitation per
  * address at a time, so the address and `invitedAt` identify it; the token
  * itself is consumed by then (on the Google path, before the account exists).
+ * A resend replaces the invitation, with a new `invitedAt` (and the resender
+ * as `invitedBy`), so match on the invitation as last sent.
  */
 export interface RedeemedInvitation {
   /** When it was sent (ISO 8601), as recorded on the invitation. */

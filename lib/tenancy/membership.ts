@@ -106,12 +106,17 @@ export function initialMembershipFor(user: NewUserShape): InitialMembership {
  * Reads the org's membership count for the bootstrap arm; a null `db` is not
  * accepted so a caller cannot skip that read by accident.
  */
+/** The org an invitation admits its invitee to: the one it names, else the install org. */
+export function invitedOrgId(invitation: AcceptedInvitation | null): string {
+  return invitation?.orgId ?? INSTALL_ORG_ID;
+}
+
 export async function membershipForNewUser(
   user: NewUserShape,
   invitation: AcceptedInvitation | null,
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<InitialMembership> {
-  const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
+  const orgId = invitedOrgId(invitation);
   const existingMembers =
     orgId === INSTALL_ORG_ID ? null : await db.orgMembership.count({ where: { orgId } });
   return membershipGiven(user, invitation, existingMembers);
@@ -129,7 +134,7 @@ function membershipGiven(
   invitation: AcceptedInvitation | null,
   existingMembers: number | null
 ): InitialMembership {
-  const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
+  const orgId = invitedOrgId(invitation);
   if (orgId === INSTALL_ORG_ID) return installMembershipForNewUser(user, invitation);
   const role = existingMembers === 0 ? ORG_OWNER_ROLE : (invitation?.orgRole ?? DEFAULT_ORG_ROLE);
   return { orgId, role };

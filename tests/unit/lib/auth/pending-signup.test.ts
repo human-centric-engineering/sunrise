@@ -127,6 +127,14 @@ describe('which invitation was redeemed (#1136)', () => {
     });
   });
 
+  it('a later acceptance with no invitation clears an earlier one on the same request', async () => {
+    await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted(redeemed);
+      await setInvitationAccepted();
+      await expect(getRedeemedInvitation()).resolves.toBeNull();
+    });
+  });
+
   it('does not leak to another request', async () => {
     await runWithRequestState(new WeakMap(), () => setInvitationAccepted(redeemed));
     await runWithRequestState(new WeakMap(), async () => {

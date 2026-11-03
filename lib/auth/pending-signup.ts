@@ -92,7 +92,9 @@ export async function setInvitationAccepted(
     return;
   }
   await invitationAcceptedState.set(true);
-  if (redeemed) await redeemedInvitationState.set(redeemed);
+  // Set even when null, so a later acceptance without one cannot report an
+  // earlier one.
+  await redeemedInvitationState.set(redeemed);
 }
 
 /** Whether this request's signup redeemed an invitation; `false` outside a request. */

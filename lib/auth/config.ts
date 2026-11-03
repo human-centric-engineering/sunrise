@@ -13,7 +13,6 @@ import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
 import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
 import type { InvitationMetadata } from '@/lib/validations/admin';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   activeOrgForSession,
   initialMembershipFor,
@@ -22,7 +21,7 @@ import {
   signupRecordFor,
   undecidedMembershipsForNewUser,
   writeNewUserMemberships,
-  type AcceptedInvitation,
+  invitedOrgId,
   type NewUserMemberships,
   type SignupRecord,
 } from '@/lib/tenancy/membership';
@@ -119,7 +118,8 @@ function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
   return {
     invitedAt: metadata.invitedAt,
     invitedBy: metadata.invitedBy,
-    orgId: metadata.orgId ?? INSTALL_ORG_ID,
+    // The same rule the membership is decided by, so the two cannot disagree.
+    orgId: invitedOrgId(metadata),
   };
 }
 
@@ -143,15 +143,15 @@ function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
  */
 async function recordPendingMembership(
   user: UserCreateData,
-  invitation: AcceptedInvitation | null,
-  viaInvitation: boolean,
-  redeemed: RedeemedInvitation | null = null
+  invitation: InvitationMetadata | null,
+  viaInvitation: boolean
 ): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
   if (viaInvitation) {
     try {
-      await setInvitationAccepted(redeemed);
+      // Which invitation, from the same record the membership is decided by.
+      await setInvitationAccepted(invitation ? redeemedInvitation(invitation) : null);
     } catch (error) {
       logger.error('Failed to record the invitation acceptance for a new user', error, {
         email: user.email,
@@ -315,12 +315,7 @@ export async function userCreateBeforeHook(
             // The row this hook consumed is the only copy of the org the
             // invitation named; hand it to the hooks that follow now.
             const invited = { ...user, role: invitedRole };
-            const record = await recordPendingMembership(
-              invited,
-              invitation.metadata,
-              true,
-              redeemedInvitation(invitation.metadata)
-            );
+            const record = await recordPendingMembership(invited, invitation.metadata, true);
             return { data: { ...invited, ...record } };
           }
         }
@@ -437,12 +432,10 @@ export async function userCreateBeforeHook(
   // `runInvitedSignup`. That route applies the invitation's platform role to
   // the row only after `signUpEmail` returns, which is why the membership is
   // decided from the invitation rather than from `user.role` here.
-  const invitedBy = invitedSignupInvitation();
   const record = await recordPendingMembership(
     user,
-    invitedBy,
-    oauthInvitationAccepted || isInvitedSignup(),
-    invitedBy ? redeemedInvitation(invitedBy) : null
+    invitedSignupInvitation(),
+    oauthInvitationAccepted || isInvitedSignup()
   );
   return { data: { ...user, ...record } };
 }
@@ -589,8 +582,14 @@ export async function userCreateAfterHook(
   // only copy; accept-invite's own metadata otherwise.
   const accepted = invitedSignupInvitation();
   const redeemed = viaInvitation
-    ? ((await getRedeemedInvitation().catch(() => null)) ??
-      (accepted ? redeemedInvitation(accepted) : null))
+    ? ((await getRedeemedInvitation().catch((error: unknown) => {
+        // On the Google path this is the only copy: say so, rather than let
+        // a fault pass for "the record could not be read".
+        logger.error('Failed to read which invitation a new user redeemed', error, {
+          userId: user.id,
+        });
+        return null;
+      })) ?? (accepted ? redeemedInvitation(accepted) : null))
     : null;
   if (viaInvitation && !isOAuthSignup) {
     logger.info('Detected password invitation acceptance', {

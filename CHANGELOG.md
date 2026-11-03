@@ -23,8 +23,8 @@ release process.
   null` (`RedeemedInvitation`, `lib/auth/user-created-hooks.ts`), on both the
   password and the Google path, where the token is consumed before the account
   exists. `orgId` is the install org when the invitation named none.
-  `viaInvitation` is unchanged. **Forks:** a test that builds a
-  `UserCreatedContext` by hand adds `invitation: null` (#1136, t-973).
+  **Forks:** a test that builds a `UserCreatedContext` by hand adds
+  `invitation: null` (#1136, t-973).
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
   (0 first), and an opaque id for this attempt. Set by the `tool_call` and
@@ -171,6 +171,21 @@ release process.
   accepting uploads. It now writes them. **Forks:** a switch you turned off
   was never stored, so Settings shows it on and uploads are still allowed. If
   you meant it off, turn it off again and save after this merge (t-963).
+
+### Security
+
+- **The user-created seam reported a public signup for an invited address as
+  invited.** On the email/password path `viaInvitation` was true whenever an
+  invitation was pending for the address, without a token being presented, so
+  under `SIGNUP_MODE=open` anyone who signed up first with an invited address
+  was reported as invited, and a fork hook acting on it (granting the
+  invitation's roles, say) acted for them. `viaInvitation` and the new
+  `invitation` now come only from signals that prove a token: the acceptance
+  the before hook records, and `accept-invite`'s own context. Such a signup
+  also no longer skips the verification gate for its welcome email.
+  **Forks:** a hook that granted anything on `viaInvitation` should be
+  re-checked against accounts created that way before this release (#1136,
+  t-973).
 
 ## [0.16.0] — 2026-10-27
 
