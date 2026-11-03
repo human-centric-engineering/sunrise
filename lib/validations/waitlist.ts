@@ -42,11 +42,9 @@ const optionalTrimmed = (max: number) =>
 function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> {
   if (field.kind === 'select') {
     const values = (field.options ?? []).map((o) => o.value);
-    const choice = z
-      .string()
-      .refine((v) => values.includes(v), {
-        message: `Choose one of the options for ${field.label}`,
-      });
+    const choice = z.string().refine((v) => values.includes(v), {
+      message: `Choose one of the options for ${field.label}`,
+    });
     return field.required ? choice : choice.optional();
   }
   const max = field.maxLength ?? WAITLIST_FIELD_MAX_LENGTH[field.kind];
@@ -56,9 +54,20 @@ function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> 
     : text.optional().transform((v) => (v ? v : undefined));
 }
 
-function joinSchema(fields: readonly WaitlistFieldShape[], lists: readonly string[]) {
+/**
+ * The answers to the fork's fields, keyed by field key. Unknown keys are
+ * refused rather than stored: an answer the fork did not declare has no
+ * label, no column and no place in the privacy notice.
+ */
+export function buildWaitlistDetailsSchema(
+  fields: readonly WaitlistFieldShape[]
+): z.ZodObject<Record<string, z.ZodType<string | undefined>>, z.core.$strict> {
   const shape: Record<string, z.ZodType<string | undefined>> = {};
   for (const field of fields) shape[field.key] = answerSchema(field);
+  return z.object(shape).strict();
+}
+
+function joinSchema(fields: readonly WaitlistFieldShape[], lists: readonly string[]) {
   const [only] = lists;
   const listSchema = z.string().refine((v) => lists.includes(v), { message: 'Unknown waitlist' });
 
@@ -67,11 +76,7 @@ function joinSchema(fields: readonly WaitlistFieldShape[], lists: readonly strin
     name: optionalTrimmed(100),
     list:
       lists.length === 1 && only !== undefined ? listSchema.optional().default(only) : listSchema,
-    // Unknown keys are refused rather than stored: an answer the fork did not
-    // declare has no label, no column and no place in the privacy notice.
-    details: z
-      .object(shape)
-      .strict()
+    details: buildWaitlistDetailsSchema(fields)
       .optional()
       .default({})
       .transform((d) => {
