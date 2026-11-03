@@ -453,7 +453,8 @@ databaseHooks: {
         // Was an invitation redeemed? Only token-proven signals: the
         // acceptance the before hook recorded, or accept-invite's context —
         // never a lookup by address (#1136).
-        const viaInvitation = (await wasInvitationAccepted()) || isInvitedSignup();
+        const viaInvitation =
+          (await wasInvitationAccepted().catch(() => false)) || isInvitedSignup();
 
         // Send welcome email (OAuth and password-invitation users: immediately;
         // password signup with verification enabled: after email verification)

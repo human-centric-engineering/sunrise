@@ -106,11 +106,6 @@ export function initialMembershipFor(user: NewUserShape): InitialMembership {
  * Reads the org's membership count for the bootstrap arm; a null `db` is not
  * accepted so a caller cannot skip that read by accident.
  */
-/** The org an invitation admits its invitee to: the one it names, else the install org. */
-export function invitedOrgId(invitation: AcceptedInvitation | null): string {
-  return invitation?.orgId ?? INSTALL_ORG_ID;
-}
-
 export async function membershipForNewUser(
   user: NewUserShape,
   invitation: AcceptedInvitation | null,
@@ -120,6 +115,11 @@ export async function membershipForNewUser(
   const existingMembers =
     orgId === INSTALL_ORG_ID ? null : await db.orgMembership.count({ where: { orgId } });
   return membershipGiven(user, invitation, existingMembers);
+}
+
+/** The org an invitation admits its invitee to: the one it names, else the install org. */
+export function invitedOrgId(invitation: AcceptedInvitation | null): string {
+  return invitation?.orgId ?? INSTALL_ORG_ID;
 }
 
 /**

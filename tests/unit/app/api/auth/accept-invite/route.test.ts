@@ -199,8 +199,14 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Verify invitation metadata was fetched
+      // From the row the token was validated against: the newest unexpired
+      // one, not an expired invitation still lying beside it (#1136).
       expect(prisma.verification.findFirst).toHaveBeenCalledWith({
-        where: { identifier: `invitation:${validInvitationData.email}` },
+        where: {
+          identifier: `invitation:${validInvitationData.email}`,
+          expiresAt: { gt: expect.any(Date) },
+        },
+        orderBy: { createdAt: 'desc' },
       });
 
       // Verify better-auth signup was called with correct body

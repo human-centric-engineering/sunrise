@@ -112,9 +112,14 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     }
 
-    // 3. Get invitation metadata
+    // 3. Get invitation metadata — from the row whose token step 2 validated:
+    // the newest unexpired one, as `validateInvitationToken` reads it. An
+    // expired invitation for the same address can linger beside it, and its
+    // metadata would decide the membership and be reported to the
+    // user-created seam as the one redeemed (#1136).
     const invitation = await prisma.verification.findFirst({
-      where: { identifier: `invitation:${email}` },
+      where: { identifier: `invitation:${email}`, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!invitation || !invitation.metadata) {

@@ -783,6 +783,35 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
+      it('an accept-invite signup that is also the first human keeps its invitation (#1136)', async () => {
+        // The membership and the invitation reported to the seam must agree,
+        // so the bootstrap branch records the invitation too.
+        const mockUser = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2026-11-01T10:00:00.000Z',
+          orgId: 'org-acme',
+        };
+
+        const result = await runInvitedSignup(
+          () => userCreateBeforeHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(result.data.role).toBe('ADMIN');
+        expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledWith({
+          invitedAt: '2026-11-01T10:00:00.000Z',
+          invitedBy: 'admin-id',
+          orgId: 'org-acme',
+        });
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith(
+          expect.objectContaining({ membership: expect.objectContaining({ orgId: 'org-acme' }) })
+        );
+      });
+
       it('promotes the first human to ADMIN on OAuth signup with no invitation', async () => {
         // Arrange: OAuth first signup, no invitation state, empty database
         const mockUser = makeUserCreateData({
@@ -1987,7 +2016,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       it('does not report a public signup for an invited address as invited (#1136 security review)', async () => {
         // An invitation is pending for this address, but this signup came
-        // through the public sign-up endpoint and presented no token. Reported
+        // through the public sign-up endpoint and presented no token. The
+        // pending invitation is arranged so a reintroduced lookup by address
+        // would find it and fail this test. Reported
         // as invited, a fork would grant that invitation's roles to whoever
         // claimed the address first.
         mocks.getValidInvitation.mockResolvedValue({
@@ -2021,6 +2052,20 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
 
+        expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
+      });
+
+      it('logs a failure to read whether the signup redeemed an invitation', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockRejectedValue(new Error('state gone'));
+        const mockUser = makeUserCreateData({ id: 'oauth-user', email: 'o@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to read whether a new user redeemed an invitation',
+          expect.any(Error),
+          { userId: 'oauth-user' }
+        );
         expect(seen).toEqual([expect.objectContaining({ viaInvitation: false, invitation: null })]);
       });
 

@@ -113,6 +113,25 @@ export type SessionCreateData = {
   activeOrgId?: string | null;
 } & Record<string, unknown>;
 
+/**
+ * Which invitation this signup redeemed, for the user-created seam (#1136):
+ * what the before hook recorded, which on the Google path held the only copy,
+ * else accept-invite's own metadata. Asked only once the signup is known to
+ * have redeemed one.
+ */
+async function redeemedBy(userId: string): Promise<RedeemedInvitation | null> {
+  let recorded: RedeemedInvitation | null = null;
+  try {
+    recorded = await getRedeemedInvitation();
+  } catch (error) {
+    // Say so, rather than let a fault pass for "the record could not be read".
+    logger.error('Failed to read which invitation a new user redeemed', error, { userId });
+  }
+  if (recorded) return recorded;
+  const accepted = invitedSignupInvitation();
+  return accepted ? redeemedInvitation(accepted) : null;
+}
+
 /** The identity of an invitation a signup redeemed, for the user-created seam (#1136). */
 function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
   return {
@@ -406,7 +425,13 @@ export async function userCreateBeforeHook(
           email: user.email,
         });
         const promoted = { ...user, role: PLATFORM_ADMIN_ROLE };
-        const record = await recordPendingMembership(promoted, null, oauthInvitationAccepted);
+        // An accept-invite signup can be the first human too: the invitation
+        // still decides the membership, so it and the one reported agree.
+        const record = await recordPendingMembership(
+          promoted,
+          invitedSignupInvitation(),
+          oauthInvitationAccepted || isInvitedSignup()
+        );
         return { data: { ...promoted, ...record } };
       }
 
@@ -577,20 +602,16 @@ export async function userCreateAfterHook(
   // public email/password signup for an invited address presented no token,
   // and reporting it as invited let a fork grant that invitation's roles to
   // whoever claimed the address first.
-  const viaInvitation = (await wasInvitationAccepted().catch(() => false)) || isInvitedSignup();
-  // Which one: recorded by the before hook, which on the Google path held the
-  // only copy; accept-invite's own metadata otherwise.
-  const accepted = invitedSignupInvitation();
-  const redeemed = viaInvitation
-    ? ((await getRedeemedInvitation().catch((error: unknown) => {
-        // On the Google path this is the only copy: say so, rather than let
-        // a fault pass for "the record could not be read".
-        logger.error('Failed to read which invitation a new user redeemed', error, {
-          userId: user.id,
-        });
-        return null;
-      })) ?? (accepted ? redeemedInvitation(accepted) : null))
-    : null;
+  const viaInvitation =
+    (await wasInvitationAccepted().catch((error: unknown) => {
+      // On the Google path this is the only record: say so, rather than
+      // report an invited signup as a stranger with nothing to explain why.
+      logger.error('Failed to read whether a new user redeemed an invitation', error, {
+        userId: user.id,
+      });
+      return false;
+    })) || isInvitedSignup();
+  const redeemed = viaInvitation ? await redeemedBy(user.id) : null;
   if (viaInvitation && !isOAuthSignup) {
     logger.info('Detected password invitation acceptance', {
       userId: user.id,

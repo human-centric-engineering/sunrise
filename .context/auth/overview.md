@@ -225,7 +225,8 @@ databaseHooks: {
         // the acceptance the before hook recorded, or accept-invite's own
         // context. NOT "an invitation is pending for this address" — a public
         // signup for an invited address presented no token (#1136).
-        const viaInvitation = (await wasInvitationAccepted()) || isInvitedSignup();
+        const viaInvitation =
+          (await wasInvitationAccepted().catch(() => false)) || isInvitedSignup();
 
         // 3. Send welcome email
         // - OAuth users: email auto-verified by provider, send immediately
