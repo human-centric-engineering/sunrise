@@ -35,7 +35,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { isRecord } from '@/lib/utils';
-import { buildWaitlistJoinSchema } from '@/lib/validations/waitlist';
+import { buildWaitlistJoinSchema, toWaitlistFieldShape } from '@/lib/validations/waitlist';
 import { getWaitlistConfig } from '@/lib/waitlist/config';
 import { joinWaitlist } from '@/lib/waitlist/join';
 import { getWaitlistListStatuses, isWaitlistListOpen } from '@/lib/waitlist/lists';
@@ -60,8 +60,9 @@ function hitHoneypot(body: Record<string, unknown>): boolean {
 }
 
 /**
- * GET /api/v1/waitlist — `{ lists: [{ key, open }] }`, so a page can show a
- * closed list as closed before anyone types into it.
+ * GET /api/v1/waitlist — `{ lists: [{ key, open }], fields: [...] }`: each
+ * list's open state, so a page can show a closed list as closed before anyone
+ * types into it, and the form's fields (`<Waitlist />` renders from this).
  */
 export async function GET(): Promise<Response> {
   try {
@@ -70,7 +71,7 @@ export async function GET(): Promise<Response> {
     const lists = await runAsOrg(INSTALL_ORG_ID, () => getWaitlistListStatuses(config), {
       source: 'public-form',
     });
-    return successResponse({ lists });
+    return successResponse({ lists, fields: config.fields.map(toWaitlistFieldShape) });
   } catch (error) {
     return handleAPIError(error);
   }

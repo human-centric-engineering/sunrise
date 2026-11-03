@@ -63,8 +63,9 @@ import { Waitlist } from '@/components/waitlist/waitlist';
 <Waitlist copy={{ submitLabel: 'Get early access', consentNotice: <PrivacyLine /> }} />;
 ```
 
-`<Waitlist>` is a server component: it renders nothing without a config, and
-shows the closed message for a closed list. `<WaitlistForm>`
+`<Waitlist>` is a server component that reads `GET /api/v1/waitlist` through
+`serverFetch()` (API-first: it never touches the database). It renders nothing
+without a config, and shows the closed message for a closed list. `<WaitlistForm>`
 (`components/waitlist/waitlist-form.tsx`) is the client form, for a page that
 supplies the fields itself.
 
@@ -75,10 +76,10 @@ duplicate keys, a field key that is a body name (`email`, `name`, `list`,
 
 ## Routes
 
-| Route                   | Who    | What                                                              |
-| ----------------------- | ------ | ----------------------------------------------------------------- |
-| `GET /api/v1/waitlist`  | Anyone | `{ lists: [{ key, open }] }`                                      |
-| `POST /api/v1/waitlist` | Anyone | Join. 5 an hour per IP (`waitlistLimiter`, `RATE_LIMIT_WAITLIST`) |
+| Route                   | Who    | What                                                                   |
+| ----------------------- | ------ | ---------------------------------------------------------------------- |
+| `GET /api/v1/waitlist`  | Anyone | `{ lists: [{ key, open }], fields }` — the form's fields, serialisable |
+| `POST /api/v1/waitlist` | Anyone | Join. 5 an hour per IP (`waitlistLimiter`, `RATE_LIMIT_WAITLIST`)      |
 
 Both answer 404 without a config. The join body:
 `{ email, name?, list?, details?: { <field key>: string }, utm_source?, utm_medium?, utm_campaign?, referrer? }`.

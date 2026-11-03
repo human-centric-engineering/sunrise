@@ -107,3 +107,37 @@ export function buildWaitlistJoinSchema(
 }
 
 export type WaitlistJoinBody = z.infer<WaitlistJoinSchema>;
+
+/** One field as `GET /api/v1/waitlist` describes it to a form. */
+const waitlistFieldShapeSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  help: z.string().optional(),
+  kind: z.enum(['text', 'textarea', 'select']),
+  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
+  required: z.boolean().optional(),
+  maxLength: z.number().int().optional(),
+});
+
+/** The `data` of `GET /api/v1/waitlist`: each list's open state, and the form's fields. */
+export const waitlistStatusSchema = z.object({
+  lists: z.array(z.object({ key: z.string(), open: z.boolean() })),
+  fields: z.array(waitlistFieldShapeSchema),
+});
+
+export type WaitlistStatus = z.infer<typeof waitlistStatusSchema>;
+
+/** Only the serialisable parts of a declared field: what a form needs, and nothing a fork attached. */
+export function toWaitlistFieldShape(f: WaitlistFieldShape): WaitlistFieldShape {
+  return {
+    key: f.key,
+    label: f.label,
+    kind: f.kind,
+    ...(f.help !== undefined ? { help: f.help } : {}),
+    ...(f.options !== undefined
+      ? { options: f.options.map((o) => ({ value: o.value, label: o.label })) }
+      : {}),
+    ...(f.required !== undefined ? { required: f.required } : {}),
+    ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
+  };
+}

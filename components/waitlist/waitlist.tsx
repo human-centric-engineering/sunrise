@@ -1,10 +1,10 @@
 /**
  * `<Waitlist />` — the waitlist form, ready to mount on any page (§125).
  *
- * A server component: it reads the app's waitlist config and whether the list
- * is open, and renders `<WaitlistForm>` with them. With no waitlist config it
- * renders nothing, so a page that mounts it is unaffected until the app has
- * one.
+ * A server component: it asks `GET /api/v1/waitlist` for the lists and the
+ * form's fields and renders `<WaitlistForm>` with them. When the app has no
+ * waitlist the route answers 404 and this renders nothing, so a page that
+ * mounts it is unaffected until the app has one.
  *
  *   <Waitlist
  *     copy={{
@@ -13,51 +13,53 @@
  *     }}
  *   />
  *
- * It reads the database on every render, so the page it is on renders per
- * request.
+ * It fetches on every render, so the page it is on renders per request.
  */
 
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { runAsOrg } from '@/lib/tenancy/context';
-import { getWaitlistConfig } from '@/lib/waitlist/config';
-import { isWaitlistListOpen } from '@/lib/waitlist/lists';
+import { waitlistStatusSchema } from '@/lib/validations/waitlist';
 import { WaitlistForm, type WaitlistFormCopy } from '@/components/waitlist/waitlist-form';
 
 export interface WaitlistProps {
-  /** Which list to join. Default: the first the config declares. */
+  /** Which list to join. Default: the first the app declares. */
   list?: string;
   copy?: Partial<WaitlistFormCopy>;
   className?: string;
 }
 
 export async function Waitlist({ list, copy, className }: WaitlistProps) {
-  const config = getWaitlistConfig();
-  if (!config) return null;
-
-  const key = list ?? config.lists[0]?.key;
-  if (!key || !config.lists.some((l) => l.key === key)) {
-    logger.warn('<Waitlist> names a list the waitlist config does not declare', { list: key });
+  const res = await serverFetch(API.PUBLIC.WAITLIST);
+  // No waitlist: nothing to render, and nothing to report.
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    logger.error('<Waitlist> could not read the waitlist', { status: res.status });
     return null;
   }
 
-  // The same org the join route writes into.
-  const open = await runAsOrg(INSTALL_ORG_ID, () => isWaitlistListOpen(config, key), {
-    source: 'public-form',
-  });
+  const body = await parseApiResponse<unknown>(res);
+  const status = body.success ? waitlistStatusSchema.safeParse(body.data) : null;
+  if (!status?.success) {
+    logger.error('<Waitlist> got a waitlist response it could not read');
+    return null;
+  }
 
-  // Only the serialisable parts of each field cross to the client.
-  const fields = config.fields.map((f) => ({
-    key: f.key,
-    label: f.label,
-    kind: f.kind,
-    ...(f.help !== undefined ? { help: f.help } : {}),
-    ...(f.options !== undefined ? { options: f.options.map((o) => ({ ...o })) } : {}),
-    ...(f.required !== undefined ? { required: f.required } : {}),
-    ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
-  }));
+  const { lists, fields } = status.data;
+  const target = list === undefined ? lists[0] : lists.find((l) => l.key === list);
+  if (!target) {
+    logger.warn('<Waitlist> names a list the waitlist config does not declare', { list });
+    return null;
+  }
 
   return (
-    <WaitlistForm fields={fields} list={key} closed={!open} copy={copy} className={className} />
+    <WaitlistForm
+      fields={fields}
+      list={target.key}
+      closed={!target.open}
+      copy={copy}
+      className={className}
+    />
   );
 }

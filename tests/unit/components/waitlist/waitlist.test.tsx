@@ -1,123 +1,106 @@
 /**
  * <Waitlist /> server wrapper tests (§125 t-974)
  *
- * It renders nothing without a config, refuses an undeclared list, hands the
- * client form only serialisable field data, and reads the open state in the
- * install org — the org the join route writes into.
+ * It reads the waitlist through `GET /api/v1/waitlist` (API-first), renders
+ * nothing when the app has none or the answer cannot be read, refuses an
+ * undeclared list, and hands the form the list's open state and the fields.
  *
  * @see components/waitlist/waitlist.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { WaitlistConfig } from '@/lib/waitlist/config';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
-const { mockPrisma, seen } = vi.hoisted(() => ({
-  mockPrisma: { waitlistListState: { findFirst: vi.fn() } },
-  seen: {
-    org: undefined as string | null | undefined,
-    context: () => null as { orgId: string | null } | null,
-  },
+const { mockServerFetch, mockLogger } = vi.hoisted(() => ({
+  mockServerFetch: vi.fn(),
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
+vi.mock('@/lib/api/server-fetch', () => ({ serverFetch: mockServerFetch }));
+vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
-async function load(config: WaitlistConfig | null) {
-  vi.resetModules();
-  vi.doMock('@/lib/app/waitlist-config', () => ({ waitlistConfig: config }));
-  const mod = await import('@/components/waitlist/waitlist');
-  (await import('@/lib/waitlist/config')).__resetWaitlistConfigForTests();
-  seen.context = (await import('@/lib/tenancy/context')).getTenantContext;
-  return mod.Waitlist;
+import { Waitlist } from '@/components/waitlist/waitlist';
+
+const FIELDS = [
+  { key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] },
+];
+
+function answer(data: unknown, status = 200) {
+  mockServerFetch.mockResolvedValue(
+    Response.json(status === 200 ? { success: true, data } : { success: false, error: {} }, {
+      status,
+    })
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  seen.org = undefined;
-  mockPrisma.waitlistListState.findFirst.mockImplementation(() => {
-    seen.org = seen.context()?.orgId;
-    return Promise.resolve(null);
-  });
 });
 
 describe('<Waitlist />', () => {
-  it('renders nothing when the app has no waitlist, and reads nothing', async () => {
-    const Waitlist = await load(null);
+  it('asks the public waitlist API', async () => {
+    answer({ lists: [{ key: 'default', open: true }], fields: [] });
+    await Waitlist({});
+    expect(mockServerFetch).toHaveBeenCalledWith('/api/v1/waitlist');
+  });
+
+  it('renders nothing, and logs nothing, when the app has no waitlist (404)', async () => {
+    answer(null, 404);
     expect(await Waitlist({})).toBeNull();
-    expect(mockPrisma.waitlistListState.findFirst).not.toHaveBeenCalled();
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
-  it('passes a named list and every optional field property through', async () => {
-    // Arrange
-    mockPrisma.waitlistListState.findFirst.mockResolvedValue({ open: true });
-    const Waitlist = await load({
-      consentVersion: 'v1',
-      fields: [
-        {
-          key: 'bio',
-          label: 'Bio',
-          kind: 'textarea',
-          help: 'Short',
-          required: true,
-          maxLength: 50,
-        },
-      ],
-      lists: [{ key: 'alpha' }, { key: 'beta', startsClosed: true }],
-    });
-
-    // Act
-    const element = await Waitlist({ list: 'beta', className: 'my-form' });
-
-    // Assert — the stored row opened the list the config starts closed
-    expect(element?.props).toMatchObject({
-      fields: [
-        {
-          key: 'bio',
-          label: 'Bio',
-          kind: 'textarea',
-          help: 'Short',
-          required: true,
-          maxLength: 50,
-        },
-      ],
-      list: 'beta',
-      closed: false,
-      className: 'my-form',
+  it('renders nothing and logs when the API fails', async () => {
+    answer(null, 500);
+    expect(await Waitlist({})).toBeNull();
+    expect(mockLogger.error).toHaveBeenCalledWith('<Waitlist> could not read the waitlist', {
+      status: 500,
     });
   });
 
-  it('renders nothing for a list the config does not declare', async () => {
-    const Waitlist = await load({ consentVersion: 'v1' });
+  it('renders nothing for an answer that does not match the contract', async () => {
+    answer({ lists: 'not-an-array', fields: [] });
+    expect(await Waitlist({})).toBeNull();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      '<Waitlist> got a waitlist response it could not read'
+    );
+  });
+
+  it('renders nothing for a list the app does not declare', async () => {
+    answer({ lists: [{ key: 'default', open: true }], fields: [] });
     expect(await Waitlist({ list: 'nope' })).toBeNull();
+    expect(mockLogger.warn).toHaveBeenCalled();
   });
 
-  it('hands the form the first list, its open state from the install org, and plain fields', async () => {
-    // Arrange — a fork field carrying something that cannot cross to the client
-    const field = {
-      key: 'role',
-      label: 'Role',
-      kind: 'select' as const,
-      options: [{ value: 'dj', label: 'DJ' }],
-      internalNote: () => 'not serialisable',
-    };
-    const Waitlist = await load({
-      consentVersion: 'v1',
-      fields: [field],
-      lists: [{ key: 'alpha', startsClosed: true }, { key: 'beta' }],
+  it('defaults to the first list and hands the form its closed state and the fields', async () => {
+    answer({
+      lists: [
+        { key: 'alpha', open: false },
+        { key: 'beta', open: true },
+      ],
+      fields: FIELDS,
     });
 
-    // Act
     const element = await Waitlist({ copy: { submitLabel: 'Go' } });
 
-    // Assert
     expect(element?.props).toEqual({
-      fields: [
-        { key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] },
-      ],
+      fields: FIELDS,
       list: 'alpha',
       closed: true,
       copy: { submitLabel: 'Go' },
       className: undefined,
     });
-    expect(seen.org).toBe(INSTALL_ORG_ID);
+  });
+
+  it('a named list uses that list’s state', async () => {
+    answer({
+      lists: [
+        { key: 'alpha', open: false },
+        { key: 'beta', open: true },
+      ],
+      fields: [],
+    });
+
+    const element = await Waitlist({ list: 'beta', className: 'my-form' });
+
+    expect(element?.props).toMatchObject({ list: 'beta', closed: false, className: 'my-form' });
   });
 });

@@ -392,8 +392,20 @@ describe('GET /api/v1/waitlist', () => {
   it('lists each declared list with its open state, the stored row winning', async () => {
     // Arrange
     mockPrisma.waitlistListState.findMany.mockResolvedValue([{ list: 'alpha', open: false }]);
+    // A fork field carrying something that cannot cross to a client: declared
+    // as a variable, so the extra property is allowed as it would be in a fork.
+    const roleField = {
+      key: 'role',
+      label: 'Role',
+      kind: 'select' as const,
+      help: 'Pick one',
+      required: true,
+      options: [{ value: 'dj', label: 'DJ' }],
+      internal: () => 'not serialisable',
+    };
     const { GET } = await loadRoute({
       ...BASE_CONFIG,
+      fields: [roleField, { key: 'bio', label: 'Bio', kind: 'textarea', maxLength: 50 }],
       lists: [{ key: 'alpha' }, { key: 'beta', startsClosed: true }, { key: 'gamma' }],
     });
 
@@ -408,6 +420,17 @@ describe('GET /api/v1/waitlist', () => {
           { key: 'alpha', open: false },
           { key: 'beta', open: false },
           { key: 'gamma', open: true },
+        ],
+        fields: [
+          {
+            key: 'role',
+            label: 'Role',
+            kind: 'select',
+            help: 'Pick one',
+            required: true,
+            options: [{ value: 'dj', label: 'DJ' }],
+          },
+          { key: 'bio', label: 'Bio', kind: 'textarea', maxLength: 50 },
         ],
       },
     });
