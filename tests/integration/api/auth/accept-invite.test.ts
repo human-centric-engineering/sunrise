@@ -260,9 +260,11 @@ describe('POST /api/auth/accept-invite', () => {
         'valid-token-123'
       );
 
-      // Assert: Invitation metadata was fetched
+      // Assert: Invitation metadata was fetched from the row the token was
+      // validated against: the newest unexpired one (#1136)
       expect(vi.mocked(prisma.verification.findFirst)).toHaveBeenCalledWith({
-        where: { identifier: 'invitation:john@example.com' },
+        where: { identifier: 'invitation:john@example.com', expiresAt: { gt: expect.any(Date) } },
+        orderBy: { createdAt: 'desc' },
       });
 
       // Assert: User was created via better-auth signup (FIRST TIME)
