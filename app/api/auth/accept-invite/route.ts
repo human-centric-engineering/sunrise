@@ -46,7 +46,11 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { acceptInvitationSchema } from '@/lib/validations/user';
-import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
+import {
+  validateInvitationToken,
+  deleteInvitationToken,
+  hashInvitationToken,
+} from '@/lib/utils/invitation-token';
 import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { getRouteLogger } from '@/lib/api/context';
@@ -112,14 +116,17 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     }
 
-    // 3. Get invitation metadata — from the row whose token step 2 validated:
-    // the newest unexpired one, as `validateInvitationToken` reads it. An
-    // expired invitation for the same address can linger beside it, and its
-    // metadata would decide the membership and be reported to the
-    // user-created seam as the one redeemed (#1136).
+    // 3. Get invitation metadata — from the row whose token step 2 validated,
+    // matched by that token: not merely the newest one, which a resend in
+    // between would swap, nor an expired one lingering beside it. Its
+    // metadata decides the membership and is reported to the user-created
+    // seam as the invitation redeemed (#1136).
     const invitation = await prisma.verification.findFirst({
-      where: { identifier: `invitation:${email}`, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: 'desc' },
+      where: {
+        identifier: `invitation:${email}`,
+        value: hashInvitationToken(token),
+        expiresAt: { gt: new Date() },
+      },
     });
 
     if (!invitation || !invitation.metadata) {

@@ -812,6 +812,28 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
+      it('an accept-invite first human invited into the install org owns it, as the promotion says', async () => {
+        // The role is the promotion's, not the invitation's USER: the first
+        // admin must own the install org (#1136 review round 3).
+        const mockUser = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2026-11-01T10:00:00.000Z',
+        };
+
+        await runInvitedSignup(
+          () => userCreateBeforeHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
+        });
+      });
+
       it('promotes the first human to ADMIN on OAuth signup with no invitation', async () => {
         // Arrange: OAuth first signup, no invitation state, empty database
         const mockUser = makeUserCreateData({

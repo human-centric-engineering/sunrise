@@ -46,9 +46,12 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
   validateInvitationToken: vi.fn(),
   deleteInvitationToken: vi.fn(),
+  // The real hash: the route matches the row by the token presented (#1136).
+  hashInvitationToken: (await importOriginal<typeof import('@/lib/utils/invitation-token')>())
+    .hashInvitationToken,
 }));
 
 // Note: getRouteLogger is mocked globally in tests/setup.ts
@@ -261,10 +264,13 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Assert: Invitation metadata was fetched from the row the token was
-      // validated against: the newest unexpired one (#1136)
+      // validated against, matched by that token (#1136)
       expect(vi.mocked(prisma.verification.findFirst)).toHaveBeenCalledWith({
-        where: { identifier: 'invitation:john@example.com', expiresAt: { gt: expect.any(Date) } },
-        orderBy: { createdAt: 'desc' },
+        where: {
+          identifier: 'invitation:john@example.com',
+          value: expect.stringMatching(/^[0-9a-f]{64}$/),
+          expiresAt: { gt: expect.any(Date) },
+        },
       });
 
       // Assert: User was created via better-auth signup (FIRST TIME)

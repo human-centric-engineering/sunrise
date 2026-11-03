@@ -425,11 +425,14 @@ export async function userCreateBeforeHook(
           email: user.email,
         });
         const promoted = { ...user, role: PLATFORM_ADMIN_ROLE };
-        // An accept-invite signup can be the first human too: the invitation
-        // still decides the membership, so it and the one reported agree.
+        // An accept-invite signup can be the first human too. Its invitation
+        // still decides the org, so the membership and the invitation reported
+        // agree; the role is the promotion's, not the invitation's, or the
+        // first admin would not own the install org.
+        const accepted = invitedSignupInvitation();
         const record = await recordPendingMembership(
           promoted,
-          invitedSignupInvitation(),
+          accepted ? { ...accepted, role: PLATFORM_ADMIN_ROLE } : null,
           oauthInvitationAccepted || isInvitedSignup()
         );
         return { data: { ...promoted, ...record } };
@@ -839,10 +842,10 @@ export async function sendVerificationEmailHook({
   // that assumes "this address is being verified for the first time by its
   // owner-to-be" is reading a different situation than it thinks.
   //
-  // Concretely, the invitation skip immediately below is about signup: an
-  // existing user moving to a new address must get a verification email for
-  // it, whatever else is true of that address. The invitation skip exists for signup (where the accept-invite
-  // route marks the address verified itself), and a change is not that.
+  // The invitation skip below is about signup only: it reads accept-invite's
+  // context, which a change never runs in, so a user moving to a new address
+  // always gets a verification email for it. The token is parsed here for the
+  // log line that says which kind of verification this is.
   const emailChange = await parseEmailChangeToken(token);
 
   if (!emailChange) {
