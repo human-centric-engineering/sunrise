@@ -33,6 +33,7 @@ const ctx: UserCreatedContext = {
   name: 'New User',
   signupMethod: 'email',
   viaInvitation: false,
+  invitation: null,
 };
 
 beforeEach(() => {

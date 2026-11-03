@@ -11,7 +11,9 @@ import { sendEmail } from '@/lib/email/send';
 import { validateEmailConfig } from '@/lib/email/client';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
-import { dispatchUserCreated } from '@/lib/auth/user-created-hooks';
+import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
+import type { InvitationMetadata } from '@/lib/validations/admin';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   activeOrgForSession,
   initialMembershipFor,
@@ -28,6 +30,7 @@ import { ORG_ROLES } from '@/lib/tenancy/roles';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
+  getRedeemedInvitation,
   setInvitationAccepted,
   setPendingSignup,
   wasInvitationAccepted,
@@ -111,6 +114,15 @@ export type SessionCreateData = {
   activeOrgId?: string | null;
 } & Record<string, unknown>;
 
+/** The identity of an invitation a signup redeemed, for the user-created seam (#1136). */
+function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
+  return {
+    invitedAt: metadata.invitedAt,
+    invitedBy: metadata.invitedBy,
+    orgId: metadata.orgId ?? INSTALL_ORG_ID,
+  };
+}
+
 /**
  * Record the membership this signup will write, so the session hook (which
  * may run first — see `lib/auth/pending-signup.ts`) and the after hook agree
@@ -132,13 +144,14 @@ export type SessionCreateData = {
 async function recordPendingMembership(
   user: UserCreateData,
   invitation: AcceptedInvitation | null,
-  viaInvitation: boolean
+  viaInvitation: boolean,
+  redeemed: RedeemedInvitation | null = null
 ): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
   if (viaInvitation) {
     try {
-      await setInvitationAccepted();
+      await setInvitationAccepted(redeemed);
     } catch (error) {
       logger.error('Failed to record the invitation acceptance for a new user', error, {
         email: user.email,
@@ -302,7 +315,12 @@ export async function userCreateBeforeHook(
             // The row this hook consumed is the only copy of the org the
             // invitation named; hand it to the hooks that follow now.
             const invited = { ...user, role: invitedRole };
-            const record = await recordPendingMembership(invited, invitation.metadata, true);
+            const record = await recordPendingMembership(
+              invited,
+              invitation.metadata,
+              true,
+              redeemedInvitation(invitation.metadata)
+            );
             return { data: { ...invited, ...record } };
           }
         }
@@ -419,10 +437,12 @@ export async function userCreateBeforeHook(
   // `runInvitedSignup`. That route applies the invitation's platform role to
   // the row only after `signUpEmail` returns, which is why the membership is
   // decided from the invitation rather than from `user.role` here.
+  const invitedBy = invitedSignupInvitation();
   const record = await recordPendingMembership(
     user,
-    invitedSignupInvitation(),
-    oauthInvitationAccepted || isInvitedSignup()
+    invitedBy,
+    oauthInvitationAccepted || isInvitedSignup(),
+    invitedBy ? redeemedInvitation(invitedBy) : null
   );
   return { data: { ...user, ...record } };
 }
@@ -558,6 +578,7 @@ export async function userCreateAfterHook(
 
   // Check if this is an invitation acceptance (for password flow)
   let isPasswordInvitation = false;
+  let passwordInvitation: InvitationMetadata | null = null;
 
   try {
     if (!isOAuthSignup) {
@@ -566,6 +587,7 @@ export async function userCreateAfterHook(
 
       if (invitation) {
         isPasswordInvitation = true;
+        passwordInvitation = invitation.metadata;
         logger.info('Detected password invitation acceptance', {
           userId: user.id,
           email: user.email,
@@ -625,12 +647,20 @@ export async function userCreateAfterHook(
   // The OAuth before hook consumed its invitation token, so the lookup above
   // cannot see it; it recorded the acceptance on the request state (#688).
   const viaInvitation = isPasswordInvitation || (await wasInvitationAccepted().catch(() => false));
+  // Which one (#1136): recorded by the before hook, which on the Google path
+  // held the only copy; on the password path the token outlives the account,
+  // so the record read above is the fallback.
+  const redeemed = viaInvitation
+    ? ((await getRedeemedInvitation().catch(() => null)) ??
+      (passwordInvitation ? redeemedInvitation(passwordInvitation) : null))
+    : null;
   await dispatchUserCreated({
     userId: user.id,
     email: user.email,
     name: user.name,
     signupMethod: isOAuthSignup ? 'oauth' : 'email',
     viaInvitation,
+    invitation: redeemed,
   });
 }
 

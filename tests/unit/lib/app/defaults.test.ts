@@ -412,6 +412,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
           name: 'New',
           signupMethod: 'email',
           viaInvitation: false,
+          invitation: null,
         });
         expect(register).not.toHaveBeenCalled();
       } finally {

@@ -49,6 +49,28 @@ export interface UserCreatedContext {
    * email" should skip that step.
    */
   viaInvitation: boolean;
+  /**
+   * The invitation this signup redeemed, so a hook can match rows it keeps
+   * against that invitation rather than against the address (#1136). `null`
+   * when the signup redeemed none, and also in the rare case it redeemed a
+   * token whose invitation record could not be read: `viaInvitation` is then
+   * true and this is null.
+   */
+  invitation: RedeemedInvitation | null;
+}
+
+/**
+ * Which invitation a signup redeemed. Sunrise holds at most one invitation per
+ * address at a time, so the address and `invitedAt` identify it; the token
+ * itself is consumed by then (on the Google path, before the account exists).
+ */
+export interface RedeemedInvitation {
+  /** When it was sent (ISO 8601), as recorded on the invitation. */
+  invitedAt: string;
+  /** The id of the user who sent it. */
+  invitedBy: string;
+  /** The org it invited the user into: the install org when it named none. */
+  orgId: string;
 }
 
 /** A unit of app-owned work that runs once, after a user row is created. */
