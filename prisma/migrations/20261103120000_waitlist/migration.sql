@@ -119,7 +119,7 @@ DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_class
-    WHERE oid = to_regclass('public.ai_agent') AND relrowsecurity
+    WHERE oid = to_regclass(format('%I.ai_agent', current_schema())) AND relrowsecurity
   ) THEN
     ALTER TABLE "waitlist_entry" ENABLE ROW LEVEL SECURITY;
     ALTER TABLE "waitlist_entry" FORCE ROW LEVEL SECURITY;

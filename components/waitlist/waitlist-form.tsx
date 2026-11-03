@@ -53,6 +53,8 @@ export interface WaitlistFormCopy {
   optionalMarker: string;
   /** A select's text before anything is chosen. */
   selectPlaceholder: string;
+  /** The item that takes back an optional select's answer. */
+  selectNoAnswerLabel: string;
   /** Shown beside the button when a join fails for a reason the server did not give. */
   failureMessage: string;
   submitLabel: string;
@@ -64,12 +66,16 @@ export interface WaitlistFormCopy {
   consentNotice: ReactNode;
 }
 
+/** The optional select's "no answer" item: Radix forbids an empty item value. */
+const NO_ANSWER = '__no_answer__';
+
 const DEFAULT_COPY: WaitlistFormCopy = {
   emailLabel: 'Email',
   emailPlaceholder: 'you@example.com',
   nameLabel: 'Name (optional)',
   optionalMarker: '(optional)',
   selectPlaceholder: 'Choose one',
+  selectNoAnswerLabel: 'No answer',
   failureMessage: 'Something went wrong. Please try again in a moment.',
   submitLabel: 'Join the waitlist',
   submittingLabel: 'Joining…',
@@ -260,10 +266,9 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
                 control={control}
                 render={({ field: control }) => (
                   <Select
-                    value={
-                      typeof control.value === 'string' && control.value ? control.value : undefined
-                    }
-                    onValueChange={control.onChange}
+                    // Always controlled: '' shows the placeholder (no answer).
+                    value={typeof control.value === 'string' ? control.value : ''}
+                    onValueChange={(v) => control.onChange(v === NO_ANSWER ? '' : v)}
                     // Closing the menu is the select's blur: it marks the field
                     // touched, as the text fields' blur does under onTouched.
                     onOpenChange={(open) => {
@@ -275,6 +280,10 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
                       <SelectValue placeholder={text.selectPlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* An optional answer can be taken back; a required one cannot be blank. */}
+                      {field.required ? null : (
+                        <SelectItem value={NO_ANSWER}>{text.selectNoAnswerLabel}</SelectItem>
+                      )}
                       {(field.options ?? []).map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}

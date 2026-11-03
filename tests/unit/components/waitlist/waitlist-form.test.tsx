@@ -139,6 +139,33 @@ describe('WaitlistForm', () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
   });
 
+  it('an optional select’s answer can be taken back', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    render(
+      <WaitlistForm
+        fields={[
+          { key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] },
+        ]}
+        list="default"
+      />
+    );
+
+    // Act — choose, then take it back
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'DJ' }));
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'No answer' }));
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    // Assert — sent as no answer, never as the sentinel
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    const [, { body }] = mockPost.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(JSON.parse(JSON.stringify(body.details))).toEqual({});
+    expect(JSON.stringify(body)).not.toContain('__no_answer__');
+  });
+
   it('a required select left unchosen blocks the submit', async () => {
     const user = userEvent.setup();
     render(

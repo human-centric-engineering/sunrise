@@ -28,7 +28,7 @@ import { prisma } from '@/lib/db/client';
 import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { logger } from '@/lib/logging';
 import { isRecord } from '@/lib/utils';
-import type { ResolvedWaitlistConfig, WaitlistScreenResult } from '@/lib/waitlist/config';
+import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 
 /** One validated join. */
 export interface WaitlistJoin {
@@ -65,7 +65,7 @@ const ATTEMPTS = 3;
 
 async function screen(config: ResolvedWaitlistConfig, join: WaitlistJoin): Promise<string | null> {
   if (!config.screen) return null;
-  let result: WaitlistScreenResult;
+  let result: unknown;
   try {
     result = await config.screen({
       email: join.email,
@@ -83,8 +83,18 @@ async function screen(config: ResolvedWaitlistConfig, join: WaitlistJoin): Promi
     });
     return 'screen-error';
   }
-  if (result.action === 'flag') return result.reason.trim().slice(0, 200) || 'flagged';
-  return null;
+  // The fork's function, so its answer is checked like any other input: a
+  // malformed one is a broken screen, and flags rather than losing the join.
+  if (isRecord(result) && result.action === 'accept') return null;
+  if (isRecord(result) && result.action === 'flag') {
+    return typeof result.reason === 'string'
+      ? result.reason.trim().slice(0, 200) || 'flagged'
+      : 'flagged';
+  }
+  logger.warn('Waitlist screen() returned neither accept nor flag; the entry is flagged', {
+    list: join.list,
+  });
+  return 'screen-error';
 }
 
 /** The stored answers, as strings. Anything else in the column is dropped. */

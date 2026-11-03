@@ -110,27 +110,6 @@ export function buildWaitlistJoinSchema(
   return joinSchema(fields, lists);
 }
 
-export type WaitlistJoinBody = z.infer<WaitlistJoinSchema>;
-
-/** One field as `GET /api/v1/waitlist` describes it to a form. */
-const waitlistFieldShapeSchema = z.object({
-  key: z.string(),
-  label: z.string(),
-  help: z.string().optional(),
-  kind: z.enum(['text', 'textarea', 'select']),
-  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
-  required: z.boolean().optional(),
-  maxLength: z.number().int().optional(),
-});
-
-/** The `data` of `GET /api/v1/waitlist`: each list's open state, and the form's fields. */
-export const waitlistStatusSchema = z.object({
-  lists: z.array(z.object({ key: z.string(), open: z.boolean() })),
-  fields: z.array(waitlistFieldShapeSchema),
-});
-
-export type WaitlistStatus = z.infer<typeof waitlistStatusSchema>;
-
 /** Only the serialisable parts of a declared field: what a form needs, and nothing a fork attached. */
 export function toWaitlistFieldShape(f: WaitlistFieldShape): WaitlistFieldShape {
   return {

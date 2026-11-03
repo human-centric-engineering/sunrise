@@ -13,7 +13,10 @@
  * **Every accepted join gets the same answer** — status, body and headers —
  * whether it created an entry, repeated one, hit the honeypot, was flagged by
  * the config's `screen()`, or re-joined a removed entry. Anything else tells a
- * stranger whether an address is on a pre-launch list. The answers that do
+ * stranger whether an address is on a pre-launch list. Response *time* still
+ * differs a little between a create, an update and no write, and this does
+ * not pad it; the confirmation mail (t-977) is to be sent in `after()` so the
+ * larger difference stays off the response. The answers that do
  * differ say nothing about the address: a validation error (about the body),
  * a closed list (whether a list is open is public), and the rate limit (about
  * the caller).

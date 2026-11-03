@@ -132,6 +132,23 @@ describe('screen()', () => {
     });
   });
 
+  it.each([
+    ['undefined', undefined],
+    ['a flag with no reason', { action: 'flag' }],
+    ['an unknown action', { action: 'reject' }],
+  ])('a screen that returns %s flags rather than losing the join', async (_name, verdict) => {
+    // A JS fork, or a cast, can return anything
+    const screen = vi.fn().mockReturnValue(verdict);
+
+    const outcome = await joinWaitlist({ ...CONFIG, screen }, JOIN, NOW);
+
+    expect(outcome).toBe('created');
+    const [{ data }] = mockPrisma.waitlistEntry.create.mock.calls[0] as [
+      { data: { flaggedReason: string } },
+    ];
+    expect(['screen-error', 'flagged']).toContain(data.flaggedReason);
+  });
+
   it('a screen that throws flags the entry as screen-error rather than accepting or losing it', async () => {
     // Arrange
     const screen = vi.fn().mockRejectedValue(new Error('blocklist service down'));
