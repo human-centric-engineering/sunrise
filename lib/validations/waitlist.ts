@@ -79,9 +79,10 @@ function joinSchema(fields: readonly WaitlistFieldShape[], lists: readonly strin
     name: optionalTrimmed(100),
     list:
       lists.length === 1 && only !== undefined ? listSchema.optional().default(only) : listSchema,
-    details: buildWaitlistDetailsSchema(fields)
-      .optional()
-      .default({})
+    // Absent details are parsed as `{}`, not defaulted past the schema: a
+    // zod `.default()` skips the inner parse, so a required field would pass.
+    details: z
+      .preprocess((v) => v ?? {}, buildWaitlistDetailsSchema(fields))
       .transform((d) => {
         const out: Record<string, string> = {};
         for (const [k, v] of Object.entries(d)) if (typeof v === 'string') out[k] = v;

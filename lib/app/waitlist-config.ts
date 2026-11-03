@@ -6,10 +6,10 @@
  * contract is this file's export, not its body). Treat it like the other
  * `lib/app/*` seams.
  *
- * `null` means this app has no waitlist: the join route answers 404, the admin
- * page is hidden and nothing writes. Fill it in to have one. Each list starts
- * open (or `startsClosed`); after that an admin opens and closes it on
- * /admin/waitlist, and the stored state wins over this file.
+ * `null` means this app has no waitlist: the waitlist routes answer 404 and
+ * nothing writes. Fill it in to have one. Each list starts open (or
+ * `startsClosed`); once an admin has opened or closed a list, that stored
+ * state wins over this file.
  *
  *   import type { WaitlistConfig } from '@/lib/waitlist/config';
  *

@@ -9,8 +9,11 @@
  * whether the list is open; mount this directly only to supply the fields
  * yourself.
  *
- * The copy is the fork's: every visible sentence is a prop with a neutral
- * default. Styling comes from the surface's theme tokens, like any other form.
+ * The copy is the fork's: every label, placeholder and message the form draws
+ * is a `copy` prop with a neutral default. The exceptions are the schema's
+ * validation messages, which come from the field labels the fork declares.
+ * A list closed since the page rendered (the route's 409) shows the closed
+ * message, as a list closed at render does. Styling comes from the surface's theme tokens, like any other form.
  *
  * The success state says the same thing whatever the server did — the route
  * gives one answer for a first join, a repeat and a removed address, and so
@@ -22,7 +25,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { CheckCircle2, Loader2 } from 'lucide-react';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { emailSchema } from '@/lib/validations/auth';
 import { buildWaitlistDetailsSchema, type WaitlistFieldShape } from '@/lib/validations/waitlist';
@@ -41,8 +44,17 @@ import {
 } from '@/components/ui/select';
 import { FormError, SaveError } from '@/components/forms/form-error';
 
-/** Every sentence the form shows. */
+/** Every sentence the form shows (the schema's own validation messages aside). */
 export interface WaitlistFormCopy {
+  emailLabel: string;
+  emailPlaceholder: string;
+  nameLabel: string;
+  /** Shown beside an optional field's label. */
+  optionalMarker: string;
+  /** A select's text before anything is chosen. */
+  selectPlaceholder: string;
+  /** Shown beside the button when a join fails for a reason the server did not give. */
+  failureMessage: string;
   submitLabel: string;
   submittingLabel: string;
   successTitle: string;
@@ -53,6 +65,12 @@ export interface WaitlistFormCopy {
 }
 
 const DEFAULT_COPY: WaitlistFormCopy = {
+  emailLabel: 'Email',
+  emailPlaceholder: 'you@example.com',
+  nameLabel: 'Name (optional)',
+  optionalMarker: '(optional)',
+  selectPlaceholder: 'Choose one',
+  failureMessage: 'Something went wrong. Please try again in a moment.',
   submitLabel: 'Join the waitlist',
   submittingLabel: 'Joining…',
   successTitle: 'Thanks for joining',
@@ -88,6 +106,8 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
   const text = { ...DEFAULT_COPY, ...copy };
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  // Closed when the page rendered, or closed since: the route's 409 says so.
+  const [isClosed, setIsClosed] = useState(closed);
 
   const schema = useMemo(
     () =>
@@ -127,7 +147,7 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
   }, [fields]);
 
   const save = useSaveFailure({
-    fallback: 'Something went wrong. Please try again in a moment.',
+    fallback: text.failureMessage,
     fields: serverFields,
     setError,
   });
@@ -147,13 +167,14 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
       });
       setIsSuccess(true);
     } catch (err) {
-      save.report(err);
+      if (err instanceof APIClientError && err.code === 'WAITLIST_CLOSED') setIsClosed(true);
+      else save.report(err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (closed) {
+  if (isClosed) {
     return (
       <p className={className} role="status">
         {text.closedMessage}
@@ -194,12 +215,12 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="waitlist-email">Email</Label>
+        <Label htmlFor="waitlist-email">{text.emailLabel}</Label>
         <Input
           id="waitlist-email"
           type="email"
           autoComplete="email"
-          placeholder="you@example.com"
+          placeholder={text.emailPlaceholder}
           disabled={isLoading}
           {...register('email')}
         />
@@ -207,7 +228,7 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="waitlist-name">Name (optional)</Label>
+        <Label htmlFor="waitlist-name">{text.nameLabel}</Label>
         <Input
           id="waitlist-name"
           type="text"
@@ -224,7 +245,9 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
         const label = (
           <Label htmlFor={id} className="flex items-center gap-1">
             {field.label}
-            {field.required ? null : <span className="text-muted-foreground">(optional)</span>}
+            {field.required ? null : (
+              <span className="text-muted-foreground">{text.optionalMarker}</span>
+            )}
             {field.help ? <FieldHelp title={field.label}>{field.help}</FieldHelp> : null}
           </Label>
         );
@@ -249,7 +272,7 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
                     disabled={isLoading}
                   >
                     <SelectTrigger id={id}>
-                      <SelectValue placeholder="Choose one" />
+                      <SelectValue placeholder={text.selectPlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
                       {(field.options ?? []).map((o) => (

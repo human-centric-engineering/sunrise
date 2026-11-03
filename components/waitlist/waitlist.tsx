@@ -1,11 +1,19 @@
 /**
  * `<Waitlist />` — the waitlist form, ready to mount on any page (§125).
  *
- * A server component: it asks `GET /api/v1/waitlist` for the lists and the
- * form's fields and renders `<WaitlistForm>` with them. When the app has no
- * waitlist the route answers 404 and this renders nothing, so a page that
- * mounts it is unaffected until the app has one — and so is a page whose
- * waitlist cannot be read right now: any failure renders nothing and logs.
+ * A server component: it reads the app's waitlist config and each list's open
+ * state and renders `<WaitlistForm>` with them — the same answer
+ * `GET /api/v1/waitlist` gives, built by the same functions. With no waitlist
+ * it renders nothing, so a page that mounts it is unaffected until the app has
+ * one; and a failure to read the state renders nothing and logs, rather than
+ * breaking the page.
+ *
+ * **Why it does not call the API.** The rule is that a component reads through
+ * the API. This one would call a public route that is rate-limited by IP, from
+ * the server, so every visitor's render shares one bucket — the server's
+ * egress address once an edge proxy rewrites `x-forwarded-for` — and a busy
+ * launch page loses its form to a 429 (§125 review). The capability stays
+ * API-accessible; the page just doesn't take the HTTP hop to reach it.
  *
  *   <Waitlist
  *     copy={{
@@ -14,15 +22,16 @@
  *     }}
  *   />
  *
- * It fetches on every render, so the page it is on renders per request.
+ * It reads the database on every render, so the page it is on renders per
+ * request.
  */
 
-import { headers } from 'next/headers';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse } from '@/lib/api/parse-response';
-import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { waitlistStatusSchema, type WaitlistStatus } from '@/lib/validations/waitlist';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { toWaitlistFieldShape } from '@/lib/validations/waitlist';
+import { getWaitlistConfig } from '@/lib/waitlist/config';
+import { getWaitlistListStatuses, type WaitlistListStatus } from '@/lib/waitlist/lists';
 import { WaitlistForm, type WaitlistFormCopy } from '@/components/waitlist/waitlist-form';
 
 export interface WaitlistProps {
@@ -32,51 +41,23 @@ export interface WaitlistProps {
   className?: string;
 }
 
-/**
- * The visitor's own address headers, for the self-call. The route is
- * rate-limited by IP; without these every visitor's render would share the
- * server's one bucket, and a busy launch page would lose its form to a 429.
- */
-async function visitorAddressHeaders(): Promise<Record<string, string>> {
-  const incoming = await headers();
-  const out: Record<string, string> = {};
-  for (const name of ['x-forwarded-for', 'x-real-ip']) {
-    const value = incoming.get(name);
-    if (value) out[name] = value;
-  }
-  return out;
-}
+export async function Waitlist({ list, copy, className }: WaitlistProps) {
+  const config = getWaitlistConfig();
+  if (!config) return null;
 
-/** The waitlist as the API describes it, or `null` (none, or unreadable — logged). */
-async function readWaitlist(): Promise<WaitlistStatus | null> {
+  let lists: WaitlistListStatus[];
   try {
-    const res = await serverFetch(API.PUBLIC.WAITLIST, { headers: await visitorAddressHeaders() });
-    // No waitlist: nothing to render, and nothing to report.
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      logger.error('<Waitlist> could not read the waitlist', { status: res.status });
-      return null;
-    }
-    const body = await parseApiResponse<unknown>(res);
-    const status = body.success ? waitlistStatusSchema.safeParse(body.data) : null;
-    if (!status?.success) {
-      logger.error('<Waitlist> got a waitlist response it could not read');
-      return null;
-    }
-    return status.data;
+    // The org the join route writes into.
+    lists = await runAsOrg(INSTALL_ORG_ID, () => getWaitlistListStatuses(config), {
+      source: 'public-form',
+    });
   } catch (error) {
-    logger.error('<Waitlist> could not reach the waitlist API', {
+    logger.error('<Waitlist> could not read the waitlist', {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
-}
 
-export async function Waitlist({ list, copy, className }: WaitlistProps) {
-  const waitlist = await readWaitlist();
-  if (!waitlist) return null;
-
-  const { lists, fields } = waitlist;
   const target = list === undefined ? lists[0] : lists.find((l) => l.key === list);
   if (!target) {
     logger.warn('<Waitlist> names a list the waitlist config does not declare', { list });
@@ -85,7 +66,7 @@ export async function Waitlist({ list, copy, className }: WaitlistProps) {
 
   return (
     <WaitlistForm
-      fields={fields}
+      fields={config.fields.map(toWaitlistFieldShape)}
       list={target.key}
       closed={!target.open}
       copy={copy}

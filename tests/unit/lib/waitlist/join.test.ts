@@ -227,20 +227,6 @@ describe('a repeat after confirmation', () => {
     );
   });
 
-  it('fills a field whose key names an Object.prototype member', async () => {
-    // Arrange — `constructor` is a legal key, and `{}.constructor` is defined
-    mockPrisma.waitlistEntry.findFirst.mockResolvedValue(
-      existing({ confirmedAt: EARLIER, details: {} })
-    );
-
-    // Act
-    const outcome = await joinWaitlist(CONFIG, { ...JOIN, details: { constructor: 'x' } }, NOW);
-
-    // Assert
-    expect(outcome).toBe('filled');
-    expect(updateData()).toMatchObject({ details: { constructor: 'x' } });
-  });
-
   it('a flagged repeat does not flag a confirmed entry (a stranger cannot hold the owner out)', async () => {
     mockPrisma.waitlistEntry.findFirst.mockResolvedValue(
       existing({ confirmedAt: EARLIER, name: null, details: {} })

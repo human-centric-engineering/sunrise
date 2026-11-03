@@ -130,6 +130,11 @@ describe('buildWaitlistJoinSchema', () => {
     ).toBe(false);
   });
 
+  it('a required field is required even when the body sends no details at all', () => {
+    // A zod .default({}) would return {} without running the inner schema
+    expect(schema.safeParse({ email: 'a@b.com' }).success).toBe(false);
+  });
+
   it('an optional select left unanswered is no answer, not an invalid choice', () => {
     const withSelect = buildWaitlistJoinSchema(
       [{ key: 'role', label: 'Role', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] }],

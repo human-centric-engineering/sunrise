@@ -67,7 +67,7 @@ Single source of truth. First match wins; rules are evaluated top to bottom.
 | 7   | `/api/v1/embed/`               | `api`           | `embed-token`  | 100/min keyed on the verified embed token + IP        |
 | 8   | `/api/v1/inbound/`             | `api`           | `ip`           | 100/min — server-to-server (Slack, Postmark, etc.)    |
 | 9   | `/api/v1/contact`              | `api`           | `ip`           | 100/min — unauthenticated public submission           |
-| 10  | `/api/v1/waitlist`             | `api`           | `ip`           | 100/min — waitlist join / confirm / leave (public)    |
+| 10  | `/api/v1/waitlist`             | `api`           | `ip`           | 100/min — the public waitlist routes (§125)           |
 | 11  | `/api/v1/` (catch-all)         | `api`           | `session-user` | 100/min — everything else                             |
 
 **Order matters.** The orchestration rule (1) must come before the broader admin rule (2) — otherwise `/api/v1/admin/orchestration/agents` would match `/api/v1/admin/` first and land on the tighter 30/min admin tier. The MCP rule (5) and the consumer-specific rules (6–10) must come before the catch-all (11) — otherwise MCP would key on session-user (and fall back to IP, defeating the api-key keying), webhooks would key on session-user, and so on.

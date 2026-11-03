@@ -63,16 +63,21 @@ import { Waitlist } from '@/components/waitlist/waitlist';
 <Waitlist copy={{ submitLabel: 'Get early access', consentNotice: <PrivacyLine /> }} />;
 ```
 
-`<Waitlist>` is a server component that reads `GET /api/v1/waitlist` through
-`serverFetch()` (API-first: it never touches the database). It renders nothing
-without a config, and shows the closed message for a closed list. `<WaitlistForm>`
-(`components/waitlist/waitlist-form.tsx`) is the client form, for a page that
-supplies the fields itself.
+`<Waitlist>` is a server component. It builds the same answer
+`GET /api/v1/waitlist` gives, from the same functions, but reads them directly
+rather than through `serverFetch()`: that route is rate-limited by IP, and a
+server-side call would put every visitor's render in one bucket, so a busy
+launch page would lose its form to a 429. It renders nothing without a config
+or when the state cannot be read, and shows the closed message for a closed
+list — including one closed after the page rendered, when the join answers 409. `<WaitlistForm>` (`components/waitlist/waitlist-form.tsx`) is the client
+form, for a page that supplies the fields itself. Every label, placeholder and
+message it draws is a `copy` prop.
 
 **An invalid config switches the waitlist off** and logs
 `Waitlist config is invalid` with each problem — a select without options,
 duplicate keys, a field key that is a body name (`email`, `name`, `list`,
-`website`, `referrer`). Half a waitlist is worse than none.
+`website`, `referrer`) or an `Object` member (`constructor`, `toString`…).
+Half a waitlist is worse than none.
 
 ## Routes
 

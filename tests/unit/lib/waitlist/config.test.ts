@@ -76,6 +76,10 @@ describe('resolveWaitlistConfig', () => {
       'a field key with a dot',
       { consentVersion: 'v1', fields: [{ key: 'a.b', label: 'A', kind: 'text' }] },
     ],
+    [
+      'a field key that names an Object member',
+      { consentVersion: 'v1', fields: [{ key: 'constructor', label: 'C', kind: 'text' }] },
+    ],
     ['duplicate list keys', { consentVersion: 'v1', lists: [{ key: 'a' }, { key: 'a' }] }],
     ['an empty list array', { consentVersion: 'v1', lists: [] }],
     ['a screen that is not a function', { consentVersion: 'v1', screen: 'reject-all' }],

@@ -226,14 +226,55 @@ describe('WaitlistForm', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('shows a server refusal beside the button and keeps the form', async () => {
-    // Arrange — the list closed between page render and submit
+  it('a list closed since the page rendered shows the fork’s closed message, not a save error', async () => {
+    // Arrange — the route answers 409 WAITLIST_CLOSED
     mockPost.mockRejectedValue(
       new MockAPIClientError(
         'This waitlist is not taking new sign-ups right now.',
         'WAITLIST_CLOSED'
       )
     );
+    const user = userEvent.setup();
+    render(<WaitlistForm fields={[]} list="default" copy={{ closedMessage: 'Wave 1 is full.' }} />);
+
+    // Act
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+    // Assert
+    expect(await screen.findByRole('status')).toHaveTextContent('Wave 1 is full.');
+    expect(screen.queryByText(/not taking new sign-ups/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders the fork’s labels and placeholders', () => {
+    render(
+      <WaitlistForm
+        fields={[
+          { key: 'role', label: 'Rôle', kind: 'select', options: [{ value: 'dj', label: 'DJ' }] },
+        ]}
+        list="default"
+        copy={{
+          emailLabel: 'E-mail',
+          emailPlaceholder: 'vous@exemple.fr',
+          nameLabel: 'Prénom (facultatif)',
+          optionalMarker: '(facultatif)',
+          selectPlaceholder: 'Choisir',
+          submitLabel: 'Rejoindre',
+        }}
+      />
+    );
+
+    expect(screen.getByLabelText('E-mail')).toHaveAttribute('placeholder', 'vous@exemple.fr');
+    expect(screen.getByLabelText('Prénom (facultatif)')).toBeInTheDocument();
+    expect(screen.getByText('(facultatif)')).toBeInTheDocument();
+    expect(screen.getByText('Choisir')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rejoindre' })).toBeInTheDocument();
+  });
+
+  it('shows a server refusal beside the button and keeps the form', async () => {
+    // Arrange — a refusal the form has no state of its own for
+    mockPost.mockRejectedValue(new MockAPIClientError('This waitlist is full.', 'WAITLIST_FULL'));
     const user = userEvent.setup();
     render(<WaitlistForm fields={[]} list="default" />);
 
@@ -242,9 +283,7 @@ describe('WaitlistForm', () => {
     await user.click(screen.getByRole('button', { name: 'Join the waitlist' }));
 
     // Assert
-    expect(
-      await screen.findByText('This waitlist is not taking new sign-ups right now.')
-    ).toBeInTheDocument();
+    expect(await screen.findByText('This waitlist is full.')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
   });
 

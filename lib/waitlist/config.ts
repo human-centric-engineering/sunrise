@@ -104,7 +104,10 @@ const fieldSchema = z
     key: z
       .string()
       .regex(KEY, 'a field key is a letter then up to 39 letters, digits, - or _')
-      .refine((k) => !RESERVED_FIELD_KEYS.has(k.toLowerCase()), 'that field key is reserved'),
+      .refine((k) => !RESERVED_FIELD_KEYS.has(k.toLowerCase()), 'that field key is reserved')
+      // `constructor`, `toString`…: an absent answer would read the inherited
+      // member, and the join would refuse it as not a string.
+      .refine((k) => !(k in Object.prototype), 'a field key may not name an Object member'),
     label: z.string().trim().min(1),
     help: z.string().optional(),
     kind: z.enum(['text', 'textarea', 'select']),
