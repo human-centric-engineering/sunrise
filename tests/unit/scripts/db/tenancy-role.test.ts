@@ -15,20 +15,32 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockConnect = vi.hoisted(() => vi.fn());
 const mockEnd = vi.hoisted(() => vi.fn());
-vi.mock('pg', () => ({
-  Client: vi.fn(function (this: Record<string, unknown>) {
-    this.query = mockQuery;
-    this.connect = mockConnect;
-    this.end = mockEnd;
-    this.escapeIdentifier = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    this.escapeLiteral = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  }),
-}));
+/** Whether the mocked client's own socket is TLS, as pg leaves it after an upgrade. */
+const socket = vi.hoisted(() => ({ encrypted: true }));
+vi.mock('pg', async (importOriginal) => {
+  // pg's own escaping, not a stand-in: the plaintext form sends operator-chosen
+  // text, so a backslash or quote must be quoted exactly as pg quotes it.
+  const actual = await importOriginal<typeof import('pg')>();
+  const { TLSSocket } = await import('node:tls');
+  return {
+    Client: vi.fn(function (this: Record<string, unknown>) {
+      this.connection = {
+        stream: socket.encrypted ? Object.create(TLSSocket.prototype) : {},
+      };
+      this.query = mockQuery;
+      this.connect = mockConnect;
+      this.end = mockEnd;
+      this.escapeIdentifier = actual.Client.prototype.escapeIdentifier;
+      this.escapeLiteral = actual.Client.prototype.escapeLiteral;
+    }),
+  };
+});
 
 const mockInfo = vi.hoisted(() => vi.fn());
 const mockError = vi.hoisted(() => vi.fn());
+const mockWarn = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/logging', () => ({
-  logger: { info: mockInfo, error: mockError, warn: vi.fn(), debug: vi.fn() },
+  logger: { info: mockInfo, error: mockError, warn: mockWarn, debug: vi.fn() },
 }));
 
 import { Client } from 'pg';
@@ -46,6 +58,8 @@ describe('scripts/db/tenancy-role', () => {
     process.env.MIGRATE_DATABASE_URL = 'postgresql://owner:pw@localhost:5432/db';
     delete process.env.TENANCY_APP_ROLE;
     delete process.env.TENANCY_APP_ROLE_PASSWORD;
+    ledger = true;
+    socket.encrypted = true;
     mockConnect.mockResolvedValue(undefined);
     mockEnd.mockResolvedValue(undefined);
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -139,6 +153,137 @@ describe('scripts/db/tenancy-role', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  // ── --plaintext-password: hosts that refuse a verifier (#1131) ─────────
+
+  it('--create --plaintext-password sends the password itself, and says so without logging it', async () => {
+    // Neon's control plane refuses a SCRAM verifier. The flag is the
+    // operator's explicit choice (owner ruling, 2026-11-03).
+    process.env.TENANCY_APP_ROLE_PASSWORD = "s3cret'quote";
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      "CREATE ROLE \"sunrise_app\" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 's3cret''quote'"
+    );
+    expect(statements().at(-1)).toBe('COMMIT');
+    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining('--plaintext-password'));
+    // The password never reaches a log line, whatever form it is sent in.
+    const logged = [...mockInfo.mock.calls, ...mockWarn.mock.calls, ...mockError.mock.calls]
+      .flat()
+      .map(String)
+      .join('\n');
+    expect(logged).not.toContain('s3cret');
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('--plaintext-password resets an existing role with the password itself too', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    answer(true);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      'ALTER ROLE "sunrise_app" WITH LOGIN NOCREATEDB NOCREATEROLE PASSWORD \'pw-plain\''
+    );
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('without the flag, never sends the password itself and warns of nothing', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    answer(true);
+    await run('--create');
+
+    expect(statements()[1]).not.toContain('pw-plain');
+    expect(mockWarn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the default path has nothing to warn of
+  });
+
+  it('quotes a backslash in a plaintext password as pg does, as one literal', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = String.raw`a\b'c`;
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toBe(
+      String.raw`CREATE ROLE "sunrise_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD  E'a\\b''c'`
+    );
+  });
+
+  it('refuses --plaintext-password over an unencrypted connection, writing nothing', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw-plain';
+    socket.encrypted = false;
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('needs an encrypted connection')
+    );
+    expect(statements().some((st) => st.includes('pw-plain'))).toBe(false);
+    expect(statements().at(-1)).toBe('ROLLBACK');
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it.each([
+    ['an md5 hash', `md5${'0123456789abcdef'.repeat(2)}`],
+    ['a SCRAM verifier', 'SCRAM-SHA-256$4096:c2FsdA==$a2V5:a2V5'],
+  ])(
+    'refuses a plaintext password shaped like %s, which Postgres would store as the hash',
+    async (_l, pw) => {
+      process.env.TENANCY_APP_ROLE_PASSWORD = pw;
+      answer(false);
+      await run('--create', '--plaintext-password');
+
+      expect(mockError).toHaveBeenCalledWith(expect.stringContaining('looks like a password hash'));
+      // Refused as input, before any connection.
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    }
+  );
+
+  it('sends a password that only starts like a hash, which Postgres hashes as usual', async () => {
+    const pw = `md5${'0123456789abcdef'.repeat(2)}Xy!`;
+    process.env.TENANCY_APP_ROLE_PASSWORD = pw;
+    answer(false);
+    await run('--create', '--plaintext-password');
+
+    expect(statements()[1]).toContain(`PASSWORD '${pw}'`);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('exits 2 without connecting for an unknown argument, so a misspelt flag cannot fall back', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    await run('--create', '--plaintext');
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('unknown argument "--plaintext"')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('logs "created" only after COMMIT, so a host refusing at COMMIT leaves no success line', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    answer(false);
+    const base = mockQuery.getMockImplementation()!;
+    mockQuery.mockImplementation((sql: string) =>
+      sql === 'COMMIT' ? Promise.reject(new Error('refused at commit')) : base(sql)
+    );
+    await run('--create');
+
+    const infos = mockInfo.mock.calls.flat().map(String).join('\n');
+    expect(infos).not.toContain('created');
+    expect(infos).not.toContain('grants on schema');
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('refused at commit'));
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('refuses --plaintext-password with --drop, without connecting', async () => {
+    await run('--drop', '--plaintext-password');
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledWith(
+      expect.stringContaining('--plaintext-password applies only to --create')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
   it('--create on an existing role resets it instead of failing, under the name TENANCY_APP_ROLE gives', async () => {
     process.env.TENANCY_APP_ROLE = 'acme_app';
     process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
@@ -160,7 +305,6 @@ describe('scripts/db/tenancy-role', () => {
     ledger = false;
     answer(false);
     await run('--create');
-    ledger = true;
     expect(mockError).toHaveBeenCalledWith(expect.stringContaining('db:migrate:deploy'));
     expect(statements()).not.toContain('COMMIT');
     expect(statements().at(-1)).toBe('ROLLBACK');

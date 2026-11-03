@@ -300,6 +300,9 @@ const SCRAM_ITERATIONS = 4096;
  * Postgres accepts a pre-computed verifier in place of the password (what
  * `psql \password` sends); the shape is RFC 7677 with Postgres's framing:
  * `SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>`, base64.
+ *
+ * A host that refuses a verifier needs the password itself, and a caller that
+ * sends it gives this protection up.
  */
 export function scramSha256Verifier(password: string, salt = randomBytes(16)): string {
   const salted = pbkdf2Sync(password.normalize('NFKC'), salt, SCRAM_ITERATIONS, 32, 'sha256');

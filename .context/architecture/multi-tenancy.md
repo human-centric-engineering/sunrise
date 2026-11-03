@@ -195,7 +195,10 @@ TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
 ```
 
 The password comes only from the environment, never an argument; the role
-name is `TENANCY_APP_ROLE` (default `sunrise_app`). The script grants
+name is `TENANCY_APP_ROLE` (default `sunrise_app`). On Neon add
+`--plaintext-password`: Neon refuses the SCRAM-SHA-256 verifier the script
+sends by default, and the flag's trade-off is in
+[the role split](../tenancy/isolation.md#the-role-split). The script grants
 `USAGE` on the schema, DML on its tables and sequences, and default
 privileges for tables future migrations create — never anything on
 `_prisma_migrations` — and refuses to touch a superuser, a `BYPASSRLS` role,

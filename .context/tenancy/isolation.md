@@ -284,6 +284,7 @@ first statement covers the rest.
 
 ```bash
 TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
+TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create --plaintext-password  # on Neon
 npm run db:tenancy:role -- --drop
 ```
 
@@ -301,7 +302,32 @@ privileges and every grant **first**, then drops the role — Neon refuses
 anywhere. The password comes only from the environment, never an argument,
 and is sent as a SCRAM-SHA-256 verifier computed locally
 (`scramSha256Verifier`), so the cleartext never crosses the wire or lands in
-a server's DDL log. The script refuses to touch the role running it, a
+a server's DDL log.
+
+**On Neon, pass `--plaintext-password`** (#1131). Neon's control plane
+refuses a verifier and accepts only the password itself, so without the flag
+`--create` fails at `COMMIT`. With it, the password is sent as written, on
+create and on reset, and the server still stores it hashed. The script refuses
+the flag unless its own connection is TLS (Neon requires TLS anyway; elsewhere
+add `sslmode=require`). It asks its own client socket, not the server: a host
+may end TLS at a proxy (Neon routes every connection through one), and the
+backend's `pg_stat_ssl` would then describe the proxy's hop, not this one. It
+also refuses a password of exactly a hash's shape (`md5` and 32 hex, or a
+whole SCRAM verifier), which Postgres would store as the hash itself.
+What the flag gives up is the protection above: the server can keep the
+statement, password included, in its log (when the statement fails, at the
+default `log_min_error_statement`, or when DDL is logged), in
+`pg_stat_statements`, and in `pg_stat_activity` while it runs. The script
+cannot switch those off (it would need a superuser, which Neon's owner is
+not). So the flag is the operator's explicit choice, never inferred from the
+host or retried on an error (owner ruling, 2026-11-03); the script warns when
+it is used, and an unknown argument is an error, so a misspelt flag cannot
+fall back to the verifier. Re-running `--create --plaintext-password` to
+rotate the password exposes the new one the same way, so if that matters,
+set it outside SQL (on Neon, in its console or API), and use the flag nowhere
+a verifier is accepted.
+Neon also refuses a short or guessable password set in SQL; generate one
+(`openssl rand -base64 32`). The script refuses to touch the role running it, a
 superuser, a `BYPASSRLS` role, or a table owner — `TENANCY_APP_ROLE=postgres`
 would otherwise demote and re-password the operator's own login.
 

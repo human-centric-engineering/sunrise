@@ -2,6 +2,7 @@
  * Create or remove the restricted app role row isolation needs (§107 t-707).
  *
  *   TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
+ *   TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create --plaintext-password  # Neon
  *   npm run db:tenancy:role -- --drop
  *
  * **Why a second role is required, not optional.** A table's owner is never
@@ -19,8 +20,15 @@
  * sequences, plus `ALTER DEFAULT PRIVILEGES` for the connecting (owner) role
  * so tables and sequences future migrations create are covered without
  * re-running this. The password is sent as a SCRAM-SHA-256 verifier computed
- * here, never as cleartext, and the script refuses to touch a role that is
- * the one running it, a superuser, `BYPASSRLS`, or a table owner.
+ * here, never as cleartext, unless `--plaintext-password` is passed (#1131):
+ * Neon's control plane refuses a verifier and accepts only the password
+ * itself, over its required TLS. That flag is the operator's explicit choice
+ * at the moment the password is sent (owner ruling, 2026-11-03), never
+ * guessed from the host or an error. It is refused over an unencrypted
+ * connection, and it costs the protection the verifier exists for: the server
+ * can keep the statement, password included (its log if the statement fails
+ * or DDL is logged, `pg_stat_statements`, `pg_stat_activity` while it runs). The script refuses to touch a role that is the one running it, a
+ * superuser, `BYPASSRLS`, or a table owner.
  *
  * `--create` is idempotent: an existing role has its password reset and its
  * grants re-applied. `--drop` revokes the default privileges and every grant
@@ -35,6 +43,7 @@
  * @see .context/tenancy/isolation.md#the-role-split
  */
 
+import { TLSSocket } from 'node:tls';
 import { Client } from 'pg';
 import { logger } from '@/lib/logging';
 import { ownerDsn, scramSha256Verifier } from '@/lib/tenancy/isolation';
@@ -43,11 +52,26 @@ const DEFAULT_ROLE = 'sunrise_app';
 const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
 type Action = 'create' | 'drop';
 
-function parseAction(argv: readonly string[]): Action {
+/** How the password reaches the server: its SCRAM-SHA-256 verifier, or itself (#1131). */
+type PasswordForm = 'verifier' | 'plaintext';
+
+const KNOWN_ARGS = new Set(['--create', '--drop', '--plaintext-password']);
+
+function parseArgs(argv: readonly string[]): { action: Action; passwordForm: PasswordForm } {
+  // A misspelt flag must not fall back silently: `--plaintext` on Neon would
+  // send the verifier and fail exactly as #1131 did, with nothing to say why.
+  const unknown = argv.filter((a) => !KNOWN_ARGS.has(a));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unknown argument ${unknown.map((a) => `"${a}"`).join(', ')}; expected --create or --drop, and optionally --plaintext-password`
+    );
+  }
   const create = argv.includes('--create');
   const drop = argv.includes('--drop');
   if (create === drop) throw new Error('Pass exactly one of --create or --drop');
-  return create ? 'create' : 'drop';
+  const plaintext = argv.includes('--plaintext-password');
+  if (plaintext && drop) throw new Error('--plaintext-password applies only to --create');
+  return { action: create ? 'create' : 'drop', passwordForm: plaintext ? 'plaintext' : 'verifier' };
 }
 
 async function roleExists(client: Client, role: string): Promise<boolean> {
@@ -108,9 +132,44 @@ async function refuseIfPrivileged(client: Client, role: string): Promise<void> {
   }
 }
 
-async function create(client: Client, role: string, password: string): Promise<void> {
+/**
+ * Postgres stores a password literal of exactly these shapes as the hash
+ * itself, not as a password to hash: `md5` and 32 lowercase hex, or a whole
+ * SCRAM-SHA-256 verifier. Anything else it hashes.
+ */
+const LOOKS_PREHASHED =
+  /^(md5[0-9a-f]{32}|SCRAM-SHA-256\$\d+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+)$/;
+
+/**
+ * Refuse to send the password itself unless this client's own socket is TLS:
+ * the hop this script controls. Asked of the client, not the server, because
+ * a host may end TLS at a proxy (Neon routes through one), where the backend's own view
+ * (`pg_stat_ssl`) reports its hop from the proxy, not ours. With `sslmode`
+ * set, pg errors rather than fall back, so the socket is TLS or there is none.
+ */
+function refuseUnencryptedPlaintext(client: Client): void {
+  if (!(client.connection.stream instanceof TLSSocket)) {
+    throw new Error(
+      '--plaintext-password needs an encrypted connection: add sslmode=require to the owner DSN, or drop the flag where the host accepts a verifier'
+    );
+  }
+}
+
+/** What `create` did, logged once the transaction has committed. */
+type Done = string[];
+
+async function create(
+  client: Client,
+  role: string,
+  password: string,
+  passwordForm: PasswordForm
+): Promise<Done> {
+  const done: Done = [];
+  if (passwordForm === 'plaintext') refuseUnencryptedPlaintext(client);
   const r = client.escapeIdentifier(role);
-  const pw = client.escapeLiteral(scramSha256Verifier(password));
+  const pw = client.escapeLiteral(
+    passwordForm === 'plaintext' ? password : scramSha256Verifier(password)
+  );
   const s = await currentSchema(client);
   await refuseIfPrivileged(client, role);
   // The app never reads or writes the migration ledger; a compromised app
@@ -130,12 +189,12 @@ async function create(client: Client, role: string, password: string): Promise<v
     // needs a superuser whatever the value (measured), and the guard above
     // has already proven this role is neither. CREATE ROLE has no such rule.
     await client.query(`ALTER ROLE ${r} WITH LOGIN NOCREATEDB NOCREATEROLE PASSWORD ${pw}`);
-    logger.info(`  role ${role}: exists — password reset, attributes re-asserted`);
+    done.push(`  role ${role}: exists — password reset, attributes re-asserted`);
   } else {
     await client.query(
       `CREATE ROLE ${r} WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD ${pw}`
     );
-    logger.info(`  role ${role}: created (LOGIN NOBYPASSRLS)`);
+    done.push(`  role ${role}: created (LOGIN NOBYPASSRLS)`);
   }
   await client.query(`GRANT USAGE ON SCHEMA ${s} TO ${r}`);
   await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${s} TO ${r}`);
@@ -149,16 +208,16 @@ async function create(client: Client, role: string, password: string): Promise<v
   await client.query(
     `ALTER DEFAULT PRIVILEGES IN SCHEMA ${s} GRANT USAGE, SELECT ON SEQUENCES TO ${r}`
   );
-  logger.info(
+  done.push(
     `  grants on schema ${s}: USAGE, DML on all tables, USAGE/SELECT on sequences, default privileges`
   );
+  return done;
 }
 
-async function drop(client: Client, role: string): Promise<void> {
+async function drop(client: Client, role: string): Promise<Done> {
   const r = client.escapeIdentifier(role);
   if (!(await roleExists(client, role))) {
-    logger.info(`  role ${role}: absent — nothing to drop`);
-    return;
+    return [`  role ${role}: absent — nothing to drop`];
   }
   await refuseIfPrivileged(client, role);
   const s = await currentSchema(client);
@@ -170,11 +229,11 @@ async function drop(client: Client, role: string): Promise<void> {
   await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA ${s} FROM ${r}`);
   await client.query(`REVOKE ALL ON SCHEMA ${s} FROM ${r}`);
   await client.query(`DROP ROLE ${r}`);
-  logger.info(`  role ${role}: grants revoked, role dropped`);
+  return [`  role ${role}: grants revoked, role dropped`];
 }
 
 async function main(): Promise<void> {
-  const action = parseAction(process.argv.slice(2));
+  const { action, passwordForm } = parseArgs(process.argv.slice(2));
   const role = process.env.TENANCY_APP_ROLE ?? DEFAULT_ROLE;
   if (!ROLE_NAME.test(role)) {
     throw new Error(`TENANCY_APP_ROLE "${role}" must match ${ROLE_NAME}`);
@@ -185,15 +244,30 @@ async function main(): Promise<void> {
   if (action === 'create' && !password) {
     throw new Error('set TENANCY_APP_ROLE_PASSWORD (never pass a password as an argument)');
   }
+  if (passwordForm === 'plaintext' && password && LOOKS_PREHASHED.test(password)) {
+    throw new Error(
+      'TENANCY_APP_ROLE_PASSWORD looks like a password hash; sent as written, Postgres would store it as the hash and no password would log in'
+    );
+  }
 
   logger.info(`db:tenancy:role --${action} (${role})`);
+  if (passwordForm === 'plaintext') {
+    logger.warn(
+      '  --plaintext-password: sending the password itself, not its SCRAM-SHA-256 verifier. The statement, password included, can be kept by the server (its log if the statement fails or DDL is logged, pg_stat_statements, pg_stat_activity while it runs). Use this only where the host refuses a verifier, as Neon does; to rotate without that exposure, set the password outside SQL (on Neon, in its console).'
+    );
+  }
   const client = new Client({ connectionString: dsn });
   await client.connect();
   try {
     await client.query('BEGIN');
-    if (action === 'create') await create(client, role, password!);
-    else await drop(client, role);
+    const done =
+      action === 'create'
+        ? await create(client, role, password!, passwordForm)
+        : await drop(client, role);
     await client.query('COMMIT');
+    // Only now: a host that refuses at COMMIT (Neon did, #1131) must not leave
+    // a success line in the log above its failure.
+    for (const line of done) logger.info(line);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw err;
