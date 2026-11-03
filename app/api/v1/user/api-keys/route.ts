@@ -14,7 +14,7 @@
  */
 
 import { withAuth } from '@/lib/auth/guards';
-import { prisma } from '@/lib/db/client';
+import { listUserApiKeys, mintUserApiKey } from '@/lib/auth/user-api-keys';
 import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
@@ -33,21 +33,9 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const GET = withAuth(
   async (_request, session) => {
-    const keys = await prisma.aiApiKey.findMany({
-      where: { userId: session.user.id },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        keyPrefix: true,
-        scopes: true,
-        orgId: true,
-        lastUsedAt: true,
-        expiresAt: true,
-        revokedAt: true,
-        createdAt: true,
-      },
-    });
+    // Bound to this org, plus the caller's platform keys, which live in no org
+    // and are read outside it (#1132; lib/auth/user-api-keys.ts).
+    const keys = await listUserApiKeys(session.user.id);
 
     return successResponse({ keys, availableScopes: listValidApiKeyScopes() });
   },
@@ -120,25 +108,16 @@ export const POST = withAuth(
     const hash = hashApiKey(rawKey);
     const prefix = keyPrefix(rawKey);
 
-    const apiKey = await prisma.aiApiKey.create({
-      data: {
-        userId: session.user.id,
-        name: body.name,
-        keyHash: hash,
-        keyPrefix: prefix,
-        scopes: body.scopes,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-        orgId,
-      },
-      select: {
-        id: true,
-        name: true,
-        keyPrefix: true,
-        scopes: true,
-        orgId: true,
-        expiresAt: true,
-        createdAt: true,
-      },
+    // A platform key is written outside every org: at `multi` the isolation
+    // policy refuses a NULL-org row from inside one (#1132).
+    const apiKey = await mintUserApiKey({
+      userId: session.user.id,
+      name: body.name,
+      keyHash: hash,
+      keyPrefix: prefix,
+      scopes: body.scopes,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      orgId,
     });
 
     // Return the raw key exactly once — it cannot be retrieved again
