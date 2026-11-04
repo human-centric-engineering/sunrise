@@ -6,10 +6,11 @@
  * What the unit tests cannot show, because they mock Prisma:
  *
  *   • **Retention deletes only what has outlived its window.** It seeds each
- *     population — expired and in-window removed entries, a long-closed list's
- *     confirmed, joined, removed-recently and unconfirmed entries, a recently
- *     closed list's and an open list's — shows each is non-empty, prunes, and
- *     checks exactly the expired rows went.
+ *     population — expired and in-window removed entries, a removed entry
+ *     that signed up, a long-closed list's confirmed, joined, recently
+ *     invited, removed-recently and unconfirmed entries, a recently closed
+ *     list's and an open list's — shows each is non-empty, prunes, and checks
+ *     exactly the expired rows went.
  *   • The admin search's JSON-path match on a declared answer, the per-org
  *     list-state upsert (`orgId_list`), and the counts' groupings, as Postgres
  *     runs them.
@@ -81,6 +82,17 @@ async function main(): Promise<void> {
         `refusing to prune: ${foreignExpired} expired removed entr(ies) not created by this script`
       );
     }
+    // …and so would a list someone else closed over the window ago.
+    const cutoff = new Date(NOW);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - DEFAULT_WAITLIST_RETENTION.closedListMonths);
+    const foreignClosed = await prisma.waitlistListState.count({
+      where: { open: false, changedAt: { lt: cutoff } },
+    });
+    if (foreignClosed > 0) {
+      throw new Error(
+        `refusing to prune: ${foreignClosed} long-closed list(s) not created by this script`
+      );
+    }
 
     const actor = await prisma.user.create({
       data: {
@@ -94,7 +106,12 @@ async function main(): Promise<void> {
     const make = async (
       label: string,
       list: string,
-      fields: { confirmedAt?: Date | null; removedAt?: Date | null; joinedAt?: Date | null } = {},
+      fields: {
+        confirmedAt?: Date | null;
+        removedAt?: Date | null;
+        joinedAt?: Date | null;
+        invitedAt?: Date | null;
+      } = {},
       details: Record<string, string> = {}
     ) => {
       const row = await prisma.waitlistEntry.create({
@@ -107,6 +124,7 @@ async function main(): Promise<void> {
           confirmedAt: fields.confirmedAt === undefined ? ago(399) : fields.confirmedAt,
           removedAt: fields.removedAt ?? null,
           joinedAt: fields.joinedAt ?? null,
+          invitedAt: fields.invitedAt ?? null,
         },
       });
       entryIds.push(row.id);
@@ -125,6 +143,13 @@ async function main(): Promise<void> {
       removedAt: ago(5),
     });
     const recentClosedConfirmed = await make('recent-closed', CLOSED_RECENT);
+    // Removed long ago but signed up: the account's, never retention's.
+    const removedJoined = await make('removed-joined', OPEN, {
+      removedAt: ago(200),
+      joinedAt: ago(150),
+    });
+    // On the long-closed list, invited yesterday: its link may be live.
+    const longClosedInvited = await make('closed-invited', CLOSED_LONG, { invitedAt: ago(1) });
 
     // Close one list 13 months ago and one last month, through the real write.
     await setWaitlistListOpen(CLOSED_LONG, false, actor.id, ago(400));
@@ -153,7 +178,7 @@ async function main(): Promise<void> {
     const byKey = new Map(counts.map((c) => [c.key, c]));
     check(byKey.get(CLOSED_LONG)?.open === false, 'a closed list counts as closed');
     check(
-      byKey.get(CLOSED_LONG)?.confirmed === 1 && byKey.get(CLOSED_LONG)?.unconfirmed === 1,
+      byKey.get(CLOSED_LONG)?.confirmed === 2 && byKey.get(CLOSED_LONG)?.unconfirmed === 1,
       'counts keep confirmed and unconfirmed apart'
     );
 
@@ -168,6 +193,8 @@ async function main(): Promise<void> {
       longClosedUnconfirmed,
       longClosedRemovedRecently,
       recentClosedConfirmed,
+      removedJoined,
+      longClosedInvited,
     ];
     check((await present(doomed)) === doomed.length, `the ${doomed.length} expired entries exist`);
     check((await present(kept)) === kept.length, `the ${kept.length} in-window entries exist`);
