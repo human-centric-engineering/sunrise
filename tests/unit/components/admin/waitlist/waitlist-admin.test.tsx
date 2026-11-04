@@ -109,3 +109,51 @@ describe('WaitlistAdmin', () => {
     );
   });
 });
+
+describe('WaitlistAdmin — a slow read from before a toggle (code review round 2)', () => {
+  it('does not let it undo the close the admin made since', async () => {
+    let finishStale: (r: Response) => void = () => {};
+    let countsReads = 0;
+    mockFetch.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (init?.method === 'PATCH') {
+        return Promise.resolve(
+          Response.json({
+            success: true,
+            data: { key: 'default', open: false, changedAt: '2026-11-04T10:00:00.000Z' },
+          })
+        );
+      }
+      if (url.includes(API.ADMIN.WAITLIST_COUNTS)) {
+        countsReads += 1;
+        // The first read (from the table's change) is slow and says open;
+        // the toggle's own read says closed.
+        if (countsReads === 1) {
+          return new Promise<Response>((resolve) => {
+            finishStale = resolve;
+          });
+        }
+        return Promise.resolve(
+          Response.json({
+            success: true,
+            data: { lists: [counts({ open: false, closedSince: '2026-11-04T10:00:00.000Z' })] },
+          })
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    renderAdmin();
+
+    fireEvent.click(screen.getByRole('button', { name: 'a change in the table' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close list' }));
+    await waitFor(() => expect(countsReads).toBe(2));
+    await screen.findByText('Closed');
+
+    // The stale read lands last, saying the list is open.
+    finishStale(Response.json({ success: true, data: { lists: [counts({ open: true })] } }));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+    expect(screen.queryByText('Taking joins')).not.toBeInTheDocument();
+  });
+});

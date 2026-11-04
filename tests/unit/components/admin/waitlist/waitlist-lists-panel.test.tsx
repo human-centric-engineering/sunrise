@@ -272,30 +272,26 @@ describe('WaitlistListsPanel — a list closed only by the config (code review r
 });
 
 describe('WaitlistListsPanel — new counts from the page (code review round 2)', () => {
-  it('shows new counts without undoing a toggle that is still in flight', async () => {
+  it('asks the page to re-read the counts once a toggle succeeded, and not when it failed', async () => {
     const { apiClient } = await import('@/lib/api/client');
-    let finish: (v: unknown) => void = () => {};
-    vi.mocked(apiClient.patch).mockReturnValue(
-      new Promise((resolve) => {
-        finish = resolve;
-      })
-    );
+    const onChanged = vi.fn();
+    vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({
+      key: 'default',
+      open: false,
+      changedAt: '2026-11-04T10:00:00.000Z',
+    });
     const user = userEvent.setup();
-    const { rerender } = render(<WaitlistListsPanel lists={[view({ confirmed: 11 })]} />);
+    render(<WaitlistListsPanel lists={[view()]} onChanged={onChanged} />);
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
-    // A counts re-read that read before the close committed: still open.
-    rerender(<WaitlistListsPanel lists={[view({ confirmed: 10, open: true })]} />);
-    expect(screen.getByText('10')).toBeInTheDocument();
+    await screen.findByRole('alert');
+    expect(onChanged).not.toHaveBeenCalled();
 
-    finish({ key: 'default', open: false, changedAt: '2026-11-04T10:00:00.000Z' });
-
-    // The close the admin made stands; the stale props did not undo it.
-    expect(await screen.findByText('Closed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open list' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close list' }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
   });
 
-  it('follows the page’s open state when no toggle is in flight', () => {
+  it('follows the page’s open state', () => {
     const { rerender } = render(<WaitlistListsPanel lists={[view({ open: true })]} />);
 
     rerender(

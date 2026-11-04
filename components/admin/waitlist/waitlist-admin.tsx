@@ -52,8 +52,8 @@ export function WaitlistAdmin({
         setStale(true);
         return;
       }
-      // The cards keep their own open state while a toggle is in flight, so
-      // these props never undo one (waitlist-lists-panel.tsx).
+      // Only the latest read lands (the seq check above), and a toggle starts
+      // a read of its own, so a read from before the toggle never undoes it.
       setLists(data.lists);
       setStale(false);
     } catch (err) {
@@ -67,7 +67,7 @@ export function WaitlistAdmin({
     <>
       {lists ? (
         <>
-          <WaitlistListsPanel lists={lists} />
+          <WaitlistListsPanel lists={lists} onChanged={() => void refreshCounts()} />
           {stale && (
             <p role="status" className="text-muted-foreground text-sm">
               The counts could not be refreshed and may be out of date.

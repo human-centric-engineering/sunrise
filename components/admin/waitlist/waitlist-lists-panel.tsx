@@ -34,20 +34,20 @@ export interface WaitlistListCountsView {
 
 export interface WaitlistListsPanelProps {
   lists: WaitlistListCountsView[];
+  /** Called after a list was opened, closed or marked closed, so the page re-reads the counts. */
+  onChanged?: () => void;
 }
 
-function ListCard({ list }: { list: WaitlistListCountsView }) {
-  // The counts come from the props, which the page re-reads after a change in
-  // the table. The open state is the card's own while a toggle it sent is in
-  // flight — a counts re-read that started before the toggle committed must
-  // not undo what the admin just did — and follows the props otherwise.
+function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged?: () => void }) {
+  // The counts come from the props, which the page re-reads after any change.
+  // The card shows a toggle's answer at once, then asks the page to re-read:
+  // the page keeps only its latest read, so a read that started before the
+  // toggle committed — and would say the list is still open — is dropped
+  // rather than undoing what the admin just did.
   const [state, setState] = useState({ open: list.open, closedSince: list.closedSince });
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (!saving) setState({ open: list.open, closedSince: list.closedSince });
-    // `saving` is left out on purpose: when a toggle finishes, the card keeps
-    // the answer it got rather than snapping back to older props.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setState({ open: list.open, closedSince: list.closedSince });
   }, [list.open, list.closedSince]);
   // Closed by the config alone: no close date, so retention has no window to count.
   const unrecorded = !state.open && state.closedSince === null;
@@ -71,6 +71,7 @@ function ListCard({ list }: { list: WaitlistListCountsView }) {
         { body: { open } }
       );
       setState({ open: result.open, closedSince: result.open ? null : result.changedAt });
+      onChanged?.();
     } catch (error) {
       save.report(error);
     } finally {
@@ -151,7 +152,7 @@ function ListCard({ list }: { list: WaitlistListCountsView }) {
   );
 }
 
-export function WaitlistListsPanel({ lists }: WaitlistListsPanelProps) {
+export function WaitlistListsPanel({ lists, onChanged }: WaitlistListsPanelProps) {
   return (
     <section className="space-y-3" aria-labelledby="waitlist-lists-heading">
       <div className="flex items-center gap-1">
@@ -166,7 +167,7 @@ export function WaitlistListsPanel({ lists }: WaitlistListsPanelProps) {
       </div>
       <div className="space-y-3">
         {lists.map((list) => (
-          <ListCard key={list.key} list={list} />
+          <ListCard key={list.key} list={list} onChanged={onChanged} />
         ))}
       </div>
     </section>

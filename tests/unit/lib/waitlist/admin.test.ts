@@ -194,7 +194,7 @@ describe('countWaitlistEntries', () => {
       ],
     });
     // A list with no rows in a state reads 0, and its stored state wins.
-    expect(beta).toMatchObject({ key: 'beta', open: true, confirmed: 0 });
+    expect(beta).toMatchObject({ key: 'beta', open: true, confirmed: 0, closedSince: null });
     expect(beta.bySource).toEqual([{ source: 'form', count: 9 }]);
   });
 
