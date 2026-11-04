@@ -31,6 +31,7 @@ import {
   generateStorageAccessToken,
   verifyStorageAccessToken,
   buildStorageAccessUrl,
+  storageRoutePath,
   tokenOrgMatchesKey,
   MAX_EXPIRY_SECONDS,
 } from '@/lib/storage/access-tokens';
@@ -391,6 +392,19 @@ describe('storage access tokens', () => {
     it('matches a legacy key only when the token carries no org', () => {
       expect(tokenOrgMatchesKey(undefined, KEY)).toBe(true);
       expect(tokenOrgMatchesKey(null, KEY)).toBe(true);
+    });
+  });
+
+  describe('storageRoutePath', () => {
+    it('encodes each segment and keeps the separators', () => {
+      expect(storageRoutePath('orgs/org-a/my report#1.pdf')).toBe(
+        '/api/v1/storage/orgs/org-a/my%20report%231.pdf'
+      );
+    });
+
+    it('is the path buildStorageAccessUrl signs', () => {
+      const { url } = buildStorageAccessUrl('a b/c.pdf', 300);
+      expect(url.split('?')[0]).toBe(storageRoutePath('a b/c.pdf'));
     });
   });
 

@@ -37,7 +37,7 @@ import type {
   SignedUrlOptions,
 } from '@/lib/storage/providers/types';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
-import { buildStorageAccessUrl } from '@/lib/storage/access-tokens';
+import { buildStorageAccessUrl, storageRoutePath } from '@/lib/storage/access-tokens';
 import { logger } from '@/lib/logging';
 
 /** Where private objects live when not configured otherwise. Gitignored. */
@@ -158,9 +158,7 @@ export class LocalProvider implements StorageProvider {
     // matching what `buildStorageAccessUrl()` emits for the same key. The
     // public branch is left alone: it has always returned the raw key, and
     // Next resolves it against the filesystem either way.
-    const url = isPrivate
-      ? `/api/v1/storage/${key.split('/').map(encodeURIComponent).join('/')}`
-      : `${this.baseUrl}/${key}`;
+    const url = isPrivate ? storageRoutePath(key) : `${this.baseUrl}/${key}`;
 
     logger.info('File uploaded to local storage', {
       key,

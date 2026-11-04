@@ -4,9 +4,10 @@
  * GET /api/v1/storage/<key...>?token=<signed>
  *
  * Serves an object the storage provider holds privately. This is what makes
- * `LocalProvider`'s private root readable over HTTP — S3 has presigned URLs
- * and doesn't need it — but the route is provider-agnostic and works with
- * any provider declaring the `download` capability.
+ * `LocalProvider`'s private root and Vercel Blob's private store readable over
+ * HTTP — S3 has presigned URLs and doesn't need it — but the route is
+ * provider-agnostic and works with any provider declaring the `download`
+ * capability.
  *
  * **Authentication is the signed token, and only the signed token.** There is
  * deliberately no session fallback. Storage keys name no user —
