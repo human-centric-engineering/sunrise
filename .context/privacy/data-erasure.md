@@ -1422,12 +1422,14 @@ and writes a receipt in one transaction:
 | `metadata.entryConfirmed`  | whether the owner had confirmed the address                 |
 | `metadata.list`            | the list the entry was on                                   |
 | `metadata.orgId`           | the org whose list it was (the receipt itself has no org)   |
+| `metadata.linkedUserId`    | the account an invitation linked the entry to, or null      |
 
 **Why `subjectUserId` is null for a linked entry.** Erasing the entry is not
-erasing the account. The readers that look a receipt up by account id
-(`finishedErasure()`, the subject export) do not read the kind, so a receipt
-naming a live account would be shown to it as an erasure of the account. The
-CHECK `data_erasure_receipt_subject_kind` holds the pairing.
+erasing the account. The readers that look a receipt up by `subjectUserId`
+(`finishedErasure()`, the subject export's account arm) do not read the kind,
+so a receipt naming a live account would be shown to it as an erasure of the
+account. The linked account is recorded as `metadata.linkedUserId` instead,
+and the CHECK `data_erasure_receipt_subject_kind` holds the pairing.
 
 **Why `addressVerified` is `false` for a confirmed entry (decided in t-975).**
 The flag means "erasure matched this address and stripped it from
@@ -1447,9 +1449,10 @@ the reason above — the erasure stripped no configuration:
 nothing cascades from a waitlist entry, so no copy is left naming a row that
 vanished with it. `addressVerified: false` is a second lock on the refusal.
 `finishedErasure()` asks by account id and never sees one. The subject export
-lists the waitlist receipts filed under the account's address once it is
-verified — the rule the waitlist rows follow — beside the account receipts
-naming its id. `smoke:erasure` holds the CHECK, the entry's deletion, the
+lists the account's waitlist receipts by the rule its waitlist rows follow
+(`waitlistReceiptsOf()` beside `waitlistEntriesOf()`): the one linked to it
+(`metadata.linkedUserId`), and those under its address once verified. It
+leaves out `actorUserId`, the erasing admin's id, on every receipt. `smoke:erasure` holds the CHECK, the entry's deletion, the
 receipt's shape and `findErasedSubjects()` not refusing the address against a
 real database; the reader filters are held by their unit tests.
 

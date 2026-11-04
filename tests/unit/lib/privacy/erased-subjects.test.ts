@@ -483,6 +483,23 @@ describe('findErasedSubjects', () => {
 });
 
 describe('waitlist receipts (§125 t-975)', () => {
+  it('never puts a null id in its answer, should a row without one reach it', async () => {
+    // Defence in depth: the query asks for account receipts, which the CHECK
+    // makes name their account. A relaxed filter must still not answer null.
+    const ctx = makeTx();
+    ctx.receiptFindMany.mockResolvedValue([
+      { subjectUserId: null, subjectEmailHash: sha256Hex('w@example.com'), metadata: {} },
+      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
+    ]);
+
+    const result = await matchErasedSubjects(ctx.tx, {
+      addresses: ['w@example.com'],
+      userIds: ['gone-user', 'live-user'],
+    });
+
+    expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
+  });
+
   it('reads account receipts only, so a waitlist receipt is never refused', async () => {
     const ctx = makeTx();
 

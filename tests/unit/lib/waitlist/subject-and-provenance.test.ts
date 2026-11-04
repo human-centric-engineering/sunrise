@@ -15,7 +15,12 @@ const { mockPrisma } = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
-import { waitlistEntriesOf, waitlistEntriesUnder } from '@/lib/waitlist/subject';
+import {
+  waitlistEntriesOf,
+  waitlistEntriesUnder,
+  waitlistReceiptsOf,
+} from '@/lib/waitlist/subject';
+import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { localeFromAcceptLanguage, referrerHost } from '@/lib/waitlist/provenance';
 import { isWaitlistListOpen } from '@/lib/waitlist/lists';
 import { buildWaitlistJoinSchema } from '@/lib/validations/waitlist';
@@ -43,6 +48,30 @@ describe('waitlistEntriesOf', () => {
     const where = waitlistEntriesOf({ userId: 'u1', email: 'a@example.com', emailVerified: true });
     expect(JSON.stringify(where)).not.toContain('insensitive');
     expect(waitlistEntriesUnder(' X@Y.com')).toEqual({ email: 'x@y.com' });
+  });
+});
+
+describe('waitlistReceiptsOf (§125 t-975)', () => {
+  const linked = {
+    subjectKind: 'waitlist',
+    metadata: { path: ['linkedUserId'], equals: 'u1' },
+  };
+
+  it('matches the linked entry only while the address is unverified', () => {
+    expect(
+      waitlistReceiptsOf({ userId: 'u1', email: 'a@example.com', emailVerified: false })
+    ).toEqual(linked);
+  });
+
+  it('adds the verified address, hashed from its normalised form', () => {
+    expect(
+      waitlistReceiptsOf({ userId: 'u1', email: ' A@Example.com ', emailVerified: true })
+    ).toEqual({
+      OR: [
+        linked,
+        { subjectKind: 'waitlist', subjectEmailHash: subjectEmailHash('a@example.com') },
+      ],
+    });
   });
 });
 

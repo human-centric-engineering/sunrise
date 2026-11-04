@@ -28,7 +28,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
+import { waitlistReceiptsOf } from '@/lib/waitlist/subject';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { collectAppSubjectData, type AppSubjectData } from '@/lib/app/data-export';
@@ -115,7 +115,12 @@ export interface SubjectExport {
   personalData: Record<string, unknown[]>;
   /** Config the subject created — identity of each thing, not its contents. */
   attributions: Record<string, unknown[]>;
-  /** Erasure receipts naming this subject. Normally empty for a live account. */
+  /**
+   * Erasure receipts about this subject: the account receipts naming its id
+   * (normally none for a live account; one appears if an id was reused), and
+   * the waitlist receipts of its erased waitlist entries (§125). Without the
+   * erasing admin's id (`actorUserId`), another person's identifier.
+   */
   erasureReceipts: unknown[];
   /** App-owned data, from the `lib/app/data-export.ts` seam. Empty in vanilla Sunrise. */
   app: AppSubjectData;
@@ -333,18 +338,12 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
   // Receipts are keyed by `subjectUserId` with no FK, so they survive the user
   // row. A live subject normally has no account receipt; one appears only if
   // an id was reused, which is worth showing rather than hiding. A waitlist
-  // receipt (§125) names no account, so it is matched by its address hash —
-  // once the account has verified that address, the rule the waitlist rows
-  // themselves follow (`waitlistEntriesOf()`).
+  // receipt (§125) names no account, and is matched by the rule its entry was
+  // (`waitlistReceiptsOf()`). The erasing admin's id is another person's
+  // identifier, as `erasureRequestedBy` is above.
   const erasureReceipts = await prisma.dataErasureReceipt.findMany({
-    where: account.emailVerified
-      ? {
-          OR: [
-            { subjectUserId: userId },
-            { subjectKind: 'waitlist', subjectEmailHash: subjectEmailHash(account.email) },
-          ],
-        }
-      : { subjectUserId: userId },
+    where: { OR: [{ subjectUserId: userId }, waitlistReceiptsOf(subject)] },
+    omit: { actorUserId: true },
     orderBy: { erasedAt: 'asc' },
   });
 

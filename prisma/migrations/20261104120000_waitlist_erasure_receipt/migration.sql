@@ -6,8 +6,8 @@ ALTER TABLE "data_erasure_receipt" ADD COLUMN     "subjectKind" TEXT NOT NULL DE
 ALTER COLUMN "subjectUserId" DROP NOT NULL;
 
 -- An account receipt names its account; a waitlist receipt names none. The
--- readers that look a receipt up by account id (finishedErasure(), the subject
--- export) do not read the kind. Not modelled by Prisma: drift probe A13 in
+-- readers that look a receipt up by subjectUserId (finishedErasure(), the
+-- subject export's account arm) do not read the kind. Not modelled by Prisma: drift probe A13 in
 -- scripts/db/check-drift.ts.
 ALTER TABLE "data_erasure_receipt" ADD CONSTRAINT "data_erasure_receipt_subject_kind" CHECK (
   ("subjectKind" = 'account' AND "subjectUserId" IS NOT NULL)

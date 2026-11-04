@@ -42,6 +42,7 @@ function entry(over: Record<string, unknown> = {}) {
     list: 'default',
     confirmedAt: null,
     orgId: 'org-a',
+    userId: null,
     ...over,
   };
 }
@@ -101,7 +102,13 @@ describe('eraseWaitlistEntry', () => {
       subjectEmailHash: createHash('sha256').update(ADDRESS).digest('hex'),
       actorUserId: null,
       reason: 'self_service',
-      metadata: { addressVerified: false, entryConfirmed: false, list: 'default', orgId: 'org-a' },
+      metadata: {
+        addressVerified: false,
+        entryConfirmed: false,
+        list: 'default',
+        orgId: 'org-a',
+        linkedUserId: null,
+      },
     });
   });
 
@@ -120,6 +127,21 @@ describe('eraseWaitlistEntry', () => {
       actorUserId: 'admin-1',
       reason: 'admin_action',
       metadata: { addressVerified: false, entryConfirmed: true, list: 'beta' },
+    });
+  });
+
+  it('records the account an invitation linked the entry to, and still names none', async () => {
+    mockTx.waitlistEntry.findUnique.mockResolvedValue(entry({ userId: 'u-linked' }));
+
+    await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+    });
+
+    expect(writtenReceipt()).toMatchObject({
+      subjectUserId: null,
+      metadata: { linkedUserId: 'u-linked' },
     });
   });
 

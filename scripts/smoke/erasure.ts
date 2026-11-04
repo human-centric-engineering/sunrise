@@ -35,6 +35,7 @@ import { isRecord } from '@/lib/utils';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
+import { waitlistReceiptsOf } from '@/lib/waitlist/subject';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
   let auditId: string | null = null;
   let receiptId: string | null = null;
   const waitlistReceiptIds: string[] = [];
+  let holderUserId: string | null = null;
   let datasetId: string | null = null;
   let costLogId: string | null = null;
   let runId: string | null = null;
@@ -426,6 +428,59 @@ async function main(): Promise<void> {
       })) === null,
       'erasing an entry already erased writes no second receipt'
     );
+    // A linked entry's receipt is found for its live account through the
+    // JSON path the subject export asks by — unverified, so the link alone.
+    const holder = await prisma.user.create({
+      data: {
+        name: `${PREFIX} holder`,
+        email: `${PREFIX}-holder-${stamp}@example.com`,
+        emailVerified: false,
+      },
+    });
+    holderUserId = holder.id;
+    const held = await prisma.waitlistEntry.create({
+      data: {
+        email: `${PREFIX}-held-${stamp}@example.com`,
+        userId: holder.id,
+        consentedAt: new Date(),
+        consentVersion: 'smoke',
+      },
+    });
+    waitlistIds.push(held.id);
+    const heldReceipt = await eraseWaitlistEntry({
+      entryId: held.id,
+      actorUserId: null,
+      reason: 'admin_action',
+    });
+    if (heldReceipt) waitlistReceiptIds.push(heldReceipt.receiptId);
+    const found = await prisma.dataErasureReceipt.findMany({
+      where: waitlistReceiptsOf({
+        userId: holder.id,
+        email: holder.email,
+        emailVerified: false,
+      }),
+      select: { id: true, subjectUserId: true },
+    });
+    check(
+      found.length === 1 &&
+        found[0].id === heldReceipt?.receiptId &&
+        found[0].subjectUserId === null,
+      "a linked entry's receipt is found for its account by linkedUserId, and names none"
+    );
+    check(
+      (
+        await prisma.dataErasureReceipt.findMany({
+          where: waitlistReceiptsOf({
+            userId: holder.id,
+            email: leaverEmail,
+            emailVerified: false,
+          }),
+          select: { id: true },
+        })
+      ).every((r) => r.id !== left?.receiptId),
+      'an unverified account does not get the receipt filed under an address it has not proved'
+    );
+
     // The recipient writers do not refuse the address (decided in t-975).
     const refused = await prisma.$transaction((tx) =>
       findErasedSubjects(tx, { addresses: [leaverEmail] })
@@ -480,6 +535,8 @@ async function main(): Promise<void> {
       await prisma.aiAdminAuditLog.deleteMany({ where: { id: auditId } }).catch(() => undefined);
     if (subjectUserId)
       await prisma.user.deleteMany({ where: { id: subjectUserId } }).catch(() => undefined);
+    if (holderUserId)
+      await prisma.user.deleteMany({ where: { id: holderUserId } }).catch(() => undefined);
     if (runId)
       await prisma.aiEvaluationRun.deleteMany({ where: { id: runId } }).catch(() => undefined);
     if (datasetId)

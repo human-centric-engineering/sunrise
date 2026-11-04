@@ -18,7 +18,6 @@
  * @see lib/privacy/export-sources.ts
  */
 
-import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -119,6 +118,7 @@ import {
   type SubjectDataSource,
 } from '@/lib/privacy/export-sources';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
+import { waitlistReceiptsOf } from '@/lib/waitlist/subject';
 import { Prisma } from '@prisma/client';
 
 /**
@@ -1303,27 +1303,35 @@ describe('exportUserData', () => {
       const bundle = await exportUserData(PARAMS);
 
       expect(bundle.erasureReceipts).toEqual([receipt]);
-      expect(argsTo('dataErasureReceipt').where).toEqual({
+      const args = argsTo('dataErasureReceipt');
+      expect(args.where).toEqual({
         OR: [
           { subjectUserId: 'user-1' },
-          // The waitlist receipts under the verified address (§125 t-975),
-          // hashed from its normalised form.
-          {
-            subjectKind: 'waitlist',
-            subjectEmailHash: createHash('sha256').update('subject@example.com').digest('hex'),
-          },
+          // Its waitlist receipts (§125 t-975), by the rule its entries follow.
+          waitlistReceiptsOf({
+            userId: 'user-1',
+            email: SUBJECT.email,
+            emailVerified: true,
+          }),
         ],
       });
+      // The erasing admin's id is another person's identifier.
+      expect(args.omit).toEqual({ actorUserId: true });
     });
 
-    it('leaves waitlist receipts out while the address is unverified (§125 t-975)', async () => {
+    it("asks only for the linked entry's waitlist receipt while the address is unverified (§125 t-975)", async () => {
       mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
 
       await exportUserData(PARAMS);
 
       // Anyone can type an address onto a waitlist; an unverified account has
       // not proved it holds this one.
-      expect(argsTo('dataErasureReceipt').where).toEqual({ subjectUserId: 'user-1' });
+      expect(argsTo('dataErasureReceipt').where).toEqual({
+        OR: [
+          { subjectUserId: 'user-1' },
+          { subjectKind: 'waitlist', metadata: { path: ['linkedUserId'], equals: 'user-1' } },
+        ],
+      });
     });
   });
 

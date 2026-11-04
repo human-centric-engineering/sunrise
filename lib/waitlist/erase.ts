@@ -10,10 +10,11 @@
  *
  * **What the receipt says.** `subjectUserId` is null, always — also for an
  * entry linked to an account by a redeemed invitation. Erasing the entry is
- * not erasing the account, and the readers that look a receipt up by account
- * id (`finishedErasure()`, the subject export) do not read its kind: one
- * naming a live account would be shown to it as an erasure of the account.
- * The CHECK `data_erasure_receipt_subject_kind` holds the pairing.
+ * not erasing the account, and the readers that look a receipt up by
+ * `subjectUserId` (`finishedErasure()`, the subject export's account arm) do
+ * not read its kind: one naming a live account would be shown to it as an
+ * erasure of the account. The linked account is `metadata.linkedUserId`
+ * instead. The CHECK `data_erasure_receipt_subject_kind` holds the pairing.
  * `metadata.addressVerified` is `false`, also for a confirmed entry: the flag
  * means "erasure stripped this address from configuration", and this one
  * strips none — it deletes one entry. The readers ask for account receipts
@@ -56,7 +57,7 @@ export async function eraseWaitlistEntry(
   return prisma.$transaction(async (tx) => {
     const entry = await tx.waitlistEntry.findUnique({
       where: { id: input.entryId },
-      select: { id: true, email: true, list: true, confirmedAt: true, orgId: true },
+      select: { id: true, email: true, list: true, confirmedAt: true, orgId: true, userId: true },
     });
     if (!entry) return null;
 
@@ -79,6 +80,9 @@ export async function eraseWaitlistEntry(
           entryConfirmed: entry.confirmedAt !== null,
           list: entry.list,
           orgId: entry.orgId,
+          // The account an invitation linked the entry to, if any: how the
+          // subject export finds this receipt for it (`waitlistReceiptsOf()`).
+          linkedUserId: entry.userId,
         },
       },
       select: { id: true, erasedAt: true },

@@ -161,7 +161,8 @@ const DRIFT_OBJECTS: DriftObject[] = [
   },
   {
     // An account receipt names its account and a waitlist receipt (§125
-    // t-975) none: the by-id receipt readers do not read the kind.
+    // t-975) none: the readers that look one up by subjectUserId do not read
+    // the kind.
     name: 'A13 data_erasure_receipt_subject_kind',
     kind: 'CHECK constraint',
     table: 'data_erasure_receipt',

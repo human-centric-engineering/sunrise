@@ -122,7 +122,8 @@ release process.
   `anyoneErasedSince()` and the run-recipients scans) read account receipts
   only, so a waitlist receipt makes no recipient writer refuse anything,
   also for a confirmed entry. A subject access export now also lists the
-  waitlist receipts filed under the account's verified address. Guide:
+  account's waitlist receipts (the linked entry's, and those under its
+  verified address), and leaves `actorUserId` out of every receipt it lists. Guide:
   `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
 
 - **The user-created seam says which invitation a signup redeemed.**
