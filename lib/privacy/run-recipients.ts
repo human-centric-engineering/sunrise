@@ -251,7 +251,8 @@ type RunWriterClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'dataErasure
  * its row, so an erasure that held the row first has committed and its
  * receipt is seen.
  *
- * The first query is the whole cost when nobody was erased: receipts by
+ * Account receipts only: a waitlist erasure (§125) names no one a run could
+ * hold. The first query is the whole cost when nobody was erased: receipts by
  * `erasedAt`, which is indexed, since the run's `startedAt` less
  * {@link RUN_CLOCK_SKEW_MS}. Both are stamped by app hosts' clocks, and the
  * margin also covers a definition read just before the run started, and a
@@ -265,10 +266,11 @@ export async function findErasedSinceRunStarted(
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   const receipts = await tx.$queryRaw<
-    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+    Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>
   >`SELECT r."subjectUserId", r."subjectEmailHash"
      FROM data_erasure_receipt r
-     WHERE r."erasedAt" >= (SELECT coalesce(e."startedAt", e."createdAt")
+     WHERE r."subjectKind" = 'account'
+       AND r."erasedAt" >= (SELECT coalesce(e."startedAt", e."createdAt")
          FROM ai_workflow_execution e WHERE e.id = ${executionId})
        - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
   return erasedAmong(tx, receipts, values);
@@ -286,17 +288,18 @@ export async function findErasedSinceCopy(
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   const receipts = await tx.$queryRaw<
-    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+    Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>
   >`SELECT r."subjectUserId", r."subjectEmailHash"
      FROM data_erasure_receipt r
-     WHERE r."erasedAt" >= ${takenAt}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
+     WHERE r."subjectKind" = 'account'
+       AND r."erasedAt" >= ${takenAt}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
   return erasedAmong(tx, receipts, values);
 }
 
 /** Who among `receipts` `values` name, matched as {@link matchErasedSubjects} matches. */
 async function erasedAmong(
   tx: RunWriterClient,
-  receipts: Array<{ subjectUserId: string; subjectEmailHash: string | null }>,
+  receipts: Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>,
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   if (receipts.length === 0) return null;
@@ -312,9 +315,11 @@ async function erasedAmong(
   }
   const erased = await matchErasedSubjects(tx, {
     addresses,
+    // Account receipts only (the queries above), each naming its account;
+    // the guard narrows the type.
     userIds: receipts
       .map((r) => r.subjectUserId)
-      .filter((id) => strings.some((value) => value.includes(id))),
+      .filter((id): id is string => id !== null && strings.some((value) => value.includes(id))),
   });
   return erased.addresses.length > 0 || erased.userIds.length > 0 ? erased : null;
 }

@@ -1009,7 +1009,7 @@ describe('redactSubjectFromRunsSince (t-843)', () => {
 
 describe('findErasedSinceRunStarted (t-843)', () => {
   const hash = (a: string) => createHash('sha256').update(a).digest('hex');
-  type Receipt = { subjectUserId: string; subjectEmailHash: string | null };
+  type Receipt = { subjectUserId: string | null; subjectEmailHash: string | null };
 
   function makeWriterTx(sinceStart: Receipt[], verified = true) {
     return {
@@ -1075,11 +1075,48 @@ describe('findErasedSinceRunStarted (t-843)', () => {
 
     expect(await findErasedSinceRunStarted(tx as never, 'exec-1', [{ to: ADDRESS }])).toBeNull();
   });
+
+  it('names nobody from a waitlist receipt, which has no account id (§125 t-975)', async () => {
+    // Written as eraseWaitlistEntry() writes it: no id, not verified.
+    const tx = makeWriterTx([{ subjectUserId: null, subjectEmailHash: hash(ADDRESS) }], false);
+
+    // "null" in a value is where a null id would match as text.
+    const erased = await findErasedSinceRunStarted(tx as never, 'exec-1', [
+      { to: ADDRESS, note: 'value was null' },
+    ]);
+
+    expect(erased).toBeNull();
+    const [args] = tx.dataErasureReceipt.findMany.mock.calls[0] as unknown as [
+      { where: { OR: Array<Record<string, unknown>> } },
+    ];
+    expect(JSON.stringify(args.where)).not.toContain('subjectUserId');
+  });
+
+  it.each([
+    [
+      'findErasedSinceRunStarted',
+      (tx: ReturnType<typeof makeWriterTx>) =>
+        findErasedSinceRunStarted(tx as never, 'exec-1', [{ to: ADDRESS }]),
+    ],
+    [
+      'findErasedSinceCopy',
+      (tx: ReturnType<typeof makeWriterTx>) =>
+        findErasedSinceCopy(tx as never, new Date(), [{ to: ADDRESS }]),
+    ],
+  ])('%s scans account receipts only (§125 t-975)', async (_name, scan) => {
+    const tx = makeWriterTx([]);
+
+    await scan(tx);
+
+    // A waitlist erasure names no one a run holds: counting it would push
+    // every write after a public leave onto the slow path.
+    expect(sqlOf(tx.$queryRaw.mock.calls[0] as unknown[])).toContain(`"subjectKind" = 'account'`);
+  });
 });
 
 describe('findErasedSinceCopy (§122 t-901)', () => {
   const hash = (a: string) => createHash('sha256').update(a).digest('hex');
-  type Receipt = { subjectUserId: string; subjectEmailHash: string | null };
+  type Receipt = { subjectUserId: string | null; subjectEmailHash: string | null };
 
   function makeWriterTx(since: Receipt[]) {
     return {

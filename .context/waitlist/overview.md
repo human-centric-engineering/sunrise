@@ -135,6 +135,11 @@ orgs until `db:tenancy:enable` ran again.
   address once the account has verified it. See
   [data-export](../privacy/data-export.md#tables-with-no-user-fk) and
   [data-erasure](../privacy/data-erasure.md).
+- **Erasing a waitlist-only person** (no account) goes through
+  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`): it deletes the entry and
+  writes a `waitlist` erasure receipt. The leave link (t-977) and the admin
+  page (t-976) will call it. See
+  [Waitlist-only receipts](../privacy/data-erasure.md#waitlist-only-receipts).
 - **`userId` cascades** with the account: an entry is personal data.
 - **Org export** includes both tables.
 - **Your privacy notice** must cover what the form collects, that answers are

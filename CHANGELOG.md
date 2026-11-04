@@ -109,6 +109,23 @@ release process.
 
 ### Changed
 
+- **`DataErasureReceipt` has a subject kind, and `subjectUserId` is nullable
+  (§125 t-975).** New column `subjectKind` (`'account'` | `'waitlist'`,
+  default `'account'`); every existing receipt reads as an account receipt
+  and keeps its id. A `'waitlist'` receipt records a person erased from the
+  waitlist with no account, and names no user (`subjectUserId` null); the
+  CHECK `data_erasure_receipt_subject_kind` holds the pairing (drift probe
+  A13). Code that reads `subjectUserId` off a receipt now gets
+  `string | null`; a query by `subjectUserId` is unchanged. The writer is
+  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`). The erased-subject
+  readers (`matchErasedSubjects()`, `findErasedSubjects()`,
+  `anyoneErasedSince()` and the run-recipients scans) read account receipts
+  only, so a waitlist receipt makes no recipient writer refuse anything,
+  also for a confirmed entry. A subject access export now also lists the
+  account's waitlist receipts (the linked entry's, and those under its
+  verified address), and leaves `actorUserId` out of every receipt it
+  lists. Guide: `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
+
 - **The user-created seam says which invitation a signup redeemed.**
   `UserCreatedContext` gains `invitation: { invitedAt, invitedBy, orgId } |
   null` (`RedeemedInvitation`, `lib/auth/user-created-hooks.ts`), on both the

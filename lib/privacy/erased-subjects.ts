@@ -46,6 +46,11 @@
  *     strips an unverified address — it may be a stranger's inbox — so it is
  *     not refused either; and a receipt written before t-805 does not say, so
  *     it is not refused (the race this closes is minutes wide, not years).
+ *   • **Nothing from a waitlist receipt** (§125, `lib/waitlist/erase.ts`):
+ *     receipts are read by `subjectKind: 'account'`. That erasure deletes an
+ *     entry and strips no configuration, so there is nothing a stale copy
+ *     could put back, and refusing the address would leave configuration that
+ *     already names it unsavable. (It also writes `addressVerified: false`.)
  *   • **Not** an address that a live, verified account now holds: a person
  *     who was erased and later signed up again with the same address may be
  *     notified like anyone else.
@@ -313,6 +318,9 @@ export async function matchErasedSubjects(
   const byHash = new Map(addresses.map((a) => [subjectEmailHash(a), a]));
   const receipts = await tx.dataErasureReceipt.findMany({
     where: {
+      // Account receipts only: a waitlist erasure (§125) strips no
+      // configuration, so nothing it names is refused.
+      subjectKind: 'account',
       ...(options.since ? { erasedAt: { gte: copyAnchor(options.since) } } : {}),
       OR: [
         ...(byHash.size > 0 ? [{ subjectEmailHash: { in: [...byHash.keys()] } }] : []),
@@ -322,8 +330,12 @@ export async function matchErasedSubjects(
     select: { subjectUserId: true, subjectEmailHash: true, metadata: true },
   });
 
+  // An account receipt always names its account (CHECK
+  // `data_erasure_receipt_subject_kind`); the guard narrows the type.
   const erasedIds = new Set(
-    receipts.map((r) => r.subjectUserId).filter((id) => userIds.includes(id))
+    receipts
+      .map((r) => r.subjectUserId)
+      .filter((id): id is string => id !== null && userIds.includes(id))
   );
   const erasedAddresses = new Set<string>();
   for (const receipt of receipts) {
@@ -353,16 +365,18 @@ function copyAnchor(takenAt: Date): Date {
 }
 
 /**
- * Whether anyone at all was erased since `takenAt` (t-886): for a copy naming
+ * Whether any account was erased since `takenAt` (t-886): for a copy naming
  * something that no longer exists — a conversation or run that cascaded away
- * with its owner — so its owner can no longer be asked for by id.
+ * with its owner — so its owner can no longer be asked for by id. A waitlist
+ * receipt (§125) does not count: that erasure deletes an entry and nothing
+ * cascades from it.
  */
 export async function anyoneErasedSince(
   tx: Pick<Prisma.TransactionClient, 'dataErasureReceipt'>,
   takenAt: Date
 ): Promise<boolean> {
   const receipt = await tx.dataErasureReceipt.findFirst({
-    where: { erasedAt: { gte: copyAnchor(takenAt) } },
+    where: { subjectKind: 'account', erasedAt: { gte: copyAnchor(takenAt) } },
     select: { id: true },
   });
   return receipt !== null;

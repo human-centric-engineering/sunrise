@@ -31,7 +31,7 @@ import {
 } from '@/lib/privacy/erased-subjects';
 
 type Receipt = {
-  subjectUserId: string;
+  subjectUserId: string | null;
   subjectEmailHash: string | null;
   metadata: Prisma.JsonValue;
 };
@@ -381,7 +381,10 @@ describe('findErasedSubjects', () => {
     expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { OR: [{ subjectUserId: { in: ['gone-user', 'live-user'] } }] },
+        where: {
+          subjectKind: 'account',
+          OR: [{ subjectUserId: { in: ['gone-user', 'live-user'] } }],
+        },
       })
     );
   });
@@ -416,7 +419,10 @@ describe('findErasedSubjects', () => {
     expect(result).toEqual({ addresses: ['gone@example.com'], userIds: [] });
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { OR: [{ subjectEmailHash: { in: [sha256Hex('gone@example.com')] } }] },
+        where: {
+          subjectKind: 'account',
+          OR: [{ subjectEmailHash: { in: [sha256Hex('gone@example.com')] } }],
+        },
       })
     );
   });
@@ -476,6 +482,34 @@ describe('findErasedSubjects', () => {
   });
 });
 
+describe('waitlist receipts (§125 t-975)', () => {
+  it('never puts a null id in its answer, should a row without one reach it', async () => {
+    // Defence in depth: the query asks for account receipts, which the CHECK
+    // makes name their account. A relaxed filter must still not answer null.
+    const ctx = makeTx();
+    ctx.receiptFindMany.mockResolvedValue([
+      { subjectUserId: null, subjectEmailHash: sha256Hex('w@example.com'), metadata: {} },
+      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
+    ]);
+
+    const result = await matchErasedSubjects(ctx.tx, {
+      addresses: ['w@example.com'],
+      userIds: ['gone-user', 'live-user'],
+    });
+
+    expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
+  });
+
+  it('reads account receipts only, so a waitlist receipt is never refused', async () => {
+    const ctx = makeTx();
+
+    await matchErasedSubjects(ctx.tx, { addresses: ['w@example.com'], userIds: ['u1'] });
+
+    const [args] = ctx.receiptFindMany.mock.calls[0] as [{ where: Record<string, unknown> }];
+    expect(args.where.subjectKind).toBe('account');
+  });
+});
+
 describe('matchErasedSubjects (t-843)', () => {
   it('matches as findErasedSubjects does, without taking a lock', async () => {
     const ctx = makeTx();
@@ -509,7 +543,11 @@ describe('erasures since a copy was taken (§122 t-886)', () => {
 
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { erasedAt: { gte: anchor }, OR: [{ subjectUserId: { in: ['u1'] } }] },
+        where: {
+          subjectKind: 'account',
+          erasedAt: { gte: anchor },
+          OR: [{ subjectUserId: { in: ['u1'] } }],
+        },
       })
     );
     // Still under the lock, shared as asked.
@@ -540,7 +578,8 @@ describe('erasures since a copy was taken (§122 t-886)', () => {
       anyoneErasedSince({ dataErasureReceipt: { findFirst } } as never, takenAt)
     ).resolves.toBe(true);
     expect(findFirst).toHaveBeenCalledWith({
-      where: { erasedAt: { gte: anchor } },
+      // Accounts only: a waitlist erasure (§125) cascades nothing away.
+      where: { subjectKind: 'account', erasedAt: { gte: anchor } },
       select: { id: true },
     });
 

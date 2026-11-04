@@ -344,6 +344,7 @@ describe('eraseUser', () => {
     // Assert — verify the TRANSFORMATION the source applied to each input
     expect(mockReceiptCreate).toHaveBeenCalledWith({
       data: {
+        subjectKind: 'account',
         subjectUserId: BASE_PARAMS.userId,
         subjectEmailHash: expectedHash,
         actorUserId: BASE_PARAMS.actorUserId,

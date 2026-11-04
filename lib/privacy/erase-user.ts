@@ -739,6 +739,7 @@ async function eraseInTransaction(
 
   const created = await tx.dataErasureReceipt.create({
     data: {
+      subjectKind: 'account',
       subjectUserId: userId,
       // The stored address, as the contact delete reads it: never the
       // caller's copy, which can be stale (t-797).

@@ -160,6 +160,15 @@ const DRIFT_OBJECTS: DriftObject[] = [
     probe: indexExists('ai_event_hook_delivery_payload_idx', 'fastupdate=off'),
   },
   {
+    // An account receipt names its account and a waitlist receipt (§125
+    // t-975) none: the readers that look one up by subjectUserId do not read
+    // the kind.
+    name: 'A13 data_erasure_receipt_subject_kind',
+    kind: 'CHECK constraint',
+    table: 'data_erasure_receipt',
+    probe: constraintExists('data_erasure_receipt_subject_kind'),
+  },
+  {
     name: "Postgres 'english' tsearch configuration",
     kind: 'pg_ts_config row',
     table: '—',

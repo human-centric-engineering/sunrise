@@ -60,10 +60,16 @@ model SeedHistory {
   @@map("seed_history")
 }
 
-/// Append-only receipt of a completed right-to-erasure (account deletion).
+/// Append-only receipt of a completed right-to-erasure.
 ///
-/// Written inside the same transaction as `prisma.user.delete` by
-/// `lib/privacy/erase-user.ts`, so a receipt exists iff the user was erased.
+/// Two kinds of subject (`subjectKind`):
+///   - `account` — written inside the same transaction as `prisma.user.delete`
+///     by `lib/privacy/erase-user.ts`, so an account receipt exists iff the
+///     user was erased. `subjectUserId` is set.
+///   - `waitlist` — a person on the waitlist with no account, erased by the
+///     leave link or an admin (§125, `lib/waitlist/erase.ts`). `subjectUserId`
+///     is null: there is no account, and a linked entry's account is alive.
+///   The CHECK `data_erasure_receipt_subject_kind` holds the pairing.
 /// Demonstrates GDPR Art. 5(2) accountability without re-introducing the
 /// subject's PII: the user id is opaque (the row is gone) and the email is
 /// stored only as a SHA-256 hash for correlating a later "did you erase me?"
@@ -71,7 +77,9 @@ model SeedHistory {
 /// including the actor if they are later erased too.
 model DataErasureReceipt {
   id               String   @id @default(cuid())
-  subjectUserId    String // id of the erased user (no FK — the user row is gone)
+  /// "account" | "waitlist". Receipts written before §125 are accounts.
+  subjectKind      String   @default("account")
+  subjectUserId    String? // id of the erased user (no FK — the user row is gone); null for a waitlist receipt
   subjectEmailHash String? // sha256(lowercased email); for correlation, not reversible
   actorUserId      String? // who initiated the erasure (self or an admin)
   reason           String // "self_service" | "admin_action"
