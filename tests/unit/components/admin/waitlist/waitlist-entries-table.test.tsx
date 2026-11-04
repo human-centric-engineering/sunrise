@@ -819,4 +819,20 @@ describe('WaitlistEntriesTable — after a change (code review round 1)', () => 
     await user.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
   });
+
+  it('tells the page an erase happened, once it succeeded', async () => {
+    const { apiClient } = await getApi();
+    const onChanged = vi.fn();
+    vi.mocked(apiClient.delete).mockResolvedValue({});
+    const user = userEvent.setup();
+    renderTable({ onChanged });
+
+    await user.click(screen.getByRole('button', { name: 'Erase' }));
+    expect(onChanged).not.toHaveBeenCalled();
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Erase' })
+    );
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  });
 });
