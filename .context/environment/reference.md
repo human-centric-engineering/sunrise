@@ -49,7 +49,8 @@ Complete reference for all environment variables used in Sunrise.
 | [`S3_ENDPOINT`](./storage-env.md) ²                              | ❌ No    | URL          | -                   | Custom S3-compatible endpoint                   |
 | [`S3_PUBLIC_URL_BASE`](./storage-env.md) ²                       | ❌ No    | URL          | -                   | CDN/domain for public URLs                      |
 | [`S3_USE_ACL`](./storage-env.md) ²                               | ❌ No    | Boolean      | `false`             | Enable ACL on uploads                           |
-| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md) ²                    | ⚠️ Cond  | String       | -                   | Vercel Blob storage token                       |
+| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md) ²                    | ⚠️ Cond  | String       | -                   | Vercel Blob public store token                  |
+| [`BLOB_PRIVATE_READ_WRITE_TOKEN`](./storage-env.md) ²            | ❌ No    | String       | -                   | Vercel Blob private store token                 |
 | `PERF_SLOW_THRESHOLD_MS` ¹                                       | ❌ No    | Number       | `1000`              | Threshold for logging slow operations           |
 | `PERF_CRITICAL_THRESHOLD_MS` ¹                                   | ❌ No    | Number       | `5000`              | Threshold for Sentry alerts                     |
 | `HEALTH_INCLUDE_MEMORY` ¹                                        | ❌ No    | Boolean      | `false`             | Include memory stats in health check            |

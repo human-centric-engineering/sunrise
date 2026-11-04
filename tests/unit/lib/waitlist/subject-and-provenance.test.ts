@@ -24,7 +24,7 @@ import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { localeFromAcceptLanguage, referrerHost } from '@/lib/waitlist/provenance';
 import { isWaitlistListOpen } from '@/lib/waitlist/lists';
 import { buildWaitlistJoinSchema } from '@/lib/validations/waitlist';
-import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -108,7 +108,7 @@ describe('isWaitlistListOpen', () => {
     fields: [],
     lists: [{ key: 'open' }, { key: 'shut', startsClosed: true }],
     screen: null,
-    retention: { unconfirmedDays: 30 },
+    retention: DEFAULT_WAITLIST_RETENTION,
   };
 
   it('with no stored row, follows the config’s starting state', async () => {

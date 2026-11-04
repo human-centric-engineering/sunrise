@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import { emailSchema } from '@/lib/validations/auth';
+import { paginationQuerySchema, queryBooleanSchema } from '@/lib/validations/common';
 
 /** The parts of a waitlist field the schema needs: serialisable, so a page can hand them to the form. */
 export interface WaitlistFieldShape {
@@ -124,6 +125,55 @@ export function toWaitlistFieldShape(f: WaitlistFieldShape): WaitlistFieldShape 
     ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
   };
 }
+
+// ── Admin (§125 t-976) ──────────────────────────────────────────────────────
+
+/**
+ * The most rows one export carries. The export's filename says so when it
+ * bites, and the page says so beside the button.
+ */
+export const WAITLIST_EXPORT_MAX_ROWS = 10_000;
+
+/** A list key as the config declares it (`lib/waitlist/config.ts`). */
+const listKeySchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/, 'Not a list key');
+
+/**
+ * The filters `GET /api/v1/admin/waitlist` and its export share. By default
+ * only confirmed, active entries: unconfirmed, removed and joined ones are
+ * shown only when asked for.
+ */
+export const waitlistAdminFilterSchema = z.object({
+  list: listKeySchema.optional(),
+  q: z.string().trim().max(200).optional(),
+  includeUnconfirmed: queryBooleanSchema.optional(),
+  includeRemoved: queryBooleanSchema.optional(),
+  includeJoined: queryBooleanSchema.optional(),
+  flaggedOnly: queryBooleanSchema.optional(),
+});
+
+/**
+ * The admin list's page size and default order: the route's defaults, the
+ * page's server-rendered first page and the table's requests all read these,
+ * so the first page and the next one cannot disagree about what a page is.
+ */
+export const WAITLIST_ADMIN_PAGE_SIZE = 25;
+export const WAITLIST_ADMIN_DEFAULT_SORT = { sortBy: 'createdAt', sortOrder: 'desc' } as const;
+
+export const waitlistAdminListQuerySchema = waitlistAdminFilterSchema.extend({
+  page: paginationQuerySchema.shape.page,
+  limit: z.coerce.number().int().positive().max(100).default(WAITLIST_ADMIN_PAGE_SIZE),
+  sortBy: z.enum(['createdAt', 'email', 'confirmedAt']).default(WAITLIST_ADMIN_DEFAULT_SORT.sortBy),
+  sortOrder: z.enum(['asc', 'desc']).default(WAITLIST_ADMIN_DEFAULT_SORT.sortOrder),
+});
+
+/** `PATCH /api/v1/admin/waitlist/:id` — the state to reach. */
+export const waitlistEntryPatchSchema = z.object({ removed: z.boolean() }).strict();
+
+/** `PATCH /api/v1/admin/waitlist/lists/:key` — the state to reach. */
+export const waitlistListPatchSchema = z.object({ open: z.boolean() }).strict();
+
+/** A list key in a route path. */
+export const waitlistListKeySchema = listKeySchema;
 
 /**
  * `POST /api/v1/waitlist/confirm` (§125 t-977). Shape only: a token that is

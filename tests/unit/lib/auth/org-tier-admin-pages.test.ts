@@ -122,7 +122,7 @@ describe('closing a core section to org admins (t-929)', () => {
     expect(orgScopedAdminPages()).toEqual(orgTierAdminPages());
   });
 
-  it('takes every orchestration page off the list, and keeps /admin, Members, Support access and the fork’s', () => {
+  it('takes every orchestration page off the list, and keeps /admin, Members, Support access, Waitlist and the fork’s', () => {
     fork.init = () => {
       registerOrgTierAdminPage('/admin/leads');
       closeCoreOrgTierSection('orchestration');
@@ -133,7 +133,13 @@ describe('closing a core section to org admins (t-929)', () => {
     expect(ORG_TIER_ADMIN_PAGES.filter((p) => p.startsWith('/admin/orchestration')).length).toBe(
       38
     );
-    expect(pages).toEqual(['/admin', '/admin/members', '/admin/support-access', '/admin/leads']);
+    expect(pages).toEqual([
+      '/admin',
+      '/admin/members',
+      '/admin/support-access',
+      '/admin/waitlist',
+      '/admin/leads',
+    ]);
     expect(adminPageTier('/admin/orchestration', pages)).toBeNull();
     expect(adminPageTier('/admin/orchestration/agents/a1', pages)).toBeNull();
     expect(adminPageTier('/admin/members', pages)).toBe('org');

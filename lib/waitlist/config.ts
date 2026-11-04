@@ -85,26 +85,33 @@ export interface WaitlistConfig {
    */
   screen?: (input: WaitlistScreenInput) => WaitlistScreenResult | Promise<WaitlistScreenResult>;
   /**
-   * How long entries are kept, in days. Your privacy notice must say the same.
-   * Each window is enforced by the maintenance tick, per org.
+   * How long each state is kept before the retention job deletes it, enforced
+   * by the maintenance tick, per org. Your privacy notice should say the same.
+   * Every window has a default.
    */
   retention?: WaitlistRetention;
 }
 
-/** The retention windows a fork may set. Every one has a default. */
+/** Retention windows (§125). Each is optional; the defaults are the spec's. */
 export interface WaitlistRetention {
   /**
-   * Delete an entry nobody confirmed this many days after it joined. Default
-   * 30. An unconfirmed entry is an address someone typed; nothing proves it is
-   * the person's own, so it is not kept for long.
+   * Days an entry nobody confirmed is kept after it joined. Default 30. An
+   * unconfirmed entry is an address someone typed; nothing proves it is the
+   * person's own, so it is not kept for long.
    */
   unconfirmedDays?: number;
+  /** Days a removed entry is kept after its removal. Default 90. */
+  removedDays?: number;
+  /** Months a closed list's entries are kept after it closed. Default 12. */
+  closedListMonths?: number;
 }
 
-/** The default retention windows, in days. */
-export const DEFAULT_WAITLIST_RETENTION = {
+/** The spec's windows, used for any the config leaves out. */
+export const DEFAULT_WAITLIST_RETENTION: Required<WaitlistRetention> = {
   unconfirmedDays: 30,
-} as const satisfies Required<WaitlistRetention>;
+  removedDays: 90,
+  closedListMonths: 12,
+};
 
 /** The config, validated and with its defaults filled in. */
 export interface ResolvedWaitlistConfig {
@@ -171,6 +178,8 @@ const configSchema = z.object({
       // At least a day: a zero window would delete an entry before its owner
       // could open the email. At most ten years, which no notice should need.
       unconfirmedDays: z.number().int().min(1).max(3650).optional(),
+      removedDays: z.number().int().min(1).max(3650).optional(),
+      closedListMonths: z.number().int().min(1).max(120).optional(),
     })
     .strict()
     .optional(),
@@ -204,9 +213,15 @@ export function resolveWaitlistConfig(
     fields: config.fields ?? [],
     lists: config.lists ?? [{ key: DEFAULT_WAITLIST_LIST }],
     screen: config.screen ?? null,
+    // `??` per window, not a spread: a key the fork sets to `undefined`
+    // (`removedDays: env.X ? Number(env.X) : undefined`) keeps the default
+    // rather than making every cut-off an Invalid Date.
     retention: {
       unconfirmedDays:
         parsed.data.retention?.unconfirmedDays ?? DEFAULT_WAITLIST_RETENTION.unconfirmedDays,
+      removedDays: parsed.data.retention?.removedDays ?? DEFAULT_WAITLIST_RETENTION.removedDays,
+      closedListMonths:
+        parsed.data.retention?.closedListMonths ?? DEFAULT_WAITLIST_RETENTION.closedListMonths,
     },
   };
 }

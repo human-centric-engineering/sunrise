@@ -18,7 +18,7 @@ const { mockTx, mockPrisma } = vi.hoisted(() => {
   const mockTx = {
     waitlistEntry: { findUnique: vi.fn(), deleteMany: vi.fn() },
     dataErasureReceipt: { create: vi.fn() },
-    verification: { deleteMany: vi.fn() },
+    verification: { findMany: vi.fn(), deleteMany: vi.fn() },
   };
   return {
     mockTx,
@@ -29,8 +29,13 @@ const { mockTx, mockPrisma } = vi.hoisted(() => {
 });
 
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
 import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
+import { logger } from '@/lib/logging';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { matchErasedSubjects } from '@/lib/privacy/erased-subjects';
 
 const ERASED_AT = new Date('2026-11-04T10:00:00Z');
@@ -84,6 +89,14 @@ beforeEach(() => {
   mockTx.waitlistEntry.findUnique.mockResolvedValue(entry());
   mockTx.waitlistEntry.deleteMany.mockResolvedValue({ count: 1 });
   mockTx.dataErasureReceipt.create.mockResolvedValue({ id: 'r-1', erasedAt: ERASED_AT });
+  mockTx.verification.findMany.mockResolvedValue([]);
+  // Two deletes: the entry's confirmation token (by identifier), and the
+  // org's invitations (by id).
+  mockTx.verification.deleteMany.mockImplementation(
+    async (args: { where: { id?: { in: string[] }; identifier?: string } }) => ({
+      count: args.where.id ? args.where.id.in.length : 0,
+    })
+  );
 });
 
 describe('eraseWaitlistEntry', () => {
@@ -94,7 +107,7 @@ describe('eraseWaitlistEntry', () => {
       reason: 'self_service',
     });
 
-    expect(result).toEqual({ receiptId: 'r-1', erasedAt: ERASED_AT });
+    expect(result).toEqual({ receiptId: 'r-1', erasedAt: ERASED_AT, invitationsDeleted: 0 });
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     expect(mockTx.waitlistEntry.deleteMany).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
     // Its outstanding confirmation link dies with it (t-977).
@@ -176,6 +189,71 @@ describe('eraseWaitlistEntry', () => {
     expect(result).toBeNull();
     expect(mockTx.dataErasureReceipt.create).not.toHaveBeenCalled();
     expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('a pending invitation for the address (spec, Rules carried over)', () => {
+  const invitation = (id: string, metadata: unknown) => ({ id, metadata });
+  const meta = (orgId?: string) => ({
+    name: 'Ada',
+    role: 'USER',
+    invitedBy: 'admin-1',
+    invitedAt: '2026-11-01T00:00:00Z',
+    ...(orgId ? { orgId } : {}),
+  });
+
+  it('deletes the one this org issued, in the same transaction, and looks it up by the address', async () => {
+    mockTx.verification.findMany.mockResolvedValue([invitation('v-1', meta('org-a'))]);
+
+    const result = await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+    });
+
+    expect(mockTx.verification.findMany).toHaveBeenCalledWith({
+      where: { identifier: `invitation:${ADDRESS}` },
+      select: { id: true, metadata: true },
+    });
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['v-1'] } } });
+    expect(result?.invitationsDeleted).toBe(1);
+  });
+
+  it('reads an invitation naming no org as the install org’s', async () => {
+    mockTx.waitlistEntry.findUnique.mockResolvedValue(entry({ orgId: INSTALL_ORG_ID }));
+    mockTx.verification.findMany.mockResolvedValue([invitation('v-1', meta())]);
+
+    const result = await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: null,
+      reason: 'self_service',
+    });
+
+    expect(result?.invitationsDeleted).toBe(1);
+  });
+
+  it('keeps another org’s invitation, and one it cannot read (logged)', async () => {
+    mockTx.verification.findMany.mockResolvedValue([
+      invitation('v-other', meta('org-b')),
+      invitation('v-broken', { not: 'an invitation' }),
+    ]);
+
+    const result = await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+    });
+
+    // Only the entry's own confirmation token goes; no invitation is deleted.
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledOnce();
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
+      where: { identifier: 'waitlist-confirm:entry-1' },
+    });
+    expect(result?.invitationsDeleted).toBe(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Waitlist erasure left an invitation it could not read',
+      { entryId: 'entry-1', count: 1 }
+    );
   });
 });
 

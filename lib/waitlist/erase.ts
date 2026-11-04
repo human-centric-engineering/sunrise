@@ -27,12 +27,23 @@
  * tenant-owned and is read under the caller's scope, so an id from another org
  * is not found. The receipt is a system model, like every other receipt.
  *
+ * **A pending invitation for the address goes too** (spec, *Rules carried
+ * over*: otherwise a working sign-up link survives the erasure) — the one
+ * this org issued. Invitations are install-wide, one per address, and name the
+ * org the invitee joins (`metadata.orgId`, absent ⇒ the install org), so one
+ * for another org is that org's to keep; one whose metadata cannot be read is
+ * left and logged rather than guessed at.
+ *
  * Erasing an account (`eraseUser()`) deletes that account's entries itself
  * and writes the account receipt; this is not called for them.
  */
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
+import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { confirmIdentifier } from '@/lib/waitlist/tokens';
 
 export interface EraseWaitlistEntryInput {
@@ -45,6 +56,8 @@ export interface EraseWaitlistEntryInput {
 export interface WaitlistErasureReceipt {
   receiptId: string;
   erasedAt: Date;
+  /** Pending invitations for the address this org issued, deleted with the entry. */
+  invitationsDeleted: number;
 }
 
 /**
@@ -93,6 +106,33 @@ export async function eraseWaitlistEntry(
       },
       select: { id: true, erasedAt: true },
     });
-    return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
+
+    const invitations = await tx.verification.findMany({
+      where: { identifier: `${INVITATION_IDENTIFIER_PREFIX}${entry.email}` },
+      select: { id: true, metadata: true },
+    });
+    const ours: string[] = [];
+    let unreadable = 0;
+    for (const invitation of invitations) {
+      const metadata = parseInvitationMetadata(invitation.metadata);
+      if (!metadata) unreadable += 1;
+      else if ((metadata.orgId ?? INSTALL_ORG_ID) === entry.orgId) ours.push(invitation.id);
+    }
+    if (unreadable > 0) {
+      logger.warn('Waitlist erasure left an invitation it could not read', {
+        entryId: entry.id,
+        count: unreadable,
+      });
+    }
+    const deletedInvitations =
+      ours.length === 0
+        ? { count: 0 }
+        : await tx.verification.deleteMany({ where: { id: { in: ours } } });
+
+    return {
+      receiptId: receipt.id,
+      erasedAt: receipt.erasedAt,
+      invitationsDeleted: deletedInvitations.count,
+    };
   });
 }

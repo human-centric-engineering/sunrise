@@ -18,11 +18,13 @@ release process.
 
 ### Added
 
-- **Waitlist (§125, in progress)**: a new seam,
+- **Waitlist (§125, in progress — joining and the admin page)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes
   answer 404. Filled in, it declares the form's extra fields, named lists, the
-  consent text's version and a `screen()` check, and turns on
+  consent text's version, a `screen()` check and the retention windows
+  (`retention: { removedDays, closedListMonths }`, defaults 90 days and 12
+  months), and turns on
   `GET`/`POST /api/v1/waitlist`, the `<Waitlist />` and `<WaitlistForm>`
   components (`components/waitlist/`), and the Art. 15 / 17 and org-export
   wiring. Two new tenant-owned models, `WaitlistEntry` and `WaitlistListState`
@@ -33,7 +35,14 @@ release process.
   per-flow sub-cap `waitlistLimiter` (`RATE_LIMIT_WAITLIST`, 5/hour per IP) and a
   `TenantContextSource` value, `'public-form'`. A fork filling the seam fails
   its row in `tests/unit/lib/app/defaults.test.ts`, as expected: pin your
-  value. The admin page and invites follow. Guide: `.context/waitlist/overview.md`.
+  value. **Admin (t-976):** an org-tier `/admin/waitlist` page (hidden while
+  the config is empty) over `GET /api/v1/admin/waitlist` (list),
+  `/counts`, `/export` (CSV), `PATCH`/`DELETE /api/v1/admin/waitlist/:id`
+  (remove or restore; erase) and `PATCH /api/v1/admin/waitlist/lists/:key`
+  (open or close); a per-org maintenance job, `waitlistRetention`, appended to
+  the tick's `backgroundTasks`; and `eraseWaitlistEntry()` now also deletes
+  the org's pending invitation for the address. Invites follow. Guide:
+  `.context/waitlist/overview.md`.
 
 - **Waitlist confirmation and leaving (§125 t-977)**: a join now emails the
   joiner, after the response — a confirmation link to a new or unconfirmed
@@ -43,11 +52,28 @@ release process.
   (`/waitlist/confirm`, `/waitlist/leave`). Two new email kinds in
   `EmailPropsMap`, `waitlistConfirm` and `waitlistAlreadyOnList`, overridable
   in `lib/app/emails.ts`. `WaitlistConfig.retention.unconfirmedDays` (default
-  30): unconfirmed entries are deleted by a new `waitlistRetention`
-  maintenance task (appended to `backgroundTasks`). New column
+  30): unconfirmed entries are deleted by the `waitlistRetention`
+  maintenance task, which also deletes a pruned entry's confirmation token. New column
   `WaitlistEntry.lastEmailedAt`, and a `TenantContextSource` value,
   `'waitlist-link'`. Leave works with no waitlist config, so dropping the
   config never strands the links in people's inboxes.
+
+- **Private files and downloads on Vercel Blob** (#1012, #1155): the Vercel
+  Blob provider can now read objects back (`download()`, through the SDK's
+  `get()`) and hold private files. A new optional env var,
+  `BLOB_PRIVATE_READ_WRITE_TOKEN`, names a second store created with Private
+  access, and `upload({ public: false })` writes there instead of throwing. A
+  private upload returns the signed read route's address, and `getSignedUrl()`
+  mints its token as the local provider does, so `privateObjects` and
+  `signedUrls` are on whenever the private store is configured, and
+  `upload_to_storage` works at `TENANCY_MODE=multi` on Vercel. `delete()` and
+  `deletePrefix()` now sweep both stores, except that a Vercel Blob URL goes
+  only to the store its hostname names. `BLOB_READ_WRITE_TOKEN` is unchanged
+  and still the public store. Either token alone makes a provider, and an
+  upload whose store is missing throws: with only the private token, avatar
+  uploads are refused. `VercelBlobProviderConfig.token` is now optional,
+  alongside the new `privateToken`, and `vercelBlobConfigSchema` accepts either
+  or both. Guide: `.context/storage/overview.md`.
 
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
@@ -154,6 +180,11 @@ release process.
   classes needs updating (§124).
 
 ### Fixed
+
+- **A second avatar upload failed on Vercel Blob.** The SDK refuses to
+  overwrite an existing blob unless asked, and avatars use one fixed key per
+  user, so every re-upload threw. The provider now
+  overwrites, as S3 and local always have.
 
 - **`db:tenancy:role --create` failed on Neon.** Neon's control plane accepts
   only the password itself, not the SCRAM-SHA-256 verifier the script sends,

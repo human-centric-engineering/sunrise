@@ -237,6 +237,17 @@ export function verifyStorageAccessToken(token: string): TokenPayload {
 }
 
 /**
+ * The signed read route's address for a key, with no token: what a provider
+ * returns as a private object's URL. On its own it serves nothing.
+ *
+ * Each segment is encoded separately so the `/` separators survive and a key
+ * with a space or `#` still makes a valid URL.
+ */
+export function storageRoutePath(key: string): string {
+  return `/api/v1/storage/${key.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+/**
  * Build the signed read URL for a storage key.
  *
  * Relative by default — the route lives in this app, and a relative URL is
@@ -251,9 +262,7 @@ export function buildStorageAccessUrl(
 ): { url: string; expiresAt: Date } {
   const { token, expiresAt } = generateStorageAccessToken(key, expiresInSeconds, options);
 
-  // Each segment is encoded separately so the `/` separators survive.
-  const encodedKey = key.split('/').map(encodeURIComponent).join('/');
-  const path = `/api/v1/storage/${encodedKey}?token=${encodeURIComponent(token)}`;
+  const path = `${storageRoutePath(key)}?token=${encodeURIComponent(token)}`;
 
   return {
     url: baseUrl ? `${baseUrl.replace(/\/$/, '')}${path}` : path,

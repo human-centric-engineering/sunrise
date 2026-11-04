@@ -49,9 +49,10 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgentsIfStale: vi.fn(),
 }));
 vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
-vi.mock('@/lib/waitlist/retention', () => ({ pruneWaitlistEntries: vi.fn() }));
+vi.mock('@/lib/waitlist/retention', () => ({ runWaitlistRetention: vi.fn() }));
 
 import { logger } from '@/lib/logging';
+import { runWaitlistRetention } from '@/lib/waitlist/retention';
 import {
   processOrphanedExecutions,
   processPendingExecutions,
@@ -67,7 +68,6 @@ import {
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
-import { pruneWaitlistEntries } from '@/lib/waitlist/retention';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOBS,
@@ -144,6 +144,11 @@ function mockIdleTasks(): void {
   });
   vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0 });
   vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_IDLE);
+  vi.mocked(runWaitlistRetention).mockResolvedValue({
+    unconfirmedDeleted: 0,
+    removedDeleted: 0,
+    closedListDeleted: 0,
+  });
   vi.mocked(processPendingExecutions).mockResolvedValue({ recovered: 0, failed: 0, errors: [] });
   vi.mocked(processPendingEvaluationRuns).mockResolvedValue({
     claimed: 0,
@@ -155,7 +160,6 @@ function mockIdleTasks(): void {
   vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue(SYSTEM_RETENTION_IDLE);
   vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({ reconciled: false });
   vi.mocked(processPendingErasures).mockResolvedValue(ERASURES_IDLE);
-  vi.mocked(pruneWaitlistEntries).mockResolvedValue({ unconfirmedDeleted: 0 });
 }
 
 beforeEach(() => {
@@ -403,7 +407,12 @@ describe('runDuePlatformJobs — foundWork', () => {
     ],
     [
       'waitlistRetention',
-      () => vi.mocked(pruneWaitlistEntries).mockResolvedValue({ unconfirmedDeleted: 2 }),
+      () =>
+        vi.mocked(runWaitlistRetention).mockResolvedValue({
+          unconfirmedDeleted: 2,
+          removedDeleted: 0,
+          closedListDeleted: 0,
+        }),
     ],
     [
       'auditLogRetention',

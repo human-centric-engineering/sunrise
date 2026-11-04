@@ -776,6 +776,40 @@ describe('lib/validations/storage', () => {
       }
     });
 
+    it('accepts a private store token alone, and keeps it', () => {
+      const result = vercelBlobConfigSchema.safeParse({ privateToken: 'vercel_blob_rw_PRIV' });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Not stripped: a parse that dropped it would refuse every private upload.
+        expect(result.data).toEqual({ privateToken: 'vercel_blob_rw_PRIV' });
+      }
+    });
+
+    it('accepts both tokens', () => {
+      const result = vercelBlobConfigSchema.safeParse({
+        token: 'vercel_blob_rw_PUB',
+        privateToken: 'vercel_blob_rw_PRIV',
+      });
+
+      expect(result.success && result.data).toEqual({
+        token: 'vercel_blob_rw_PUB',
+        privateToken: 'vercel_blob_rw_PRIV',
+      });
+    });
+
+    it('treats an empty token as unset, as the provider factory does', () => {
+      const result = vercelBlobConfigSchema.safeParse({
+        token: '',
+        privateToken: 'vercel_blob_rw_PRIV',
+      });
+
+      expect(result.success && result.data).toEqual({ privateToken: 'vercel_blob_rw_PRIV' });
+      // With nothing else set, an empty token is still no token.
+      expect(vercelBlobConfigSchema.safeParse({ privateToken: '' }).success).toBe(false);
+    });
+
     it('should reject missing token', () => {
       // Arrange
       const config = {};

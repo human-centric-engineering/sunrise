@@ -87,10 +87,10 @@ export interface StorageObject {
  * What a storage provider can actually do
  *
  * `upload(buffer, { public: false })` means different things on different
- * backends: private on S3 (with ACLs or a private-by-default bucket),
- * impossible on Vercel Blob, and — before this contract existed — silently
- * ignored on local. Callers that care must ask before writing, rather than
- * sniffing `provider.name`.
+ * backends: private on S3 (with ACLs or a private-by-default bucket), on
+ * Vercel Blob only with a private store configured, and — before this
+ * contract existed — silently ignored on local. Callers that care must ask
+ * before writing, rather than sniffing `provider.name`.
  *
  * Read this through {@link getStorageCapabilities}, never off the provider
  * directly: the field is an optional `Partial<>` so that a fork's custom

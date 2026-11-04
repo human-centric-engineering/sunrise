@@ -39,6 +39,7 @@ import {
   UserCog,
   UsersRound,
   LifeBuoy,
+  Hourglass,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
@@ -98,6 +99,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Support access',
         icon: LifeBuoy,
         description: 'Let platform support into this organisation',
+      },
+      {
+        href: '/admin/waitlist',
+        tier: 'org',
+        label: 'Waitlist',
+        icon: Hourglass,
+        description: 'People waiting to be let in',
       },
       {
         href: '/admin/orgs',
@@ -449,6 +457,11 @@ interface AdminSidebarProps {
    * console at `single` is what it was before them.
    */
   multiTenant?: boolean;
+  /**
+   * The app has a waitlist (`lib/app/waitlist-config.ts` filled in, §125).
+   * Its item is hidden otherwise, as its routes answer 404.
+   */
+  waitlistEnabled?: boolean;
 }
 
 /**
@@ -463,6 +476,25 @@ const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set(['/admin/members', '/admi
 export function sectionsForMode(sections: NavSection[], multiTenant: boolean): NavSection[] {
   if (multiTenant) return sections;
   const kept = (items: NavItem[]) => items.filter((item) => !MULTI_TENANT_ONLY.has(item.href));
+  return sections.map((section) => ({
+    ...section,
+    ...(section.items ? { items: kept(section.items) } : {}),
+    ...(section.subgroups
+      ? { subgroups: section.subgroups.map((group) => ({ ...group, items: kept(group.items) })) }
+      : {}),
+  }));
+}
+
+/** Items shown only when the app has switched their capability on. */
+const WAITLIST_ITEM = '/admin/waitlist';
+
+/** The sections without the waitlist item, when the app has no waitlist. */
+export function sectionsForCapabilities(
+  sections: NavSection[],
+  { waitlistEnabled }: { waitlistEnabled: boolean }
+): NavSection[] {
+  if (waitlistEnabled) return sections;
+  const kept = (items: NavItem[]) => items.filter((item) => item.href !== WAITLIST_ITEM);
   return sections.map((section) => ({
     ...section,
     ...(section.items ? { items: kept(section.items) } : {}),
@@ -608,6 +640,7 @@ export function AdminSidebar({
   viewerTier,
   orgTierPages,
   multiTenant = false,
+  waitlistEnabled = false,
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -621,7 +654,10 @@ export function AdminSidebar({
       // safe — see lib/admin-nav/registry.ts.
       injectBadges(
         sectionsForViewer(
-          sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
+          sectionsForCapabilities(
+            sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
+            { waitlistEnabled }
+          ),
           viewerTier,
           orgTierPages
         ),
@@ -630,7 +666,7 @@ export function AdminSidebar({
           '/admin/orchestration/executions': inProgressCount,
         }
       ),
-    [approvalCount, inProgressCount, viewerTier, orgTierPages, multiTenant]
+    [approvalCount, inProgressCount, viewerTier, orgTierPages, multiTenant, waitlistEnabled]
   );
 
   return (

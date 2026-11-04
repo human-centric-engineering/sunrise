@@ -27,20 +27,35 @@ describe('resolveWaitlistConfig', () => {
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
-  it('fills the defaults: no fields, one open default list, no screen, 30-day unconfirmed window', () => {
+  it('fills the defaults: no fields, one open default list, no screen, the spec’s windows', () => {
     expect(resolveWaitlistConfig({ consentVersion: 'v1' })).toEqual({
       consentVersion: 'v1',
       fields: [],
       lists: [{ key: 'default' }],
       screen: null,
-      retention: { unconfirmedDays: 30 },
+      retention: { unconfirmedDays: 30, removedDays: 90, closedListMonths: 12 },
     });
   });
 
-  it('keeps the retention window the fork sets', () => {
+  it('keeps the default for a window the fork sets to undefined', () => {
+    // `removedDays: env.X ? Number(env.X) : undefined` — a spread would let
+    // the undefined win and make every cut-off an Invalid Date.
+    expect(
+      resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: undefined } })
+        ?.retention
+    ).toEqual({ unconfirmedDays: 30, removedDays: 90, closedListMonths: 12 });
+  });
+
+  it('takes a retention window the fork sets and keeps the default for the other', () => {
+    expect(
+      resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: 30 } })?.retention
+    ).toEqual({ unconfirmedDays: 30, removedDays: 30, closedListMonths: 12 });
+  });
+
+  it('keeps the unconfirmed window the fork sets', () => {
     expect(
       resolveWaitlistConfig({ consentVersion: 'v1', retention: { unconfirmedDays: 14 } })?.retention
-    ).toEqual({ unconfirmedDays: 14 });
+    ).toEqual({ unconfirmedDays: 14, removedDays: 90, closedListMonths: 12 });
   });
 
   it('keeps the fork’s own screen function', () => {
@@ -50,6 +65,7 @@ describe('resolveWaitlistConfig', () => {
 
   const invalid: Array<[string, unknown]> = [
     ['no consent version', { consentVersion: '  ' }],
+    ['a zero retention window', { consentVersion: 'v1', retention: { removedDays: 0 } }],
     [
       'a select with no options',
       { consentVersion: 'v1', fields: [{ key: 'r', label: 'R', kind: 'select' }] },

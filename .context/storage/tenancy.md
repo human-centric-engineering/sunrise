@@ -93,17 +93,19 @@ open it some time after the turn that produced it. An hour would expire links
 nobody has opened yet; longer makes a leaked link live longer. A binding that
 needs something else sets `signedUrlTtlSeconds` (60 s to 7 days).
 
-**On Vercel Blob**, which has no signed URLs, a default binding at `multi` is
-refused with `signed_url_not_supported` until it opts into `public: true`. It
-fails loudly rather than publishing the file.
+**On Vercel Blob without a private store** (`BLOB_PRIVATE_READ_WRITE_TOKEN`),
+which therefore has no signed URLs, a default binding at `multi` is refused
+with `signed_url_not_supported` until it opts into `public: true` or the
+deployment adds the private store. It fails loudly rather than publishing the
+file.
 
 ## What each URL kind protects
 
-| URL kind               | What it carries                             | Org protection                                                                                                                                                                                                                               |
-| ---------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Local signed token** | One key, an expiry, and an `org` claim      | Minting refuses a key outside the org; the read route (`/api/v1/storage/<key>`) refuses a token whose `org` claim does not match the key's prefix (`TOKEN_ORG_MISMATCH`, 403), or whose org is erased or suspended (`ORG_UNAVAILABLE`, 403). |
-| **S3 presigned URL**   | AWS's own signature over one key and expiry | **None in the URL.** A presigned URL is AWS's format and has nowhere to put a claim of ours. The org-bound client's check before signing is the whole control.                                                                               |
-| **Public URL**         | Nothing                                     | **None.** Anyone holding it can read the file for as long as it exists. Local public files are served statically from `/uploads/<key>`. This is why the default changed at `multi`.                                                          |
+| URL kind                                                       | What it carries                             | Org protection                                                                                                                                                                                                                               |
+| -------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Signed read token** (local, and Vercel Blob's private store) | One key, an expiry, and an `org` claim      | Minting refuses a key outside the org; the read route (`/api/v1/storage/<key>`) refuses a token whose `org` claim does not match the key's prefix (`TOKEN_ORG_MISMATCH`, 403), or whose org is erased or suspended (`ORG_UNAVAILABLE`, 403). |
+| **S3 presigned URL**                                           | AWS's own signature over one key and expiry | **None in the URL.** A presigned URL is AWS's format and has nowhere to put a claim of ours. The org-bound client's check before signing is the whole control.                                                                               |
+| **Public URL**                                                 | Nothing                                     | **None.** Anyone holding it can read the file for as long as it exists. Local public files are served statically from `/uploads/<key>`. This is why the default changed at `multi`.                                                          |
 
 **The local token's claim, in detail** (`lib/storage/access-tokens.ts`). The
 payload is `{ typ: 'storage-read', key, expiresAt, org? }`. An org-owned key
