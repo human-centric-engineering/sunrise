@@ -311,7 +311,7 @@ export function WaitlistEntriesTable({
     eraseSave.clear();
     setErasing(true);
     try {
-      
+      await apiClient.delete(API.ADMIN.waitlistEntry(eraseTarget.id));
       setEraseTarget(null);
       await load();
     } catch (err) {

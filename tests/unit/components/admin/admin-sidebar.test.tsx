@@ -13,7 +13,12 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 
-import { AdminSidebar, sectionsForViewer, sectionsForMode } from '@/components/admin/admin-sidebar';
+import {
+  AdminSidebar,
+  sectionsForViewer,
+  sectionsForMode,
+  sectionsForCapabilities,
+} from '@/components/admin/admin-sidebar';
 import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 import { ORG_TIER_ADMIN_PAGES } from '@/lib/auth/admin-tier';
 
@@ -660,5 +665,75 @@ describe('sectionsForMode', () => {
 
     for (const href of MULTI_ONLY) expect(before).toContain(href);
     expect(after).toEqual(before.filter((h) => !MULTI_ONLY.includes(h)));
+  });
+});
+
+describe('sectionsForCapabilities', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string) => ({ href, label: href, icon: Icon, description: '' });
+  const sections = [
+    { title: 'Management', items: [item('/admin/users'), item('/admin/waitlist'), item('/o')] },
+    {
+      title: 'Grouped',
+      subgroups: [{ label: 'G', items: [item('/admin/waitlist'), item('/g')] }],
+    },
+  ];
+
+  it('returns the very array it was given when the app has a waitlist', () => {
+    expect(sectionsForCapabilities(sections, { waitlistEnabled: true })).toBe(sections);
+  });
+
+  it('removes /admin/waitlist, from items and subgroups, and leaves everything else', () => {
+    const result = sectionsForCapabilities(sections, { waitlistEnabled: false });
+
+    expect(result).toEqual([
+      { title: 'Management', items: [item('/admin/users'), item('/o')] },
+      { title: 'Grouped', subgroups: [{ label: 'G', items: [item('/g')] }] },
+    ]);
+    // The input is not mutated.
+    expect(sections[0].items).toHaveLength(3);
+  });
+
+  it('removes only the waitlist item from the real core sections', async () => {
+    const { coreNavSections } = await import('@/components/admin/admin-sidebar');
+    const flat = (secs: typeof coreNavSections) =>
+      secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
+
+    const before = flat(coreNavSections).map((i) => i.href);
+    const after = flat(sectionsForCapabilities(coreNavSections, { waitlistEnabled: false })).map(
+      (i) => i.href
+    );
+
+    expect(before).toContain('/admin/waitlist');
+    expect(after).toEqual(before.filter((h) => h !== '/admin/waitlist'));
+  });
+});
+
+describe('AdminSidebar — Waitlist (§125)', () => {
+  beforeEach(() => {
+    pathnameMock.mockReturnValue('/admin/overview');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetNavRegistryForTests();
+  });
+
+  it('shows a Waitlist link to /admin/waitlist for a platform viewer when waitlistEnabled', () => {
+    render(
+      <AdminSidebar viewerTier="platform" waitlistEnabled orgTierPages={ORG_TIER_ADMIN_PAGES} />
+    );
+
+    expect(screen.getByRole('link', { name: /Waitlist/ })).toHaveAttribute(
+      'href',
+      '/admin/waitlist'
+    );
+  });
+
+  it('hides the Waitlist link when the prop is omitted', () => {
+    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+
+    expect(screen.queryByRole('link', { name: /Waitlist/ })).not.toBeInTheDocument();
   });
 });
