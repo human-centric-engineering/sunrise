@@ -93,7 +93,7 @@ beforeEach(() => {
   // Two deletes: the entry's confirmation token (by identifier), and the
   // org's invitations (by id).
   mockTx.verification.deleteMany.mockImplementation(
-    async (args: { where: { id?: { in: string[] }; identifier?: string } }) => ({
+    async (args: { where: { id?: { in: string[] }; identifier?: unknown } }) => ({
       count: args.where.id ? args.where.id.in.length : 0,
     })
   );
@@ -112,7 +112,7 @@ describe('eraseWaitlistEntry', () => {
     expect(mockTx.waitlistEntry.deleteMany).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
     // Its outstanding confirmation link dies with it (t-977).
     expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { identifier: 'waitlist-confirm:entry-1' },
+      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
     });
     expect(writtenReceipt()).toEqual({
       subjectKind: 'waitlist',
@@ -247,7 +247,7 @@ describe('a pending invitation for the address (spec, Rules carried over)', () =
     // Only the entry's own confirmation token goes; no invitation is deleted.
     expect(mockTx.verification.deleteMany).toHaveBeenCalledOnce();
     expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { identifier: 'waitlist-confirm:entry-1' },
+      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
     });
     expect(result?.invitationsDeleted).toBe(0);
     expect(logger.warn).toHaveBeenCalledWith(
