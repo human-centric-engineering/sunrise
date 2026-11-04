@@ -96,7 +96,7 @@ describe('WaitlistAdminPage', () => {
     expect(paths).toContain(
       '/api/v1/admin/waitlist?page=1&limit=25&sortBy=createdAt&sortOrder=desc'
     );
-    expect(panelProps).toHaveBeenCalledWith({ lists: LISTS });
+    expect(panelProps).toHaveBeenCalledWith({ lists: LISTS, onListChange: expect.any(Function) });
     expect(tableProps).toHaveBeenCalledWith({
       lists: ['default', 'beta'],
       fields: FIELDS,

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { WaitlistAdmin } from '@/components/admin/waitlist/waitlist-admin';
 import type { WaitlistListCountsView } from '@/components/admin/waitlist/waitlist-lists-panel';
@@ -149,9 +149,25 @@ describe('WaitlistAdmin — a slow read from before a toggle (code review round 
     await waitFor(() => expect(countsReads).toBe(2));
     await screen.findByText('Closed');
 
-    // The stale read lands last, saying the list is open.
-    finishStale(Response.json({ success: true, data: { lists: [counts({ open: true })] } }));
-    await new Promise((r) => setTimeout(r, 20));
+    // The stale read lands last, saying the list is open. Wait until its body
+    // has been read — a positive signal, not a sleep — then let the reader's
+    // continuation run.
+    const stale = Response.json({ success: true, data: { lists: [counts({ open: true })] } });
+    const read = stale.json.bind(stale);
+    let bodyRead: () => void = () => {};
+    const bodyWasRead = new Promise<void>((resolve) => {
+      bodyRead = resolve;
+    });
+    vi.spyOn(stale, 'json').mockImplementation(async () => {
+      const body: unknown = await read();
+      bodyRead();
+      return body;
+    });
+    finishStale(stale);
+    await act(async () => {
+      await bodyWasRead;
+      await Promise.resolve();
+    });
 
     expect(screen.getByText('Closed')).toBeInTheDocument();
     expect(screen.queryByText('Taking joins')).not.toBeInTheDocument();

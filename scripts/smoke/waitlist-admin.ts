@@ -31,6 +31,7 @@ import {
 } from '@/lib/waitlist/admin';
 import {
   expiredRemovedWhere,
+  longClosedListWhere,
   pruneWaitlistEntries,
   waitlistRetentionCutoffs,
 } from '@/lib/waitlist/retention';
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
     }
     // …and so would a list someone else closed over the window ago.
     const foreignClosed = await prisma.waitlistListState.count({
-      where: { open: false, changedAt: { lt: closedBefore } },
+      where: longClosedListWhere(closedBefore),
     });
     if (foreignClosed > 0) {
       throw new Error(

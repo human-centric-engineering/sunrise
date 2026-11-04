@@ -20,6 +20,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { requireOrgId } from '@/lib/tenancy/context';
 import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import { getWaitlistListStates } from '@/lib/waitlist/lists';
 
 /** Which entries a list or export shows beyond the default (confirmed, active). */
 export interface WaitlistEntryFilter {
@@ -162,21 +163,8 @@ export interface WaitlistListCounts {
 export async function countWaitlistEntries(
   config: ResolvedWaitlistConfig
 ): Promise<WaitlistListCounts[]> {
-  const keys = config.lists.map((l) => l.key);
-  const stored = new Map(
-    (
-      await prisma.waitlistListState.findMany({
-        where: { list: { in: keys } },
-        select: { list: true, open: true, changedAt: true },
-      })
-    ).map((r) => [r.list, r])
-  );
-  // The stored row wins over the config's starting state (lib/waitlist/lists.ts).
-  const statuses = config.lists.map((l) => {
-    const row = stored.get(l.key);
-    const open = row?.open ?? !l.startsClosed;
-    return { key: l.key, open, closedSince: row && !row.open ? row.changedAt : null };
-  });
+  const statuses = await getWaitlistListStates(config);
+  const keys = statuses.map((s) => s.key);
   const active = { list: { in: keys }, removedAt: null, joinedAt: null };
 
   const [confirmed, unconfirmed, flagged, removed, invited, joined, sources] = await Promise.all([

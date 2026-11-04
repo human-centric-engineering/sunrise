@@ -12,9 +12,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { useState } from 'react';
+
 import {
   WaitlistListsPanel,
   type WaitlistListCountsView,
+  type WaitlistListStateChange,
 } from '@/components/admin/waitlist/waitlist-lists-panel';
 import { API } from '@/lib/api/endpoints';
 
@@ -22,6 +25,29 @@ vi.mock('@/lib/api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api/client')>()),
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
+
+/**
+ * The page's part, as `WaitlistAdmin` plays it: hold the lists, and record a
+ * toggle's answer in them. The panel draws only what it is given.
+ */
+function Harness({
+  lists,
+  onListChange,
+}: {
+  lists: WaitlistListCountsView[];
+  onListChange?: (key: string, change: WaitlistListStateChange) => void;
+}) {
+  const [state, setState] = useState(lists);
+  return (
+    <WaitlistListsPanel
+      lists={state}
+      onListChange={(key, change) => {
+        onListChange?.(key, change);
+        setState((current) => current.map((l) => (l.key === key ? { ...l, ...change } : l)));
+      }}
+    />
+  );
+}
 
 function view(overrides: Partial<WaitlistListCountsView> = {}): WaitlistListCountsView {
   return {
@@ -51,7 +77,7 @@ beforeEach(() => {
 
 describe('WaitlistListsPanel — counts', () => {
   it('shows each list’s counts under the right label', () => {
-    render(<WaitlistListsPanel lists={[view()]} />);
+    render(<Harness lists={[view()]} />);
 
     const card = screen.getByTestId('waitlist-list-default');
     expect(within(card).getByRole('heading', { name: 'default' })).toBeInTheDocument();
@@ -65,9 +91,7 @@ describe('WaitlistListsPanel — counts', () => {
 
   it('shows one card per list, each with its own numbers and state', () => {
     render(
-      <WaitlistListsPanel
-        lists={[view(), view({ key: 'beta', open: false, confirmed: 99, removed: 0 })]}
-      />
+      <Harness lists={[view(), view({ key: 'beta', open: false, confirmed: 99, removed: 0 })]} />
     );
 
     const beta = screen.getByTestId('waitlist-list-beta');
@@ -80,13 +104,13 @@ describe('WaitlistListsPanel — counts', () => {
   });
 
   it('shows "Taking joins" and "Close list" for an open list, "Closed" and "Open list" for a closed one', () => {
-    const { unmount } = render(<WaitlistListsPanel lists={[view({ open: true })]} />);
+    const { unmount } = render(<Harness lists={[view({ open: true })]} />);
     expect(screen.getByText('Taking joins')).toBeInTheDocument();
     expect(screen.queryByText('Closed')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close list' })).toBeInTheDocument();
     unmount();
 
-    render(<WaitlistListsPanel lists={[view({ open: false })]} />);
+    render(<Harness lists={[view({ open: false })]} />);
     expect(screen.getByText('Closed')).toBeInTheDocument();
     expect(screen.queryByText('Taking joins')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open list' })).toBeInTheDocument();
@@ -94,7 +118,7 @@ describe('WaitlistListsPanel — counts', () => {
 
   it('shows the confirmed-by-source line only when there are sources', () => {
     const { unmount } = render(
-      <WaitlistListsPanel
+      <Harness
         lists={[
           view({
             bySource: [
@@ -108,7 +132,7 @@ describe('WaitlistListsPanel — counts', () => {
     expect(screen.getByText('Confirmed by source: direct 7 · twitter 2')).toBeInTheDocument();
     unmount();
 
-    render(<WaitlistListsPanel lists={[view({ bySource: [] })]} />);
+    render(<Harness lists={[view({ bySource: [] })]} />);
     expect(screen.queryByText(/Confirmed by source/)).not.toBeInTheDocument();
   });
 });
@@ -118,7 +142,7 @@ describe('WaitlistListsPanel — close and open', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockResolvedValue({ key: 'default', open: false });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view()]} />);
+    render(<Harness lists={[view()]} />);
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
 
@@ -136,7 +160,7 @@ describe('WaitlistListsPanel — close and open', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockResolvedValue({ key: 'beta', open: true });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view({ key: 'beta', open: false })]} />);
+    render(<Harness lists={[view({ key: 'beta', open: false })]} />);
 
     await user.click(screen.getByRole('button', { name: 'Open list' }));
 
@@ -151,7 +175,7 @@ describe('WaitlistListsPanel — close and open', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockResolvedValue({ key: 'beta', open: false });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view(), view({ key: 'beta' })]} />);
+    render(<Harness lists={[view(), view({ key: 'beta' })]} />);
 
     await user.click(
       within(screen.getByTestId('waitlist-list-beta')).getByRole('button', { name: 'Close list' })
@@ -169,7 +193,7 @@ describe('WaitlistListsPanel — close and open', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockReturnValue(new Promise(() => {}));
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view()]} />);
+    render(<Harness lists={[view()]} />);
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
 
@@ -181,7 +205,7 @@ describe('WaitlistListsPanel — close and open', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(new Error('offline'));
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view()]} />);
+    render(<Harness lists={[view()]} />);
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
 
@@ -199,7 +223,7 @@ describe('WaitlistListsPanel — close and open', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce({ key: 'default', open: true });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view({ open: false })]} />);
+    render(<Harness lists={[view({ open: false })]} />);
 
     await user.click(screen.getByRole('button', { name: 'Open list' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -216,7 +240,7 @@ describe('WaitlistListsPanel — close and open', () => {
 describe('WaitlistListsPanel — a list closed only by the config (code review round 2)', () => {
   it('offers Mark closed only for a closed list with no recorded close, and says why', () => {
     render(
-      <WaitlistListsPanel
+      <Harness
         lists={[
           view({ key: 'config-closed', open: false, closedSince: null }),
           view({ key: 'admin-closed', open: false, closedSince: '2026-01-01T00:00:00.000Z' }),
@@ -240,7 +264,7 @@ describe('WaitlistListsPanel — a list closed only by the config (code review r
       changedAt: '2026-11-04T10:00:00.000Z',
     });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view({ open: false, closedSince: null })]} />);
+    render(<Harness lists={[view({ open: false, closedSince: null })]} />);
 
     await user.click(screen.getByRole('button', { name: 'Mark closed' }));
 
@@ -257,7 +281,7 @@ describe('WaitlistListsPanel — a list closed only by the config (code review r
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(new Error('offline'));
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view({ open: false, closedSince: null })]} />);
+    render(<Harness lists={[view({ open: false, closedSince: null })]} />);
 
     await user.click(screen.getByRole('button', { name: 'Mark closed' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -272,31 +296,73 @@ describe('WaitlistListsPanel — a list closed only by the config (code review r
 });
 
 describe('WaitlistListsPanel — new counts from the page (code review round 2)', () => {
-  it('asks the page to re-read the counts once a toggle succeeded, and not when it failed', async () => {
+  it('hands the page the toggle’s answer once it succeeded, and nothing when it failed', async () => {
     const { apiClient } = await import('@/lib/api/client');
-    const onChanged = vi.fn();
+    const onListChange = vi.fn();
     vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({
       key: 'default',
       open: false,
       changedAt: '2026-11-04T10:00:00.000Z',
     });
     const user = userEvent.setup();
-    render(<WaitlistListsPanel lists={[view()]} onChanged={onChanged} />);
+    render(<Harness lists={[view()]} onListChange={onListChange} />);
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
     await screen.findByRole('alert');
-    expect(onChanged).not.toHaveBeenCalled();
+    expect(onListChange).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Close list' }));
-    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(onListChange).toHaveBeenCalledWith('default', {
+        open: false,
+        closedSince: '2026-11-04T10:00:00.000Z',
+      })
+    );
+  });
+
+  it('draws only what it is given: a toggle shows nothing until the page records it', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({
+      key: 'default',
+      open: false,
+      changedAt: '2026-11-04T10:00:00.000Z',
+    });
+    const user = userEvent.setup();
+    const onListChange = vi.fn();
+    render(<WaitlistListsPanel lists={[view()]} onListChange={onListChange} />);
+
+    await user.click(screen.getByRole('button', { name: 'Close list' }));
+
+    await waitFor(() => expect(onListChange).toHaveBeenCalled());
+    expect(screen.getByText('Taking joins')).toBeInTheDocument();
+  });
+
+  it('shows the spinner on the button that was pressed', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<Harness lists={[view({ open: false, closedSince: null })]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Mark closed' }));
+
+    const mark = screen.getByRole('button', { name: 'Mark closed' });
+    const open = screen.getByRole('button', { name: 'Open list' });
+    expect(mark.querySelector('.animate-spin')).not.toBeNull();
+    expect(open.querySelector('.animate-spin')).toBeNull();
+    expect(mark).toBeDisabled();
+    expect(open).toBeDisabled();
   });
 
   it('follows the page’s open state', () => {
-    const { rerender } = render(<WaitlistListsPanel lists={[view({ open: true })]} />);
+    const noop = vi.fn();
+    const { rerender } = render(
+      <WaitlistListsPanel lists={[view({ open: true })]} onListChange={noop} />
+    );
 
     rerender(
       <WaitlistListsPanel
         lists={[view({ open: false, closedSince: '2026-11-04T10:00:00.000Z' })]}
+        onListChange={noop}
       />
     );
 

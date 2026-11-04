@@ -202,9 +202,9 @@ it. Invites go on after a close, so an entry invited since the cut-off is
 kept. A list closed only by the config (`startsClosed`, never touched on the
 page) has no close date: its card says so and offers **Mark closed**, which
 records today, and the window runs from then. A joined entry is never pruned,
-even once removed. Each prune deletes in batches of 1,000, up to 20 a run, so
-a backlog of up to 20,000 goes in the run that finds it and a bigger one over
-the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
+even once removed. Each prune deletes in batches of 1,000, up to 20 a run and
+within 15 seconds an org, so a backlog of up to 20,000 goes in the run that
+finds it and a bigger one over the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
 safe because a new entry for the address must be confirmed by its owner.
 These deletions are retention, not erasure requests, and write no receipt.
 Rows on a list the config no longer declares are not shown on the admin page.

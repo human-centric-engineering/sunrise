@@ -32,6 +32,7 @@ import {
   pruneWaitlistEntries,
   runWaitlistRetention,
   WAITLIST_RETENTION_BATCH,
+  WAITLIST_RETENTION_BUDGET_MS,
   WAITLIST_RETENTION_MAX_BATCHES,
 } from '@/lib/waitlist/retention';
 
@@ -101,6 +102,34 @@ describe('pruneWaitlistEntries', () => {
     expect(args.take).toBe(WAITLIST_RETENTION_BATCH);
     // Any expired row will do; an order would sort every match first.
     expect(args.orderBy).toBeUndefined();
+  });
+
+  it('stops when a full batch deletes nothing, rather than reading the same rows again', async () => {
+    const full = Array.from({ length: WAITLIST_RETENTION_BATCH }, (_, i) => ({ id: `r${i}` }));
+    mockPrisma.waitlistEntry.findMany.mockResolvedValue(full);
+    mockPrisma.waitlistEntry.deleteMany.mockResolvedValue({ count: 0 });
+
+    await pruneWaitlistEntries(CONFIG, NOW);
+
+    // One read and one delete for the removed prune; the closed prune has no lists.
+    expect(mockPrisma.waitlistEntry.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops when the run’s time budget is spent, leaving the rest for the next run', async () => {
+    const full = Array.from({ length: WAITLIST_RETENTION_BATCH }, (_, i) => ({ id: `r${i}` }));
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    // Each batch takes a third of the budget.
+    mockPrisma.waitlistEntry.findMany.mockImplementation(async () => {
+      clock += Math.ceil(WAITLIST_RETENTION_BUDGET_MS / 3);
+      return full;
+    });
+
+    const result = await pruneWaitlistEntries(CONFIG, NOW);
+
+    expect(result.removedDeleted).toBe(3 * WAITLIST_RETENTION_BATCH);
+    now.mockRestore();
   });
 
   it('stops at the run’s batch cap, leaving the rest for the next run', async () => {

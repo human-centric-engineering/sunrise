@@ -6,7 +6,7 @@
  * closing a list records who and when, and closing stops new joins only.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -32,28 +32,37 @@ export interface WaitlistListCountsView {
   bySource: Array<{ source: string; count: number }>;
 }
 
-export interface WaitlistListsPanelProps {
-  lists: WaitlistListCountsView[];
-  /** Called after a list was opened, closed or marked closed, so the page re-reads the counts. */
-  onChanged?: () => void;
+/** A list's open state as a toggle's answer gives it. */
+export interface WaitlistListStateChange {
+  open: boolean;
+  closedSince: string | null;
 }
 
-function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged?: () => void }) {
-  // The counts come from the props, which the page re-reads after any change.
-  // The card shows a toggle's answer at once, then asks the page to re-read:
-  // the page keeps only its latest read, so a read that started before the
-  // toggle committed — and would say the list is still open — is dropped
-  // rather than undoing what the admin just did.
-  const [state, setState] = useState({ open: list.open, closedSince: list.closedSince });
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setState({ open: list.open, closedSince: list.closedSince });
-  }, [list.open, list.closedSince]);
+export interface WaitlistListsPanelProps {
+  lists: WaitlistListCountsView[];
+  /**
+   * A toggle succeeded: the page records its answer in `lists` and re-reads
+   * the counts. The panel holds no copy of the lists' state; it draws what
+   * it is given, so a counts re-read can never disagree with what it shows.
+   */
+  onListChange: (key: string, change: WaitlistListStateChange) => void;
+}
+
+type Pending = 'toggle' | 'record' | null;
+
+function ListCard({
+  list,
+  onListChange,
+}: {
+  list: WaitlistListCountsView;
+  onListChange: WaitlistListsPanelProps['onListChange'];
+}) {
+  const [pending, setPending] = useState<Pending>(null);
   // Closed by the config alone: no close date, so retention has no window to count.
-  const unrecorded = !state.open && state.closedSince === null;
+  const unrecorded = !list.open && list.closedSince === null;
   // One failure per button, each shown beside the button that was pressed.
   const toggleSave = useSaveFailure({
-    fallback: `Could not ${state.open ? 'close' : 'open'} the list. Try again.`,
+    fallback: `Could not ${list.open ? 'close' : 'open'} the list. Try again.`,
     fields: NO_SERVER_FIELDS,
   });
   const recordSave = useSaveFailure({
@@ -61,21 +70,23 @@ function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged
     fields: NO_SERVER_FIELDS,
   });
 
-  const send = async (open: boolean, save: typeof toggleSave) => {
+  const send = async (open: boolean, which: Exclude<Pending, null>) => {
     toggleSave.clear();
     recordSave.clear();
-    setSaving(true);
+    setPending(which);
     try {
       const result = await apiClient.patch<{ key: string; open: boolean; changedAt: string }>(
         API.ADMIN.waitlistList(list.key),
         { body: { open } }
       );
-      setState({ open: result.open, closedSince: result.open ? null : result.changedAt });
-      onChanged?.();
+      onListChange(list.key, {
+        open: result.open,
+        closedSince: result.open ? null : result.changedAt,
+      });
     } catch (error) {
-      save.report(error);
+      (which === 'record' ? recordSave : toggleSave).report(error);
     } finally {
-      setSaving(false);
+      setPending(null);
     }
   };
 
@@ -93,8 +104,8 @@ function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h3 className="font-medium">{list.key}</h3>
-          <Badge variant={state.open ? 'default' : 'secondary'}>
-            {state.open ? 'Taking joins' : 'Closed'}
+          <Badge variant={list.open ? 'default' : 'secondary'}>
+            {list.open ? 'Taking joins' : 'Closed'}
           </Badge>
           <FieldHelp title="Opening and closing a list">
             Closing a list stops new joins and nothing else: people can still confirm, leave and be
@@ -109,9 +120,12 @@ function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void send(false, recordSave)}
-                disabled={saving}
+                onClick={() => void send(false, 'record')}
+                disabled={pending !== null}
               >
+                {pending === 'record' && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                )}
                 Mark closed
               </Button>
             </>
@@ -120,11 +134,11 @@ function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void send(!state.open, toggleSave)}
-            disabled={saving}
+            onClick={() => void send(!list.open, 'toggle')}
+            disabled={pending !== null}
           >
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
-            {state.open ? 'Close list' : 'Open list'}
+            {pending === 'toggle' && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
+            {list.open ? 'Close list' : 'Open list'}
           </Button>
         </div>
       </div>
@@ -152,7 +166,7 @@ function ListCard({ list, onChanged }: { list: WaitlistListCountsView; onChanged
   );
 }
 
-export function WaitlistListsPanel({ lists, onChanged }: WaitlistListsPanelProps) {
+export function WaitlistListsPanel({ lists, onListChange }: WaitlistListsPanelProps) {
   return (
     <section className="space-y-3" aria-labelledby="waitlist-lists-heading">
       <div className="flex items-center gap-1">
@@ -167,7 +181,7 @@ export function WaitlistListsPanel({ lists, onChanged }: WaitlistListsPanelProps
       </div>
       <div className="space-y-3">
         {lists.map((list) => (
-          <ListCard key={list.key} list={list} onChanged={onChanged} />
+          <ListCard key={list.key} list={list} onListChange={onListChange} />
         ))}
       </div>
     </section>
