@@ -1091,6 +1091,23 @@ describe('findErasedSinceRunStarted (t-843)', () => {
     ];
     expect(JSON.stringify(args.where)).not.toContain('subjectUserId');
   });
+
+  it.each([
+    ['findErasedSinceRunStarted', () => findErasedSinceRunStarted],
+    ['findErasedSinceCopy', () => findErasedSinceCopy],
+  ])('%s scans account receipts only (§125 t-975)', async (_name, fn) => {
+    const tx = makeWriterTx([]);
+
+    await (fn() as (...a: unknown[]) => Promise<unknown>)(
+      tx,
+      _name === 'findErasedSinceCopy' ? new Date() : 'exec-1',
+      [{ to: ADDRESS }]
+    );
+
+    // A waitlist erasure names no one a run holds: counting it would push
+    // every write after a public leave onto the slow path.
+    expect(sqlOf(tx.$queryRaw.mock.calls[0] as unknown[])).toContain(`"subjectKind" = 'account'`);
+  });
 });
 
 describe('findErasedSinceCopy (§122 t-901)', () => {

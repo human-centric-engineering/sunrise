@@ -3,8 +3,9 @@
  *
  * What the erasure writes, and — by handing the receipt it wrote to the real
  * `matchErasedSubjects()` — what the recipient writers then make of it. The
- * CHECK that pairs `subjectKind` with `subjectUserId`, and the readers' SQL
- * against a null id, are Postgres properties: `smoke:erasure` holds them.
+ * CHECK that pairs `subjectKind` with `subjectUserId` is a Postgres property:
+ * `smoke:erasure` holds it, and that `findErasedSubjects()` does not refuse
+ * the address on a real receipt.
  *
  * @see lib/waitlist/erase.ts
  */
@@ -35,7 +36,14 @@ const ERASED_AT = new Date('2026-11-04T10:00:00Z');
 const ADDRESS = 'ada@example.com';
 
 function entry(over: Record<string, unknown> = {}) {
-  return { id: 'entry-1', email: ADDRESS, list: 'default', confirmedAt: null, ...over };
+  return {
+    id: 'entry-1',
+    email: ADDRESS,
+    list: 'default',
+    confirmedAt: null,
+    orgId: 'org-a',
+    ...over,
+  };
 }
 
 type ReceiptData = {
@@ -85,7 +93,7 @@ describe('eraseWaitlistEntry', () => {
       subjectEmailHash: createHash('sha256').update(ADDRESS).digest('hex'),
       actorUserId: null,
       reason: 'self_service',
-      metadata: { addressVerified: false, entryConfirmed: false, list: 'default' },
+      metadata: { addressVerified: false, entryConfirmed: false, list: 'default', orgId: 'org-a' },
     });
   });
 

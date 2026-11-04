@@ -46,12 +46,11 @@
  *     strips an unverified address — it may be a stranger's inbox — so it is
  *     not refused either; and a receipt written before t-805 does not say, so
  *     it is not refused (the race this closes is minutes wide, not years).
- *   • **Not** an address or anything else from a **waitlist receipt** (§125,
- *     `lib/waitlist/erase.ts`). It names no account, and it says
- *     `addressVerified: false` even for a confirmed entry: that erasure
- *     deletes the entry and strips no configuration, so there is nothing a
- *     stale copy could put back, and refusing the address would leave the
- *     configuration that already names it unsavable.
+ *   • **Nothing from a waitlist receipt** (§125, `lib/waitlist/erase.ts`):
+ *     receipts are read by `subjectKind: 'account'`. That erasure deletes an
+ *     entry and strips no configuration, so there is nothing a stale copy
+ *     could put back, and refusing the address would leave configuration that
+ *     already names it unsavable. (It also writes `addressVerified: false`.)
  *   • **Not** an address that a live, verified account now holds: a person
  *     who was erased and later signed up again with the same address may be
  *     notified like anyone else.
@@ -319,6 +318,9 @@ export async function matchErasedSubjects(
   const byHash = new Map(addresses.map((a) => [subjectEmailHash(a), a]));
   const receipts = await tx.dataErasureReceipt.findMany({
     where: {
+      // Account receipts only: a waitlist erasure (§125) strips no
+      // configuration, so nothing it names is refused.
+      subjectKind: 'account',
       ...(options.since ? { erasedAt: { gte: copyAnchor(options.since) } } : {}),
       OR: [
         ...(byHash.size > 0 ? [{ subjectEmailHash: { in: [...byHash.keys()] } }] : []),
@@ -328,8 +330,8 @@ export async function matchErasedSubjects(
     select: { subjectUserId: true, subjectEmailHash: true, metadata: true },
   });
 
-  // A waitlist receipt names no account (`subjectUserId` null), so it never
-  // matches an id.
+  // An account receipt always names its account (CHECK
+  // `data_erasure_receipt_subject_kind`); the guard narrows the type.
   const erasedIds = new Set(
     receipts
       .map((r) => r.subjectUserId)

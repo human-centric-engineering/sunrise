@@ -15,8 +15,10 @@
  * CHECK `data_erasure_receipt_subject_kind` holds the pairing.
  * `metadata.addressVerified` is `false`, also for a confirmed entry: the flag
  * means "erasure stripped this address from configuration", and this one
- * strips none — it deletes one entry. `metadata.entryConfirmed` records
- * whether the owner had proved the address. See
+ * strips none — it deletes one entry. The readers ask for account receipts
+ * only, so this is the second of two locks, not the only one.
+ * `metadata.entryConfirmed` records whether the owner had proved the address,
+ * and `metadata.orgId` whose list it was on: the receipt itself has no org. See
  * `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
  *
  * **Tenancy.** Call inside the entry's org (`runAsOrg`): the entry is
@@ -53,7 +55,7 @@ export async function eraseWaitlistEntry(
   return prisma.$transaction(async (tx) => {
     const entry = await tx.waitlistEntry.findUnique({
       where: { id: input.entryId },
-      select: { id: true, email: true, list: true, confirmedAt: true },
+      select: { id: true, email: true, list: true, confirmedAt: true, orgId: true },
     });
     if (!entry) return null;
 
@@ -75,6 +77,7 @@ export async function eraseWaitlistEntry(
           addressVerified: false,
           entryConfirmed: entry.confirmedAt !== null,
           list: entry.list,
+          orgId: entry.orgId,
         },
       },
       select: { id: true, erasedAt: true },

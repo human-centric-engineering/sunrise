@@ -381,7 +381,10 @@ describe('findErasedSubjects', () => {
     expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { OR: [{ subjectUserId: { in: ['gone-user', 'live-user'] } }] },
+        where: {
+          subjectKind: 'account',
+          OR: [{ subjectUserId: { in: ['gone-user', 'live-user'] } }],
+        },
       })
     );
   });
@@ -416,7 +419,10 @@ describe('findErasedSubjects', () => {
     expect(result).toEqual({ addresses: ['gone@example.com'], userIds: [] });
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { OR: [{ subjectEmailHash: { in: [sha256Hex('gone@example.com')] } }] },
+        where: {
+          subjectKind: 'account',
+          OR: [{ subjectEmailHash: { in: [sha256Hex('gone@example.com')] } }],
+        },
       })
     );
   });
@@ -492,6 +498,15 @@ describe('waitlist receipts (§125 t-975)', () => {
 
     expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
   });
+
+  it('reads account receipts only, so a waitlist receipt is never refused', async () => {
+    const ctx = makeTx();
+
+    await matchErasedSubjects(ctx.tx, { addresses: ['w@example.com'], userIds: ['u1'] });
+
+    const [args] = ctx.receiptFindMany.mock.calls[0] as [{ where: Record<string, unknown> }];
+    expect(args.where.subjectKind).toBe('account');
+  });
 });
 
 describe('matchErasedSubjects (t-843)', () => {
@@ -527,7 +542,11 @@ describe('erasures since a copy was taken (§122 t-886)', () => {
 
     expect(ctx.receiptFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { erasedAt: { gte: anchor }, OR: [{ subjectUserId: { in: ['u1'] } }] },
+        where: {
+          subjectKind: 'account',
+          erasedAt: { gte: anchor },
+          OR: [{ subjectUserId: { in: ['u1'] } }],
+        },
       })
     );
     // Still under the lock, shared as asked.

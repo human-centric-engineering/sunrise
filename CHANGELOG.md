@@ -117,10 +117,10 @@ release process.
   CHECK `data_erasure_receipt_subject_kind` holds the pairing (drift probe
   A13). Code that reads `subjectUserId` off a receipt now gets
   `string | null`; a query by `subjectUserId` is unchanged. The writer is
-  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`). A waitlist receipt makes
-  no recipient writer refuse anything (`addressVerified: false`, also for a
-  confirmed entry), and `anyoneErasedSince()` now counts account receipts
-  only. Guide: `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
+  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`). The erased-subject readers (`matchErasedSubjects()`, `findErasedSubjects()`,
+  `anyoneErasedSince()`, and the run-recipients scans) read account receipts
+  only, so a waitlist receipt makes no recipient writer refuse anything, also
+  for a confirmed entry. Guide: `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
 
 - **The user-created seam says which invitation a signup redeemed.**
   `UserCreatedContext` gains `invitation: { invitedAt, invitedBy, orgId } |

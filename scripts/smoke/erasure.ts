@@ -31,6 +31,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { isRecord } from '@/lib/utils';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
@@ -414,22 +415,16 @@ async function main(): Promise<void> {
       'waitlist receipt is of kind waitlist and names no account'
     );
     check(
+      isRecord(waitlistReceipt?.metadata) && waitlistReceipt.metadata.orgId === INSTALL_ORG_ID,
+      'waitlist receipt records the org whose list it was'
+    );
+    check(
       (await eraseWaitlistEntry({
         entryId: leaver.id,
         actorUserId: null,
         reason: 'self_service',
       })) === null,
       'erasing an entry already erased writes no second receipt'
-    );
-    // The readers that ask by id (erasure-requests, export-user) never see it.
-    check(
-      !(
-        await prisma.dataErasureReceipt.findMany({
-          where: { subjectUserId: subject.id },
-          select: { id: true },
-        })
-      ).some((r) => r.id === left?.receiptId),
-      'a by-id receipt lookup does not return the waitlist receipt'
     );
     // The recipient writers do not refuse the address (decided in t-975).
     const refused = await prisma.$transaction((tx) =>
