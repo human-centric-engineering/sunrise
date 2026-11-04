@@ -475,6 +475,8 @@ small and conflict-free.)
 | `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards                               | the chat handler's `collectGuardFloors()` (server route-handler)                                                      |
 | `lib/app/guard-event-contributors.ts`      | observe an inline chat guard firing                                   | the chat handler's `emitGuardEvent()` (server route-handler)                                                          |
 | `lib/app/csp.ts`                           | extra CSP frame, script, connect and media origins                    | `lib/security/headers.ts` → `proxy.ts` (middleware runtime)                                                           |
+| `lib/app/frame-ancestors.ts`               | sites allowed to frame a page, per request                            | `proxy.ts` → `setSecurityHeaders()` (middleware runtime)                                                              |
+| `lib/app/frameable-paths.json`             | path prefixes left out of the static `DENY`                           | `next.config.js` `headers()` (build/config)                                                                           |
 | `lib/app/agent-fields.ts`                  | extra `AiAgent` config fields                                         | the agent field registry (server + agent form)                                                                        |
 | `lib/app/surface.ts`                       | which URLs count as `admin` vs `consumer`                             | `proxy.ts` classification + `<SurfaceSync>` (proxy + client)                                                          |
 | `lib/app/data-export.ts`                   | subject-access export: tables + declarations                          | `exportUserData()` + the coverage guard (server + test)                                                               |
@@ -1035,6 +1037,19 @@ exactly as broad as the feature: build iframe `src`s only on listed hosts from a
 script host, since a listed script host runs code with your app's privileges.
 See
 [`.context/security/overview.md`](./.context/security/overview.md#third-party-hosts--the-libappcspts-seam).
+
+**Pages other sites may frame — `lib/app/frame-ancestors.ts` and
+`lib/app/frameable-paths.json`.** Every response refuses framing. To let a
+customer's own site embed one family of your pages (an embeddable form, a
+booking widget), return the sites allowed to frame each request from
+`resolveAppFrameAncestors(request)`, and list those pages' path prefixes
+(`"/embed/"`) in `frameable-paths.json` so `next.config.js` leaves its static
+`DENY` off them. Both are needed; neither frames anything alone. Return exact
+`https://` origins (no wildcard, no path), answer `[]` from the path for
+everything else, and cache any lookup — it runs on every request. A framed page
+is cross-site and gets no session cookie, so frame pages that work signed out.
+See
+[`.context/security/overview.md`](./.context/security/overview.md#letting-named-sites-frame-a-page--the-frame-ancestors-seam).
 
 **Database drift probes — `lib/app/db-drift.ts`.** Register the Prisma-_unmodelled_
 DB objects your app adds — hand-written FK constraints, custom indexes (GIN/HNSW),

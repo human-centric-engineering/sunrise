@@ -1,3 +1,5 @@
+const { frameDenySource } = require('./lib/security/frame-deny-source.cjs');
+
 /**
  * Hosts allowed to reach Next's internal dev endpoints (HMR socket,
  * `/_next/*` dev resources). Next allows `localhost` and `*.localhost` on its
@@ -109,12 +111,23 @@ const nextConfig = {
         ],
       },
       {
-        source: '/(.*)',
+        // DENY everywhere except the path prefixes a fork lists in
+        // lib/app/frameable-paths.json. On those, proxy.ts sets the framing
+        // headers itself: DENY and `frame-ancestors 'none'` unless the fork's
+        // lib/app/frame-ancestors.ts names sites for that request. With the
+        // list empty (vanilla Sunrise) the source is '/(.*)' and nothing
+        // changes. Why this is a path list: lib/security/frame-deny-source.cjs.
+        source: frameDenySource(require('./lib/app/frameable-paths.json')),
         headers: [
           {
             key: 'X-Frame-Options',
             value: 'DENY',
           },
+        ],
+      },
+      {
+        source: '/(.*)',
+        headers: [
           {
             key: 'X-Content-Type-Options',
             value: 'nosniff',

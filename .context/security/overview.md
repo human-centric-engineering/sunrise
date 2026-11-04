@@ -52,7 +52,7 @@ setSecurityHeaders(response, nonce);
 | Header                      | Value                                                   | Purpose                       |
 | --------------------------- | ------------------------------------------------------- | ----------------------------- |
 | `Content-Security-Policy`   | Environment-specific                                    | XSS prevention                |
-| `X-Frame-Options`           | `DENY`                                                  | Clickjacking prevention       |
+| `X-Frame-Options`           | `DENY` (omitted on a page a fork lets sites frame)      | Clickjacking prevention       |
 | `X-Content-Type-Options`    | `nosniff`                                               | MIME type sniffing prevention |
 | `Referrer-Policy`           | `strict-origin-when-cross-origin`                       | Referrer leakage control      |
 | `Permissions-Policy`        | `geolocation=(), microphone=(self), camera=()`          | Feature restriction           |
@@ -199,6 +199,67 @@ Keep each list exactly as broad as the feature:
 A widget often needs more than one list. Cloudflare Turnstile loads a script and
 renders its challenge in an iframe, so it needs its host in both `appScriptSrc`
 and `appFrameSrc`.
+
+### Letting named sites frame a page — the `frame-ancestors` seam
+
+Every response refuses framing: `frame-ancestors 'none'` in the CSP and
+`X-Frame-Options: DENY`, from both `setSecurityHeaders()` and a blanket rule in
+`next.config.js`. A fork that needs one family of pages to run inside a frame on
+a customer's own site (an embeddable form, a booking widget, a questionnaire)
+fills two fork-owned files, and nothing changes for an install that fills
+neither:
+
+```typescript
+// lib/app/frame-ancestors.ts — ships answering [] for every request
+export async function resolveAppFrameAncestors(request: Request): Promise<string[]> {
+  const { pathname } = new URL(request.url);
+  if (!pathname.startsWith('/embed/')) return [];
+  return getAllowedEmbedOrigins(pathname.split('/')[2]); // your lookup, cached
+}
+```
+
+```json
+// lib/app/frameable-paths.json — ships []
+["/embed/"]
+```
+
+- **The resolver decides per request.** `proxy.ts` awaits it before
+  `setSecurityHeaders(response, nonce, { frameAncestors })`. A non-empty answer
+  replaces `frame-ancestors 'none'` with those origins and removes
+  `X-Frame-Options` for that response, because that header cannot name a site
+  (`ALLOW-FROM` is obsolete). `[]`, or a resolver that throws (logged at error),
+  leaves the response refused.
+- **The path list is for `next.config.js`.** Its `X-Frame-Options: DENY` is a
+  static header the proxy cannot remove per request, so the rule's `source`
+  leaves out the listed prefixes (`lib/security/frame-deny-source.cjs`). A
+  `has`/`missing` condition on a header the proxy sets does not work instead:
+  `next.config` headers match the browser's original request, not the proxy's,
+  and a client can send that header itself. Listing a prefix frames nothing by
+  itself — the proxy still sends `DENY` there unless the resolver answers. Only
+  plain `/segment/` prefixes are accepted; anything else is ignored.
+- **Origins are held to the narrowest shape**: exact `https://host[:port]`, no
+  wildcard and no path, because the answer is often stored data (the sites a
+  customer named). Outside production `http://localhost[:port]` is accepted
+  too, so an embed can be tried locally. Anything else is dropped with a
+  warning.
+- **Keep the resolver cheap.** It runs on every request the proxy handles, so
+  answer `[]` from the path for anything you do not frame, and cache whatever
+  needs I/O.
+
+Two consequences to design for:
+
+- **A framed page is cross-site, so it gets no session cookie.** The session
+  cookie is `SameSite=Lax`, which the browser does not send inside another
+  site's frame. Frame pages that work signed out.
+- **The proxy's early replies carry no framing header on a listed prefix.** The
+  403 from the origin check, the 429 from the rate limiter and the auth
+  redirects return before `setSecurityHeaders()` runs, and the listed prefix is
+  out of `next.config.js`'s rule. They are JSON bodies and redirects, with
+  nothing to click, so this is accepted rather than patched; revisit it if a
+  listed path ever returns an interactive early response.
+
+nginx (`nginx.conf`) sets no `X-Frame-Options` of its own: the app's is the only
+one, so a framable page is not refused by a proxy in front of it.
 
 ### Analytics CSP Auto-Configuration
 
@@ -535,7 +596,7 @@ red meaning something, and a standing red trains people to stop looking.
 - [x] Content-Security-Policy with environment-specific policies
 - [x] Security headers set in proxy (`lib/security/headers.ts`)
 - [x] HTTPS enforced in production (HSTS header)
-- [x] X-Frame-Options set to DENY
+- [x] X-Frame-Options set to DENY (except a page a fork's `lib/app/frame-ancestors.ts` names sites for)
 - [x] Permissions-Policy restricts browser features
 
 ### API Protection
@@ -636,14 +697,19 @@ If `RATE_LIMIT_STORE=redis` but `REDIS_URL` is unset, falls back to memory with 
 
 ### X-Frame-Options: DENY
 
-**Decision**: Use `DENY` for maximum clickjacking protection
+**Decision**: Use `DENY` for maximum clickjacking protection, except on a page a
+fork has chosen to let named sites frame
 **Rationale**:
 
 - Prevents all framing, including same-origin
 - Matches CSP `frame-ancestors: 'none'` for consistent policy
-- No legitimate use case for embedding the app in iframes
+- Sunrise itself frames none of its pages. A fork that embeds one family of its
+  pages on customers' sites names the sites per request
+  (`lib/app/frame-ancestors.ts`); that response carries `frame-ancestors` with
+  those origins and no `X-Frame-Options`, since the header cannot name a site
 
-**Trade-offs**: Cannot embed app pages in same-origin iframes (not needed for this application)
+**Trade-offs**: Cannot embed app pages in same-origin iframes unless a fork's
+resolver names the app's own origin for them
 
 ## TypeScript Types
 

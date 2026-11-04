@@ -57,6 +57,8 @@ import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
 import { appConnectSrc, appFrameSrc, appMediaSrc, appScriptSrc } from '@/lib/app/csp';
+import { resolveAppFrameAncestors } from '@/lib/app/frame-ancestors';
+import appFrameablePaths from '@/lib/app/frameable-paths.json';
 import {
   appCoverageExclusions,
   appAlwaysRunTests,
@@ -596,6 +598,20 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(appConnectSrc).toEqual([]);
       expect(appMediaSrc).toEqual([]);
     },
+  },
+  {
+    seam: 'lib/app/frame-ancestors.ts',
+    risk: 'a stray answer would let the named sites frame pages on every install — the clickjacking protection every response carries, switched off',
+    assert: async () => {
+      for (const url of ['https://app.example.com/', 'https://app.example.com/embed/widget-1']) {
+        expect(await resolveAppFrameAncestors(new Request(url))).toEqual([]);
+      }
+    },
+  },
+  {
+    seam: 'lib/app/frameable-paths.json',
+    risk: 'a stray prefix would take those paths out of next.config.js’s blanket X-Frame-Options: DENY on every install, leaving the proxy as their only framing header',
+    assert: () => expect(appFrameablePaths).toEqual([]),
   },
   {
     seam: 'lib/app/ci.ts',

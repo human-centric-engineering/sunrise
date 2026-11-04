@@ -110,6 +110,8 @@ covered by the version contract.
   - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/credential-paths.ts` → `appCredentialPaths` — route patterns whose dynamic segments are credentials, collapsed to `[param]` in every logged, reported and analytics path (read by `collapseDynamicSegments()` in `lib/logging/redact-path.ts`)
   - `lib/app/csp.ts` → `appFrameSrc` / `appScriptSrc` / `appConnectSrc` / `appMediaSrc` — extra CSP `frame-src`, `script-src`, `connect-src` and `media-src` origins
+  - `lib/app/frame-ancestors.ts` → `resolveAppFrameAncestors()` — the sites allowed to frame this request's page, per request (read by `proxy.ts`, applied by `setSecurityHeaders()`)
+  - `lib/app/frameable-paths.json` — path prefixes `next.config.js` leaves out of its blanket `X-Frame-Options: DENY`, so the proxy decides framing for them
   - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources
   - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
   - `lib/app/emails.ts` → `emailOverrides` — transactional-email template overrides

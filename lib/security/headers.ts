@@ -220,6 +220,26 @@ const APP_CSP_ADDITIONS = [
 ];
 
 /**
+ * An exact origin a page may be framed by: `https://host[:port]`. No wildcard
+ * and no path — unlike the `lib/app/csp.ts` lists, this one comes from a fork's
+ * per-request answer (often stored data, such as the sites a customer named), so
+ * it is held to the narrowest shape. Outside production `http://localhost[:port]`
+ * is also accepted, so an embedding page can be tried locally.
+ */
+const FRAME_ANCESTOR_ORIGIN = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const LOCAL_FRAME_ANCESTOR_ORIGIN = /^http:\/\/localhost(:\d{1,5})?$/i;
+
+/** The rule for `lib/app/frame-ancestors.ts` answers, checked per request. */
+const FRAME_ANCESTORS_RULE: OriginRule = {
+  directive: 'frame-ancestors',
+  source: 'lib/app/frame-ancestors.ts',
+  accepts: (origin) =>
+    FRAME_ANCESTOR_ORIGIN.test(origin) ||
+    (process.env.NODE_ENV !== 'production' && LOCAL_FRAME_ANCESTOR_ORIGIN.test(origin)),
+  example: 'https://www.example.com',
+};
+
+/**
  * Get analytics provider domains for CSP allowlisting
  *
  * Reads configured analytics env vars and returns domains that need to be
@@ -326,12 +346,22 @@ export function getCSP(nonce?: string): string {
   return buildCSP(getCSPConfig(nonce));
 }
 
+/** Per-request options for {@link setSecurityHeaders}. */
+export interface SecurityHeaderOptions {
+  /**
+   * Exact origins allowed to frame this response, from the fork's
+   * `lib/app/frame-ancestors.ts`. Empty or absent = `frame-ancestors 'none'`
+   * and `X-Frame-Options: DENY`. Invalid entries are dropped with a warning.
+   */
+  frameAncestors?: readonly string[];
+}
+
 /**
  * Set all security headers on a NextResponse
  *
  * Headers set:
  * - Content-Security-Policy (environment-specific, nonce-based in production)
- * - X-Frame-Options: SAMEORIGIN
+ * - X-Frame-Options: DENY (omitted when `options.frameAncestors` names a site)
  * - X-Content-Type-Options: nosniff
  * - Referrer-Policy: strict-origin-when-cross-origin
  * - Permissions-Policy (disables geolocation, microphone, camera)
@@ -343,6 +373,7 @@ export function getCSP(nonce?: string): string {
  *
  * @param response - NextResponse to add headers to
  * @param nonce - Per-request nonce to include in script-src
+ * @param options - Per-request additions: the sites allowed to frame this response
  *
  * @example
  * ```typescript
@@ -353,13 +384,33 @@ export function getCSP(nonce?: string): string {
  * return response;
  * ```
  */
-export function setSecurityHeaders(response: NextResponse, nonce?: string): void {
-  // Content Security Policy - environment-specific, nonce-based in production
-  response.headers.set('Content-Security-Policy', getCSP(nonce));
+export function setSecurityHeaders(
+  response: NextResponse,
+  nonce?: string,
+  options: SecurityHeaderOptions = {}
+): void {
+  // The sites this response may be framed by, from the fork's
+  // lib/app/frame-ancestors.ts. Empty (the default, and always in vanilla
+  // Sunrise) keeps `frame-ancestors 'none'` and DENY below.
+  const frameAncestors = acceptOrigins(options.frameAncestors ?? [], FRAME_ANCESTORS_RULE);
 
-  // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
-  // Note: CSP frame-ancestors supersedes this in modern browsers
-  response.headers.set('X-Frame-Options', 'DENY');
+  // Content Security Policy - environment-specific, nonce-based in production
+  const csp = getCSPConfig(nonce);
+  if (frameAncestors.length > 0) csp['frame-ancestors'] = frameAncestors;
+  response.headers.set('Content-Security-Policy', buildCSP(csp));
+
+  if (frameAncestors.length > 0) {
+    // X-Frame-Options cannot name a site (ALLOW-FROM is obsolete), so a
+    // framable response must not carry it: browsers that honour
+    // `frame-ancestors` ignore it anyway, and the rest would refuse the named
+    // site. Deleted rather than left unset, so an earlier writer cannot leave
+    // DENY behind.
+    response.headers.delete('X-Frame-Options');
+  } else {
+    // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
+    // Note: CSP frame-ancestors supersedes this in modern browsers
+    response.headers.set('X-Frame-Options', 'DENY');
+  }
 
   // Prevent MIME type sniffing
   response.headers.set('X-Content-Type-Options', 'nosniff');

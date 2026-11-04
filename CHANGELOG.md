@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **Letting named sites frame a page (#887)**: two new fork-owned seams.
+  `lib/app/frame-ancestors.ts` → `resolveAppFrameAncestors(request)` (ships
+  answering `[]`) names, per request, the exact `https://` origins allowed to
+  frame that page; `proxy.ts` awaits it and passes the answer to
+  `setSecurityHeaders()`'s new third argument, `{ frameAncestors }` (type
+  `SecurityHeaderOptions`, exported from `@/lib/security`). A non-empty answer
+  replaces `frame-ancestors 'none'` and drops `X-Frame-Options` for that
+  response; a throw is logged and frames nothing. `lib/app/frameable-paths.json`
+  (ships `[]`) lists the path prefixes `next.config.js` leaves out of its static
+  `X-Frame-Options: DENY`. With both empty every response carries exactly the
+  headers it did before.
 - **Third-party scripts, services and audio in the CSP (#841)**: `lib/app/csp.ts`
   gains `appScriptSrc`, `appConnectSrc` and `appMediaSrc` beside `appFrameSrc`,
   all shipping empty. Each is held to the same exact-`https://`-origin check as
