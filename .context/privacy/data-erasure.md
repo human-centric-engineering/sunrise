@@ -1421,12 +1421,13 @@ and writes a receipt in one transaction:
 | `metadata.addressVerified` | `false`, always                                             |
 | `metadata.entryConfirmed`  | whether the owner had confirmed the address                 |
 | `metadata.list`            | the list the entry was on                                   |
-| `metadata.orgId`           | the org whose list it was                                   |
+| `metadata.orgId`           | the org whose list it was (the receipt itself has no org)   |
 
 **Why `subjectUserId` is null for a linked entry.** Erasing the entry is not
-erasing the account, and a user id with a receipt is refused by every
-recipient writer — a receipt naming a live account would make the account
-unnamable in configuration.
+erasing the account. The readers that look a receipt up by account id
+(`finishedErasure()`, the subject export) do not read the kind, so a receipt
+naming a live account would be shown to it as an erasure of the account. The
+CHECK `data_erasure_receipt_subject_kind` holds the pairing.
 
 **Why `addressVerified` is `false` for a confirmed entry (decided in t-975).**
 The flag means "erasure matched this address and stripped it from
@@ -1439,20 +1440,18 @@ it. So neither a confirmed nor an unconfirmed waitlist receipt is refused;
 `entryConfirmed` keeps the fact that the owner had proved the address, for
 answering "did you erase me?".
 
-**What reads it.** The refusal readers ask for account receipts only:
-`matchErasedSubjects()` (and so `findErasedSubjects()`), the two raw scans in
-`run-recipients.ts`, and `anyoneErasedSince()` — nothing cascades from a
-waitlist entry, so it leaves a copy nothing dangling. `addressVerified: false`
-is the second lock on the same door. The readers that ask by account
-(`finishedErasure()` in `erasure-requests.ts`, the receipt list in
-`exportUserData()`) query `subjectUserId = <id>` and never see one: a subject
-access export does not list the waitlist receipts filed under its address.
-`smoke:erasure` holds the CHECK, the entry's deletion, the receipt's shape and
-`findErasedSubjects()` not refusing the address, against a real database; the
-reader filters are held by their unit tests.
-
-`metadata.orgId` is the org whose list the entry was on: the receipt is a
-system row and has no org of its own.
+**What reads it.** The refusal readers ask for account receipts only, for
+the reason above — the erasure stripped no configuration:
+`matchErasedSubjects()` (and so `findErasedSubjects()`) and the two raw scans in
+`run-recipients.ts`. `anyoneErasedSince()` skips it too, for its own reason:
+nothing cascades from a waitlist entry, so no copy is left naming a row that
+vanished with it. `addressVerified: false` is a second lock on the refusal.
+`finishedErasure()` asks by account id and never sees one. The subject export
+lists the waitlist receipts filed under the account's address once it is
+verified — the rule the waitlist rows follow — beside the account receipts
+naming its id. `smoke:erasure` holds the CHECK, the entry's deletion, the
+receipt's shape and `findErasedSubjects()` not refusing the address against a
+real database; the reader filters are held by their unit tests.
 
 ## Deletion Guards
 

@@ -483,22 +483,6 @@ describe('findErasedSubjects', () => {
 });
 
 describe('waitlist receipts (§125 t-975)', () => {
-  it('never matches a user id from a receipt that names none', async () => {
-    const ctx = makeTx();
-    ctx.receiptFindMany.mockResolvedValue([
-      // A waitlist receipt found by its hash, beside an account receipt.
-      { subjectUserId: null, subjectEmailHash: sha256Hex('w@example.com'), metadata: {} },
-      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
-    ]);
-
-    const result = await matchErasedSubjects(ctx.tx, {
-      addresses: ['w@example.com'],
-      userIds: ['gone-user', 'live-user'],
-    });
-
-    expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
-  });
-
   it('reads account receipts only, so a waitlist receipt is never refused', async () => {
     const ctx = makeTx();
 

@@ -28,6 +28,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { collectAppSubjectData, type AppSubjectData } from '@/lib/app/data-export';
@@ -330,10 +331,20 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
   }
 
   // Receipts are keyed by `subjectUserId` with no FK, so they survive the user
-  // row. A live subject normally has none; one appears only if an id was
-  // reused, which is worth showing rather than hiding.
+  // row. A live subject normally has no account receipt; one appears only if
+  // an id was reused, which is worth showing rather than hiding. A waitlist
+  // receipt (§125) names no account, so it is matched by its address hash —
+  // once the account has verified that address, the rule the waitlist rows
+  // themselves follow (`waitlistEntriesOf()`).
   const erasureReceipts = await prisma.dataErasureReceipt.findMany({
-    where: { subjectUserId: userId },
+    where: account.emailVerified
+      ? {
+          OR: [
+            { subjectUserId: userId },
+            { subjectKind: 'waitlist', subjectEmailHash: subjectEmailHash(account.email) },
+          ],
+        }
+      : { subjectUserId: userId },
     orderBy: { erasedAt: 'asc' },
   });
 

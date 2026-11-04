@@ -1093,16 +1093,20 @@ describe('findErasedSinceRunStarted (t-843)', () => {
   });
 
   it.each([
-    ['findErasedSinceRunStarted', () => findErasedSinceRunStarted],
-    ['findErasedSinceCopy', () => findErasedSinceCopy],
-  ])('%s scans account receipts only (§125 t-975)', async (_name, fn) => {
+    [
+      'findErasedSinceRunStarted',
+      (tx: ReturnType<typeof makeWriterTx>) =>
+        findErasedSinceRunStarted(tx as never, 'exec-1', [{ to: ADDRESS }]),
+    ],
+    [
+      'findErasedSinceCopy',
+      (tx: ReturnType<typeof makeWriterTx>) =>
+        findErasedSinceCopy(tx as never, new Date(), [{ to: ADDRESS }]),
+    ],
+  ])('%s scans account receipts only (§125 t-975)', async (_name, scan) => {
     const tx = makeWriterTx([]);
 
-    await (fn() as (...a: unknown[]) => Promise<unknown>)(
-      tx,
-      _name === 'findErasedSinceCopy' ? new Date() : 'exec-1',
-      [{ to: ADDRESS }]
-    );
+    await scan(tx);
 
     // A waitlist erasure names no one a run holds: counting it would push
     // every write after a public leave onto the slow path.

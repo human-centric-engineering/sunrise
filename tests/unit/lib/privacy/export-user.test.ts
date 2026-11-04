@@ -18,6 +18,7 @@
  * @see lib/privacy/export-sources.ts
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -1302,6 +1303,26 @@ describe('exportUserData', () => {
       const bundle = await exportUserData(PARAMS);
 
       expect(bundle.erasureReceipts).toEqual([receipt]);
+      expect(argsTo('dataErasureReceipt').where).toEqual({
+        OR: [
+          { subjectUserId: 'user-1' },
+          // The waitlist receipts under the verified address (§125 t-975),
+          // hashed from its normalised form.
+          {
+            subjectKind: 'waitlist',
+            subjectEmailHash: createHash('sha256').update('subject@example.com').digest('hex'),
+          },
+        ],
+      });
+    });
+
+    it('leaves waitlist receipts out while the address is unverified (§125 t-975)', async () => {
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+
+      await exportUserData(PARAMS);
+
+      // Anyone can type an address onto a waitlist; an unverified account has
+      // not proved it holds this one.
       expect(argsTo('dataErasureReceipt').where).toEqual({ subjectUserId: 'user-1' });
     });
   });

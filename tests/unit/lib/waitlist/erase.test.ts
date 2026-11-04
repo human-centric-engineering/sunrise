@@ -60,10 +60,18 @@ function writtenReceipt(): ReceiptData {
   return args.data;
 }
 
-/** The written receipt as a recipient writer's receipt lookup returns it. */
+/**
+ * What a recipient writer refuses with `receipt` in the table. The lookup
+ * applies the reader's `subjectKind` filter, as Postgres would; the rest of its
+ * where (hash, id) matches this receipt by construction.
+ */
 async function writersRefuse(receipt: ReceiptData) {
   const tx = {
-    dataErasureReceipt: { findMany: vi.fn(async () => [receipt]) },
+    dataErasureReceipt: {
+      findMany: vi.fn(async (args: { where: { subjectKind?: string } }) =>
+        [receipt].filter((r) => !args.where.subjectKind || r.subjectKind === args.where.subjectKind)
+      ),
+    },
     user: { findMany: vi.fn(async () => []) },
   };
   return matchErasedSubjects(tx as never, { addresses: [ADDRESS], userIds: ['u-linked'] });
@@ -161,15 +169,27 @@ describe('what the recipient writers make of the receipt', () => {
     });
   });
 
-  it('is refused like an account receipt once it says verified — the check reads the receipt', async () => {
-    // The control: the same address, from a receipt that says verified, is
-    // refused. Without it the cases above would pass on a check that refuses
-    // nothing.
+  it('is not refused even if it said verified: the readers skip its kind', async () => {
     await eraseWaitlistEntry({ entryId: 'entry-1', actorUserId: null, reason: 'self_service' });
     const receipt = writtenReceipt();
 
     await expect(
       writersRefuse({ ...receipt, metadata: { addressVerified: true } })
+    ).resolves.toEqual({ addresses: [], userIds: [] });
+  });
+
+  it('the control: the same address on a verified account receipt is refused', async () => {
+    // Without it the cases above would pass on a check that refuses nothing.
+    await eraseWaitlistEntry({ entryId: 'entry-1', actorUserId: null, reason: 'self_service' });
+    const receipt = writtenReceipt();
+
+    await expect(
+      writersRefuse({
+        ...receipt,
+        subjectKind: 'account',
+        subjectUserId: 'gone-user',
+        metadata: { addressVerified: true },
+      })
     ).resolves.toEqual({ addresses: [ADDRESS], userIds: [] });
   });
 });

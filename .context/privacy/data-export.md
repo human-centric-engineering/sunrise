@@ -251,6 +251,10 @@ The guard casts **two nets**, because the first one missed both of these:
 `exportUserData()` fetches it directly into the bundle's `erasureReceipts`
 section rather than through a manifest source. That allowlist is an accounting
 note, not an escape hatch — anything added to it still owes a reader a reason.
+The section holds the receipts naming the account's id and, once the account
+has verified its address, the waitlist receipts filed under that address
+(§125: a waitlist-only erasure names no account — see the erasure doc's
+[Waitlist-only receipts](./data-erasure.md#waitlist-only-receipts)).
 
 Being invisible to the cascade means erasure needs its own step for each.
 `eraseUser()` deletes `ContactSubmission` rows through the same matcher the
