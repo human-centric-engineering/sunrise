@@ -78,6 +78,7 @@ export interface OrgEntry {
     | 'mcp-key'
     | 'inbound-trigger'
     | 'approval-token'
+    | 'waitlist-link'
   >;
   /** The grant a `'support'` entry was admitted under; absent for every other source. */
   support?: SupportEntry;
@@ -292,9 +293,9 @@ export async function enterApiKeyOrg(
  * customer's site stops answering. The install org cannot be suspended
  * (`INSTALL_ORG_IMMUTABLE`), so at `single` the status is not consulted.
  *
- * The same rule answers the two routes whose credential is a signed token
- * naming a ROW rather than a principal — the inbound trigger and the HMAC
- * approval token (§107 t-708). Those routes must read the row to learn the
+ * The same rule answers the routes whose credential is a token naming a ROW
+ * rather than a principal — the inbound trigger and the HMAC approval token
+ * (§107 t-708), and a waitlist email's confirm and leave links (§125 t-977). Those routes must read the row to learn the
  * org, so the read runs under `runAsCredentialLookup` (that one read, nothing else),
  * and the row's `orgId` and its org's status come here before anything runs
  * inside the org. A refusal is the route's usual "not found": it names
@@ -304,7 +305,7 @@ export function resolveCredentialOrg(
   credential: { orgId: string | null; orgStatus: string | null },
   source: Extract<
     TenantContextSource,
-    'embed-token' | 'mcp-key' | 'inbound-trigger' | 'approval-token'
+    'embed-token' | 'mcp-key' | 'inbound-trigger' | 'approval-token' | 'waitlist-link'
   >
 ): OrgEntryResult {
   const orgId = orgOfColumn(credential.orgId);

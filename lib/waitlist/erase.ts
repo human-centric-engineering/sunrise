@@ -33,6 +33,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
+import { confirmIdentifier } from '@/lib/waitlist/tokens';
 
 export interface EraseWaitlistEntryInput {
   entryId: string;
@@ -65,6 +66,11 @@ export async function eraseWaitlistEntry(
     // nothing to delete rather than throwing, and writes no second receipt.
     const deleted = await tx.waitlistEntry.deleteMany({ where: { id: entry.id } });
     if (deleted.count === 0) return null;
+
+    // An outstanding confirmation link for the entry dies with it (t-977).
+    // The token row holds no address, but it is the entry's, and a link that
+    // still resolved to something would be one more thing to explain.
+    await tx.verification.deleteMany({ where: { identifier: confirmIdentifier(entry.id) } });
 
     const receipt = await tx.dataErasureReceipt.create({
       data: {

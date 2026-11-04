@@ -124,3 +124,20 @@ export function toWaitlistFieldShape(f: WaitlistFieldShape): WaitlistFieldShape 
     ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
   };
 }
+
+/**
+ * `POST /api/v1/waitlist/confirm` (§125 t-977). Shape only: a token that is
+ * well-formed but wrong gets the same answer as an expired or used one.
+ */
+export const waitlistConfirmSchema = z.object({
+  entry: z.string().trim().min(1).max(100),
+  token: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-f]{64}$/i, 'Invalid token'),
+});
+
+/** `POST /api/v1/waitlist/leave` (§125 t-977). The signature is checked in the handler. */
+export const waitlistLeaveSchema = z.object({
+  token: z.string().trim().min(1).max(1000),
+});

@@ -84,7 +84,27 @@ export interface WaitlistConfig {
    * blocklist. A throw flags the entry with `screen-error`.
    */
   screen?: (input: WaitlistScreenInput) => WaitlistScreenResult | Promise<WaitlistScreenResult>;
+  /**
+   * How long entries are kept, in days. Your privacy notice must say the same.
+   * Each window is enforced by the maintenance tick, per org.
+   */
+  retention?: WaitlistRetention;
 }
+
+/** The retention windows a fork may set. Every one has a default. */
+export interface WaitlistRetention {
+  /**
+   * Delete an entry nobody confirmed this many days after it joined. Default
+   * 30. An unconfirmed entry is an address someone typed; nothing proves it is
+   * the person's own, so it is not kept for long.
+   */
+  unconfirmedDays?: number;
+}
+
+/** The default retention windows, in days. */
+export const DEFAULT_WAITLIST_RETENTION = {
+  unconfirmedDays: 30,
+} as const satisfies Required<WaitlistRetention>;
 
 /** The config, validated and with its defaults filled in. */
 export interface ResolvedWaitlistConfig {
@@ -92,6 +112,7 @@ export interface ResolvedWaitlistConfig {
   fields: readonly WaitlistField[];
   lists: readonly WaitlistListDeclaration[];
   screen: WaitlistConfig['screen'] | null;
+  retention: Required<WaitlistRetention>;
 }
 
 const KEY = /^[a-z][a-z0-9_-]{0,39}$/i;
@@ -145,6 +166,14 @@ const configSchema = z.object({
       message: 'list keys must be unique',
     }),
   screen: z.unknown().optional(),
+  retention: z
+    .object({
+      // At least a day: a zero window would delete an entry before its owner
+      // could open the email. At most ten years, which no notice should need.
+      unconfirmedDays: z.number().int().min(1).max(3650).optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 type Cached = { resolved: ResolvedWaitlistConfig | null };
@@ -175,6 +204,10 @@ export function resolveWaitlistConfig(
     fields: config.fields ?? [],
     lists: config.lists ?? [{ key: DEFAULT_WAITLIST_LIST }],
     screen: config.screen ?? null,
+    retention: {
+      unconfirmedDays:
+        parsed.data.retention?.unconfirmedDays ?? DEFAULT_WAITLIST_RETENTION.unconfirmedDays,
+    },
   };
 }
 

@@ -387,6 +387,8 @@ export const API = {
     HEALTH: '/api/health',
     CONTACT: '/api/v1/contact',
     WAITLIST: '/api/v1/waitlist',
+    WAITLIST_CONFIRM: '/api/v1/waitlist/confirm',
+    WAITLIST_LEAVE: '/api/v1/waitlist/leave',
     CSP_REPORT: '/api/csp-report',
   },
 } as const;

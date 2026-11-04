@@ -60,6 +60,12 @@ export type WaitlistJoinOutcome =
   /** A removed entry; the attempt was counted. */
   | 'rejoin-counted';
 
+/** What a join did, and to which entry (for the email sent after it). */
+export interface WaitlistJoinResult {
+  outcome: WaitlistJoinOutcome;
+  entryId: string;
+}
+
 /** How many times a join re-reads after losing a race before it gives up. */
 const ATTEMPTS = 3;
 
@@ -114,7 +120,7 @@ export async function joinWaitlist(
   config: ResolvedWaitlistConfig,
   join: WaitlistJoin,
   now: Date = new Date()
-): Promise<WaitlistJoinOutcome> {
+): Promise<WaitlistJoinResult> {
   const flaggedReason = await screen(config, join);
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
@@ -133,7 +139,8 @@ export async function joinWaitlist(
 
     if (!existing) {
       try {
-        await prisma.waitlistEntry.create({
+        const created = await prisma.waitlistEntry.create({
+          select: { id: true },
           data: {
             email: join.email,
             name: join.name,
@@ -150,7 +157,7 @@ export async function joinWaitlist(
             flaggedReason,
           },
         });
-        return 'created';
+        return { outcome: 'created', entryId: created.id };
       } catch (error) {
         // Someone joined with the same address between the read and the
         // create; re-read and treat this one as their repeat.
@@ -164,7 +171,7 @@ export async function joinWaitlist(
         where: { id: existing.id, removedAt: { not: null } },
         data: { rejoinRequests: { increment: 1 }, rejoinRequestedAt: now },
       });
-      if (count === 1) return 'rejoin-counted';
+      if (count === 1) return { outcome: 'rejoin-counted', entryId: existing.id };
       continue;
     }
 
@@ -177,7 +184,7 @@ export async function joinWaitlist(
           flaggedReason: existing.flaggedReason ?? flaggedReason,
         },
       });
-      if (count === 1) return 'replaced';
+      if (count === 1) return { outcome: 'replaced', entryId: existing.id };
       continue;
     }
 
@@ -193,7 +200,7 @@ export async function joinWaitlist(
     // Own keys only: a field keyed `constructor` must not read the prototype.
     const added = Object.entries(join.details).filter(([k]) => !Object.hasOwn(stored, k));
     const fillName = existing.name === null && join.name !== null;
-    if (added.length === 0 && !fillName) return 'unchanged';
+    if (added.length === 0 && !fillName) return { outcome: 'unchanged', entryId: existing.id };
     const { count } = await prisma.waitlistEntry.updateMany({
       where: { id: existing.id, updatedAt: existing.updatedAt, removedAt: null },
       data: {
@@ -201,7 +208,7 @@ export async function joinWaitlist(
         details: { ...stored, ...Object.fromEntries(added) },
       },
     });
-    if (count === 1) return 'filled';
+    if (count === 1) return { outcome: 'filled', entryId: existing.id };
   }
 
   throw new Error(`Waitlist join lost ${ATTEMPTS} races in a row`);

@@ -130,6 +130,10 @@ model WaitlistEntry {
   flaggedReason String?
   /// Set when the joiner confirms through the emailed link (t-977).
   confirmedAt   DateTime?
+  /// When this entry was last sent a waitlist email (the confirmation link, or
+  /// the already-on-the-list note). Caps both at one an hour per entry, so the
+  /// form cannot flood a stranger's inbox from our sender.
+  lastEmailedAt DateTime?
 
   removedAt         DateTime?
   rejoinRequestedAt DateTime?
