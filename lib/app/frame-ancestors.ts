@@ -18,10 +18,13 @@
  *
  * **List the path prefixes in `lib/app/frameable-paths.json` too.**
  * `next.config.js` adds its own `X-Frame-Options: DENY` to every path except
- * those, and a header it adds cannot be removed per request, so a page answered
- * here but outside that list still refuses framing. On a listed prefix every
- * page still gets DENY and `frame-ancestors 'none'` whenever this answers `[]`,
- * so listing a prefix frames nothing by itself. The exceptions are the proxy's
+ * those, and a header it adds cannot be removed per request. A page answered
+ * here but outside that list carries both your `frame-ancestors` and that
+ * DENY: current browsers follow `frame-ancestors` and frame it, older ones that
+ * only read `X-Frame-Options` refuse it. Listing the prefix makes the response
+ * say one thing. On a listed prefix every page still gets DENY and
+ * `frame-ancestors 'none'` whenever this answers `[]`, so listing a prefix
+ * frames nothing by itself. The exceptions are the proxy's
  * early replies (the 403 origin check, the 429 rate limit, its redirects),
  * which return before the security headers are set and so carry no framing
  * header on a listed prefix. They are JSON or redirects, with nothing to click.

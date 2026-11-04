@@ -1044,7 +1044,8 @@ customer's own site embed one family of your pages (an embeddable form, a
 booking widget), return the sites allowed to frame each request from
 `resolveAppFrameAncestors(request)`, and list those pages' path prefixes
 (`"/embed/"`) in `frameable-paths.json` so `next.config.js` leaves its static
-`DENY` off them. Both are needed; neither frames anything alone. Return exact
+`DENY` off them. Fill both: without the listing the page carries a contradicting
+`DENY` that older browsers obey, and a listed prefix alone frames nothing. Return exact
 `https://` origins (no wildcard, no path), answer `[]` from the path for
 everything else, and cache any lookup — it runs on every request. A framed page
 is cross-site and gets no session cookie, so frame pages that work signed out.

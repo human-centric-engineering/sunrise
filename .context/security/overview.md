@@ -234,9 +234,13 @@ export async function resolveAppFrameAncestors(request: Request): Promise<string
   leaves out the listed prefixes (`lib/security/frame-deny-source.cjs`). A
   `has`/`missing` condition on a header the proxy sets does not work instead:
   `next.config` headers match the browser's original request, not the proxy's,
-  and a client can send that header itself. Listing a prefix frames nothing by
-  itself — the proxy still sends `DENY` there unless the resolver answers. Only
-  plain `/segment/` prefixes are accepted; anything else is ignored.
+  and a client can send that header itself. Without the listing, a page the
+  resolver answers for carries both its `frame-ancestors` and the static
+  `DENY`: current browsers follow `frame-ancestors` (it takes precedence over
+  `X-Frame-Options`) and frame it, but a browser that only reads
+  `X-Frame-Options` refuses it. Listing a prefix frames nothing by itself — the
+  proxy still sends `DENY` there unless the resolver answers. Only plain
+  `/segment/` prefixes are accepted; anything else is ignored.
 - **Origins are held to the narrowest shape**: exact `https://host[:port]`, no
   wildcard and no path, because the answer is often stored data (the sites a
   customer named). Outside production `http://localhost[:port]` is accepted
