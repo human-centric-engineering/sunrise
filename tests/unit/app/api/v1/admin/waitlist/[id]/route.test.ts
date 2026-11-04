@@ -9,13 +9,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 
-const { mockConfig, mockSetRemoved, mockErase, mockAudit, mockLog } = vi.hoisted(() => ({
-  mockConfig: { current: null },
-  mockSetRemoved: vi.fn(),
-  mockErase: vi.fn(),
-  mockAudit: vi.fn(),
-  mockLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+const { mockConfig, mockSetRemoved, mockErase, mockAudit, mockLog } = vi.hoisted(() => {
+  const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
+  return {
+    mockConfig,
+    mockSetRemoved: vi.fn(),
+    mockErase: vi.fn(),
+    mockAudit: vi.fn(),
+    mockLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  };
+});
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));

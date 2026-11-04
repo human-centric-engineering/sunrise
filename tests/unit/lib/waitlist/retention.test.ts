@@ -11,13 +11,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 
-const { mockPrisma, mockConfig } = vi.hoisted(() => ({
-  mockPrisma: {
-    waitlistEntry: { deleteMany: vi.fn() },
-    waitlistListState: { findMany: vi.fn() },
-  },
-  mockConfig: { current: null },
-}));
+const { mockPrisma, mockConfig } = vi.hoisted(() => {
+  const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
+  return {
+    mockPrisma: {
+      waitlistEntry: { deleteMany: vi.fn() },
+      waitlistListState: { findMany: vi.fn() },
+    },
+    mockConfig,
+  };
+});
 
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 vi.mock('@/lib/waitlist/config', async (importOriginal) => ({

@@ -11,12 +11,15 @@ import { NextRequest } from 'next/server';
 import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 import { WAITLIST_EXPORT_MAX_ROWS } from '@/lib/validations/waitlist';
 
-const { mockConfig, mockPrisma, mockCheck, mockLog } = vi.hoisted(() => ({
-  mockConfig: { current: null },
-  mockPrisma: { waitlistEntry: { findMany: vi.fn(), count: vi.fn() } },
-  mockCheck: vi.fn(),
-  mockLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+const { mockConfig, mockPrisma, mockCheck, mockLog } = vi.hoisted(() => {
+  const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
+  return {
+    mockConfig,
+    mockPrisma: { waitlistEntry: { findMany: vi.fn(), count: vi.fn() } },
+    mockCheck: vi.fn(),
+    mockLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  };
+});
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));

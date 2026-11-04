@@ -6,10 +6,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 
-const { mockConfig, mockCount } = vi.hoisted(() => ({
-  mockConfig: { current: null },
-  mockCount: vi.fn(),
-}));
+const { mockConfig, mockCount } = vi.hoisted(() => {
+  const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
+  return {
+    mockConfig,
+    mockCount: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
