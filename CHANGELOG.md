@@ -123,8 +123,8 @@ release process.
   only, so a waitlist receipt makes no recipient writer refuse anything,
   also for a confirmed entry. A subject access export now also lists the
   account's waitlist receipts (the linked entry's, and those under its
-  verified address), and leaves `actorUserId` out of every receipt it lists. Guide:
-  `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
+  verified address), and leaves `actorUserId` out of every receipt it
+  lists. Guide: `.context/privacy/data-erasure.md`, "Waitlist-only receipts".
 
 - **The user-created seam says which invitation a signup redeemed.**
   `UserCreatedContext` gains `invitation: { invitedAt, invitedBy, orgId } |
