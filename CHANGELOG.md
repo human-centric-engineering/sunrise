@@ -18,7 +18,7 @@ release process.
 
 ### Added
 
-- **Waitlist (§125, in progress — joining only)**: a new seam,
+- **Waitlist (§125, in progress)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes
   answer 404. Filled in, it declares the form's extra fields, named lists, the
@@ -33,8 +33,21 @@ release process.
   per-flow sub-cap `waitlistLimiter` (`RATE_LIMIT_WAITLIST`, 5/hour per IP) and a
   `TenantContextSource` value, `'public-form'`. A fork filling the seam fails
   its row in `tests/unit/lib/app/defaults.test.ts`, as expected: pin your
-  value. Confirmation, the admin page and invites follow; don't switch it on in
-  production until confirmation lands. Guide: `.context/waitlist/overview.md`.
+  value. The admin page and invites follow. Guide: `.context/waitlist/overview.md`.
+
+- **Waitlist confirmation and leaving (§125 t-977)**: a join now emails the
+  joiner, after the response — a confirmation link to a new or unconfirmed
+  entry, an "already on the list" note to a confirmed one — at most once an
+  hour per entry. New public routes `POST /api/v1/waitlist/confirm` and
+  `POST /api/v1/waitlist/leave`, and the pages their links open
+  (`/waitlist/confirm`, `/waitlist/leave`). Two new email kinds in
+  `EmailPropsMap`, `waitlistConfirm` and `waitlistAlreadyOnList`, overridable
+  in `lib/app/emails.ts`. `WaitlistConfig.retention.unconfirmedDays` (default
+  30): unconfirmed entries are deleted by a new `waitlistRetention`
+  maintenance task (appended to `backgroundTasks`). New column
+  `WaitlistEntry.lastEmailedAt`, and a `TenantContextSource` value,
+  `'waitlist-link'`. Leave works with no waitlist config, so dropping the
+  config never strands the links in people's inboxes.
 
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is

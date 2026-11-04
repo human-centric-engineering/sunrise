@@ -72,6 +72,7 @@ interface TenantContext {
     | 'inbound-trigger'
     | 'approval-token' // a signed token naming a ROW (t-708)
     | 'public-form' // an anonymous public write the route places (a waitlist join, §125)
+    | 'waitlist-link' // a waitlist email's confirm or leave link, naming an entry (§125 t-977)
     | 'system'
     | 'job'
     | 'implicit';
@@ -236,7 +237,9 @@ them from `runAsSystem` to the quieter scope), and the row's `orgId` with its or
 request runs inside `runAsOrg(orgId, …, { source: 'inbound-trigger' |
 'approval-token' })`. A refusal — no org at `multi`, a suspended org — is
 the route's usual 404. The background engine drain and resume start
-inside that scope and keep it.
+inside that scope and keep it. A waitlist email's confirm and leave links
+(`POST /api/v1/waitlist/{confirm,leave}`, through `runAsWaitlistEntryOrg` in
+`lib/waitlist/entry-org.ts`) enter the same way, as `waitlist-link`.
 **The credential resolvers read their row the same way** (t-709):
 `resolveApiKey` (`lib/auth/api-keys.ts`), `resolveEmbedToken`
 (`lib/embed/auth.ts`) and `authenticateMcpRequest`
