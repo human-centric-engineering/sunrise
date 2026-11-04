@@ -203,9 +203,32 @@ export class VercelBlobProvider implements StorageProvider {
    *
    * The caller does not say which store holds it, and nothing records it, so
    * both are swept. A key in neither store is a successful delete.
+   *
+   * A blob URL is the exception (`deleteFile()` passes a stored avatar URL
+   * straight through): its hostname names the store it lives in, so it goes
+   * to that store only. Sent to the other store, the other token may be
+   * refused rather than told "not found", which would fail a delete that
+   * worked.
    */
   async delete(key: string): Promise<DeleteResult> {
     validateStorageKey(key);
+
+    const urlAccess = blobUrlAccess(key);
+    if (urlAccess !== null) {
+      const store = urlAccess === 'private' ? this.privateStore : this.publicStore;
+      if (!store) {
+        logger.error('Cannot delete a Vercel Blob URL from a store with no token', undefined, {
+          key,
+          store: urlAccess,
+        });
+        return { success: false, key };
+      }
+      const outcome = await this.deleteFrom(store, key);
+      if (outcome === 'deleted') {
+        logger.info('File deleted from Vercel Blob', { key, store: store.access });
+      }
+      return { success: outcome !== 'failed', key };
+    }
 
     let success = true;
     for (const store of this.stores()) {
@@ -395,6 +418,25 @@ export class VercelBlobProvider implements StorageProvider {
 
     return url;
   }
+}
+
+/**
+ * Which store a Vercel Blob URL belongs to, or null for a pathname or any
+ * other URL.
+ *
+ * The SDK builds blob URLs as `https://<storeId>.<access>.blob.vercel-storage.com/<pathname>`.
+ */
+function blobUrlAccess(keyOrUrl: string): StoreAccess | null {
+  if (!/^https?:\/\//i.test(keyOrUrl)) return null;
+  let hostname: string;
+  try {
+    hostname = new URL(keyOrUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (hostname.endsWith('.public.blob.vercel-storage.com')) return 'public';
+  if (hostname.endsWith('.private.blob.vercel-storage.com')) return 'private';
+  return null;
 }
 
 /**

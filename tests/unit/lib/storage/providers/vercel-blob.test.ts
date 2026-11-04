@@ -377,6 +377,65 @@ describe('lib/storage/providers/vercel-blob', () => {
         expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
+      it('sends a public blob URL to the public store only', async () => {
+        const { del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        // What deleteFile() passes for a stored avatar URL.
+        const url = 'https://abc123.public.blob.vercel-storage.com/avatars/user-1/a.jpg';
+        const provider = new VercelBlobProvider({ token: PUBLIC, privateToken: PRIVATE });
+
+        const result = await provider.delete(url);
+
+        expect(del).toHaveBeenCalledTimes(1);
+        expect(del).toHaveBeenCalledWith(url, { token: PUBLIC });
+        expect(result).toEqual({ success: true, key: url });
+      });
+
+      it('sends a private blob URL to the private store only', async () => {
+        const { del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        const url = 'https://abc123.private.blob.vercel-storage.com/documents/user-1/c.pdf';
+        const provider = new VercelBlobProvider({ token: PUBLIC, privateToken: PRIVATE });
+
+        await provider.delete(url);
+
+        expect(del).toHaveBeenCalledTimes(1);
+        expect(del).toHaveBeenCalledWith(url, { token: PRIVATE });
+      });
+
+      it('fails a blob URL whose store has no token, without trying the other store', async () => {
+        const { del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+        const { logger } = await import('@/lib/logging');
+
+        const url = 'https://abc123.public.blob.vercel-storage.com/avatars/user-1/a.jpg';
+        const provider = new VercelBlobProvider({ privateToken: PRIVATE });
+
+        const result = await provider.delete(url);
+
+        expect(result).toEqual({ success: false, key: url });
+        expect(del).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the wrong store's token must not be used;
+        expect(logger.error).toHaveBeenCalledWith(
+          'Cannot delete a Vercel Blob URL from a store with no token',
+          undefined,
+          { key: url, store: 'public' }
+        );
+      });
+
+      it('sweeps both stores for a URL that names no Vercel Blob store', async () => {
+        const { del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        const url = 'https://cdn.example.com/avatars/user-1/a.jpg';
+        const provider = new VercelBlobProvider({ token: PUBLIC, privateToken: PRIVATE });
+
+        await provider.delete(url);
+
+        expect(del).toHaveBeenCalledTimes(2);
+      });
+
       it('fails when either store fails, and still tries the other', async () => {
         const { del } = await import('@vercel/blob');
         const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
