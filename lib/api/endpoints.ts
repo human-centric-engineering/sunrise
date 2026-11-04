@@ -386,6 +386,7 @@ export const API = {
   PUBLIC: {
     HEALTH: '/api/health',
     CONTACT: '/api/v1/contact',
+    WAITLIST: '/api/v1/waitlist',
     CSP_REPORT: '/api/csp-report',
   },
 } as const;

@@ -314,6 +314,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'apiLimiter',
       'passwordResetLimiter',
       'contactLimiter',
+      'waitlistLimiter',
       'verificationEmailLimiter',
       'adminLimiter',
       'orchestrationAdminLimiter',
@@ -785,6 +786,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['resolver'],
     posture: 'no-tenant-data',
     why: "A fork's request-to-org resolver — the seam that DECIDES an org per request, holding no org itself.",
+  },
+  {
+    file: 'lib/waitlist/config.ts',
+    holders: ['cache'],
+    posture: 'no-tenant-data',
+    why: "The fork's waitlist config, validated once: a constant from code, the same for every org.",
   },
 ];
 

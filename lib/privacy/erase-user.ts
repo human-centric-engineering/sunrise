@@ -15,7 +15,9 @@
  *   3. Remove the user's stored avatar blobs (object storage, not the DB).
  *   4. Delete the contact-form messages sent from the user's stored address,
  *      when the account has verified it. `ContactSubmission` has no FK to
- *      `User`, so no cascade reaches it.
+ *      `User`, so no cascade reaches it. Likewise the user's waitlist entries
+ *      (§125): those linked to the account cascade, but one joined under the
+ *      address before the account existed is linked by nothing but the address.
  *   5. Redact the user's own (verified) address from every webhook delivery
  *      sent to it. Deliveries outlive their subscription (`SetNull`, §109
  *      t-739) as the org's record of where its events went, so a notification
@@ -52,6 +54,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
+import { waitlistEntriesOf, waitlistEntriesUnder } from '@/lib/waitlist/subject';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 import {
   eraseSubjectFromDeliveries,
@@ -185,6 +188,7 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     reason,
     receiptId: receipt.id,
     contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
+    waitlistEntriesDeleted: receipt.waitlistEntriesDeleted,
     webhookDeliveriesRedacted: receipt.webhookDeliveriesRedacted,
     webhookPayloadsRedacted: receipt.webhookPayloadsRedacted,
     eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted,
@@ -197,6 +201,15 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   // The settings row is cached in-process (#442); a list just rewritten should
   // not be served stale to the settings page.
   if (receipt.escalationListsChanged > 0) invalidateOrchestrationSettingsCache();
+  // Waitlist entries under an unverified address: the same case as the
+  // contact messages below, for the same reason.
+  if (receipt.waitlistEntriesLeft > 0) {
+    logger.warn('Waitlist entries not erased: the account never verified its address', {
+      userId,
+      receiptId: receipt.id,
+      waitlistEntriesLeft: receipt.waitlistEntriesLeft,
+    });
+  }
   // An unverified address matched nothing, so contact messages sent under it
   // are still there, and only a person can decide whether they were this
   // subject's. The address itself is gone with the user row and is not
@@ -219,6 +232,8 @@ async function eraseRows(params: EraseUserParams): Promise<{
   erasedAt: Date;
   contactSubmissionsDeleted: number;
   contactSubmissionsLeft: number;
+  waitlistEntriesDeleted: number;
+  waitlistEntriesLeft: number;
   /** Rows touched by the delivery redaction; a row can count in two passes. */
   webhookDeliveriesRedacted: number;
   /**
@@ -527,6 +542,23 @@ async function eraseInTransaction(
     ? 0
     : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
 
+  // Waitlist entries (§125), through the matcher the export uses: linked to
+  // the account, or joined under its address once the account has verified
+  // it. The join form proves nothing about who typed an address, so an
+  // unverified account's address matches nothing — counted, never deleted,
+  // for an operator to look at. Tenant-owned and possibly in several orgs: at
+  // `multi` this runs in the system scope `eraseUser()` entered.
+  const waitlist = await tx.waitlistEntry.deleteMany({
+    where: waitlistEntriesOf({
+      userId,
+      email: account.email,
+      emailVerified: account.emailVerified,
+    }),
+  });
+  const waitlistLeft = account.emailVerified
+    ? 0
+    : await tx.waitlistEntry.count({ where: waitlistEntriesUnder(account.email) });
+
   // An email subscription that notifies this person (t-786; owner ruling
   // 2026-10-13) — a colleague's, or since t-782 their own, which outlives
   // them (`createdBy` is `SetNull`). Either would keep emailing the erased
@@ -728,6 +760,8 @@ async function eraseInTransaction(
     ...created,
     contactSubmissionsDeleted: contacts.count,
     contactSubmissionsLeft: left,
+    waitlistEntriesDeleted: waitlist.count,
+    waitlistEntriesLeft: waitlistLeft,
     webhookDeliveriesRedacted,
     webhookPayloadsRedacted,
     eventHookPayloadsRedacted,

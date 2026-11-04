@@ -229,11 +229,12 @@ erased — `smoke:erasure` is where that assertion belongs.
 
 A table can identify a person without declaring a Prisma relation to `User` —
 and then it is invisible to a relation-based scan, **and to the erasure
-cascade**. Sunrise has four, all in the manifest by hand:
+cascade**. Sunrise has five, all in the manifest by hand:
 
 | Table                 | Identified by                                                          | How it is matched                                                                                                                  |
 | --------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `ContactSubmission`   | `email` — no user id at all                                            | `email`, exactly, normalised; verified accounts only                                                                               |
+| `WaitlistEntry`       | `email`, and `userId` once a waitlist invitation is redeemed           | `userId`, or `email` exactly, normalised, verified accounts only (`waitlistEntriesOf()`, `lib/waitlist/subject.ts`)                |
 | `FeatureFlag`         | `createdBy String?`, no relation                                       | `createdBy`, as an attribution source                                                                                              |
 | `AiWebhookDelivery`   | `destination` — an email-channel delivery's address; and its `payload` | `destination` (or a `previousDestinations` entry), exactly, normalised, verified accounts only; or the payload naming them (below) |
 | `AiEventHookDelivery` | its `payload` — the subject's id, or a conversation or run of theirs   | JSON containment on `payload.data`, through `lib/privacy/delivery-payloads.ts`                                                     |

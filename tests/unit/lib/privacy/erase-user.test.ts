@@ -24,6 +24,8 @@ const {
   mockUpdateMany,
   mockContactDeleteMany,
   mockContactCount,
+  mockWaitlistDeleteMany,
+  mockWaitlistCount,
   mockReceiptCreate,
   mockExecuteRaw,
   mockQueryRaw,
@@ -43,6 +45,8 @@ const {
   const updateMany = vi.fn().mockResolvedValue({ count: 1 });
   const contactDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
   const contactCount = vi.fn().mockResolvedValue(0);
+  const waitlistDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
+  const waitlistCount = vi.fn().mockResolvedValue(0);
   const receiptCreate = vi.fn().mockResolvedValue({
     id: 'receipt-1',
     erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -75,6 +79,7 @@ const {
     $queryRaw: queryRaw,
     aiAdminAuditLog: { updateMany, createMany: auditCreateMany },
     contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
+    waitlistEntry: { deleteMany: waitlistDeleteMany, count: waitlistCount },
     dataErasureReceipt: { create: receiptCreate },
     aiWebhookSubscription: { findMany: subFindMany, updateMany: subUpdateMany },
     aiWebhookDelivery: {
@@ -110,6 +115,8 @@ const {
     mockUpdateMany: updateMany,
     mockContactDeleteMany: contactDeleteMany,
     mockContactCount: contactCount,
+    mockWaitlistDeleteMany: waitlistDeleteMany,
+    mockWaitlistCount: waitlistCount,
     mockReceiptCreate: receiptCreate,
     mockExecuteRaw: executeRaw,
     mockQueryRaw: queryRaw,
@@ -233,6 +240,8 @@ describe('eraseUser', () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockContactCount.mockResolvedValue(0);
+    mockWaitlistDeleteMany.mockResolvedValue({ count: 0 });
+    mockWaitlistCount.mockResolvedValue(0);
     mockDeliveryUpdateMany.mockResolvedValue({ count: 0 });
     mockDeliveryFindMany.mockResolvedValue([]);
     mockDeliveryUpdate.mockResolvedValue({});
@@ -707,6 +716,83 @@ describe('eraseUser', () => {
     await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('contact delete failed');
     expect(mockReceiptCreate).not.toHaveBeenCalled();
     expect(mockUserDelete).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Waitlist entries (§125) — joined under the address before any account
+  // existed, so only an entry linked by userId is reached by the cascade.
+  // -------------------------------------------------------------------------
+
+  describe('waitlist entries (§125)', () => {
+    it('deletes entries linked to the account or under its verified, normalised address', async () => {
+      // Arrange — a stored address not in the canonical form
+      mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ', emailVerified: true });
+      mockWaitlistDeleteMany.mockResolvedValue({ count: 2 });
+
+      // Act
+      await eraseUser(BASE_PARAMS);
+
+      // Assert — both arms, the address exact (no `mode`), every org and list
+      expect(mockWaitlistDeleteMany).toHaveBeenCalledWith({
+        where: { OR: [{ userId: BASE_PARAMS.userId }, { email: 'foo@bar.com' }] },
+      });
+      expect(mockWaitlistCount).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ waitlistEntriesDeleted: 2 })
+      );
+    });
+
+    it('an unverified account deletes only its linked entries, and counts and flags the rest', async () => {
+      // Arrange — anyone can type any address into the join form
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+      mockWaitlistCount.mockResolvedValue(3);
+
+      // Act
+      await eraseUser(BASE_PARAMS);
+
+      // Assert — the address arm is absent, so a stranger's entry survives…
+      expect(mockWaitlistDeleteMany).toHaveBeenCalledWith({
+        where: { userId: BASE_PARAMS.userId },
+      });
+      // …and what is left under the address is counted, exactly, and flagged
+      expect(mockWaitlistCount).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Waitlist entries not erased: the account never verified its address',
+        { userId: BASE_PARAMS.userId, receiptId: 'receipt-1', waitlistEntriesLeft: 3 }
+      );
+    });
+
+    it('deletes through the transaction client, before the user row', async () => {
+      // Arrange — a tx distinct from `prisma`, so a delete on the outer client misses it
+      const txWaitlistDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        ...mockPrisma,
+        waitlistEntry: { deleteMany: txWaitlistDeleteMany, count: mockWaitlistCount },
+      };
+      mockPrisma.$transaction.mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)
+      );
+
+      // Act
+      await eraseUser(BASE_PARAMS);
+
+      // Assert
+      expect(txWaitlistDeleteMany).toHaveBeenCalledTimes(1);
+      expect(mockWaitlistDeleteMany).not.toHaveBeenCalled();
+      expect(txWaitlistDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        mockUserDelete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('a failed delete rolls the erasure back: the user row is never deleted', async () => {
+      // Arrange
+      mockWaitlistDeleteMany.mockRejectedValue(new Error('waitlist delete failed'));
+
+      // Act + Assert
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('waitlist delete failed');
+      expect(mockUserDelete).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

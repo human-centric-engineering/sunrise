@@ -680,6 +680,32 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       return rows.map((row) => ({ id: row.id, label: row.name, createdAt: row.createdAt }));
     },
   },
+  {
+    model: 'WaitlistEntry',
+    section: 'waitlistEntries',
+    disposition: 'export',
+    description:
+      'Everyone on the organisation’s waitlists: address, answers, where they came from, consent and its notice version, and whether each was confirmed, removed, invited or joined.',
+    fetch: ({ orgId }) =>
+      prisma.waitlistEntry.findMany({
+        where: ownedBy(orgId),
+        orderBy: byCreatedAt,
+      }),
+  },
+  {
+    model: 'WaitlistListState',
+    section: 'waitlistLists',
+    disposition: 'export',
+    description:
+      'Whether each of the organisation’s waitlists is taking sign-ups, and when it last changed.',
+    // `changedById` names a person; the org receives that one of its admins
+    // changed the list, which is its own record, as with the audit log.
+    fetch: ({ orgId }) =>
+      prisma.waitlistListState.findMany({
+        where: ownedBy(orgId),
+        orderBy: { changedAt: 'asc' },
+      }),
+  },
 ];
 
 /**

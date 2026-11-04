@@ -84,6 +84,11 @@ vi.mock('@/lib/db/client', () => ({
       deleteMany: vi.fn(),
       count: vi.fn(),
     },
+    // eraseUser's waitlist step (§125).
+    waitlistEntry: {
+      deleteMany: vi.fn(),
+      count: vi.fn(),
+    },
     // eraseUser's colleague-subscription clear (t-786).
     aiWebhookSubscription: {
       findMany: vi.fn(),
@@ -227,6 +232,8 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.waitlistEntry.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.waitlistEntry.count).mockResolvedValue(0);
     vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
     // No colleague subscription matches and no delivery payload names the user.

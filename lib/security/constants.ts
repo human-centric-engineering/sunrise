@@ -17,7 +17,7 @@
  *   - `RATE_LIMIT_AUTH`       — authentication endpoints (default 5/min)
  *
  * Per-flow sub-caps (applied additively inside route handlers):
- *   - `RATE_LIMIT_PASSWORD_RESET` (3), `RATE_LIMIT_CONTACT` (5),
+ *   - `RATE_LIMIT_PASSWORD_RESET` (3), `RATE_LIMIT_CONTACT` (5), `RATE_LIMIT_WAITLIST` (5),
  *     `RATE_LIMIT_ACCEPT_INVITE` (5), `RATE_LIMIT_UPLOAD` (10),
  *     `RATE_LIMIT_INVITE` (10), `RATE_LIMIT_CSP_REPORT` (20),
  *     `RATE_LIMIT_CHAT` (20), `RATE_LIMIT_CONSUMER_CHAT` (10),
@@ -74,6 +74,10 @@ export const SECURITY_CONSTANTS = {
       CONTACT: envInt('RATE_LIMIT_CONTACT', 5),
       /** Contact form window: 1 hour */
       CONTACT_INTERVAL: 60 * 60 * 1000,
+      /** Waitlist joins: 5 per hour per IP (override with `RATE_LIMIT_WAITLIST`) */
+      WAITLIST: envInt('RATE_LIMIT_WAITLIST', 5),
+      /** Waitlist join window: 1 hour */
+      WAITLIST_INTERVAL: 60 * 60 * 1000,
       /** Accept invite: 5 attempts per 15 minutes (override with `RATE_LIMIT_ACCEPT_INVITE`) */
       ACCEPT_INVITE: envInt('RATE_LIMIT_ACCEPT_INVITE', 5),
       /** Upload: 10 uploads per 15 minutes (override with `RATE_LIMIT_UPLOAD`) */

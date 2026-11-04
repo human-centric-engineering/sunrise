@@ -285,6 +285,18 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     },
   },
   {
+    seam: 'lib/app/waitlist-config.ts',
+    risk: 'a stray config would open a public join form, an admin page and a table of strangers’ addresses on every install',
+    assert: async () => {
+      // `importActual`, NOT a plain import: tests/setup.ts pins this seam to
+      // `null` for every other file, so a plain import would assert the pin.
+      const seam = await vi.importActual<typeof import('@/lib/app/waitlist-config')>(
+        '@/lib/app/waitlist-config'
+      );
+      expect(seam.waitlistConfig).toBeNull();
+    },
+  },
+  {
     seam: 'lib/app/data-export.ts',
     risk: 'a stray collector would leak app rows into every install’s subject-access export, and a stray declaration would pre-account for a table nobody decided about',
     assert: async () => {
@@ -611,6 +623,7 @@ describe('lib/app/ seams ship empty', () => {
   it.each([
     ['brand', 'brand', []],
     ['emails', 'email-override', []],
+    ['waitlist-config', 'waitlist-config', []],
     ['llm-providers', 'provider-eligibility', []],
     ['admin-tier', 'org-tier admin', [ROSTER]],
     ['user-created', 'user-created', []],
