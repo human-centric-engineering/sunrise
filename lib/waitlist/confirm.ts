@@ -10,11 +10,11 @@
 import { prisma } from '@/lib/db/client';
 import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
 import { runAsWaitlistEntryOrg } from '@/lib/waitlist/entry-org';
-import { findConfirmToken, verifyLeaveToken } from '@/lib/waitlist/tokens';
+import { deleteConfirmTokens, findConfirmToken, verifyLeaveToken } from '@/lib/waitlist/tokens';
 
 /**
- * Confirm the entry if `token` is its current confirmation token, and use the
- * token up. `'invalid'` for a wrong, expired or used token, an unknown entry,
+ * Confirm the entry if `token` is one of its current confirmation tokens, and
+ * use up every token it has. `'invalid'` for a wrong, expired or used token, an unknown entry,
  * and an org that cannot be entered alike: the route gives them one answer.
  */
 export async function confirmWaitlistEntry(
@@ -41,6 +41,8 @@ export async function confirmWaitlistEntry(
         where: { id: entryId, confirmedAt: null },
         data: { confirmedAt: now },
       });
+      // The entry's other links (earlier sends) have nothing left to do.
+      await deleteConfirmTokens(tx, [entryId]);
       return 'confirmed' as const;
     })
   );

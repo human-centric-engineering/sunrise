@@ -22,7 +22,7 @@ const { mockTx, mockPrisma, mockErase, seen } = vi.hoisted(() => {
   return {
     mockTx,
     mockPrisma: {
-      verification: { findFirst: vi.fn() },
+      verification: { findMany: vi.fn() },
       waitlistEntry: { findUnique: vi.fn() },
       $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
     },
@@ -44,7 +44,7 @@ const HASH = createHash('sha256').update(TOKEN).digest('hex');
 beforeEach(() => {
   vi.clearAllMocks();
   seen.sources = [];
-  mockPrisma.verification.findFirst.mockResolvedValue({ id: 'v1', value: HASH });
+  mockPrisma.verification.findMany.mockResolvedValue([{ id: 'v1', value: HASH }]);
   mockPrisma.waitlistEntry.findUnique.mockImplementation(async () => {
     seen.sources.push(getTenantContext()?.source);
     return { orgId: INSTALL_ORG_ID, org: { status: 'ACTIVE' } };
@@ -74,12 +74,16 @@ describe('confirmWaitlistEntry', () => {
       where: { id: 'entry-1', confirmedAt: null },
       data: { confirmedAt: NOW },
     });
+    // The entry's other links (earlier sends) are used up with it
+    expect(mockTx.verification.deleteMany).toHaveBeenLastCalledWith({
+      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
+    });
     // Looked up under the credential-lookup (system) scope, written in the org
     expect(seen.sources).toEqual(['system', 'waitlist-link']);
   });
 
   it('a wrong, expired or used token is invalid, and the entry is never read', async () => {
-    mockPrisma.verification.findFirst.mockResolvedValue(null);
+    mockPrisma.verification.findMany.mockResolvedValue([]);
 
     expect(await confirmWaitlistEntry('entry-1', TOKEN, NOW)).toBe('invalid');
     expect(mockPrisma.waitlistEntry.findUnique).not.toHaveBeenCalled();

@@ -5,8 +5,14 @@
  * token (`lib/utils/invitation-token.ts`): 32 random bytes, only their SHA-256
  * hash kept in `Verification`, seven days, deleted when used. The identifier is
  * `waitlist-confirm:<entryId>`, not the address, so the Verification table does
- * not become another place holding a stranger's email. A re-send replaces the
- * entry's token, so only the latest link works.
+ * not become another place holding a stranger's email.
+ *
+ * **Every link sent stays good until it expires or the entry is confirmed.**
+ * A re-send adds a token rather than replacing one, so a failed send cannot
+ * kill the link already in the inbox, and nobody who resubmits the address
+ * can kill the owner's link either. Confirming deletes them all. There are at
+ * most a week of hourly sends' worth per entry (the mail cap), and an issue
+ * clears the entry's expired ones.
  *
  * **Leave is signed, not stored.** HMAC-SHA256 over `{ typ, entryId }` with
  * `BETTER_AUTH_SECRET`, the construction `lib/orchestration/approval-tokens.ts`
@@ -20,6 +26,7 @@
  */
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
@@ -42,43 +49,72 @@ function sha256(token: string): string {
 }
 
 /**
- * Mint a confirmation token for the entry, replacing any it had. Returns the
- * raw token (it goes in the email and nowhere else) and when it expires.
+ * Mint a confirmation token for the entry, beside any it already has, and
+ * clear its expired ones. Returns the raw token (it goes in the email and
+ * nowhere else), its row id (to withdraw it if the email is never sent), and
+ * when it expires.
  */
 export async function issueConfirmToken(
   entryId: string,
   now: Date = new Date()
-): Promise<{ token: string; expiresAt: Date }> {
+): Promise<{ id: string; token: string; expiresAt: Date }> {
   const token = randomBytes(CONFIRM_TOKEN_BYTES).toString('hex');
   const expiresAt = new Date(now.getTime() + WAITLIST_CONFIRM_TTL_MS);
   const identifier = confirmIdentifier(entryId);
-  await prisma.$transaction(async (tx) => {
-    await tx.verification.deleteMany({ where: { identifier } });
-    await tx.verification.create({ data: { identifier, value: sha256(token), expiresAt } });
+  const row = await prisma.$transaction(async (tx) => {
+    await tx.verification.deleteMany({ where: { identifier, expiresAt: { lte: now } } });
+    return tx.verification.create({
+      data: { identifier, value: sha256(token), expiresAt },
+      select: { id: true },
+    });
   });
-  return { token, expiresAt };
+  return { id: row.id, token, expiresAt };
 }
 
 /**
  * The stored token row this raw token matches, if it is current. Reads only:
  * `confirmWaitlistEntry()` deletes the row in the transaction that confirms,
  * once it knows the entry can be. A wrong, expired or used token are all
- * `null`.
+ * `null`. Every live row is compared, in constant time each.
  */
 export async function findConfirmToken(
   entryId: string,
   token: string,
   now: Date = new Date()
 ): Promise<{ id: string; value: string } | null> {
-  const row = await prisma.verification.findFirst({
+  const rows = await prisma.verification.findMany({
     where: { identifier: confirmIdentifier(entryId), expiresAt: { gt: now } },
-    orderBy: { createdAt: 'desc' },
     select: { id: true, value: true },
   });
-  if (!row) return null;
-  const a = Buffer.from(row.value, 'utf8');
-  const b = Buffer.from(sha256(token), 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b) ? row : null;
+  const given = Buffer.from(sha256(token), 'utf8');
+  let match: { id: string; value: string } | null = null;
+  for (const row of rows) {
+    const stored = Buffer.from(row.value, 'utf8');
+    if (stored.length === given.length && timingSafeEqual(stored, given)) match = row;
+  }
+  return match;
+}
+
+/** Most identifiers one token delete names. */
+const TOKEN_DELETE_CHUNK = 1000;
+
+/**
+ * Delete the confirmation tokens of entries that are being deleted, in the
+ * caller's transaction. Every path that deletes an entry calls it: the leave
+ * link and admin erase, retention, account erasure and org erasure. A token
+ * left behind names an entry that is gone; the link would only ever fail, but
+ * it is the entry's, and it should go with it.
+ */
+export async function deleteConfirmTokens(
+  tx: Prisma.TransactionClient,
+  entryIds: readonly string[]
+): Promise<void> {
+  for (let i = 0; i < entryIds.length; i += TOKEN_DELETE_CHUNK) {
+    const chunk = entryIds.slice(i, i + TOKEN_DELETE_CHUNK);
+    await tx.verification.deleteMany({
+      where: { identifier: { in: chunk.map(confirmIdentifier) } },
+    });
+  }
 }
 
 const leavePayloadSchema = z.object({

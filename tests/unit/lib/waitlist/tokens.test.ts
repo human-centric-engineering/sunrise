@@ -17,7 +17,7 @@ const { mockTx, mockPrisma } = vi.hoisted(() => {
   return {
     mockTx,
     mockPrisma: {
-      verification: { findFirst: vi.fn() },
+      verification: { findMany: vi.fn() },
       $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
     },
   };
@@ -27,6 +27,7 @@ vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
 import {
   confirmUrl,
+  deleteConfirmTokens,
   findConfirmToken,
   issueConfirmToken,
   leaveUrl,
@@ -44,16 +45,18 @@ beforeEach(() => {
 });
 
 describe('issueConfirmToken', () => {
-  it('stores only the hash, under the entry id, for seven days, replacing the old one', async () => {
+  beforeEach(() => {
+    mockTx.verification.create.mockResolvedValue({ id: 'v-new' });
+  });
+
+  it('stores only the hash, under the entry id, for seven days', async () => {
     // Act
-    const { token, expiresAt } = await issueConfirmToken('entry-1', NOW);
+    const { id, token, expiresAt } = await issueConfirmToken('entry-1', NOW);
 
     // Assert
+    expect(id).toBe('v-new');
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(expiresAt.getTime() - NOW.getTime()).toBe(WAITLIST_CONFIRM_TTL_MS);
-    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { identifier: 'waitlist-confirm:entry-1' },
-    });
     const [{ data }] = mockTx.verification.create.mock.calls[0] as [
       { data: { identifier: string; value: string; expiresAt: Date } },
     ];
@@ -63,34 +66,78 @@ describe('issueConfirmToken', () => {
       expiresAt,
     });
     expect(data.value).not.toBe(token);
-    // The replace runs before the create, so only the newest link works
-    expect(mockTx.verification.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-      mockTx.verification.create.mock.invocationCallOrder[0]
-    );
+  });
+
+  it('keeps the entry’s live links and clears only its expired ones', async () => {
+    // A re-send must not kill the link already in the inbox: a failed send,
+    // or a stranger resubmitting the address, would otherwise break it.
+    await issueConfirmToken('entry-1', NOW);
+
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledOnce();
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
+      where: { identifier: 'waitlist-confirm:entry-1', expiresAt: { lte: NOW } },
+    });
   });
 });
 
 describe('findConfirmToken', () => {
   it('matches the raw token against the stored hash, among current rows only', async () => {
-    mockPrisma.verification.findFirst.mockResolvedValue({ id: 'v1', value: sha256('right') });
+    mockPrisma.verification.findMany.mockResolvedValue([{ id: 'v1', value: sha256('right') }]);
 
     expect(await findConfirmToken('entry-1', 'right', NOW)).toEqual({
       id: 'v1',
       value: sha256('right'),
     });
-    expect(mockPrisma.verification.findFirst).toHaveBeenCalledWith(
+    expect(mockPrisma.verification.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { identifier: 'waitlist-confirm:entry-1', expiresAt: { gt: NOW } },
       })
     );
   });
 
+  it('matches an earlier link as well as the newest', async () => {
+    mockPrisma.verification.findMany.mockResolvedValue([
+      { id: 'v-old', value: sha256('first') },
+      { id: 'v-new', value: sha256('second') },
+    ]);
+
+    expect(await findConfirmToken('entry-1', 'first', NOW)).toEqual({
+      id: 'v-old',
+      value: sha256('first'),
+    });
+    expect(await findConfirmToken('entry-1', 'second', NOW)).toEqual({
+      id: 'v-new',
+      value: sha256('second'),
+    });
+  });
+
   it('is null for a wrong token, and for none stored (used, expired or never issued)', async () => {
-    mockPrisma.verification.findFirst.mockResolvedValue({ id: 'v1', value: sha256('right') });
+    mockPrisma.verification.findMany.mockResolvedValue([{ id: 'v1', value: sha256('right') }]);
     expect(await findConfirmToken('entry-1', 'wrong', NOW)).toBeNull();
 
-    mockPrisma.verification.findFirst.mockResolvedValue(null);
+    mockPrisma.verification.findMany.mockResolvedValue([]);
     expect(await findConfirmToken('entry-1', 'right', NOW)).toBeNull();
+  });
+});
+
+describe('deleteConfirmTokens', () => {
+  it('deletes the entries’ tokens by identifier, in chunks of a thousand', async () => {
+    const ids = Array.from({ length: 1001 }, (_, i) => `e${i}`);
+
+    await deleteConfirmTokens(mockTx as never, ids);
+
+    const calls = mockTx.verification.deleteMany.mock.calls.map(
+      (c) => (c[0] as { where: { identifier: { in: string[] } } }).where.identifier.in
+    );
+    expect(calls.map((c) => c.length)).toEqual([1000, 1]);
+    expect(calls[0][0]).toBe('waitlist-confirm:e0');
+    expect(calls[1][0]).toBe('waitlist-confirm:e1000');
+  });
+
+  it('makes no call for no entries', async () => {
+    await deleteConfirmTokens(mockTx as never, []);
+
+    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
   });
 });
 

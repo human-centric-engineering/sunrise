@@ -16,9 +16,14 @@ import type { ReactElement } from 'react';
 const { mockPrisma, mockSendEmail, mockLogger } = vi.hoisted(() => ({
   mockPrisma: {
     waitlistEntry: { updateMany: vi.fn(), findUnique: vi.fn() },
-    verification: { findFirst: vi.fn() },
+    verification: { deleteMany: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({ verification: { deleteMany: vi.fn(), create: vi.fn() } })
+      fn({
+        verification: {
+          deleteMany: vi.fn(),
+          create: vi.fn().mockResolvedValue({ id: 'v-new' }),
+        },
+      })
     ),
   },
   mockSendEmail: vi.fn(),
@@ -46,10 +51,22 @@ function sent(): Sent {
   return args;
 }
 
+/** The entry as both reads see it: the claim's and the send's. */
+function entryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    email: ADDRESS,
+    name: 'Ada Lovelace',
+    lastEmailedAt: null,
+    removedAt: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
-  mockPrisma.waitlistEntry.findUnique.mockResolvedValue({ email: ADDRESS, name: 'Ada Lovelace' });
+  mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow());
+  mockPrisma.verification.deleteMany.mockResolvedValue({ count: 1 });
   mockSendEmail.mockResolvedValue({ success: true, status: 'sent' });
 });
 
@@ -112,23 +129,36 @@ describe('sendWaitlistJoinMail', () => {
     expect(html).not.toContain('Lovelace');
   });
 
-  it('claims the hour with a write conditional on the last email being an hour old', async () => {
+  it('claims the hour with a write conditional on the value it read', async () => {
+    const twoHoursAgo = new Date(NOW.getTime() - 2 * WAITLIST_MAIL_INTERVAL_MS);
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ lastEmailedAt: twoHoursAgo }));
+
     await sendWaitlistJoinMail('entry-1', 'replaced', NOW);
 
+    // Of two concurrent joins that read the same value, only one write matches
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: 'entry-1',
-        removedAt: null,
-        OR: [
-          { lastEmailedAt: null },
-          { lastEmailedAt: { lte: new Date(NOW.getTime() - WAITLIST_MAIL_INTERVAL_MS) } },
-        ],
-      },
+      where: { id: 'entry-1', removedAt: null, lastEmailedAt: twoHoursAgo },
       data: { lastEmailedAt: NOW },
     });
   });
 
   it('sends nothing and issues no token when an email went out in the last hour', async () => {
+    // Arrange
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+      entryRow({ lastEmailedAt: new Date(NOW.getTime() - WAITLIST_MAIL_INTERVAL_MS / 2) })
+    );
+
+    // Act
+    const result = await sendWaitlistJoinMail('entry-1', 'replaced', NOW);
+
+    // Assert
+    expect(result).toBe('capped');
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when a concurrent join took the slot between the read and the write', async () => {
     // Arrange — the conditional claim matched no row
     mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
 
@@ -139,6 +169,52 @@ describe('sendWaitlistJoinMail', () => {
     expect(result).toBe('capped');
     expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing to a removed entry', async () => {
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ removedAt: NOW }));
+
+    expect(await sendWaitlistJoinMail('entry-1', 'replaced', NOW)).toBe('capped');
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('on a failed send, gives the slot back and withdraws the link it never delivered', async () => {
+    // Arrange — a link went out two hours ago; this one fails
+    const twoHoursAgo = new Date(NOW.getTime() - 2 * WAITLIST_MAIL_INTERVAL_MS);
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ lastEmailedAt: twoHoursAgo }));
+    mockSendEmail.mockResolvedValue({ success: false, status: 'failed', error: 'provider down' });
+
+    // Act
+    const result = await sendWaitlistJoinMail('entry-1', 'replaced', NOW);
+
+    // Assert — the claim is undone only if nothing claimed since…
+    expect(result).toBe('not-sent');
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'entry-1', lastEmailedAt: NOW },
+      data: { lastEmailedAt: twoHoursAgo },
+    });
+    // …and only the new, undelivered token goes: the earlier link still works
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
+  });
+
+  it('gives the slot back on a send that throws too', async () => {
+    mockSendEmail.mockRejectedValue(new Error('network'));
+
+    expect(await sendWaitlistJoinMail('entry-1', 'created', NOW)).toBe('not-sent');
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'entry-1', lastEmailedAt: NOW },
+      data: { lastEmailedAt: null },
+    });
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
+  });
+
+  it('gives the slot back, with no token to withdraw, when the note fails', async () => {
+    mockSendEmail.mockResolvedValue({ success: false, status: 'failed', error: 'bounced' });
+
+    expect(await sendWaitlistJoinMail('entry-1', 'unchanged', NOW)).toBe('not-sent');
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 
   it('sends a confirmed repeat the note, under the same cap, with no confirm link', async () => {
@@ -156,10 +232,7 @@ describe('sendWaitlistJoinMail', () => {
   });
 
   it('greets a name that is not a first name impersonally', async () => {
-    mockPrisma.waitlistEntry.findUnique.mockResolvedValue({
-      email: ADDRESS,
-      name: 'evil.example/login',
-    });
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ name: 'evil.example/login' }));
 
     await sendWaitlistJoinMail('entry-1', 'created', NOW);
 
