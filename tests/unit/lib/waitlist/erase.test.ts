@@ -1,0 +1,167 @@
+/**
+ * Unit tests: eraseWaitlistEntry() (§125 t-975)
+ *
+ * What the erasure writes, and — by handing the receipt it wrote to the real
+ * `matchErasedSubjects()` — what the recipient writers then make of it. The
+ * CHECK that pairs `subjectKind` with `subjectUserId`, and the readers' SQL
+ * against a null id, are Postgres properties: `smoke:erasure` holds them.
+ *
+ * @see lib/waitlist/erase.ts
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
+
+const { mockTx, mockPrisma } = vi.hoisted(() => {
+  const mockTx = {
+    waitlistEntry: { findUnique: vi.fn(), deleteMany: vi.fn() },
+    dataErasureReceipt: { create: vi.fn() },
+  };
+  return {
+    mockTx,
+    mockPrisma: {
+      $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
+    },
+  };
+});
+
+vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
+
+import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
+import { matchErasedSubjects } from '@/lib/privacy/erased-subjects';
+
+const ERASED_AT = new Date('2026-11-04T10:00:00Z');
+const ADDRESS = 'ada@example.com';
+
+function entry(over: Record<string, unknown> = {}) {
+  return { id: 'entry-1', email: ADDRESS, list: 'default', confirmedAt: null, ...over };
+}
+
+type ReceiptData = {
+  subjectKind: string;
+  subjectUserId: string | null;
+  subjectEmailHash: string;
+  actorUserId: string | null;
+  reason: string;
+  metadata: Prisma.JsonValue;
+};
+
+function writtenReceipt(): ReceiptData {
+  const [args] = mockTx.dataErasureReceipt.create.mock.calls[0] as [{ data: ReceiptData }];
+  return args.data;
+}
+
+/** The written receipt as a recipient writer's receipt lookup returns it. */
+async function writersRefuse(receipt: ReceiptData) {
+  const tx = {
+    dataErasureReceipt: { findMany: vi.fn(async () => [receipt]) },
+    user: { findMany: vi.fn(async () => []) },
+  };
+  return matchErasedSubjects(tx as never, { addresses: [ADDRESS], userIds: ['u-linked'] });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockTx.waitlistEntry.findUnique.mockResolvedValue(entry());
+  mockTx.waitlistEntry.deleteMany.mockResolvedValue({ count: 1 });
+  mockTx.dataErasureReceipt.create.mockResolvedValue({ id: 'r-1', erasedAt: ERASED_AT });
+});
+
+describe('eraseWaitlistEntry', () => {
+  it('deletes the entry and writes a waitlist receipt, in one transaction', async () => {
+    const result = await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: null,
+      reason: 'self_service',
+    });
+
+    expect(result).toEqual({ receiptId: 'r-1', erasedAt: ERASED_AT });
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+    expect(mockTx.waitlistEntry.deleteMany).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
+    expect(writtenReceipt()).toEqual({
+      subjectKind: 'waitlist',
+      subjectUserId: null,
+      subjectEmailHash: createHash('sha256').update(ADDRESS).digest('hex'),
+      actorUserId: null,
+      reason: 'self_service',
+      metadata: { addressVerified: false, entryConfirmed: false, list: 'default' },
+    });
+  });
+
+  it('records the admin who erased it, and that the owner had confirmed', async () => {
+    mockTx.waitlistEntry.findUnique.mockResolvedValue(
+      entry({ confirmedAt: new Date('2026-11-02T00:00:00Z'), list: 'beta' })
+    );
+
+    await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+    });
+
+    expect(writtenReceipt()).toMatchObject({
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+      metadata: { addressVerified: false, entryConfirmed: true, list: 'beta' },
+    });
+  });
+
+  it('writes no receipt for an entry it cannot see', async () => {
+    mockTx.waitlistEntry.findUnique.mockResolvedValue(null);
+
+    const result = await eraseWaitlistEntry({
+      entryId: 'other-org',
+      actorUserId: 'admin-1',
+      reason: 'admin_action',
+    });
+
+    expect(result).toBeNull();
+    expect(mockTx.waitlistEntry.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.dataErasureReceipt.create).not.toHaveBeenCalled();
+  });
+
+  it('writes no second receipt when a concurrent erasure deleted it first', async () => {
+    mockTx.waitlistEntry.deleteMany.mockResolvedValue({ count: 0 });
+
+    const result = await eraseWaitlistEntry({
+      entryId: 'entry-1',
+      actorUserId: null,
+      reason: 'self_service',
+    });
+
+    expect(result).toBeNull();
+    expect(mockTx.dataErasureReceipt.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('what the recipient writers make of the receipt', () => {
+  // Decided in t-975: neither is refused. The refusal stops a stale copy
+  // putting back what erasure stripped from configuration, and this erasure
+  // strips none; refusing would leave configuration that already names the
+  // address unsavable.
+  it.each([
+    ['an unconfirmed entry', null],
+    ['a confirmed entry', new Date('2026-11-02T00:00:00Z')],
+  ])('does not refuse the address or any account after erasing %s', async (_label, confirmedAt) => {
+    mockTx.waitlistEntry.findUnique.mockResolvedValue(entry({ confirmedAt }));
+    await eraseWaitlistEntry({ entryId: 'entry-1', actorUserId: null, reason: 'self_service' });
+
+    await expect(writersRefuse(writtenReceipt())).resolves.toEqual({
+      addresses: [],
+      userIds: [],
+    });
+  });
+
+  it('is refused like an account receipt once it says verified — the check reads the receipt', async () => {
+    // The control: the same address, from a receipt that says verified, is
+    // refused. Without it the cases above would pass on a check that refuses
+    // nothing.
+    await eraseWaitlistEntry({ entryId: 'entry-1', actorUserId: null, reason: 'self_service' });
+    const receipt = writtenReceipt();
+
+    await expect(
+      writersRefuse({ ...receipt, metadata: { addressVerified: true } })
+    ).resolves.toEqual({ addresses: [ADDRESS], userIds: [] });
+  });
+});

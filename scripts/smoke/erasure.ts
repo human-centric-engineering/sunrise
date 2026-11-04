@@ -32,6 +32,8 @@
 
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
+import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -64,6 +66,7 @@ async function main(): Promise<void> {
   let agentId: string | null = null;
   let auditId: string | null = null;
   let receiptId: string | null = null;
+  const waitlistReceiptIds: string[] = [];
   let datasetId: string | null = null;
   let costLogId: string | null = null;
   let runId: string | null = null;
@@ -378,15 +381,94 @@ async function main(): Promise<void> {
       'receipt stores a 64-char sha256 email hash, not the raw email'
     );
     check(receipt?.reason === 'self_service', 'receipt records the reason');
+    check(receipt?.subjectKind === 'account', 'an account erasure writes an account receipt');
+
+    // A waitlist-only person (§125 t-975): no account, a confirmed entry,
+    // erased through the leave link's writer.
+    const leaverEmail = `${PREFIX}-leaver-${stamp}@example.com`;
+    const leaver = await prisma.waitlistEntry.create({
+      data: {
+        email: leaverEmail,
+        consentedAt: new Date(),
+        consentVersion: 'smoke',
+        confirmedAt: new Date(),
+      },
+    });
+    waitlistIds.push(leaver.id);
+    const left = await eraseWaitlistEntry({
+      entryId: leaver.id,
+      actorUserId: null,
+      reason: 'self_service',
+    });
+    if (left) waitlistReceiptIds.push(left.receiptId);
+    check(left !== null, 'waitlist erasure returns its receipt');
+    check(
+      (await prisma.waitlistEntry.findUnique({ where: { id: leaver.id } })) === null,
+      'waitlist erasure deletes the entry'
+    );
+    const waitlistReceipt = left
+      ? await prisma.dataErasureReceipt.findUnique({ where: { id: left.receiptId } })
+      : null;
+    check(
+      waitlistReceipt?.subjectKind === 'waitlist' && waitlistReceipt.subjectUserId === null,
+      'waitlist receipt is of kind waitlist and names no account'
+    );
+    check(
+      (await eraseWaitlistEntry({
+        entryId: leaver.id,
+        actorUserId: null,
+        reason: 'self_service',
+      })) === null,
+      'erasing an entry already erased writes no second receipt'
+    );
+    // The readers that ask by id (erasure-requests, export-user) never see it.
+    check(
+      !(
+        await prisma.dataErasureReceipt.findMany({
+          where: { subjectUserId: subject.id },
+          select: { id: true },
+        })
+      ).some((r) => r.id === left?.receiptId),
+      'a by-id receipt lookup does not return the waitlist receipt'
+    );
+    // The recipient writers do not refuse the address (decided in t-975).
+    const refused = await prisma.$transaction((tx) =>
+      findErasedSubjects(tx, { addresses: [leaverEmail] })
+    );
+    check(
+      refused.addresses.length === 0,
+      'a confirmed waitlist erasure is not refused by the writers'
+    );
+    // The CHECK holds the kind and the id together.
+    const rejects = async (data: { subjectKind: string; subjectUserId: string | null }) => {
+      try {
+        const row = await prisma.dataErasureReceipt.create({ data: { ...data, reason: 'smoke' } });
+        waitlistReceiptIds.push(row.id);
+        return false;
+      } catch (err) {
+        // The CHECK, not any failure: a create that fails for another reason
+        // would pass a bare catch.
+        return String(err).includes('data_erasure_receipt_subject_kind');
+      }
+    };
+    check(
+      await rejects({ subjectKind: 'waitlist', subjectUserId: subject.id }),
+      'CHECK rejects a waitlist receipt naming an account'
+    );
+    check(
+      await rejects({ subjectKind: 'account', subjectUserId: null }),
+      'CHECK rejects an account receipt naming none'
+    );
 
     console.log('\n✓ smoke:erasure passed');
   } finally {
     // Self-clean by tracked id. The user + its cascade children may already be
     // gone (erased); deleteMany is a no-op then. All FKs here are Cascade/SetNull,
     // so order can't cause constraint violations.
-    if (receiptId)
+    const receiptIds = [receiptId, ...waitlistReceiptIds].filter((id): id is string => id !== null);
+    if (receiptIds.length > 0)
       await prisma.dataErasureReceipt
-        .deleteMany({ where: { id: receiptId } })
+        .deleteMany({ where: { id: { in: receiptIds } } })
         .catch(() => undefined);
     const contactIds = [subjectContactId, strangerContactId].filter(
       (id): id is string => id !== null

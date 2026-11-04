@@ -31,7 +31,7 @@ import {
 } from '@/lib/privacy/erased-subjects';
 
 type Receipt = {
-  subjectUserId: string;
+  subjectUserId: string | null;
   subjectEmailHash: string | null;
   metadata: Prisma.JsonValue;
 };
@@ -476,6 +476,24 @@ describe('findErasedSubjects', () => {
   });
 });
 
+describe('waitlist receipts (§125 t-975)', () => {
+  it('never matches a user id from a receipt that names none', async () => {
+    const ctx = makeTx();
+    ctx.receiptFindMany.mockResolvedValue([
+      // A waitlist receipt found by its hash, beside an account receipt.
+      { subjectUserId: null, subjectEmailHash: sha256Hex('w@example.com'), metadata: {} },
+      { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: null },
+    ]);
+
+    const result = await matchErasedSubjects(ctx.tx, {
+      addresses: ['w@example.com'],
+      userIds: ['gone-user', 'live-user'],
+    });
+
+    expect(result).toEqual({ addresses: [], userIds: ['gone-user'] });
+  });
+});
+
 describe('matchErasedSubjects (t-843)', () => {
   it('matches as findErasedSubjects does, without taking a lock', async () => {
     const ctx = makeTx();
@@ -540,7 +558,8 @@ describe('erasures since a copy was taken (§122 t-886)', () => {
       anyoneErasedSince({ dataErasureReceipt: { findFirst } } as never, takenAt)
     ).resolves.toBe(true);
     expect(findFirst).toHaveBeenCalledWith({
-      where: { erasedAt: { gte: anchor } },
+      // Accounts only: a waitlist erasure (§125) cascades nothing away.
+      where: { subjectKind: 'account', erasedAt: { gte: anchor } },
       select: { id: true },
     });
 

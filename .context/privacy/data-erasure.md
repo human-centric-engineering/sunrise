@@ -848,6 +848,8 @@ unverified address, which may be a stranger's inbox, so a writer does not
 refuse one either; a receipt from before t-805 does not say, and is not
 refused. And never an address a live, verified account holds again — a
 person erased and later signed up again may be notified like anyone else.
+Nothing from a waitlist-only receipt is refused (§125;
+[Waitlist-only receipts](#waitlist-only-receipts) says why).
 
 **Erasure does not wait for a writer inside its transaction** (t-840). The
 backup importer holds the locks for everyone its bundle names for the whole
@@ -1381,7 +1383,11 @@ de-attributed against a real DB — the same proof the core tables get.
 is an **append-only** record proving an erasure happened, without re-introducing
 the subject's PII:
 
+- `subjectKind` — `account` (written by `eraseUser()`) or `waitlist` (below).
+  Receipts written before §125 are accounts (the column's default).
 - `subjectUserId` — opaque; the user row is gone, so it identifies nothing on its own.
+  Null exactly when the kind is `waitlist` (CHECK
+  `data_erasure_receipt_subject_kind`, drift probe A13).
 - `subjectEmailHash` — `sha256` of the trimmed, lower-cased email, for correlating a later
   "did you erase me?" request. Not reversible; the raw email is never stored.
   It hashes the address **stored on the user row**, read inside the erasure
@@ -1398,6 +1404,47 @@ the subject's PII:
   the trimmed, lower-cased form erasure matches on.
 - **No foreign keys** — the receipt must outlive every referenced row, including
   the actor if they are erased later.
+
+### Waitlist-only receipts
+
+A person on the waitlist with no account (§125) is erased by the leave link in a
+waitlist email or by an admin. Both go through `eraseWaitlistEntry()`
+(`lib/waitlist/erase.ts`, called in the entry's org), which deletes the entry
+and writes a receipt in one transaction:
+
+| Field                      | Value                                                       |
+| -------------------------- | ----------------------------------------------------------- |
+| `subjectKind`              | `waitlist`                                                  |
+| `subjectUserId`            | null — also for an entry an invitation linked to an account |
+| `subjectEmailHash`         | the entry's address, hashed as an account receipt's is      |
+| `actorUserId`, `reason`    | the admin and `admin_action`, or null and `self_service`    |
+| `metadata.addressVerified` | `false`, always                                             |
+| `metadata.entryConfirmed`  | whether the owner had confirmed the address                 |
+| `metadata.list`            | the list the entry was on                                   |
+
+**Why `subjectUserId` is null for a linked entry.** Erasing the entry is not
+erasing the account, and a user id with a receipt is refused by every
+recipient writer — a receipt naming a live account would make the account
+unnamable in configuration.
+
+**Why `addressVerified` is `false` for a confirmed entry (decided in t-975).**
+The flag means "erasure matched this address and stripped it from
+configuration", and the refusal it drives exists so that a copy read before
+the erasure cannot put the address back. A waitlist erasure strips no
+configuration; it deletes one entry. Refusing the address afterwards would
+protect nothing a stale copy could restore, and a settings form whose saved
+value already names the address would refuse to save until someone removed
+it. So neither a confirmed nor an unconfirmed waitlist receipt is refused;
+`entryConfirmed` keeps the fact that the owner had proved the address, for
+answering "did you erase me?".
+
+**What reads it.** The receipt readers that ask by account
+(`finishedErasure()` in `erasure-requests.ts`, the receipt list in
+`exportUserData()`) query `subjectUserId = <id>` and never see one.
+`matchErasedSubjects()` and `run-recipients.ts` skip its null id.
+`anyoneErasedSince()` counts account receipts only: nothing cascades from a
+waitlist entry, so it gives a copy nothing dangling. `smoke:erasure` holds
+all of this against a real database.
 
 ## Deletion Guards
 

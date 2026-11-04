@@ -265,7 +265,7 @@ export async function findErasedSinceRunStarted(
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   const receipts = await tx.$queryRaw<
-    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+    Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>
   >`SELECT r."subjectUserId", r."subjectEmailHash"
      FROM data_erasure_receipt r
      WHERE r."erasedAt" >= (SELECT coalesce(e."startedAt", e."createdAt")
@@ -286,7 +286,7 @@ export async function findErasedSinceCopy(
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   const receipts = await tx.$queryRaw<
-    Array<{ subjectUserId: string; subjectEmailHash: string | null }>
+    Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>
   >`SELECT r."subjectUserId", r."subjectEmailHash"
      FROM data_erasure_receipt r
      WHERE r."erasedAt" >= ${takenAt}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond'`;
@@ -296,7 +296,7 @@ export async function findErasedSinceCopy(
 /** Who among `receipts` `values` name, matched as {@link matchErasedSubjects} matches. */
 async function erasedAmong(
   tx: RunWriterClient,
-  receipts: Array<{ subjectUserId: string; subjectEmailHash: string | null }>,
+  receipts: Array<{ subjectUserId: string | null; subjectEmailHash: string | null }>,
   values: unknown[]
 ): Promise<ErasedSubjects | null> {
   if (receipts.length === 0) return null;
@@ -312,9 +312,11 @@ async function erasedAmong(
   }
   const erased = await matchErasedSubjects(tx, {
     addresses,
+    // A waitlist receipt names no account (§125): `includes(null)` would
+    // look for the text "null".
     userIds: receipts
       .map((r) => r.subjectUserId)
-      .filter((id) => strings.some((value) => value.includes(id))),
+      .filter((id): id is string => id !== null && strings.some((value) => value.includes(id))),
   });
   return erased.addresses.length > 0 || erased.userIds.length > 0 ? erased : null;
 }
