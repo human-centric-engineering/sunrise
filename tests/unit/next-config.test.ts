@@ -17,7 +17,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match';
-import { frameDenySource } from '@/lib/security/frame-deny-source.cjs';
 
 async function loadConfig(env: Record<string, string | undefined>) {
   for (const [key, value] of Object.entries(env)) {
@@ -120,6 +119,15 @@ describe('next.config allowedDevOrigins', () => {
     expect(config.allowedDevOrigins).toEqual(['localhost']);
   });
 });
+
+/**
+ * The helper, loaded through Node's own require — the instance next.config.js
+ * itself loads, and the one coverage records. An ESM import of a `.cjs` file
+ * gets a separate copy.
+ */
+const { frameDenySource } = createRequire(import.meta.url)(
+  '../../lib/security/frame-deny-source.cjs'
+) as { frameDenySource: (listed: unknown) => string };
 
 describe('next.config X-Frame-Options rule (#887)', () => {
   interface HeaderRule {
