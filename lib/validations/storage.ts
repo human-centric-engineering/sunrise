@@ -85,12 +85,16 @@ export const s3ConfigSchema = z.object({
  * Vercel Blob configuration schema
  *
  * Mirrors `VercelBlobProviderConfig`: a public store token, a private store
- * token, or both — but at least one.
+ * token, or both — but at least one. An empty string counts as unset, as it
+ * does in `createVercelBlobProviderFromEnv()`: `BLOB_READ_WRITE_TOKEN=""` is a
+ * common `.env` placeholder.
  */
+const optionalToken = z.preprocess((v) => (v === '' ? undefined : v), z.string().optional());
+
 export const vercelBlobConfigSchema = z
   .object({
-    token: z.string().min(1, 'BLOB_READ_WRITE_TOKEN must not be empty').optional(),
-    privateToken: z.string().min(1, 'BLOB_PRIVATE_READ_WRITE_TOKEN must not be empty').optional(),
+    token: optionalToken,
+    privateToken: optionalToken,
   })
   .refine((config) => config.token !== undefined || config.privateToken !== undefined, {
     message: 'Set BLOB_READ_WRITE_TOKEN, BLOB_PRIVATE_READ_WRITE_TOKEN, or both',

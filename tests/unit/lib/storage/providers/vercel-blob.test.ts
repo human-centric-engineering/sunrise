@@ -731,6 +731,8 @@ describe('lib/storage/providers/vercel-blob', () => {
         expect(get).toHaveBeenCalledWith('notes/user-1/a.txt', {
           access: 'public',
           token: PUBLIC,
+          // Past the cache: an overwritten blob must not come back with its old bytes.
+          useCache: false,
           abortSignal: expect.any(AbortSignal),
         });
       });

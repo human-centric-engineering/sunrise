@@ -40,9 +40,9 @@
  *     uploads privately and returns a signed URL valid for
  *     {@link DEFAULT_MULTI_SIGNED_URL_TTL_SECONDS}. A public URL carries no
  *     token, so no org check can protect it; `public: true` is the explicit
- *     opt-out for a link that must outlive a TTL. On Vercel Blob, which has
- *     no signed URLs, such a binding is refused with
- *     `signed_url_not_supported` until it opts into public.
+ *     opt-out for a link that must outlive a TTL. On a provider that cannot
+ *     sign (Vercel Blob without a private store), such a binding is refused
+ *     with `signed_url_not_supported` until it opts into public.
  *
  * Security posture:
  * - The LLM cannot influence the storage path: prefix is admin-set,

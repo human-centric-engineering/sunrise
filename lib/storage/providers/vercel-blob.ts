@@ -228,7 +228,10 @@ export class VercelBlobProvider implements StorageProvider {
       }
       const outcome = await this.deleteFrom(store, key);
       if (outcome === 'deleted') {
-        logger.info('File deleted from Vercel Blob', { key, store: store.access });
+        logger.info('File deleted from Vercel Blob, or it was not there', {
+          key,
+          store: store.access,
+        });
       }
       return { success: outcome !== 'failed', key };
     }
@@ -238,7 +241,10 @@ export class VercelBlobProvider implements StorageProvider {
       const outcome = await this.deleteFrom(store, key);
       if (outcome === 'failed') success = false;
       else if (outcome === 'deleted') {
-        logger.info('File deleted from Vercel Blob', { key, store: store.access });
+        logger.info('File deleted from Vercel Blob, or it was not there', {
+          key,
+          store: store.access,
+        });
       }
     }
 
@@ -359,8 +365,9 @@ export class VercelBlobProvider implements StorageProvider {
    * tokens to whichever store it names.
    *
    * A store that answers with an error, rather than "not found", ends the
-   * read: an outage surfaces as an error instead of falling through to the
-   * other store and being reported as a missing object.
+   * read: an outage reaches the caller as an error instead of falling
+   * through to the other store and coming back as "not found" here. (The
+   * signed read route answers 404 for any read error, as it always has.)
    *
    * @throws If the object is in neither store, or a read fails
    */
@@ -376,6 +383,9 @@ export class VercelBlobProvider implements StorageProvider {
       const result = await get(pathname, {
         access: store.access,
         token: store.token,
+        // Read past the cache: an overwritten blob could otherwise come back
+        // with its previous bytes. The SDK applies this to private reads.
+        useCache: false,
         abortSignal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
       });
       if (result === null) continue;

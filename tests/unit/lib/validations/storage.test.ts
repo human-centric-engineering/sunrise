@@ -799,7 +799,14 @@ describe('lib/validations/storage', () => {
       });
     });
 
-    it('rejects an empty private token', () => {
+    it('treats an empty token as unset, as the provider factory does', () => {
+      const result = vercelBlobConfigSchema.safeParse({
+        token: '',
+        privateToken: 'vercel_blob_rw_PRIV',
+      });
+
+      expect(result.success && result.data).toEqual({ privateToken: 'vercel_blob_rw_PRIV' });
+      // With nothing else set, an empty token is still no token.
       expect(vercelBlobConfigSchema.safeParse({ privateToken: '' }).success).toBe(false);
     });
 
