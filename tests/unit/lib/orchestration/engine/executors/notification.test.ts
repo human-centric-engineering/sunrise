@@ -474,7 +474,10 @@ describe('executeNotification', () => {
         .filter((args) => !args.where.erasedAt);
       expect(allTime).toEqual([
         expect.objectContaining({
-          where: { OR: [{ subjectEmailHash: { in: [subjectEmailHash('old@example.com')] } }] },
+          where: {
+            subjectKind: 'account',
+            OR: [{ subjectEmailHash: { in: [subjectEmailHash('old@example.com')] } }],
+          },
         }),
       ]);
     });

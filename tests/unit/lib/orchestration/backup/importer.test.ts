@@ -1043,13 +1043,17 @@ describe('importOrchestrationConfig — people whose data was erased (t-805)', (
     expect(asked).toContainEqual(
       expect.objectContaining({
         where: {
+          subjectKind: 'account',
           OR: [{ subjectUserId: { in: expect.arrayContaining([ERASED_ID, 'live-approver']) } }],
         },
       })
     );
     expect(asked).toContainEqual(
       expect.objectContaining({
-        where: { OR: [{ subjectEmailHash: { in: expect.arrayContaining([expect.any(String)]) } }] },
+        where: {
+          subjectKind: 'account',
+          OR: [{ subjectEmailHash: { in: expect.arrayContaining([expect.any(String)]) } }],
+        },
       })
     );
   });
