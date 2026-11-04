@@ -201,10 +201,12 @@ A list "closed" is its `WaitlistListState` row with `open: false`; its
 it. Deleting a removed entry ends its "stays removed" protection, which is
 safe because a new entry for the address must be confirmed by its owner.
 These deletions are retention, not erasure requests, and write no receipt.
-Rows on a list the config no longer declares are not shown on the admin page
-and are not deleted by this job — remove the list from the config only once
-it is empty. `npm run smoke:waitlist-admin` holds the windows against a real
-database.
+Rows on a list the config no longer declares are not shown on the admin page.
+This job still deletes them on its usual windows — a removed one 90 days on, a
+confirmed one 12 months after its list closed — but a confirmed entry on a
+list that was never closed is kept for ever. Close a list before removing it
+from the config, or erase what is left. `npm run smoke:waitlist-admin` holds
+the windows against a real database.
 
 ## Testing
 
