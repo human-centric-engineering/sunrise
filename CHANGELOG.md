@@ -167,6 +167,11 @@ release process.
 
 ### Fixed
 
+- **A second avatar upload failed on Vercel Blob.** The SDK refuses to
+  overwrite an existing blob unless asked, and avatars use one fixed key per
+  user, so every re-upload threw. The provider now
+  overwrites, as S3 and local always have.
+
 - **`db:tenancy:role --create` failed on Neon.** Neon's control plane accepts
   only the password itself, not the SCRAM-SHA-256 verifier the script sends,
   so the role was never created. A new `--plaintext-password` flag sends the

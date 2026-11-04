@@ -145,6 +145,10 @@ export class VercelBlobProvider implements StorageProvider {
       contentType,
       token: store.token,
       addRandomSuffix: false, // We handle uniqueness ourselves
+      // The SDK refuses to overwrite by default and throws instead. Every
+      // other provider overwrites, and callers rely on it: avatars use one
+      // fixed key per user, so without this the second upload fails.
+      allowOverwrite: true,
     });
 
     // Enforce one-key-one-store, as LocalProvider does one-key-one-root.

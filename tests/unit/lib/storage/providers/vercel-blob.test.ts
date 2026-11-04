@@ -111,6 +111,7 @@ describe('lib/storage/providers/vercel-blob', () => {
           contentType: 'image/jpeg',
           token: 'test-token',
           addRandomSuffix: false,
+          allowOverwrite: true,
         });
         expect(result.url).toBe('https://blob.vercel-storage.com/avatars/user-123/avatar.jpg');
         expect(result.size).toBe(file.length);
@@ -174,6 +175,7 @@ describe('lib/storage/providers/vercel-blob', () => {
           contentType: 'application/pdf',
           token: PRIVATE,
           addRandomSuffix: false,
+          allowOverwrite: true,
         });
         // Not the blob's own URL, which needs the store token to open.
         expect(result.url).toBe('/api/v1/storage/documents/user-1/my%20contract.pdf');
