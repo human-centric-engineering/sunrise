@@ -33,10 +33,12 @@ export default function WaitlistConfirmEmail({
   leaveUrl,
   expiresAt,
 }: WaitlistConfirmEmailProps): React.ReactElement {
+  // In UTC, and said so: the server's own zone is no more the reader's.
   const expiry = new Date(expiresAt).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+    timeZone: 'UTC',
   });
 
   return (
@@ -56,8 +58,8 @@ export default function WaitlistConfirmEmail({
               Confirm my address
             </Button>
             <Text style={small}>
-              This link works once and expires on {expiry}. If you don&apos;t confirm, we delete the
-              entry.
+              This link works once and expires on {expiry} (UTC). If you don&apos;t confirm, we
+              delete the entry.
             </Text>
             <Text style={small}>
               If you didn&apos;t join, ignore this email, or{' '}

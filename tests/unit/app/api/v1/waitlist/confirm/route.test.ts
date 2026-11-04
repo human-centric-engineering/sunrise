@@ -55,6 +55,16 @@ describe('POST /api/v1/waitlist/confirm', () => {
     expect(mockConfirm).toHaveBeenCalledWith('entry-1', TOKEN);
   });
 
+  it('lowercases a token a mail client or copy uppercased, so the link still works', async () => {
+    // The stored hash is of the lowercase hex the email carries.
+    const { POST } = await loadRoute(CONFIG);
+
+    const res = await POST(post({ entry: 'entry-1', token: TOKEN.toUpperCase() }));
+
+    expect(res.status).toBe(200);
+    expect(mockConfirm).toHaveBeenCalledWith('entry-1', TOKEN);
+  });
+
   it('gives an expired, used, unknown or malformed link one answer', async () => {
     // Arrange — the confirm logic answers `invalid` for expired, used and unknown alike
     mockConfirm.mockResolvedValue('invalid');

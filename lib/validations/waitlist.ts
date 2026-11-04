@@ -181,10 +181,13 @@ export const waitlistListKeySchema = listKeySchema;
  */
 export const waitlistConfirmSchema = z.object({
   entry: z.string().trim().min(1).max(100),
+  // Lowercased before the check: the stored hash is of the lowercase hex the
+  // email carries, so an uppercased copy of the link still works.
   token: z
     .string()
     .trim()
-    .regex(/^[0-9a-f]{64}$/i, 'Invalid token'),
+    .toLowerCase()
+    .regex(/^[0-9a-f]{64}$/, 'Invalid token'),
 });
 
 /** `POST /api/v1/waitlist/leave` (§125 t-977). The signature is checked in the handler. */
