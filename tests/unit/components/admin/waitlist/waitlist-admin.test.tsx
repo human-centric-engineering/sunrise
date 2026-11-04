@@ -173,3 +173,43 @@ describe('WaitlistAdmin — a slow read from before a toggle (code review round 
     expect(screen.queryByText('Taking joins')).not.toBeInTheDocument();
   });
 });
+
+describe('WaitlistAdmin — answers it cannot use', () => {
+  it('treats a counts answer without lists as a failed re-read', async () => {
+    mockFetch.mockResolvedValue(Response.json({ success: true, data: { lists: 'nope' } }));
+    renderAdmin();
+
+    fireEvent.click(screen.getByRole('button', { name: 'a change in the table' }));
+
+    expect(await screen.findByText(/may be out of date/)).toBeInTheDocument();
+    expect(confirmedShown()).toBe('5');
+  });
+
+  it('records a toggle on the list it was made on, and leaves the others', async () => {
+    mockFetch.mockImplementation((_input, init) =>
+      Promise.resolve(
+        init?.method === 'PATCH'
+          ? Response.json({
+              success: true,
+              data: { key: 'beta', open: false, changedAt: '2026-11-04T10:00:00.000Z' },
+            })
+          : // The re-read behind it never lands, so what shows is the toggle's answer.
+            new Response('{}', { status: 500 })
+      )
+    );
+    renderAdmin([counts(), counts({ key: 'beta' })]);
+
+    fireEvent.click(
+      within(screen.getByTestId('waitlist-list-beta')).getByRole('button', { name: 'Close list' })
+    );
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('waitlist-list-beta')).getByText('Closed')
+      ).toBeInTheDocument()
+    );
+    expect(
+      within(screen.getByTestId('waitlist-list-default')).getByText('Taking joins')
+    ).toBeInTheDocument();
+  });
+});
