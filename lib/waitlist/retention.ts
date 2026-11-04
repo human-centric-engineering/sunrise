@@ -17,19 +17,25 @@
  *     A list closed only by the config (`startsClosed`, no row) has no close
  *     date; the admin page offers "Mark closed", which records one, and the
  *     window runs from then.
- *   • **Unconfirmed** — deleted `unconfirmedDays` (30) after it joined or was
- *     last sent a confirmation link, whichever is later (t-977): a re-join
- *     sends a new link, and the entry must outlive it. The window is at least
- *     the link's seven days. Nothing proves the address is the person's own,
- *     so it is not kept for long. A removed entry waits out the removed
- *     window instead, so its "stays removed" protection is not cut short; an
- *     entry linked to an account is never deleted here.
+ *   • **Unconfirmed** — deleted `unconfirmedDays` (30) after its
+ *     `confirmWindowFrom` (t-977): its join, the latest confirmation link
+ *     sent (a re-join sends a new link, and the entry must outlive it), or an
+ *     admin restore. The window is at least the link's seven days. Nothing
+ *     proves the address is the person's own, so it is not kept for long, and
+ *     the link cap (`WAITLIST_CONFIRM_MAX_LINKS`) stops resubmissions from
+ *     keeping it forever. An entry from before t-977 starts its window at the
+ *     migration that added the column, never at its join: it was never sent a
+ *     link. A removed entry waits out the removed window instead, so its
+ *     "stays removed" protection is not cut short; an entry linked to an
+ *     account is never deleted here.
  *   • **Joined** — linked to its account and erased with it; never here, also
  *     when an admin has removed it.
  *
  * Each prune deletes in batches of {@link WAITLIST_RETENTION_BATCH}, up to
  * {@link WAITLIST_RETENTION_MAX_BATCHES} a run and within
- * {@link WAITLIST_RETENTION_BUDGET_MS} for the whole run: short statements
+ * {@link WAITLIST_RETENTION_BUDGET_MS} for the whole run, shared fairly: each
+ * prune gets an equal part of what is left when it starts, so a backlog in
+ * one window cannot hold up the others. Short statements
  * rather than one long delete inside the shared maintenance tick, and a
  * backlog of up to 20,000 rows still goes in the run that finds it rather
  * than over hours past its window. A bigger one, or one the time budget cuts
@@ -62,7 +68,7 @@ export const WAITLIST_RETENTION_BATCH = 1000;
 /** Batches per prune per run. */
 export const WAITLIST_RETENTION_MAX_BATCHES = 20;
 /**
- * Time one org's run may spend, both prunes together. The tick runs every
+ * Time one org's run may spend, all three prunes together. The tick runs every
  * job for every org; this keeps a large backlog in one org from taking it.
  */
 export const WAITLIST_RETENTION_BUDGET_MS = 15_000;
@@ -94,8 +100,11 @@ async function deleteInBatches(
         where: { AND: [where, { id: { in: ids } }] },
       });
       // Only the entries actually gone lose their confirmation tokens: one
-      // that changed state since the read is kept, and keeps its links.
-      if (result.count > 0) {
+      // that changed state since the read is kept, and keeps its links. When
+      // every row went, there is nothing to tell apart.
+      if (result.count === ids.length) {
+        await deleteConfirmTokens(tx, ids);
+      } else if (result.count > 0) {
         const kept = await tx.waitlistEntry.findMany({
           where: { id: { in: ids } },
           select: { id: true },
@@ -154,9 +163,9 @@ export function expiredUnconfirmedWhere(unconfirmedBefore: Date): Prisma.Waitlis
     userId: null,
     // A removed one keeps its "stays removed" protection for the removed window.
     removedAt: null,
-    createdAt: { lt: unconfirmedBefore },
-    // Nor while a link sent since the cut-off may still be live.
-    OR: [{ lastEmailedAt: null }, { lastEmailedAt: { lt: unconfirmedBefore } }],
+    // Moved by every link sent, so a link sent since the cut-off, which may
+    // still be live, keeps its entry.
+    confirmWindowFrom: { lt: unconfirmedBefore },
   };
 }
 
@@ -176,12 +185,16 @@ export async function pruneWaitlistEntries(
     removedBefore,
     closedBefore: closedCutoff,
   } = waitlistRetentionCutoffs(retention, now);
-  const deadline = Date.now() + WAITLIST_RETENTION_BUDGET_MS;
+  const end = Date.now() + WAITLIST_RETENTION_BUDGET_MS;
+  // An equal part of what is left, for a prune with `prunesLeft` to go
+  // (itself included): time one does not use passes to the next.
+  const shareOf = (prunesLeft: number): number =>
+    Date.now() + Math.max(0, end - Date.now()) / prunesLeft;
   const unconfirmedDeleted = await deleteInBatches(
     expiredUnconfirmedWhere(unconfirmedBefore),
-    deadline
+    shareOf(3)
   );
-  const removedDeleted = await deleteInBatches(expiredRemovedWhere(removedBefore), deadline);
+  const removedDeleted = await deleteInBatches(expiredRemovedWhere(removedBefore), shareOf(2));
 
   const closedLists = await prisma.waitlistListState.findMany({
     where: longClosedListWhere(closedCutoff),
@@ -200,7 +213,7 @@ export async function pruneWaitlistEntries(
             // still be a live sign-up link.
             OR: [{ invitedAt: null }, { invitedAt: { lt: closedCutoff } }],
           },
-          deadline
+          shareOf(1)
         );
 
   return { unconfirmedDeleted, removedDeleted, closedListDeleted };

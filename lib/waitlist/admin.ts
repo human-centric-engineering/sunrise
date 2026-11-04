@@ -219,7 +219,9 @@ async function groupCount(where: Prisma.WaitlistEntryWhereInput): Promise<Map<st
  * so a double click or two admins at once land in the same place. Removing
  * keeps the row (`removedAt`, never a delete) and keeps an earlier removal's
  * time; a re-join while removed stays removed (`joinWaitlist()`). Restoring
- * clears `removedAt` and keeps the re-join count as history. Null when no
+ * clears `removedAt`, keeps the re-join count as history, and restarts an
+ * unconfirmed entry's retention window (`confirmWindowFrom`): the admin chose
+ * to keep it, and the prune must not undo that on its next run. Null when no
  * entry has that id in this org; `changed` is false when it was already in
  * that state, so the caller records only a change that happened.
  */
@@ -232,7 +234,7 @@ export async function setWaitlistEntryRemoved(
   // read after tells which.
   const { count } = await prisma.waitlistEntry.updateMany({
     where: removed ? { id, removedAt: null } : { id, removedAt: { not: null } },
-    data: { removedAt: removed ? now : null },
+    data: removed ? { removedAt: now } : { removedAt: null, confirmWindowFrom: now },
   });
   const entry = await prisma.waitlistEntry.findUnique({
     where: { id },

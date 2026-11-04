@@ -38,12 +38,15 @@ import {
   firstNameOf,
   mailForOutcome,
   sendWaitlistJoinMail,
+  WAITLIST_CONFIRM_MAX_LINKS,
   WAITLIST_MAIL_INTERVAL_MS,
 } from '@/lib/waitlist/mail';
 import { verifyLeaveToken } from '@/lib/waitlist/tokens';
 
 const NOW = new Date('2026-11-04T12:00:00Z');
 const ADDRESS = 'ada@example.com';
+/** When the entry's retention window started: its join, a day ago. */
+const JOINED = new Date('2026-11-03T12:00:00Z');
 
 type Sent = { to: string; subject: string; react: ReactElement };
 function sent(): Sent {
@@ -58,6 +61,9 @@ function entryRow(overrides: Record<string, unknown> = {}) {
     name: 'Ada Lovelace',
     lastEmailedAt: null,
     removedAt: null,
+    flaggedReason: null,
+    confirmWindowFrom: JOINED,
+    confirmLinksSent: 0,
     ...overrides,
   };
 }
@@ -129,17 +135,54 @@ describe('sendWaitlistJoinMail', () => {
     expect(html).not.toContain('Lovelace');
   });
 
-  it('claims the hour with a write conditional on the value it read', async () => {
+  it('claims the hour, starts the retention window again and counts the link, conditional on the values it read', async () => {
     const twoHoursAgo = new Date(NOW.getTime() - 2 * WAITLIST_MAIL_INTERVAL_MS);
-    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ lastEmailedAt: twoHoursAgo }));
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+      entryRow({ lastEmailedAt: twoHoursAgo, confirmLinksSent: 1 })
+    );
 
     await sendWaitlistJoinMail('entry-1', 'replaced', NOW);
 
-    // Of two concurrent joins that read the same value, only one write matches
+    // Of two concurrent joins that read the same values, only one write matches
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
-      where: { id: 'entry-1', removedAt: null, lastEmailedAt: twoHoursAgo },
+      where: {
+        id: 'entry-1',
+        removedAt: null,
+        flaggedReason: null,
+        lastEmailedAt: twoHoursAgo,
+        confirmLinksSent: 1,
+      },
+      // The new link is good for a week, so the entry must outlive it
+      data: { lastEmailedAt: NOW, confirmWindowFrom: NOW, confirmLinksSent: { increment: 1 } },
+    });
+  });
+
+  it('claims only the hour for the note: a confirmed entry has no window to move', async () => {
+    await sendWaitlistJoinMail('entry-1', 'unchanged', NOW);
+
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
+      where: { id: 'entry-1', removedAt: null, flaggedReason: null, lastEmailedAt: null },
       data: { lastEmailedAt: NOW },
     });
+  });
+
+  it('sends no more links once the entry has had its last, so resubmitting cannot keep it', async () => {
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+      entryRow({ confirmLinksSent: WAITLIST_CONFIRM_MAX_LINKS })
+    );
+
+    expect(await sendWaitlistJoinMail('entry-1', 'replaced', NOW)).toBe('capped');
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing to an entry screen() flagged', async () => {
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ flaggedReason: 'flagged' }));
+
+    expect(await sendWaitlistJoinMail('entry-1', 'created', NOW)).toBe('held');
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
   it('sends nothing and issues no token when an email went out in the last hour', async () => {
@@ -174,7 +217,7 @@ describe('sendWaitlistJoinMail', () => {
   it('sends nothing to a removed entry', async () => {
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ removedAt: NOW }));
 
-    expect(await sendWaitlistJoinMail('entry-1', 'replaced', NOW)).toBe('capped');
+    expect(await sendWaitlistJoinMail('entry-1', 'replaced', NOW)).toBe('none');
     expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
@@ -192,7 +235,12 @@ describe('sendWaitlistJoinMail', () => {
     expect(result).toBe('not-sent');
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
       where: { id: 'entry-1', lastEmailedAt: NOW },
-      data: { lastEmailedAt: twoHoursAgo },
+      // The window and the link count as they were: no link reached anyone
+      data: {
+        lastEmailedAt: twoHoursAgo,
+        confirmWindowFrom: JOINED,
+        confirmLinksSent: { decrement: 1 },
+      },
     });
     // …and only the new, undelivered token goes: the earlier link still works
     expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
@@ -204,7 +252,7 @@ describe('sendWaitlistJoinMail', () => {
     expect(await sendWaitlistJoinMail('entry-1', 'created', NOW)).toBe('not-sent');
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
       where: { id: 'entry-1', lastEmailedAt: NOW },
-      data: { lastEmailedAt: null },
+      data: { lastEmailedAt: null, confirmWindowFrom: JOINED, confirmLinksSent: { decrement: 1 } },
     });
     expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
   });
@@ -213,7 +261,10 @@ describe('sendWaitlistJoinMail', () => {
     mockSendEmail.mockResolvedValue({ success: false, status: 'failed', error: 'bounced' });
 
     expect(await sendWaitlistJoinMail('entry-1', 'unchanged', NOW)).toBe('not-sent');
-    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'entry-1', lastEmailedAt: NOW },
+      data: { lastEmailedAt: null },
+    });
     expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 

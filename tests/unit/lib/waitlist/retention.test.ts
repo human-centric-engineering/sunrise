@@ -114,7 +114,7 @@ beforeEach(() => {
 const IDLE = { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
 
 describe('pruneWaitlistEntries', () => {
-  it('deletes unconfirmed entries 30 days after they joined or were last sent a link, never a linked or removed one', async () => {
+  it('deletes unconfirmed entries 30 days after their window started, never a linked or removed one', async () => {
     db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
 
     const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
@@ -126,9 +126,9 @@ describe('pruneWaitlistEntries', () => {
       userId: null,
       // Removed: kept for the removed window, so a re-join stays removed.
       removedAt: null,
-      createdAt: { lt: cutoff },
-      // A re-join on day 29 sent a link good for 7 more days: kept.
-      OR: [{ lastEmailedAt: null }, { lastEmailedAt: { lt: cutoff } }],
+      // Not the join date: a link sent, an admin restore and (for a row from
+      // before t-977) the migration all start the window again.
+      confirmWindowFrom: { lt: cutoff },
     };
     expect(wheres()[0]).toEqual(unconfirmedWhere);
     expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledWith({
@@ -144,6 +144,18 @@ describe('pruneWaitlistEntries', () => {
 
     expect(tokenDeletes()).toEqual([['waitlist-confirm:u1', 'waitlist-confirm:u2']]);
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+  });
+
+  it('reads no survivors when the whole batch was deleted', async () => {
+    db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
+
+    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
+
+    const survivorChecks = mockPrisma.waitlistEntry.findMany.mock.calls.filter((c) =>
+      isSurvivorCheck((c[0] as { where: Where }).where)
+    );
+    expect(survivorChecks).toHaveLength(0);
+    expect(tokenDeletes()).toEqual([['waitlist-confirm:u1', 'waitlist-confirm:u2']]);
   });
 
   it('keeps the token of an entry the delete’s re-check kept (confirmed since the read)', async () => {
@@ -213,7 +225,7 @@ describe('pruneWaitlistEntries', () => {
     expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledTimes(2);
   });
 
-  it('stops when the run’s time budget is spent, leaving the rest for the next run', async () => {
+  it('shares the run’s time budget, so one window’s backlog cannot starve the next', async () => {
     let clock = 1_000_000;
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     db.fallback = full();
@@ -224,8 +236,13 @@ describe('pruneWaitlistEntries', () => {
 
     const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
-    // The budget is shared: the unconfirmed prune spends it, the others get none.
-    expect(result).toEqual({ ...IDLE, unconfirmedDeleted: 3 * WAITLIST_RETENTION_BATCH });
+    // A third each: the unconfirmed backlog gets one batch, and the removed
+    // prune still gets its own rather than none.
+    expect(result).toEqual({
+      ...IDLE,
+      unconfirmedDeleted: WAITLIST_RETENTION_BATCH,
+      removedDeleted: WAITLIST_RETENTION_BATCH,
+    });
     now.mockRestore();
   });
 
@@ -242,7 +259,9 @@ describe('pruneWaitlistEntries', () => {
   it('uses the windows the config sets', async () => {
     await pruneWaitlistEntries({ unconfirmedDays: 7, removedDays: 30, closedListMonths: 6 }, NOW);
 
-    expect(wheres()[0]).toMatchObject({ createdAt: { lt: new Date('2026-10-28T12:00:00Z') } });
+    expect(wheres()[0]).toMatchObject({
+      confirmWindowFrom: { lt: new Date('2026-10-28T12:00:00Z') },
+    });
     expect(wheres()[1]).toMatchObject({ removedAt: { lt: new Date('2026-10-05T12:00:00Z') } });
     expect(mockPrisma.waitlistListState.findMany).toHaveBeenCalledWith({
       where: { open: false, changedAt: { lt: new Date('2026-05-04T12:00:00Z') } },
@@ -300,7 +319,9 @@ describe('runWaitlistRetention', () => {
     const result = await runWaitlistRetention(NOW);
 
     expect(result.unconfirmedDeleted).toBe(1);
-    expect(wheres()[0]).toMatchObject({ createdAt: { lt: new Date('2026-10-05T12:00:00Z') } });
+    expect(wheres()[0]).toMatchObject({
+      confirmWindowFrom: { lt: new Date('2026-10-05T12:00:00Z') },
+    });
     expect(wheres()[1]).toMatchObject({ removedAt: { lt: new Date('2026-08-06T12:00:00Z') } });
   });
 

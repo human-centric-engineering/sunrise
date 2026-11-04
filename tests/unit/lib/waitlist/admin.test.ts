@@ -258,7 +258,7 @@ describe('setWaitlistEntryRemoved', () => {
     });
   });
 
-  it('restores only a removed entry, and leaves its re-join count alone', async () => {
+  it('restores only a removed entry, restarts its retention window, and leaves its re-join count alone', async () => {
     mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue({ id: 'e1', removedAt: null });
 
@@ -266,7 +266,9 @@ describe('setWaitlistEntryRemoved', () => {
 
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
       where: { id: 'e1', removedAt: { not: null } },
-      data: { removedAt: null },
+      // An unconfirmed entry that joined long ago would otherwise be pruned
+      // on the next run, undoing the admin's restore.
+      data: { removedAt: null, confirmWindowFrom: NOW },
     });
   });
 

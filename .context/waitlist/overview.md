@@ -146,14 +146,23 @@ unconfirmed, and the join sends a link that proves the address is the
 person's own.
 
 - **The join sends one email, after the response** (`after()`, through
-  `keepRunningAfterResponse`), so the answer and its timing are the same for a
-  member and a stranger. A new or still-unconfirmed entry gets the
-  confirmation link; a confirmed address submitted again gets the "already on
-  the list" note, with no link. A removed address, a honeypot hit and a closed
-  list get nothing.
+  `keepRunningAfterResponse`, handed a function so that nothing of the mail,
+  not even the read deciding whether to send, starts before the response has
+  gone). The answer and its timing are the same for a member and a stranger.
+  A new or still-unconfirmed entry gets the confirmation link; a confirmed
+  address submitted again gets the "already on the list" note, with no link. A
+  removed address, an entry `screen()` flagged, a honeypot hit and a closed
+  list get nothing: an entry held back as suspected abuse does not get to use
+  your sender either.
 - **At most one email an hour per entry**, both kinds together, claimed with
   a conditional write on `lastEmailedAt`. The form cannot be used to flood an
   inbox from your sender.
+- **At most three confirmation links per entry, ever**
+  (`WAITLIST_CONFIRM_MAX_LINKS`, counted in `confirmLinksSent`). Each link
+  restarts the entry's retention window, so without a cap a stranger
+  resubmitting an address nobody confirms could mail it every hour and keep
+  it on the list for good. Past the cap the entry gets nothing more and is
+  deleted when its window runs out; its owner can join afresh after that.
 - **A name is put in an email only if it looks like a first name**
   (`firstNameOf()`, `lib/waitlist/mail.ts`): a letter, then letters,
   apostrophes or hyphens, up to 40. Anything else gets "Hello,". A URL typed as
@@ -177,8 +186,9 @@ person's own.
   suspended answers `503`, because it is still there.
 - **Closing a list stops joins only.** Confirming and leaving still work.
 - **Unconfirmed entries are deleted after `retention.unconfirmedDays`**
-  (default 30) by the `waitlistRetention` maintenance job, once per org. An
-  entry linked to an account is left for the account's erasure.
+  (default 30) by the `waitlistRetention` maintenance job, once per org,
+  counted from `confirmWindowFrom` (see [Retention](#retention)). An entry
+  linked to an account is left for the account's erasure.
 
 The two emails are registry kinds, `waitlistConfirm` and
 `waitlistAlreadyOnList` (`lib/email/registry.ts`). Override them in
@@ -244,12 +254,12 @@ Every state has a limit, each a config setting (`retention`, defaults in
 `DEFAULT_WAITLIST_RETENTION`), enforced by the per-org maintenance job
 `waitlistRetention` (hourly, `lib/waitlist/retention.ts`):
 
-| State                         | Deleted                                                      | Setting            |
-| ----------------------------- | ------------------------------------------------------------ | ------------------ |
-| Removed                       | 90 days after removal                                        | `removedDays`      |
-| Confirmed, on a closed list   | 12 months after the list closed                              | `closedListMonths` |
-| Unconfirmed, not removed      | 30 days after it joined or was last sent a link (at least 7) | `unconfirmedDays`  |
-| Joined (linked to an account) | with the account, never by this job                          | —                  |
+| State                         | Deleted                                       | Setting            |
+| ----------------------------- | --------------------------------------------- | ------------------ |
+| Removed                       | 90 days after removal                         | `removedDays`      |
+| Confirmed, on a closed list   | 12 months after the list closed               | `closedListMonths` |
+| Unconfirmed, not removed      | 30 days after its window started (at least 7) | `unconfirmedDays`  |
+| Joined (linked to an account) | with the account, never by this job           | —                  |
 
 A list "closed" is its `WaitlistListState` row with `open: false`; its
 `changedAt` dates the window, and closing a closed list again does not move
@@ -259,12 +269,18 @@ page) has no close date: its card says so and offers **Mark closed**, which
 records today, and the window runs from then. A joined entry is never pruned,
 even once removed. Each prune deletes in batches of 1,000, up to 20 a run and
 within 15 seconds an org, so a backlog of up to 20,000 goes in the run that
-finds it and a bigger one over the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
-safe because a new entry for the address must be confirmed by its owner.
-An unconfirmed entry's window runs from its latest confirmation email as well
-as its join, and is never shorter than the link's seven days, so retention
-never deletes an entry while a link to confirm it still works. A removed
-unconfirmed entry waits out the removed window instead. Every deleted entry's
+finds it and a bigger one over the following hourly runs. The 15 seconds are
+shared fairly: each prune gets an equal part of what is left when it starts,
+so a backlog in one window cannot hold up the others. Deleting a removed
+entry ends its "stays removed" protection, which is safe because a new entry
+for the address must be confirmed by its owner.
+An unconfirmed entry's window starts at `confirmWindowFrom`: its join, its
+latest confirmation link, or an admin's Restore, whichever came last. It is
+never shorter than the link's seven days, so retention never deletes an entry
+while a link to confirm it still works, and a restored entry is not deleted on
+the next run. An entry from before confirmation existed starts its window at
+the migration that added the column, not at its join: it was never sent a
+link. A removed unconfirmed entry waits out the removed window instead. Every deleted entry's
 confirmation tokens go with it, in the same transaction.
 These deletions are retention, not erasure requests, and write no receipt.
 **The windows hold with no config.** A fork that drops its waitlist config

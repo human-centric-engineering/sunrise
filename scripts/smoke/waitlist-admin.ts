@@ -139,7 +139,10 @@ async function main(): Promise<void> {
           removedAt: fields.removedAt ?? null,
           joinedAt: fields.joinedAt ?? null,
           invitedAt: fields.invitedAt ?? null,
-          ...(fields.createdAt ? { createdAt: fields.createdAt } : {}),
+          // An old join is an old window too: no link has been sent since.
+          ...(fields.createdAt
+            ? { createdAt: fields.createdAt, confirmWindowFrom: fields.createdAt }
+            : {}),
         },
       });
       entryIds.push(row.id);

@@ -127,13 +127,20 @@ model WaitlistEntry {
   consentVersion String
 
   /// Set by the config's `screen()`: kept, but held back from bulk invites and counts.
-  flaggedReason String?
+  flaggedReason     String?
   /// Set when the joiner confirms through the emailed link (t-977).
-  confirmedAt   DateTime?
+  confirmedAt       DateTime?
   /// When this entry was last sent a waitlist email (the confirmation link, or
   /// the already-on-the-list note). Caps both at one an hour per entry, so the
   /// form cannot flood a stranger's inbox from our sender.
-  lastEmailedAt DateTime?
+  lastEmailedAt     DateTime?
+  /// Where an unconfirmed entry's retention window starts: its join, the latest
+  /// confirmation link sent, or an admin restore. Existing rows took the
+  /// migration's time, since none had been sent a link (t-977).
+  confirmWindowFrom DateTime  @default(now())
+  /// Confirmation links sent to this entry. Capped, so a stranger resubmitting
+  /// an address nobody confirms cannot mail it, or keep it, indefinitely.
+  confirmLinksSent  Int       @default(0)
 
   removedAt         DateTime?
   rejoinRequestedAt DateTime?
