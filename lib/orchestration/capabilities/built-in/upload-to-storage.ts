@@ -324,7 +324,8 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
           (signedByDefault
             ? '. Uploads are private by default when the deployment runs several organisations; ' +
               'set public: true on the binding to publish the file instead.'
-            : ''),
+            : '.') +
+          signedUrlsDeploymentRemedy(storage.name),
         'signed_url_not_supported'
       );
     }
@@ -533,7 +534,7 @@ function privateObjectsRemedy(providerName: string): string {
     case 's3':
       return 'Set S3_OBJECTS_PRIVATE_BY_DEFAULT=true if the bucket blocks public access, or S3_USE_ACL=true on a legacy ACL bucket.';
     case 'vercel-blob':
-      return 'Vercel Blob has no private storage — switch STORAGE_PROVIDER to s3, or drop signedUrlTtlSeconds and public:false from the binding.';
+      return 'Set BLOB_PRIVATE_READ_WRITE_TOKEN to give Vercel Blob a private store, or drop signedUrlTtlSeconds and public:false from the binding.';
     default:
       return 'Remove signedUrlTtlSeconds and public:false from the binding, or configure a provider that supports private objects.';
   }
@@ -545,6 +546,16 @@ function privateObjectsRemedy(providerName: string): string {
  */
 function privateObjectsDeploymentRemedy(providerName: string): string {
   return providerName === 's3' ? `${privateObjectsRemedy('s3')} ` : '';
+}
+
+/**
+ * The deployment-side fix for a provider that cannot sign URLs. Vercel Blob
+ * signs them once it has a private store; the others have no setting for it.
+ */
+function signedUrlsDeploymentRemedy(providerName: string): string {
+  return providerName === 'vercel-blob'
+    ? ' Set BLOB_PRIVATE_READ_WRITE_TOKEN to give Vercel Blob a private store, which signs URLs.'
+    : '';
 }
 
 /**
