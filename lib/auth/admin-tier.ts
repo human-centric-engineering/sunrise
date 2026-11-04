@@ -144,6 +144,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   '/admin/orchestration/executions/live',
   '/admin/members',
   '/admin/support-access',
+  '/admin/waitlist',
 ]);
 
 /**
@@ -164,6 +165,7 @@ export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'overview',
   'support-access',
   'users',
+  'waitlist',
 ]);
 
 /** One literal segment of a page's path: what a directory under `app/` that is a URL segment may be called. */
@@ -561,6 +563,12 @@ export const ORG_TIER_ADMIN_ROUTES: readonly string[] = Object.freeze([
   'app/api/v1/admin/orchestration/workflows/route.ts#GET',
   'app/api/v1/admin/orchestration/workflows/route.ts#POST',
   'app/api/v1/admin/orchestration/workflows/templates/route.ts#GET',
+  'app/api/v1/admin/waitlist/[id]/route.ts#DELETE',
+  'app/api/v1/admin/waitlist/[id]/route.ts#PATCH',
+  'app/api/v1/admin/waitlist/counts/route.ts#GET',
+  'app/api/v1/admin/waitlist/export/route.ts#GET',
+  'app/api/v1/admin/waitlist/lists/[key]/route.ts#PATCH',
+  'app/api/v1/admin/waitlist/route.ts#GET',
 ]);
 
 /**
