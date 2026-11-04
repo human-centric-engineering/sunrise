@@ -202,7 +202,14 @@ export function resolveWaitlistConfig(
     fields: config.fields ?? [],
     lists: config.lists ?? [{ key: DEFAULT_WAITLIST_LIST }],
     screen: config.screen ?? null,
-    retention: { ...DEFAULT_WAITLIST_RETENTION, ...parsed.data.retention },
+    // `??` per window, not a spread: a key the fork sets to `undefined`
+    // (`removedDays: env.X ? Number(env.X) : undefined`) keeps the default
+    // rather than making every cut-off an Invalid Date.
+    retention: {
+      removedDays: parsed.data.retention?.removedDays ?? DEFAULT_WAITLIST_RETENTION.removedDays,
+      closedListMonths:
+        parsed.data.retention?.closedListMonths ?? DEFAULT_WAITLIST_RETENTION.closedListMonths,
+    },
   };
 }
 

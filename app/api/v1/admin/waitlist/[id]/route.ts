@@ -44,8 +44,12 @@ export const PATCH = withAdminAuth<Params>(
     const { removed } = await validateRequestBody(request, waitlistEntryPatchSchema);
     const log = await getRouteLogger(request);
 
-    const entry = await setWaitlistEntryRemoved(id, removed);
-    if (!entry) throw new NotFoundError('Waitlist entry not found');
+    const result = await setWaitlistEntryRemoved(id, removed);
+    if (!result) throw new NotFoundError('Waitlist entry not found');
+    const { entry, changed } = result;
+    // Already in that state (a double click, a second admin): the answer is
+    // the same, and nothing is recorded that did not happen.
+    if (!changed) return successResponse(entry);
 
     logAdminAction({
       userId: session.user.id,

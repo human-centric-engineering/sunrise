@@ -198,7 +198,11 @@ Every state has a limit, each a config setting (`retention`, defaults in
 
 A list "closed" is its `WaitlistListState` row with `open: false`; its
 `changedAt` dates the window, and closing a closed list again does not move
-it. Deleting a removed entry ends its "stays removed" protection, which is
+it. Invites go on after a close, so an entry invited since the cut-off is
+kept. A list closed only by the config (`startsClosed`, never touched on the
+page) has no close date, so its entries are not pruned until an admin closes
+it there. A joined entry is never pruned, even once removed. Each prune
+deletes at most 1,000 rows a run, so a backlog drains over hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
 safe because a new entry for the address must be confirmed by its owner.
 These deletions are retention, not erasure requests, and write no receipt.
 Rows on a list the config no longer declares are not shown on the admin page.

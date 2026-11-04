@@ -212,20 +212,25 @@ async function groupCount(where: Prisma.WaitlistEntryWhereInput): Promise<Map<st
  * keeps the row (`removedAt`, never a delete) and keeps an earlier removal's
  * time; a re-join while removed stays removed (`joinWaitlist()`). Restoring
  * clears `removedAt` and keeps the re-join count as history. Null when no
- * entry has that id in this org.
+ * entry has that id in this org; `changed` is false when it was already in
+ * that state, so the caller records only a change that happened.
  */
 export async function setWaitlistEntryRemoved(
   id: string,
   removed: boolean,
   now: Date = new Date()
-): Promise<AdminWaitlistEntry | null> {
+): Promise<{ entry: AdminWaitlistEntry; changed: boolean } | null> {
   // Zero rows updated means already in that state, or no such entry; the
   // read after tells which.
-  await prisma.waitlistEntry.updateMany({
+  const { count } = await prisma.waitlistEntry.updateMany({
     where: removed ? { id, removedAt: null } : { id, removedAt: { not: null } },
     data: { removedAt: removed ? now : null },
   });
-  return prisma.waitlistEntry.findUnique({ where: { id }, select: WAITLIST_ENTRY_SELECT });
+  const entry = await prisma.waitlistEntry.findUnique({
+    where: { id },
+    select: WAITLIST_ENTRY_SELECT,
+  });
+  return entry ? { entry, changed: count > 0 } : null;
 }
 
 /**

@@ -34,18 +34,18 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const FIELDS = [
+const FIELDS: WaitlistFieldShape[] = [
   {
     key: 'role',
     label: 'Role',
-    type: 'select',
+    kind: 'select',
     options: [
       { value: 'dev', label: 'Developer' },
       { value: 'ops', label: 'Operations' },
     ],
   },
-  { key: 'company', label: 'Company', type: 'text' },
-] as unknown as WaitlistFieldShape[];
+  { key: 'company', label: 'Company', kind: 'text' },
+];
 
 function entry(overrides: Partial<WaitlistEntryRow> = {}): WaitlistEntryRow {
   return {
@@ -696,6 +696,28 @@ describe('WaitlistEntriesTable — Export', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('exports the search as typed, even before the table has caught up with it', async () => {
+    mockFetch.mockImplementation((input) =>
+      asString(input).startsWith(API.ADMIN.WAITLIST_EXPORT)
+        ? Promise.resolve(new Response('email\n', { status: 200 }))
+        : Promise.resolve(listResponse([]))
+    );
+    renderTable();
+
+    // Typed, then Export at once: the 300 ms debounce has not fired, so the
+    // table still shows every row. The export must not.
+    fireEvent.change(screen.getByPlaceholderText('Address, name or answer'), {
+      target: { value: ' acme.com ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Export CSV/ }));
+
+    await waitFor(() => expect(clicks).toHaveLength(1));
+    const exportCall = mockFetch.mock.calls.findIndex((c) =>
+      asString(c[0]).startsWith(API.ADMIN.WAITLIST_EXPORT)
+    );
+    expect(urlOf(exportCall).searchParams.get('q')).toBe('acme.com');
+  });
+
   it('falls back to waitlist.csv when the response names no file', async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValue(new Response('email', { status: 200 }));
@@ -738,5 +760,63 @@ describe('WaitlistEntriesTable — Export', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('The export failed. Please try again.')
     );
     expect(clicks).toHaveLength(0);
+  });
+});
+
+describe('WaitlistEntriesTable — after a change (code review round 1)', () => {
+  function pageResponse(entries: WaitlistEntryRow[], pageNo: number, total: number): Response {
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: entries,
+        meta: { page: pageNo, limit: 25, total, totalPages: Math.max(1, Math.ceil(total / 25)) },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  it('steps back to the new last page when a change emptied the one it was on', async () => {
+    const { apiClient } = await getApi();
+    vi.mocked(apiClient.patch).mockResolvedValue({});
+    const first = Array.from({ length: 25 }, (_, i) =>
+      entry({ id: `p1-${i}`, email: `p1-${i}@example.com` })
+    );
+    const last = entry({ id: 'only', email: 'last@example.com' });
+    // 26 people: page 2 holds one. After removing it there are 25, one page.
+    mockFetch.mockImplementation((input) => {
+      const url = new URL(asString(input), 'http://localhost');
+      const pageNo = Number(url.searchParams.get('page'));
+      const removed = vi.mocked(apiClient.patch).mock.calls.length > 0;
+      if (pageNo === 2)
+        return Promise.resolve(pageResponse(removed ? [] : [last], 2, removed ? 25 : 26));
+      return Promise.resolve(pageResponse(first, 1, removed ? 25 : 26));
+    });
+    const user = userEvent.setup();
+    renderTable({ initial: page(first, 26) });
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await screen.findByText('last@example.com');
+    await user.click(within(rowOf('last@example.com')).getByRole('button', { name: 'Remove' }));
+
+    // Not "No one matches." on a page 2 of 1: back to page 1 and its rows.
+    expect(await screen.findByText('p1-0@example.com')).toBeInTheDocument();
+    expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
+    expect(lastUrl().searchParams.get('page')).toBe('1');
+  });
+
+  it('tells the page a remove happened, so the counts can follow, and not when it failed', async () => {
+    const { apiClient } = await getApi();
+    const onChanged = vi.fn();
+    vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('offline'));
+    vi.mocked(apiClient.patch).mockResolvedValueOnce({});
+    const user = userEvent.setup();
+    renderTable({ onChanged });
+
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    await screen.findByText(/Could not update the entry/);
+    expect(onChanged).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
   });
 });

@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockConfig.current = CONFIG;
   vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-  mockSetRemoved.mockResolvedValue(ENTRY);
+  mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: true });
   mockErase.mockResolvedValue({
     receiptId: 'r-1',
     erasedAt: new Date('2026-11-04T10:00:00Z'),
@@ -87,6 +87,17 @@ describe('PATCH /api/v1/admin/waitlist/:id', () => {
         entityName: 'default',
       })
     );
+  });
+
+  it('answers the entry but records nothing when it was already in that state', async () => {
+    // A double click, or a second admin on a stale page.
+    mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: false });
+
+    const response = await PATCH(patch({ removed: true }), ctx());
+
+    expect(response.status).toBe(200);
+    expect(mockAudit).not.toHaveBeenCalled();
+    expect(mockLog.info).not.toHaveBeenCalled();
   });
 
   it('answers 404 for an entry this org does not have', async () => {

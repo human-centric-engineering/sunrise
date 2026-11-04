@@ -151,11 +151,19 @@ export const waitlistAdminFilterSchema = z.object({
   flaggedOnly: queryBooleanSchema.optional(),
 });
 
+/**
+ * The admin list's page size and default order: the route's defaults, the
+ * page's server-rendered first page and the table's requests all read these,
+ * so the first page and the next one cannot disagree about what a page is.
+ */
+export const WAITLIST_ADMIN_PAGE_SIZE = 25;
+export const WAITLIST_ADMIN_DEFAULT_SORT = { sortBy: 'createdAt', sortOrder: 'desc' } as const;
+
 export const waitlistAdminListQuerySchema = waitlistAdminFilterSchema.extend({
   page: paginationQuerySchema.shape.page,
-  limit: z.coerce.number().int().positive().max(100).default(25),
-  sortBy: z.enum(['createdAt', 'email', 'confirmedAt']).default('createdAt'),
-  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  limit: z.coerce.number().int().positive().max(100).default(WAITLIST_ADMIN_PAGE_SIZE),
+  sortBy: z.enum(['createdAt', 'email', 'confirmedAt']).default(WAITLIST_ADMIN_DEFAULT_SORT.sortBy),
+  sortOrder: z.enum(['asc', 'desc']).default(WAITLIST_ADMIN_DEFAULT_SORT.sortOrder),
 });
 
 /** `PATCH /api/v1/admin/waitlist/:id` — the state to reach. */

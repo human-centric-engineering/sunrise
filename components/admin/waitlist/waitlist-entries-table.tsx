@@ -61,7 +61,11 @@ import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { logger } from '@/lib/logging';
 import { isRecord } from '@/lib/utils';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import type { WaitlistFieldShape } from '@/lib/validations/waitlist';
+import {
+  WAITLIST_ADMIN_DEFAULT_SORT,
+  WAITLIST_ADMIN_PAGE_SIZE,
+  type WaitlistFieldShape,
+} from '@/lib/validations/waitlist';
 
 /** One entry as the list endpoint returns it (dates as strings). */
 export interface WaitlistEntryRow {
@@ -96,10 +100,12 @@ export interface WaitlistEntriesTableProps {
   initial: WaitlistPage | null;
   /** The most rows one export carries (`WAITLIST_EXPORT_MAX_ROWS`). */
   exportMaxRows: number;
+  /** Called after a remove, restore or erase succeeded, so the counts can follow. */
+  onChanged?: () => void;
 }
 
 const ALL = '__all__';
-const LIMIT = 25;
+const LIMIT = WAITLIST_ADMIN_PAGE_SIZE;
 const LOAD_FAILED = 'The waitlist could not be loaded. Please try again.';
 
 interface Filters {
@@ -163,11 +169,12 @@ export function WaitlistEntriesTable({
   fields,
   initial,
   exportMaxRows,
+  onChanged,
 }: WaitlistEntriesTableProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [searchText, setSearchText] = useState('');
-  const [sortBy, setSortBy] = useState<SortField>('createdAt');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<SortField>(WAITLIST_ADMIN_DEFAULT_SORT.sortBy);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(WAITLIST_ADMIN_DEFAULT_SORT.sortOrder);
   const [page, setPage] = useState(1);
   const [entries, setEntries] = useState<WaitlistEntryRow[]>(initial?.entries ?? []);
   const [total, setTotal] = useState(initial?.total ?? 0);
@@ -231,6 +238,14 @@ export function WaitlistEntriesTable({
         fail(LOAD_FAILED);
         return;
       }
+      // An action that emptied the last page (a remove or erase of its one
+      // row) leaves the page past the end: step back to the new last page,
+      // which loads in turn.
+      const lastPage = Math.max(1, Math.ceil(meta.total / LIMIT));
+      if (page > lastPage) {
+        setPage(lastPage);
+        return;
+      }
       setEntries(body.data);
       setTotal(meta.total);
     } catch (err) {
@@ -276,6 +291,7 @@ export function WaitlistEntriesTable({
 
   const setRemoved = async (entry: WaitlistEntryRow, removed: boolean): Promise<boolean> => {
     await apiClient.patch(API.ADMIN.waitlistEntry(entry.id), { body: { removed } });
+    onChanged?.();
     await load();
     return true;
   };
@@ -313,6 +329,7 @@ export function WaitlistEntriesTable({
     try {
       await apiClient.delete(API.ADMIN.waitlistEntry(eraseTarget.id));
       setEraseTarget(null);
+      onChanged?.();
       await load();
     } catch (err) {
       eraseSave.report(err);
@@ -338,7 +355,11 @@ export function WaitlistEntriesTable({
     setExporting(true);
     setExportError(null);
     try {
-      const res = await fetch(`${API.ADMIN.WAITLIST_EXPORT}?${filterParams(filters)}`);
+      // The search box as it reads now, not the debounced copy: an Export
+      // clicked straight after typing must not export the wider set.
+      const res = await fetch(
+        `${API.ADMIN.WAITLIST_EXPORT}?${filterParams({ ...filters, q: searchText })}`
+      );
       if (!res.ok) {
         setExportError(
           res.status === 429

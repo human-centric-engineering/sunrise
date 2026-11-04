@@ -102,6 +102,7 @@ describe('WaitlistAdminPage', () => {
       fields: FIELDS,
       initial: { entries: ENTRIES, total: 51 },
       exportMaxRows: WAITLIST_EXPORT_MAX_ROWS,
+      onChanged: expect.any(Function),
     });
   });
 

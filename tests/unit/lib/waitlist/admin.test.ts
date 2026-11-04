@@ -217,18 +217,30 @@ function isNot(value: unknown): boolean {
 
 describe('setWaitlistEntryRemoved', () => {
   it('removes only an entry not already removed, so an earlier removal keeps its time', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue({ id: 'e1', removedAt: NOW });
 
-    const entry = await setWaitlistEntryRemoved('e1', true, NOW);
+    const result = await setWaitlistEntryRemoved('e1', true, NOW);
 
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
       where: { id: 'e1', removedAt: null },
       data: { removedAt: NOW },
     });
-    expect(entry).toEqual({ id: 'e1', removedAt: NOW });
+    expect(result).toEqual({ entry: { id: 'e1', removedAt: NOW }, changed: true });
+  });
+
+  it('says nothing changed when the entry was already in that state', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue({ id: 'e1', removedAt: NOW });
+
+    await expect(setWaitlistEntryRemoved('e1', true, NOW)).resolves.toEqual({
+      entry: { id: 'e1', removedAt: NOW },
+      changed: false,
+    });
   });
 
   it('restores only a removed entry, and leaves its re-join count alone', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue({ id: 'e1', removedAt: null });
 
     await setWaitlistEntryRemoved('e1', false, NOW);
@@ -240,6 +252,7 @@ describe('setWaitlistEntryRemoved', () => {
   });
 
   it('answers null for an id this org has no entry for', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue(null);
 
     await expect(setWaitlistEntryRemoved('nope', true, NOW)).resolves.toBeNull();

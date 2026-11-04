@@ -37,6 +37,15 @@ describe('resolveWaitlistConfig', () => {
     });
   });
 
+  it('keeps the default for a window the fork sets to undefined', () => {
+    // `removedDays: env.X ? Number(env.X) : undefined` — a spread would let
+    // the undefined win and make every cut-off an Invalid Date.
+    expect(
+      resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: undefined } })
+        ?.retention
+    ).toEqual({ removedDays: 90, closedListMonths: 12 });
+  });
+
   it('takes a retention window the fork sets and keeps the default for the other', () => {
     expect(
       resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: 30 } })?.retention

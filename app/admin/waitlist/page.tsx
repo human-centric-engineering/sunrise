@@ -1,18 +1,18 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import {
-  WaitlistEntriesTable,
-  type WaitlistEntryRow,
-} from '@/components/admin/waitlist/waitlist-entries-table';
-import {
-  WaitlistListsPanel,
-  type WaitlistListCountsView,
-} from '@/components/admin/waitlist/waitlist-lists-panel';
+import { WaitlistAdmin } from '@/components/admin/waitlist/waitlist-admin';
+import type { WaitlistEntryRow } from '@/components/admin/waitlist/waitlist-entries-table';
+import type { WaitlistListCountsView } from '@/components/admin/waitlist/waitlist-lists-panel';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { WAITLIST_EXPORT_MAX_ROWS, type WaitlistFieldShape } from '@/lib/validations/waitlist';
+import {
+  WAITLIST_ADMIN_DEFAULT_SORT,
+  WAITLIST_ADMIN_PAGE_SIZE,
+  WAITLIST_EXPORT_MAX_ROWS,
+  type WaitlistFieldShape,
+} from '@/lib/validations/waitlist';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
 
 export const metadata: Metadata = {
@@ -38,7 +38,11 @@ export default async function WaitlistAdminPage() {
       API.ADMIN.WAITLIST_COUNTS
     ),
     loadServerData<WaitlistEntryRow[]>(
-      `${API.ADMIN.WAITLIST}?page=1&limit=25&sortBy=createdAt&sortOrder=desc`
+      `${API.ADMIN.WAITLIST}?${new URLSearchParams({
+        page: '1',
+        limit: String(WAITLIST_ADMIN_PAGE_SIZE),
+        ...WAITLIST_ADMIN_DEFAULT_SORT,
+      })}`
     ),
   ]);
 
@@ -60,16 +64,8 @@ export default async function WaitlistAdminPage() {
         </p>
       </header>
 
-      {lists ? (
-        <WaitlistListsPanel lists={lists} />
-      ) : (
-        <p role="alert" className="text-destructive text-sm">
-          The waitlist&apos;s lists could not be loaded.
-        </p>
-      )}
-
-      <WaitlistEntriesTable
-        lists={lists?.map((l) => l.key) ?? []}
+      <WaitlistAdmin
+        lists={lists}
         fields={fields}
         initial={initial}
         exportMaxRows={WAITLIST_EXPORT_MAX_ROWS}
