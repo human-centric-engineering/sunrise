@@ -548,20 +548,21 @@ lists the shared-config reads these pages need (capabilities, agent profiles,
 providers and models, tags), whose writes stay the install org's. To open a
 fork's own surface, declare it the same way.
 
-| Surface                                             | Backing models                                        |
-| --------------------------------------------------- | ----------------------------------------------------- |
-| `orchestration/agents` (+ `new`, `[id]`, `compare`) | `AiAgent`, `AiAgentVersion`, the token models         |
-| `orchestration/workflows`                           | `AiWorkflow`, `AiWorkflowVersion`                     |
-| `orchestration/triggers`                            | `AiWorkflowTrigger`, `AiWorkflowSchedule`             |
-| `orchestration/knowledge`                           | `AiKnowledgeDocument`, `AiKnowledgeBase`              |
-| `orchestration/conversations`                       | `AiConversation`                                      |
-| `orchestration/evaluations` (+ `datasets`, `runs`)  | `AiEvaluationSession`, `AiDataset`, `AiEvaluationRun` |
-| `orchestration/experiments`                         | `AiExperiment`                                        |
-| `orchestration/event-subscriptions` (+ `dlq`)       | `AiWebhookSubscription`, `AiEventHook`                |
-| `orchestration/mcp/keys`                            | `McpApiKey`                                           |
-| `orchestration/approvals`                           | Approvals on executions                               |
-| `members` (§111 t-813, shown at `multi` only)       | `OrgMembership` of the entered org, and invitations   |
-| `support-access` (§121 t-823, `multi` only)         | `OrgSupportGrant` of the entered org                  |
+| Surface                                              | Backing models                                          |
+| ---------------------------------------------------- | ------------------------------------------------------- |
+| `orchestration/agents` (+ `new`, `[id]`, `compare`)  | `AiAgent`, `AiAgentVersion`, the token models           |
+| `orchestration/workflows`                            | `AiWorkflow`, `AiWorkflowVersion`                       |
+| `orchestration/triggers`                             | `AiWorkflowTrigger`, `AiWorkflowSchedule`               |
+| `orchestration/knowledge`                            | `AiKnowledgeDocument`, `AiKnowledgeBase`                |
+| `orchestration/conversations`                        | `AiConversation`                                        |
+| `orchestration/evaluations` (+ `datasets`, `runs`)   | `AiEvaluationSession`, `AiDataset`, `AiEvaluationRun`   |
+| `orchestration/experiments`                          | `AiExperiment`                                          |
+| `orchestration/event-subscriptions` (+ `dlq`)        | `AiWebhookSubscription`, `AiEventHook`                  |
+| `orchestration/mcp/keys`                             | `McpApiKey`                                             |
+| `orchestration/approvals`                            | Approvals on executions                                 |
+| `members` (§111 t-813, shown at `multi` only)        | `OrgMembership` of the entered org, and invitations     |
+| `support-access` (§121 t-823, `multi` only)          | `OrgSupportGrant` of the entered org                    |
+| `waitlist` (§125 t-976, when the app has a waitlist) | `WaitlistEntry`, `WaitlistListState` of the entered org |
 
 ### Mixed — split per viewer, not assigned
 

@@ -34,7 +34,7 @@ import {
 } from '@/lib/waitlist/admin';
 import { requireWaitlistConfig, WAITLIST_ADMIN_OWNERSHIP } from '@/lib/waitlist/admin-route';
 
-const BOM = '﻿';
+const BOM = '\uFEFF';
 
 const BASE_COLUMNS: Array<[header: string, cell: (e: AdminWaitlistEntry) => string]> = [
   ['id', (e) => e.id],

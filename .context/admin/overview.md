@@ -89,12 +89,13 @@ The admin section includes a dedicated error boundary (`app/admin/error.tsx`) th
 
 ## Navigation Structure
 
-| Route             | Label         | Description                                                                              |
-| ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
-| `/admin/overview` | Dashboard     | User stats, health status, and the app/Sunrise version pair (see [stats.md](./stats.md)) |
-| `/admin/users`    | Users         | User and invitation management                                                           |
-| `/admin/features` | Feature Flags | Runtime feature toggles                                                                  |
-| `/admin/logs`     | Logs          | Application log viewer                                                                   |
+| Route             | Label         | Description                                                                                  |
+| ----------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| `/admin/overview` | Dashboard     | User stats, health status, and the app/Sunrise version pair (see [stats.md](./stats.md))     |
+| `/admin/users`    | Users         | User and invitation management                                                               |
+| `/admin/features` | Feature Flags | Runtime feature toggles                                                                      |
+| `/admin/logs`     | Logs          | Application log viewer                                                                       |
+| `/admin/waitlist` | Waitlist      | The org's waitlist, when the app has one (see [the waitlist guide](../waitlist/overview.md)) |
 
 ## API Endpoints
 

@@ -18,11 +18,13 @@ release process.
 
 ### Added
 
-- **Waitlist (§125, in progress — joining only)**: a new seam,
+- **Waitlist (§125, in progress — joining and the admin page)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes
   answer 404. Filled in, it declares the form's extra fields, named lists, the
-  consent text's version and a `screen()` check, and turns on
+  consent text's version, a `screen()` check and the retention windows
+  (`retention: { removedDays, closedListMonths }`, defaults 90 days and 12
+  months), and turns on
   `GET`/`POST /api/v1/waitlist`, the `<Waitlist />` and `<WaitlistForm>`
   components (`components/waitlist/`), and the Art. 15 / 17 and org-export
   wiring. Two new tenant-owned models, `WaitlistEntry` and `WaitlistListState`
@@ -33,8 +35,15 @@ release process.
   per-flow sub-cap `waitlistLimiter` (`RATE_LIMIT_WAITLIST`, 5/hour per IP) and a
   `TenantContextSource` value, `'public-form'`. A fork filling the seam fails
   its row in `tests/unit/lib/app/defaults.test.ts`, as expected: pin your
-  value. Confirmation, the admin page and invites follow; don't switch it on in
-  production until confirmation lands. Guide: `.context/waitlist/overview.md`.
+  value. **Admin (t-976):** an org-tier `/admin/waitlist` page (hidden while
+  the config is empty) over `GET /api/v1/admin/waitlist` (list),
+  `/counts`, `/export` (CSV), `PATCH`/`DELETE /api/v1/admin/waitlist/:id`
+  (remove or restore; erase) and `PATCH /api/v1/admin/waitlist/lists/:key`
+  (open or close); a per-org maintenance job, `waitlistRetention`, appended to
+  the tick's `backgroundTasks`; and `eraseWaitlistEntry()` now also deletes
+  the org's pending invitation for the address. Confirmation and invites
+  follow; don't switch it on in production until confirmation lands. Guide:
+  `.context/waitlist/overview.md`.
 
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
