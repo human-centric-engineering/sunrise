@@ -27,8 +27,10 @@ release process.
   replaces `frame-ancestors 'none'` and drops `X-Frame-Options` for that
   response; a throw is logged and frames nothing. `lib/app/frameable-paths.json`
   (ships `[]`) lists the path prefixes `next.config.js` leaves out of its static
-  `X-Frame-Options: DENY`. With both empty every response carries exactly the
-  headers it did before.
+  `X-Frame-Options: DENY`. With both empty every response the app sends carries
+  exactly the headers it did before. `nginx.conf` no longer adds its own
+  `X-Frame-Options: SAMEORIGIN`, which contradicted the app's `DENY`; a fork
+  that copied that line into its own proxy config should drop it too.
 - **Third-party scripts, services and audio in the CSP (#841)**: `lib/app/csp.ts`
   gains `appScriptSrc`, `appConnectSrc` and `appMediaSrc` beside `appFrameSrc`,
   all shipping empty. Each is held to the same exact-`https://`-origin check as
