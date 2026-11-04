@@ -54,7 +54,8 @@ release process.
   mints its token as the local provider does, so `privateObjects` and
   `signedUrls` are on whenever the private store is configured, and
   `upload_to_storage` works at `TENANCY_MODE=multi` on Vercel. `delete()` and
-  `deletePrefix()` now sweep both stores. `BLOB_READ_WRITE_TOKEN` is unchanged
+  `deletePrefix()` now sweep both stores, except that a Vercel Blob URL goes
+  only to the store its hostname names. `BLOB_READ_WRITE_TOKEN` is unchanged
   and still the public store. Either token alone makes a provider, and an
   upload whose store is missing throws: with only the private token, avatar
   uploads are refused. `VercelBlobProviderConfig.token` is now optional,
