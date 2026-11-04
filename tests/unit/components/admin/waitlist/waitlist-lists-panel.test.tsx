@@ -27,6 +27,7 @@ function view(overrides: Partial<WaitlistListCountsView> = {}): WaitlistListCoun
   return {
     key: 'default',
     open: true,
+    closedSince: null,
     confirmed: 11,
     unconfirmed: 22,
     flagged: 3,
@@ -209,5 +210,100 @@ describe('WaitlistListsPanel — close and open', () => {
     await user.click(screen.getByRole('button', { name: 'Open list' }));
     expect(await screen.findByText('Taking joins')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
+
+describe('WaitlistListsPanel — a list closed only by the config (code review round 2)', () => {
+  it('offers Mark closed only for a closed list with no recorded close, and says why', () => {
+    render(
+      <WaitlistListsPanel
+        lists={[
+          view({ key: 'config-closed', open: false, closedSince: null }),
+          view({ key: 'admin-closed', open: false, closedSince: '2026-01-01T00:00:00.000Z' }),
+          view({ key: 'open' }),
+        ]}
+      />
+    );
+
+    const card = (key: string) => within(screen.getByTestId(`waitlist-list-${key}`));
+    expect(card('config-closed').getByRole('button', { name: 'Mark closed' })).toBeInTheDocument();
+    expect(card('config-closed').getByText(/no close date recorded/)).toBeInTheDocument();
+    expect(card('admin-closed').queryByRole('button', { name: 'Mark closed' })).toBeNull();
+    expect(card('open').queryByRole('button', { name: 'Mark closed' })).toBeNull();
+  });
+
+  it('records the close with open:false, keeps the list closed, and drops the offer', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({
+      key: 'default',
+      open: false,
+      changedAt: '2026-11-04T10:00:00.000Z',
+    });
+    const user = userEvent.setup();
+    render(<WaitlistListsPanel lists={[view({ open: false, closedSince: null })]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Mark closed' }));
+
+    expect(apiClient.patch).toHaveBeenCalledWith(API.ADMIN.waitlistList('default'), {
+      body: { open: false },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Mark closed' })).not.toBeInTheDocument()
+    );
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('reports a failed Mark closed with its own message, and a failed Open with the open one', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(new Error('offline'));
+    const user = userEvent.setup();
+    render(<WaitlistListsPanel lists={[view({ open: false, closedSince: null })]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Mark closed' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not record the close. Try again.'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Open list' }));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not open the list. Try again.')
+    );
+  });
+});
+
+describe('WaitlistListsPanel — new counts from the page (code review round 2)', () => {
+  it('shows new counts without undoing a toggle that is still in flight', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    let finish: (v: unknown) => void = () => {};
+    vi.mocked(apiClient.patch).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<WaitlistListsPanel lists={[view({ confirmed: 11 })]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Close list' }));
+    // A counts re-read that read before the close committed: still open.
+    rerender(<WaitlistListsPanel lists={[view({ confirmed: 10, open: true })]} />);
+    expect(screen.getByText('10')).toBeInTheDocument();
+
+    finish({ key: 'default', open: false, changedAt: '2026-11-04T10:00:00.000Z' });
+
+    // The close the admin made stands; the stale props did not undo it.
+    expect(await screen.findByText('Closed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open list' })).toBeInTheDocument();
+  });
+
+  it('follows the page’s open state when no toggle is in flight', () => {
+    const { rerender } = render(<WaitlistListsPanel lists={[view({ open: true })]} />);
+
+    rerender(
+      <WaitlistListsPanel
+        lists={[view({ open: false, closedSince: '2026-11-04T10:00:00.000Z' })]}
+      />
+    );
+
+    expect(screen.getByText('Closed')).toBeInTheDocument();
   });
 });

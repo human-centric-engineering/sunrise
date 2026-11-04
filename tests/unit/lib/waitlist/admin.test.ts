@@ -171,13 +171,16 @@ describe('countWaitlistEntries', () => {
         return [];
       }
     );
-    mockPrisma.waitlistListState.findMany.mockResolvedValue([{ list: 'beta', open: true }]);
+    mockPrisma.waitlistListState.findMany.mockResolvedValue([
+      { list: 'beta', open: true, changedAt: NOW },
+    ]);
 
     const [defaultList, beta] = await countWaitlistEntries(CONFIG);
 
     expect(defaultList).toEqual({
       key: 'default',
       open: true,
+      closedSince: null,
       confirmed: 6,
       unconfirmed: 4,
       flagged: 2,
@@ -214,6 +217,22 @@ describe('countWaitlistEntries', () => {
 function isNot(value: unknown): boolean {
   return typeof value === 'object' && value !== null && 'not' in value;
 }
+
+describe('countWaitlistEntries — when a list closed', () => {
+  it('dates a list an admin closed, and leaves one closed only by the config undated', async () => {
+    const closedAt = new Date('2026-01-01T00:00:00Z');
+    mockPrisma.waitlistListState.findMany.mockResolvedValue([
+      { list: 'default', open: false, changedAt: closedAt },
+    ]);
+
+    const [defaultList, beta] = await countWaitlistEntries(CONFIG);
+
+    expect(defaultList).toMatchObject({ open: false, closedSince: closedAt });
+    // 'beta' starts closed with no row: closed, but nothing says since when,
+    // so retention has no window to count until an admin records one.
+    expect(beta).toMatchObject({ open: false, closedSince: null });
+  });
+});
 
 describe('setWaitlistEntryRemoved', () => {
   it('removes only an entry not already removed, so an earlier removal keeps its time', async () => {

@@ -35,6 +35,7 @@ function counts(over: Partial<WaitlistListCountsView> = {}): WaitlistListCountsV
   return {
     key: 'default',
     open: true,
+    closedSince: null,
     confirmed: 5,
     unconfirmed: 0,
     flagged: 0,

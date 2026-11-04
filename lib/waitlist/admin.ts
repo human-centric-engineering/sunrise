@@ -20,7 +20,6 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { requireOrgId } from '@/lib/tenancy/context';
 import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
-import { getWaitlistListStatuses } from '@/lib/waitlist/lists';
 
 /** Which entries a list or export shows beyond the default (confirmed, active). */
 export interface WaitlistEntryFilter {
@@ -139,6 +138,13 @@ export async function listWaitlistEntries(
 export interface WaitlistListCounts {
   key: string;
   open: boolean;
+  /**
+   * When an admin closed it, if it is closed and that was recorded. Null for
+   * an open list, and for one closed only by the config (`startsClosed`):
+   * that list has no close date, so retention has no window to count until
+   * one is recorded.
+   */
+  closedSince: Date | null;
   /** Confirmed, on the list, not flagged: the people an invite wave draws from. */
   confirmed: number;
   /** Not yet confirmed (and not removed or joined). Never inside `confirmed`. */
@@ -156,8 +162,21 @@ export interface WaitlistListCounts {
 export async function countWaitlistEntries(
   config: ResolvedWaitlistConfig
 ): Promise<WaitlistListCounts[]> {
-  const statuses = await getWaitlistListStatuses(config);
-  const keys = statuses.map((s) => s.key);
+  const keys = config.lists.map((l) => l.key);
+  const stored = new Map(
+    (
+      await prisma.waitlistListState.findMany({
+        where: { list: { in: keys } },
+        select: { list: true, open: true, changedAt: true },
+      })
+    ).map((r) => [r.list, r])
+  );
+  // The stored row wins over the config's starting state (lib/waitlist/lists.ts).
+  const statuses = config.lists.map((l) => {
+    const row = stored.get(l.key);
+    const open = row?.open ?? !l.startsClosed;
+    return { key: l.key, open, closedSince: row && !row.open ? row.changedAt : null };
+  });
   const active = { list: { in: keys }, removedAt: null, joinedAt: null };
 
   const [confirmed, unconfirmed, flagged, removed, invited, joined, sources] = await Promise.all([
@@ -174,7 +193,7 @@ export async function countWaitlistEntries(
     }),
   ]);
 
-  return statuses.map(({ key, open }) => {
+  return statuses.map(({ key, open, closedSince }) => {
     const bySource = new Map<string, number>();
     for (const row of sources) {
       if (row.list !== key) continue;
@@ -184,6 +203,7 @@ export async function countWaitlistEntries(
     return {
       key,
       open,
+      closedSince,
       confirmed: confirmed.get(key) ?? 0,
       unconfirmed: unconfirmed.get(key) ?? 0,
       flagged: flagged.get(key) ?? 0,

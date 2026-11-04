@@ -6,7 +6,7 @@
  * closing a list records who and when, and closing stops new joins only.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +21,8 @@ import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 export interface WaitlistListCountsView {
   key: string;
   open: boolean;
+  /** When an admin closed it (ISO), or null: open, or closed only by the config. */
+  closedSince: string | null;
   confirmed: number;
   unconfirmed: number;
   flagged: number;
@@ -34,23 +36,41 @@ export interface WaitlistListsPanelProps {
   lists: WaitlistListCountsView[];
 }
 
-function ListCard({ initial }: { initial: WaitlistListCountsView }) {
-  const [list, setList] = useState(initial);
+function ListCard({ list }: { list: WaitlistListCountsView }) {
+  // The counts come from the props, which the page re-reads after a change in
+  // the table. The open state is the card's own while a toggle it sent is in
+  // flight — a counts re-read that started before the toggle committed must
+  // not undo what the admin just did — and follows the props otherwise.
+  const [state, setState] = useState({ open: list.open, closedSince: list.closedSince });
   const [saving, setSaving] = useState(false);
-  const save = useSaveFailure({
-    fallback: `Could not ${list.open ? 'close' : 'open'} the list. Try again.`,
+  useEffect(() => {
+    if (!saving) setState({ open: list.open, closedSince: list.closedSince });
+    // `saving` is left out on purpose: when a toggle finishes, the card keeps
+    // the answer it got rather than snapping back to older props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.open, list.closedSince]);
+  // Closed by the config alone: no close date, so retention has no window to count.
+  const unrecorded = !state.open && state.closedSince === null;
+  // One failure per button, each shown beside the button that was pressed.
+  const toggleSave = useSaveFailure({
+    fallback: `Could not ${state.open ? 'close' : 'open'} the list. Try again.`,
+    fields: NO_SERVER_FIELDS,
+  });
+  const recordSave = useSaveFailure({
+    fallback: 'Could not record the close. Try again.',
     fields: NO_SERVER_FIELDS,
   });
 
-  const toggle = async () => {
-    save.clear();
+  const send = async (open: boolean, save: typeof toggleSave) => {
+    toggleSave.clear();
+    recordSave.clear();
     setSaving(true);
     try {
-      const state = await apiClient.patch<{ key: string; open: boolean }>(
+      const result = await apiClient.patch<{ key: string; open: boolean; changedAt: string }>(
         API.ADMIN.waitlistList(list.key),
-        { body: { open: !list.open } }
+        { body: { open } }
       );
-      setList((current) => ({ ...current, open: state.open }));
+      setState({ open: result.open, closedSince: result.open ? null : result.changedAt });
     } catch (error) {
       save.report(error);
     } finally {
@@ -72,8 +92,8 @@ function ListCard({ initial }: { initial: WaitlistListCountsView }) {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h3 className="font-medium">{list.key}</h3>
-          <Badge variant={list.open ? 'default' : 'secondary'}>
-            {list.open ? 'Taking joins' : 'Closed'}
+          <Badge variant={state.open ? 'default' : 'secondary'}>
+            {state.open ? 'Taking joins' : 'Closed'}
           </Badge>
           <FieldHelp title="Opening and closing a list">
             Closing a list stops new joins and nothing else: people can still confirm, leave and be
@@ -82,13 +102,38 @@ function ListCard({ initial }: { initial: WaitlistListCountsView }) {
           </FieldHelp>
         </div>
         <div className="flex items-center gap-2">
-          <SaveError failure={save.failure} />
-          <Button variant="outline" size="sm" onClick={() => void toggle()} disabled={saving}>
+          {unrecorded && (
+            <>
+              <SaveError failure={recordSave.failure} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void send(false, recordSave)}
+                disabled={saving}
+              >
+                Mark closed
+              </Button>
+            </>
+          )}
+          <SaveError failure={toggleSave.failure} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void send(!state.open, toggleSave)}
+            disabled={saving}
+          >
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
-            {list.open ? 'Close list' : 'Open list'}
+            {state.open ? 'Close list' : 'Open list'}
           </Button>
         </div>
       </div>
+      {unrecorded && (
+        <p className="text-muted-foreground text-sm">
+          Closed by the app&apos;s settings, with no close date recorded, so its entries are kept
+          until one is. Mark closed records today: confirmed entries are then deleted the app&apos;s
+          retention window after it.
+        </p>
+      )}
       <dl className="grid grid-cols-3 gap-2 text-sm sm:grid-cols-6">
         {states.map(([label, count]) => (
           <div key={label}>
@@ -121,7 +166,7 @@ export function WaitlistListsPanel({ lists }: WaitlistListsPanelProps) {
       </div>
       <div className="space-y-3">
         {lists.map((list) => (
-          <ListCard key={list.key} initial={list} />
+          <ListCard key={list.key} list={list} />
         ))}
       </div>
     </section>

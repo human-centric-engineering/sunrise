@@ -32,6 +32,7 @@ import {
   pruneWaitlistEntries,
   runWaitlistRetention,
   WAITLIST_RETENTION_BATCH,
+  WAITLIST_RETENTION_MAX_BATCHES,
 } from '@/lib/waitlist/retention';
 
 const CONFIG: ResolvedWaitlistConfig = {
@@ -82,14 +83,33 @@ describe('pruneWaitlistEntries', () => {
     expect(result).toEqual({ removedDeleted: 2, closedListDeleted: 0 });
   });
 
-  it('deletes at most one batch a run, oldest first', async () => {
-    await pruneWaitlistEntries(CONFIG, NOW);
+  it('deletes a backlog batch by batch in the run that finds it, unordered', async () => {
+    const full = Array.from({ length: WAITLIST_RETENTION_BATCH }, (_, i) => ({ id: `r${i}` }));
+    mockPrisma.waitlistEntry.findMany
+      .mockResolvedValueOnce(full)
+      .mockResolvedValueOnce(full)
+      .mockResolvedValueOnce([{ id: 'last' }]);
 
+    const result = await pruneWaitlistEntries(CONFIG, NOW);
+
+    // Two full batches and a short one, then it stops: no fourth read.
+    expect(result.removedDeleted).toBe(2 * WAITLIST_RETENTION_BATCH + 1);
+    expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledTimes(3);
     const [args] = mockPrisma.waitlistEntry.findMany.mock.calls[0] as [
-      { take: number; orderBy: unknown },
+      { take: number; orderBy?: unknown },
     ];
     expect(args.take).toBe(WAITLIST_RETENTION_BATCH);
-    expect(args.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    // Any expired row will do; an order would sort every match first.
+    expect(args.orderBy).toBeUndefined();
+  });
+
+  it('stops at the run’s batch cap, leaving the rest for the next run', async () => {
+    const full = Array.from({ length: WAITLIST_RETENTION_BATCH }, (_, i) => ({ id: `r${i}` }));
+    mockPrisma.waitlistEntry.findMany.mockResolvedValue(full);
+
+    const result = await pruneWaitlistEntries(CONFIG, NOW);
+
+    expect(result.removedDeleted).toBe(WAITLIST_RETENTION_MAX_BATCHES * WAITLIST_RETENTION_BATCH);
   });
 
   it('uses the windows the config sets', async () => {

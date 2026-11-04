@@ -29,7 +29,11 @@ import {
   listWaitlistEntries,
   setWaitlistListOpen,
 } from '@/lib/waitlist/admin';
-import { pruneWaitlistEntries } from '@/lib/waitlist/retention';
+import {
+  expiredRemovedWhere,
+  pruneWaitlistEntries,
+  waitlistRetentionCutoffs,
+} from '@/lib/waitlist/retention';
 
 const PREFIX = 'smoke-waitlist-admin';
 const stamp = Date.now();
@@ -73,9 +77,11 @@ async function main(): Promise<void> {
   let actorId: string | null = null;
 
   try {
-    // Anyone else's expired rows would be deleted by an org-wide prune.
+    // Anyone else's expired rows would be deleted by an org-wide prune: ask
+    // the prune's own question, with its own cut-offs.
+    const { removedBefore, closedBefore } = waitlistRetentionCutoffs(CONFIG.retention, NOW);
     const foreignExpired = await prisma.waitlistEntry.count({
-      where: { removedAt: { lt: ago(DEFAULT_WAITLIST_RETENTION.removedDays) } },
+      where: expiredRemovedWhere(removedBefore),
     });
     if (foreignExpired > 0) {
       throw new Error(
@@ -83,10 +89,8 @@ async function main(): Promise<void> {
       );
     }
     // …and so would a list someone else closed over the window ago.
-    const cutoff = new Date(NOW);
-    cutoff.setUTCMonth(cutoff.getUTCMonth() - DEFAULT_WAITLIST_RETENTION.closedListMonths);
     const foreignClosed = await prisma.waitlistListState.count({
-      where: { open: false, changedAt: { lt: cutoff } },
+      where: { open: false, changedAt: { lt: closedBefore } },
     });
     if (foreignClosed > 0) {
       throw new Error(

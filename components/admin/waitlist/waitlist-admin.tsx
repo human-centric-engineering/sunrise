@@ -18,8 +18,8 @@ import {
   WaitlistListsPanel,
   type WaitlistListCountsView,
 } from '@/components/admin/waitlist/waitlist-lists-panel';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse } from '@/lib/api/parse-response';
 import { logger } from '@/lib/logging';
 import type { WaitlistFieldShape } from '@/lib/validations/waitlist';
 
@@ -38,23 +38,23 @@ export function WaitlistAdmin({
   exportMaxRows,
 }: WaitlistAdminProps) {
   const [lists, setLists] = useState(initialLists);
-  // Bumped on each fresh read, so each list card starts from the new counts.
-  const [version, setVersion] = useState(0);
   const [stale, setStale] = useState(false);
   const latest = useRef(0);
 
   const refreshCounts = useCallback(async () => {
     const seq = ++latest.current;
     try {
-      const res = await fetch(API.ADMIN.WAITLIST_COUNTS);
-      const body = res.ok ? await parseApiResponse<{ lists: WaitlistListCountsView[] }>(res) : null;
+      const data = await apiClient.get<{ lists: WaitlistListCountsView[] }>(
+        API.ADMIN.WAITLIST_COUNTS
+      );
       if (seq !== latest.current) return;
-      if (!body?.success || !Array.isArray(body.data?.lists)) {
+      if (!Array.isArray(data?.lists)) {
         setStale(true);
         return;
       }
-      setLists(body.data.lists);
-      setVersion((v) => v + 1);
+      // The cards keep their own open state while a toggle is in flight, so
+      // these props never undo one (waitlist-lists-panel.tsx).
+      setLists(data.lists);
       setStale(false);
     } catch (err) {
       if (seq !== latest.current) return;
@@ -67,7 +67,7 @@ export function WaitlistAdmin({
     <>
       {lists ? (
         <>
-          <WaitlistListsPanel key={version} lists={lists} />
+          <WaitlistListsPanel lists={lists} />
           {stale && (
             <p role="status" className="text-muted-foreground text-sm">
               The counts could not be refreshed and may be out of date.
