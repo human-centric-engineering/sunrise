@@ -1,13 +1,14 @@
 # Waitlist
 
-> **In progress (§125).** Joining is built (t-974). Confirming the address and
-> the leave link (t-977), the admin page (t-976), invites and linking the new
-> account (t-978) are not yet. Until t-977 lands, every entry stays
-> unconfirmed, and nothing sends the joiner an email. Don't switch the
-> waitlist on in production before then.
+> **In progress (§125).** Joining (t-974), the erasure receipt (t-975) and the
+> admin page (t-976) are built. Confirming the address and the leave link
+> (t-977), invites and linking the new account (t-978) are not yet. Until
+> t-977 lands, every entry stays unconfirmed — so the admin page shows no one
+> until you tick "Show unconfirmed" — and nothing sends the joiner an email.
+> Don't switch the waitlist on in production before then.
 
 A pre-launch waitlist a fork switches on: Sunrise owns the table, the routes,
-the privacy wiring and (soon) the admin page and invites; the fork owns its
+the privacy wiring, the admin page and (soon) invites; the fork owns its
 fields, copy and look. The binding design is the
 [Sunrise Waitlist spec](https://claude.ai/artifact/NVEu3CqpBAXskCoBQnBExN).
 
@@ -15,10 +16,10 @@ fields, copy and look. The binding design is the
 
 Two switches, answering different questions:
 
-| Question                | Who changes it               | Where it lives                                                    |
-| ----------------------- | ---------------------------- | ----------------------------------------------------------------- |
-| Does the app have one?  | The fork's developers        | `lib/app/waitlist-config.ts` — `null` (shipped) means no waitlist |
-| Is a list taking joins? | The admin running the launch | A `WaitlistListState` row per org and list (admin page: t-976)    |
+| Question                | Who changes it               | Where it lives                                                       |
+| ----------------------- | ---------------------------- | -------------------------------------------------------------------- |
+| Does the app have one?  | The fork's developers        | `lib/app/waitlist-config.ts` — `null` (shipped) means no waitlist    |
+| Is a list taking joins? | The admin running the launch | A `WaitlistListState` row per org and list, set on `/admin/waitlist` |
 
 Neither is an env var: neither should differ between staging and production,
 and closing a list must not need a redeploy. A declared list starts open
@@ -86,7 +87,26 @@ Half a waitlist is worse than none.
 | `GET /api/v1/waitlist`  | Anyone | `{ lists: [{ key, open }], fields }` — the form's fields, serialisable |
 | `POST /api/v1/waitlist` | Anyone | Join. 5 an hour per IP (`waitlistLimiter`, `RATE_LIMIT_WAITLIST`)      |
 
-Both answer 404 without a config. The join body:
+Admin routes — org-tier (`withAdminAuth({ tier: 'org' })`, listed in
+`ORG_TIER_ADMIN_ROUTES`), so an org's OWNER or ADMIN works their own org's list:
+
+| Route                                     | What                                                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/admin/waitlist`              | One page: `page`, `limit` (≤100), `sortBy` (`createdAt` / `email` / `confirmedAt`), `sortOrder`, filters ↓ |
+| `GET /api/v1/admin/waitlist/counts`       | Per list: open or closed, counts by state, confirmed by source; and the declared fields                    |
+| `GET /api/v1/admin/waitlist/export`       | CSV with the same filters. `exportLimiter` keyed `export:waitlist:user:<id>`; BOM; `no-store`; 10,000 rows |
+| `PATCH /api/v1/admin/waitlist/:id`        | `{ removed: boolean }` — the state to reach                                                                |
+| `DELETE /api/v1/admin/waitlist/:id`       | Erase: the row, a waitlist receipt, and this org's pending invitation for the address                      |
+| `PATCH /api/v1/admin/waitlist/lists/:key` | `{ open: boolean }` for a declared list — records who and when                                             |
+
+The filters: `list`, `q` (the address as typed, the name, or any declared
+answer — a JSON-path text match), `includeUnconfirmed`, `includeRemoved`,
+`includeJoined`, `flaggedOnly`. **By default only confirmed entries still on
+the list** are listed and exported: anyone can type any address into the
+form, so an unconfirmed entry is asked for, never assumed. Every route
+answers 404 without a config, and the page and its nav item are hidden.
+
+The public routes answer 404 without a config too. The join body:
 `{ email, name?, list?, details?: { <field key>: string }, utm_source?, utm_medium?, utm_campaign?, referrer? }`.
 `list` may be left out when there is one list. Unknown `details` keys are a 400.
 
@@ -136,14 +156,63 @@ orgs until `db:tenancy:enable` ran again.
   [data-export](../privacy/data-export.md#tables-with-no-user-fk) and
   [data-erasure](../privacy/data-erasure.md).
 - **Erasing a waitlist-only person** (no account) goes through
-  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`): it deletes the entry and
-  writes a `waitlist` erasure receipt. The leave link (t-977) and the admin
-  page (t-976) will call it. See
+  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`): it deletes the entry,
+  writes a `waitlist` erasure receipt, and deletes the pending invitation for
+  the address that this org issued — otherwise a working sign-up link survives
+  the erasure. Another org's invitation is left (invitations are install-wide,
+  one per address); one whose metadata cannot be read is left and logged. The
+  admin page's Erase calls it; the leave link (t-977) will. See
   [Waitlist-only receipts](../privacy/data-erasure.md#waitlist-only-receipts).
+- **Removing is not erasing.** Remove (`PATCH { removed: true }`) keeps the
+  row — `removedAt`, never a delete — so a re-join stays removed and Art. 15
+  still discloses it. Erase deletes it.
 - **`userId` cascades** with the account: an entry is personal data.
 - **Org export** includes both tables.
 - **Your privacy notice** must cover what the form collects, that answers are
   kept while the list is open, and the version you put in `consentVersion`.
+
+## The admin page
+
+`/admin/waitlist` (org-tier, in Management). Per list: open/closed with the
+button that changes it, counts by state (confirmed, unconfirmed, flagged,
+invited, signed up, removed) and confirmed by source. Below it, the people:
+search, filters, sortable columns, Remove / Restore (Restore asks first, and
+says how many times a removed address tried to re-join) and Erase (asks
+first). The export button states its row cap. The table drops a stale
+response, never shows "empty" after a failed load, and the server breaks
+sort ties by `id`. Every field has a `<FieldHelp>`; a failed save shows
+`<SaveError>` beside the button pressed.
+
+## Retention
+
+Every state has a limit, each a config setting (`retention`, defaults in
+`DEFAULT_WAITLIST_RETENTION`), enforced by the per-org maintenance job
+`waitlistRetention` (hourly, `lib/waitlist/retention.ts`):
+
+| State                         | Deleted                             | Setting            |
+| ----------------------------- | ----------------------------------- | ------------------ |
+| Removed                       | 90 days after removal               | `removedDays`      |
+| Confirmed, on a closed list   | 12 months after the list closed     | `closedListMonths` |
+| Unconfirmed                   | 30 days (t-977)                     | —                  |
+| Joined (linked to an account) | with the account, never by this job | —                  |
+
+A list "closed" is its `WaitlistListState` row with `open: false`; its
+`changedAt` dates the window, and closing a closed list again does not move
+it. Invites go on after a close, so an entry invited since the cut-off is
+kept. A list closed only by the config (`startsClosed`, never touched on the
+page) has no close date: its card says so and offers **Mark closed**, which
+records today, and the window runs from then. A joined entry is never pruned,
+even once removed. Each prune deletes in batches of 1,000, up to 20 a run and
+within 15 seconds an org, so a backlog of up to 20,000 goes in the run that
+finds it and a bigger one over the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
+safe because a new entry for the address must be confirmed by its owner.
+These deletions are retention, not erasure requests, and write no receipt.
+Rows on a list the config no longer declares are not shown on the admin page.
+This job still deletes them on its usual windows — a removed one 90 days on, a
+confirmed one 12 months after its list closed — but a confirmed entry on a
+list that was never closed is kept for ever. Close a list before removing it
+from the config, or erase what is left. `npm run smoke:waitlist-admin` holds
+the windows against a real database.
 
 ## Testing
 

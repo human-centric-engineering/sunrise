@@ -84,7 +84,26 @@ export interface WaitlistConfig {
    * blocklist. A throw flags the entry with `screen-error`.
    */
   screen?: (input: WaitlistScreenInput) => WaitlistScreenResult | Promise<WaitlistScreenResult>;
+  /**
+   * How long each state is kept before the retention job deletes it. Your
+   * privacy notice should say the same. Every window has a default.
+   */
+  retention?: WaitlistRetention;
 }
+
+/** Retention windows (§125). Each is optional; the defaults are the spec's. */
+export interface WaitlistRetention {
+  /** Days a removed entry is kept after its removal. Default 90. */
+  removedDays?: number;
+  /** Months a closed list's entries are kept after it closed. Default 12. */
+  closedListMonths?: number;
+}
+
+/** The spec's windows, used for any the config leaves out. */
+export const DEFAULT_WAITLIST_RETENTION: Required<WaitlistRetention> = {
+  removedDays: 90,
+  closedListMonths: 12,
+};
 
 /** The config, validated and with its defaults filled in. */
 export interface ResolvedWaitlistConfig {
@@ -92,6 +111,7 @@ export interface ResolvedWaitlistConfig {
   fields: readonly WaitlistField[];
   lists: readonly WaitlistListDeclaration[];
   screen: WaitlistConfig['screen'] | null;
+  retention: Required<WaitlistRetention>;
 }
 
 const KEY = /^[a-z][a-z0-9_-]{0,39}$/i;
@@ -145,6 +165,13 @@ const configSchema = z.object({
       message: 'list keys must be unique',
     }),
   screen: z.unknown().optional(),
+  retention: z
+    .object({
+      removedDays: z.number().int().min(1).max(3650).optional(),
+      closedListMonths: z.number().int().min(1).max(120).optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 type Cached = { resolved: ResolvedWaitlistConfig | null };
@@ -175,6 +202,14 @@ export function resolveWaitlistConfig(
     fields: config.fields ?? [],
     lists: config.lists ?? [{ key: DEFAULT_WAITLIST_LIST }],
     screen: config.screen ?? null,
+    // `??` per window, not a spread: a key the fork sets to `undefined`
+    // (`removedDays: env.X ? Number(env.X) : undefined`) keeps the default
+    // rather than making every cut-off an Invalid Date.
+    retention: {
+      removedDays: parsed.data.retention?.removedDays ?? DEFAULT_WAITLIST_RETENTION.removedDays,
+      closedListMonths:
+        parsed.data.retention?.closedListMonths ?? DEFAULT_WAITLIST_RETENTION.closedListMonths,
+    },
   };
 }
 

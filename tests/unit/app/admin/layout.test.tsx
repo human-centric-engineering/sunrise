@@ -549,6 +549,7 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
           '/admin',
           '/admin/members',
           '/admin/support-access',
+          '/admin/waitlist',
           FORK_PAGE,
         ]);
       });

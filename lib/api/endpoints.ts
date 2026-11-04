@@ -85,6 +85,14 @@ export const API = {
     /** Feature flag by ID */
     featureFlag: (id: string): string => `/api/v1/admin/feature-flags/${id}`,
 
+    /** The org's waitlist (§125): list, counts, export, one entry, one list's state */
+    WAITLIST: '/api/v1/admin/waitlist',
+    WAITLIST_COUNTS: '/api/v1/admin/waitlist/counts',
+    WAITLIST_EXPORT: '/api/v1/admin/waitlist/export',
+    waitlistEntry: (id: string): string => `/api/v1/admin/waitlist/${encodeURIComponent(id)}`,
+    waitlistList: (key: string): string =>
+      `/api/v1/admin/waitlist/lists/${encodeURIComponent(key)}`,
+
     /** AI Orchestration admin endpoints (Phase 3 / Phase 4) */
     ORCHESTRATION: {
       AGENTS: '/api/v1/admin/orchestration/agents',

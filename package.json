@@ -67,6 +67,7 @@
     "smoke:epub": "tsx --env-file=.env.local scripts/smoke/epub-ingestion.ts",
     "smoke:erasure": "tsx --env-file=.env.local scripts/smoke/erasure.ts",
     "smoke:export": "tsx --env-file=.env.local scripts/smoke/export.ts",
+    "smoke:waitlist-admin": "tsx --env-file=.env.local scripts/smoke/waitlist-admin.ts",
     "smoke:delivery-destination": "tsx --env-file=.env.local scripts/smoke/delivery-destination.ts",
     "smoke:erasure-deliveries": "tsx --env-file=.env.local scripts/smoke/erasure-deliveries.ts",
     "smoke:erasure-config": "tsx --env-file=.env.local scripts/smoke/erasure-config-recipients.ts",

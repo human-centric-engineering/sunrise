@@ -143,6 +143,8 @@ describe('the pins', () => {
       '/admin/members',
       // §121 t-823: the org's consent to vendor support, over the org arm.
       '/admin/support-access',
+      // §125 t-976: the org's waitlist — its list of people, not the platform's.
+      '/admin/waitlist',
     ]);
   });
 
@@ -322,6 +324,12 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/workflows/route.ts#GET',
       'app/api/v1/admin/orchestration/workflows/route.ts#POST',
       'app/api/v1/admin/orchestration/workflows/templates/route.ts#GET',
+      'app/api/v1/admin/waitlist/[id]/route.ts#DELETE',
+      'app/api/v1/admin/waitlist/[id]/route.ts#PATCH',
+      'app/api/v1/admin/waitlist/counts/route.ts#GET',
+      'app/api/v1/admin/waitlist/export/route.ts#GET',
+      'app/api/v1/admin/waitlist/lists/[key]/route.ts#PATCH',
+      'app/api/v1/admin/waitlist/route.ts#GET',
     ]);
   });
 });
@@ -370,6 +378,7 @@ describe('the core sections', () => {
       'overview',
       'support-access',
       'users',
+      'waitlist',
     ]);
   });
 });

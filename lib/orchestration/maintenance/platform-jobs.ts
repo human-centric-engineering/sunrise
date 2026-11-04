@@ -55,6 +55,7 @@ import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/recon
 import { createPlatformAgentCatalogue } from '@/lib/orchestration/agents/platform-agents';
 import { requireOrgId } from '@/lib/tenancy/context';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
+import { runWaitlistRetention } from '@/lib/waitlist/retention';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -142,6 +143,7 @@ function job<T, R = undefined>(spec: {
  * | `auditLogRetention`       | 1 hour   | system  | the two audit tables have no org; once, not once per org            |
  * | `platformAgents`          | 15 min   | per-org | catches up an org behind the running code or what it can reach      |
  * | `pendingErasures`         | every    | system  | a throttled tick would report no work and let the idle gate skip it |
+ * | `waitlistRetention`       | 1 hour   | per-org | removed and closed-list windows are days and months (§125)           |
  *
  * `platformAgents` does real work only after a deploy changes the platform
  * agents' definitions, when an org's creation-time reconcile failed, or when
@@ -260,6 +262,15 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // Any pending erasure counts, due or not: one waiting out its backoff must
     // keep the idle gate from skipping past its next attempt.
     foundWork: (r) => r.claimed > 0 || r.pending > 0,
+  }),
+  job({
+    name: 'waitlistRetention',
+    scope: 'per-org',
+    intervalMs: HOUR,
+    // A no-op while the app has no waitlist (`lib/app/waitlist-config.ts`
+    // empty): nothing is read.
+    run: () => runWaitlistRetention(),
+    foundWork: (r) => r.removedDeleted > 0 || r.closedListDeleted > 0,
   }),
 ];
 

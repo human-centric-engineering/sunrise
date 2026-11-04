@@ -556,6 +556,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'auditLogRetention',
       'platformAgents',
       'pendingErasures',
+      'waitlistRetention',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -675,9 +676,10 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
     // Background tasks still kick off even when schedules fail
-    // (11 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
-    // §108, platformAgents added in §116, pendingErasures in t-842).
-    expect(body.data.backgroundTasks).toHaveLength(11);
+    // (12 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
+    // §108, platformAgents added in §116, pendingErasures in t-842,
+    // waitlistRetention in §125 t-976).
+    expect(body.data.backgroundTasks).toHaveLength(12);
   });
 
   it('returns a readable schedules.error when processDueSchedules rejects a non-Error', async () => {
