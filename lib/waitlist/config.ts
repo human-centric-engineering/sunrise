@@ -95,7 +95,8 @@ export interface WaitlistConfig {
 /** Retention windows (§125). Each is optional; the defaults are the spec's. */
 export interface WaitlistRetention {
   /**
-   * Days an entry nobody confirmed is kept after it joined. Default 30. An
+   * Days an entry nobody confirmed is kept after it joined or was last sent
+   * a confirmation link. Default 30, at least 7 (the link's lifetime). An
    * unconfirmed entry is an address someone typed; nothing proves it is the
    * person's own, so it is not kept for long.
    */
@@ -175,9 +176,10 @@ const configSchema = z.object({
   screen: z.unknown().optional(),
   retention: z
     .object({
-      // At least a day: a zero window would delete an entry before its owner
-      // could open the email. At most ten years, which no notice should need.
-      unconfirmedDays: z.number().int().min(1).max(3650).optional(),
+      // At least the confirmation link's seven days, so retention never
+      // deletes an entry while a link to confirm it is still good. At most
+      // ten years, which no notice should need.
+      unconfirmedDays: z.number().int().min(7).max(3650).optional(),
       removedDays: z.number().int().min(1).max(3650).optional(),
       closedListMonths: z.number().int().min(1).max(120).optional(),
     })

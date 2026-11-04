@@ -104,6 +104,13 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
 
 // The pending-erasure retrier (t-842): its own module, mocked idle by default.
 vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
+vi.mock('@/lib/waitlist/retention', () => ({
+  runWaitlistRetention: vi.fn(async () => ({
+    unconfirmedDeleted: 0,
+    removedDeleted: 0,
+    closedListDeleted: 0,
+  })),
+}));
 
 // The fork seam (#469). Left unmocked, the real empty registry always resolves
 // `undefined`, so neither the "a fork registered jobs" nor the rejection arm of

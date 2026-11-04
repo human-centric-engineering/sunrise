@@ -17,7 +17,7 @@ const { mockPrisma, mockConfig } = vi.hoisted(() => {
   return {
     mockConfig,
     mockPrisma: {
-      waitlistEntry: { findMany: vi.fn(), deleteMany: vi.fn() },
+      waitlistEntry: { findMany: vi.fn(), findFirst: vi.fn(), deleteMany: vi.fn() },
       waitlistListState: { findMany: vi.fn() },
       verification: { deleteMany: vi.fn() },
       $transaction: vi.fn(),
@@ -114,16 +114,21 @@ beforeEach(() => {
 const IDLE = { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
 
 describe('pruneWaitlistEntries', () => {
-  it('deletes unconfirmed entries 30 days after they joined by default, never a linked one', async () => {
+  it('deletes unconfirmed entries 30 days after they joined or were last sent a link, never a linked or removed one', async () => {
     db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
+    const cutoff = new Date('2026-10-05T12:00:00Z');
     const unconfirmedWhere = {
       confirmedAt: null,
       // Linked to an account: erased with it, not here.
       userId: null,
-      createdAt: { lt: new Date('2026-10-05T12:00:00Z') },
+      // Removed: kept for the removed window, so a re-join stays removed.
+      removedAt: null,
+      createdAt: { lt: cutoff },
+      // A re-join on day 29 sent a link good for 7 more days: kept.
+      OR: [{ lastEmailedAt: null }, { lastEmailedAt: { lt: cutoff } }],
     };
     expect(wheres()[0]).toEqual(unconfirmedWhere);
     expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledWith({
@@ -135,7 +140,7 @@ describe('pruneWaitlistEntries', () => {
   it('deletes a deleted entry’s confirmation token with it, in the same transaction', async () => {
     db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
 
-    await pruneWaitlistEntries(CONFIG, NOW);
+    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(tokenDeletes()).toEqual([['waitlist-confirm:u1', 'waitlist-confirm:u2']]);
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
@@ -145,7 +150,7 @@ describe('pruneWaitlistEntries', () => {
     db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
     db.survivors = ['u2'];
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(result.unconfirmedDeleted).toBe(1);
     expect(tokenDeletes()).toEqual([['waitlist-confirm:u1']]);
@@ -155,7 +160,7 @@ describe('pruneWaitlistEntries', () => {
     db.queue = [[{ id: 'u1' }]];
     db.survivors = ['u1'];
 
-    await pruneWaitlistEntries(CONFIG, NOW);
+    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
@@ -163,7 +168,7 @@ describe('pruneWaitlistEntries', () => {
   it('deletes removed entries 90 days after removal by default, never a joined one', async () => {
     db.queue = [[], [{ id: 'a' }, { id: 'b' }]];
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     const removedWhere = {
       removedAt: { lt: new Date('2026-08-06T12:00:00Z') },
@@ -182,7 +187,7 @@ describe('pruneWaitlistEntries', () => {
   it('deletes a backlog batch by batch in the run that finds it, unordered', async () => {
     db.queue = [full(), full(), [{ id: 'last' }]];
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     // Two full batches and a short one, then the unconfirmed prune stops.
     expect(result.unconfirmedDeleted).toBe(2 * WAITLIST_RETENTION_BATCH + 1);
@@ -200,7 +205,7 @@ describe('pruneWaitlistEntries', () => {
     db.fallback = batch;
     db.survivors = batch.map((r) => r.id);
 
-    await pruneWaitlistEntries(CONFIG, NOW);
+    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     // One read and one delete each for the unconfirmed and removed prunes;
     // the closed prune has no lists.
@@ -217,7 +222,7 @@ describe('pruneWaitlistEntries', () => {
       clock += Math.ceil(WAITLIST_RETENTION_BUDGET_MS / 3);
     };
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     // The budget is shared: the unconfirmed prune spends it, the others get none.
     expect(result).toEqual({ ...IDLE, unconfirmedDeleted: 3 * WAITLIST_RETENTION_BATCH });
@@ -227,7 +232,7 @@ describe('pruneWaitlistEntries', () => {
   it('stops at the run’s batch cap, leaving the rest for the next run', async () => {
     db.fallback = full();
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(result.unconfirmedDeleted).toBe(
       WAITLIST_RETENTION_MAX_BATCHES * WAITLIST_RETENTION_BATCH
@@ -235,10 +240,7 @@ describe('pruneWaitlistEntries', () => {
   });
 
   it('uses the windows the config sets', async () => {
-    await pruneWaitlistEntries(
-      { ...CONFIG, retention: { unconfirmedDays: 7, removedDays: 30, closedListMonths: 6 } },
-      NOW
-    );
+    await pruneWaitlistEntries({ unconfirmedDays: 7, removedDays: 30, closedListMonths: 6 }, NOW);
 
     expect(wheres()[0]).toMatchObject({ createdAt: { lt: new Date('2026-10-28T12:00:00Z') } });
     expect(wheres()[1]).toMatchObject({ removedAt: { lt: new Date('2026-10-05T12:00:00Z') } });
@@ -252,7 +254,7 @@ describe('pruneWaitlistEntries', () => {
     mockPrisma.waitlistListState.findMany.mockResolvedValue([{ list: 'beta' }, { list: 'wave1' }]);
     db.queue = [[], [], [{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }]];
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     // Closed 12 calendar months ago or more.
     const cutoff = new Date('2025-11-04T12:00:00Z');
@@ -272,7 +274,7 @@ describe('pruneWaitlistEntries', () => {
   });
 
   it('reads no entries for the closed-list prune when no list has been closed that long', async () => {
-    await pruneWaitlistEntries(CONFIG, NOW);
+    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(wheres()).toHaveLength(2);
     expect(mockPrisma.waitlistEntry.deleteMany).not.toHaveBeenCalled();
@@ -280,10 +282,34 @@ describe('pruneWaitlistEntries', () => {
 });
 
 describe('runWaitlistRetention', () => {
-  it('reads nothing while the app has no waitlist', async () => {
+  it('reads one empty table and nothing else when there is no config and no entry', async () => {
+    mockPrisma.waitlistEntry.findFirst.mockResolvedValue(null);
+
     await expect(runWaitlistRetention(NOW)).resolves.toEqual(IDLE);
+    expect(mockPrisma.waitlistEntry.findFirst).toHaveBeenCalledWith({ select: { id: true } });
     expect(mockPrisma.waitlistEntry.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.waitlistListState.findMany).not.toHaveBeenCalled();
+  });
+
+  it('still prunes, on the default windows, the rows a dropped config left behind', async () => {
+    // The fork removed its config; the entries it collected are still there,
+    // and its notice still promised their limits.
+    mockPrisma.waitlistEntry.findFirst.mockResolvedValue({ id: 'left-behind' });
+    db.queue = [[{ id: 'u1' }]];
+
+    const result = await runWaitlistRetention(NOW);
+
+    expect(result.unconfirmedDeleted).toBe(1);
+    expect(wheres()[0]).toMatchObject({ createdAt: { lt: new Date('2026-10-05T12:00:00Z') } });
+    expect(wheres()[1]).toMatchObject({ removedAt: { lt: new Date('2026-08-06T12:00:00Z') } });
+  });
+
+  it('does not ask whether the table is empty when there is a config', async () => {
+    mockConfig.current = CONFIG;
+
+    await runWaitlistRetention(NOW);
+
+    expect(mockPrisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
   });
 
   it('prunes with the app’s config when it has one', async () => {

@@ -17,9 +17,13 @@
  *     A list closed only by the config (`startsClosed`, no row) has no close
  *     date; the admin page offers "Mark closed", which records one, and the
  *     window runs from then.
- *   • **Unconfirmed** — deleted `unconfirmedDays` (30) after it joined
- *     (t-977). Nothing proves the address is the person's own, so it is not
- *     kept for long. An entry linked to an account is never deleted here.
+ *   • **Unconfirmed** — deleted `unconfirmedDays` (30) after it joined or was
+ *     last sent a confirmation link, whichever is later (t-977): a re-join
+ *     sends a new link, and the entry must outlive it. The window is at least
+ *     the link's seven days. Nothing proves the address is the person's own,
+ *     so it is not kept for long. A removed entry waits out the removed
+ *     window instead, so its "stays removed" protection is not cut short; an
+ *     entry linked to an account is never deleted here.
  *   • **Joined** — linked to its account and erased with it; never here, also
  *     when an admin has removed it.
  *
@@ -32,15 +36,24 @@
  * short, drains over the following hourly runs.
  * Runs in one org (the maintenance job enters each in turn). These deletions
  * are retention, not erasure requests, so they write no receipt. A deleted
- * entry's outstanding confirmation token goes with it, in the same
+ * entry's outstanding confirmation tokens go with it, in the same
  * transaction.
+ *
+ * **The windows hold with no config too.** A fork that drops its waitlist
+ * config still has the rows it collected, and its privacy notice still
+ * promised their limits, so the job prunes them on the default windows. An
+ * org with no entries costs one read.
  */
 
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getWaitlistConfig, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
-import { confirmIdentifier } from '@/lib/waitlist/tokens';
+import {
+  DEFAULT_WAITLIST_RETENTION,
+  getWaitlistConfig,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
+import { deleteConfirmTokens } from '@/lib/waitlist/tokens';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -80,19 +93,18 @@ async function deleteInBatches(
       const result = await tx.waitlistEntry.deleteMany({
         where: { AND: [where, { id: { in: ids } }] },
       });
-      // Only the entries actually gone lose their confirmation token: one
-      // that changed state since the read is kept, and keeps its link.
+      // Only the entries actually gone lose their confirmation tokens: one
+      // that changed state since the read is kept, and keeps its links.
       if (result.count > 0) {
         const kept = await tx.waitlistEntry.findMany({
           where: { id: { in: ids } },
           select: { id: true },
         });
         const keptIds = new Set(kept.map((k) => k.id));
-        await tx.verification.deleteMany({
-          where: {
-            identifier: { in: ids.filter((id) => !keptIds.has(id)).map(confirmIdentifier) },
-          },
-        });
+        await deleteConfirmTokens(
+          tx,
+          ids.filter((id) => !keptIds.has(id))
+        );
       }
       return result;
     });
@@ -136,8 +148,16 @@ export function longClosedListWhere(closedBefore: Date): Prisma.WaitlistListStat
 
 /** The entries the unconfirmed-entry prune deletes. */
 export function expiredUnconfirmedWhere(unconfirmedBefore: Date): Prisma.WaitlistEntryWhereInput {
-  // A linked entry is the account's, erased with it.
-  return { confirmedAt: null, userId: null, createdAt: { lt: unconfirmedBefore } };
+  return {
+    confirmedAt: null,
+    // A linked entry is the account's, erased with it.
+    userId: null,
+    // A removed one keeps its "stays removed" protection for the removed window.
+    removedAt: null,
+    createdAt: { lt: unconfirmedBefore },
+    // Nor while a link sent since the cut-off may still be live.
+    OR: [{ lastEmailedAt: null }, { lastEmailedAt: { lt: unconfirmedBefore } }],
+  };
 }
 
 /** The entries the removed-entry prune deletes. */
@@ -148,14 +168,14 @@ export function expiredRemovedWhere(removedBefore: Date): Prisma.WaitlistEntryWh
 
 /** Delete this org's waitlist entries that have outlived their window. */
 export async function pruneWaitlistEntries(
-  config: ResolvedWaitlistConfig,
+  retention: ResolvedWaitlistConfig['retention'],
   now: Date = new Date()
 ): Promise<WaitlistRetentionResult> {
   const {
     unconfirmedBefore,
     removedBefore,
     closedBefore: closedCutoff,
-  } = waitlistRetentionCutoffs(config.retention, now);
+  } = waitlistRetentionCutoffs(retention, now);
   const deadline = Date.now() + WAITLIST_RETENTION_BUDGET_MS;
   const unconfirmedDeleted = await deleteInBatches(
     expiredUnconfirmedWhere(unconfirmedBefore),
@@ -187,16 +207,20 @@ export async function pruneWaitlistEntries(
 }
 
 /**
- * The maintenance job's entry point (`waitlistRetention`, per org): a no-op
- * while the app has no waitlist, so an install with the scaffold empty reads
- * nothing.
+ * The maintenance job's entry point (`waitlistRetention`, per org). With no
+ * config it prunes on the default windows (module comment), after one read
+ * that finds whether the org holds any entries at all — so an install that
+ * never had a waitlist reads one empty table and nothing else.
  */
 export async function runWaitlistRetention(
   now: Date = new Date()
 ): Promise<WaitlistRetentionResult> {
   const config = getWaitlistConfig();
-  if (!config) return { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
-  const result = await pruneWaitlistEntries(config, now);
+  if (!config) {
+    const any = await prisma.waitlistEntry.findFirst({ select: { id: true } });
+    if (!any) return { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
+  }
+  const result = await pruneWaitlistEntries(config?.retention ?? DEFAULT_WAITLIST_RETENTION, now);
   if (result.unconfirmedDeleted > 0 || result.removedDeleted > 0 || result.closedListDeleted > 0) {
     logger.info('Waitlist retention deleted entries', { ...result });
   }

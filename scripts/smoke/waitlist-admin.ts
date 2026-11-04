@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     check((await present(doomed)) === doomed.length, `the ${doomed.length} expired entries exist`);
     check((await present(kept)) === kept.length, `the ${kept.length} in-window entries exist`);
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(CONFIG.retention, NOW);
 
     check(
       result.unconfirmedDeleted === 1 &&

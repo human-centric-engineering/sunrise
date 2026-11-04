@@ -107,9 +107,15 @@ describe('resolveWaitlistConfig', () => {
     ['an empty list array', { consentVersion: 'v1', lists: [] }],
     ['a screen that is not a function', { consentVersion: 'v1', screen: 'reject-all' }],
     ['a zero retention window', { consentVersion: 'v1', retention: { unconfirmedDays: 0 } }],
+    // Shorter than the confirmation link's seven days: retention would delete
+    // an entry while a link to confirm it still worked.
+    [
+      'an unconfirmed window shorter than the link',
+      { consentVersion: 'v1', retention: { unconfirmedDays: 6 } },
+    ],
     [
       'a fractional retention window',
-      { consentVersion: 'v1', retention: { unconfirmedDays: 1.5 } },
+      { consentVersion: 'v1', retention: { unconfirmedDays: 7.5 } },
     ],
     ['an unknown retention key', { consentVersion: 'v1', retention: { unconfirmedDay: 30 } }],
   ];

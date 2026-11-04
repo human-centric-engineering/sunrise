@@ -267,8 +267,8 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     name: 'waitlistRetention',
     scope: 'per-org',
     intervalMs: HOUR,
-    // A no-op while the app has no waitlist (`lib/app/waitlist-config.ts`
-    // empty): nothing is read.
+    // With no waitlist config it still prunes rows a dropped config left
+    // behind, on the default windows; an org with no entries costs one read.
     run: () => runWaitlistRetention(),
     // Batch-capped: a deletion may mean more behind it.
     foundWork: (r) => r.unconfirmedDeleted > 0 || r.removedDeleted > 0 || r.closedListDeleted > 0,

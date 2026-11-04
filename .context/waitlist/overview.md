@@ -161,7 +161,12 @@ person's own.
   the filtered `firstName`, never the raw text.
 - **The confirm link** is `/waitlist/confirm?entry=…&token=…`: 32 random bytes,
   only their hash stored in `Verification` under `waitlist-confirm:<entryId>`
-  (no address), seven days, single use. A re-send replaces it. The page shows
+  (no address), seven days, single use. **A re-send adds a link and never
+  kills one**: every link sent works until it expires or the address is
+  confirmed, so a failed send, or a stranger resubmitting the address, cannot
+  break the link already in the inbox. Confirming uses up all of them. A send
+  that fails gives back the hour's slot and withdraws its unsent link. The
+  token is lowercase hex; an uppercased copy still works. The page shows
   a button; **opening the link alone confirms nothing**, because mail scanners
   open links before people do. An expired, used, unknown or malformed link
   gets one answer: `400 INVALID_TOKEN`.
@@ -239,12 +244,12 @@ Every state has a limit, each a config setting (`retention`, defaults in
 `DEFAULT_WAITLIST_RETENTION`), enforced by the per-org maintenance job
 `waitlistRetention` (hourly, `lib/waitlist/retention.ts`):
 
-| State                         | Deleted                             | Setting            |
-| ----------------------------- | ----------------------------------- | ------------------ |
-| Removed                       | 90 days after removal               | `removedDays`      |
-| Confirmed, on a closed list   | 12 months after the list closed     | `closedListMonths` |
-| Unconfirmed                   | 30 days after it joined             | `unconfirmedDays`  |
-| Joined (linked to an account) | with the account, never by this job | —                  |
+| State                         | Deleted                                                      | Setting            |
+| ----------------------------- | ------------------------------------------------------------ | ------------------ |
+| Removed                       | 90 days after removal                                        | `removedDays`      |
+| Confirmed, on a closed list   | 12 months after the list closed                              | `closedListMonths` |
+| Unconfirmed, not removed      | 30 days after it joined or was last sent a link (at least 7) | `unconfirmedDays`  |
+| Joined (linked to an account) | with the account, never by this job                          | —                  |
 
 A list "closed" is its `WaitlistListState` row with `open: false`; its
 `changedAt` dates the window, and closing a closed list again does not move
@@ -256,7 +261,16 @@ even once removed. Each prune deletes in batches of 1,000, up to 20 a run and
 within 15 seconds an org, so a backlog of up to 20,000 goes in the run that
 finds it and a bigger one over the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
 safe because a new entry for the address must be confirmed by its owner.
+An unconfirmed entry's window runs from its latest confirmation email as well
+as its join, and is never shorter than the link's seven days, so retention
+never deletes an entry while a link to confirm it still works. A removed
+unconfirmed entry waits out the removed window instead. Every deleted entry's
+confirmation tokens go with it, in the same transaction.
 These deletions are retention, not erasure requests, and write no receipt.
+**The windows hold with no config.** A fork that drops its waitlist config
+keeps the rows it collected, and its notice still promised their limits, so
+the job prunes them on the default windows; an org with no entries costs it
+one read.
 Rows on a list the config no longer declares are not shown on the admin page.
 This job still deletes them on its usual windows — a removed one 90 days on, a
 confirmed one 12 months after its list closed — but a confirmed entry on a

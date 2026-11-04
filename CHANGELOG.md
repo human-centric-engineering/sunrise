@@ -52,11 +52,16 @@ release process.
   (`/waitlist/confirm`, `/waitlist/leave`). Two new email kinds in
   `EmailPropsMap`, `waitlistConfirm` and `waitlistAlreadyOnList`, overridable
   in `lib/app/emails.ts`. `WaitlistConfig.retention.unconfirmedDays` (default
-  30): unconfirmed entries are deleted by the `waitlistRetention`
-  maintenance task, which also deletes a pruned entry's confirmation token. New column
-  `WaitlistEntry.lastEmailedAt`, and a `TenantContextSource` value,
+  30, at least 7, the link's lifetime): an unconfirmed entry is deleted by the
+  `waitlistRetention` maintenance task that many days after it joined or was
+  last sent a link, whichever is later. Every link sent stays good until it
+  expires or the address is confirmed; a re-send adds one rather than
+  replacing it. Every path that deletes an entry (leave, admin erase,
+  retention, account and org erasure) deletes its confirmation tokens. New
+  column `WaitlistEntry.lastEmailedAt`, and a `TenantContextSource` value,
   `'waitlist-link'`. Leave works with no waitlist config, so dropping the
-  config never strands the links in people's inboxes.
+  config never strands the links in people's inboxes, and `waitlistRetention`
+  still prunes the rows a dropped config left, on the default windows.
 
 - **Private files and downloads on Vercel Blob** (#1012, #1155): the Vercel
   Blob provider can now read objects back (`download()`, through the SDK's
