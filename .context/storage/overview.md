@@ -68,18 +68,18 @@ await storage.upload(buffer, { key, contentType, public: false });
 
 ### Capabilities matrix
 
-| Capability       | S3                                              | Vercel Blob | Local |
-| ---------------- | ----------------------------------------------- | ----------- | ----- |
-| `privateObjects` | `S3_USE_ACL` or `S3_OBJECTS_PRIVATE_BY_DEFAULT` | ✗           | ✓     |
-| `signedUrls`     | ✓                                               | ✗           | ✓     |
-| `download`       | ✓                                               | ✗           | ✓     |
+| Capability       | S3                                              | Vercel Blob                     | Local |
+| ---------------- | ----------------------------------------------- | ------------------------------- | ----- |
+| `privateObjects` | `S3_USE_ACL` or `S3_OBJECTS_PRIVATE_BY_DEFAULT` | `BLOB_PRIVATE_READ_WRITE_TOKEN` | ✓     |
+| `signedUrls`     | ✓                                               | `BLOB_PRIVATE_READ_WRITE_TOKEN` | ✓     |
+| `download`       | ✓                                               | ✓                               | ✓     |
 
 **Read capabilities through `getStorageCapabilities(provider)` — never `provider.capabilities` directly.** The field is an optional `Partial<StorageCapabilities>` so that a fork's custom provider (see [Adding a New Provider](#adding-a-new-provider)) keeps compiling when a capability is added upstream. An undeclared capability means _cannot_, and the helper is what fills that in.
 
 ### What each provider does with `public: false`
 
 - **S3** — sends `ACL: private` when `S3_USE_ACL=true`. Without ACLs it cannot verify object visibility from the SDK, so it logs a warning (once per process) and uploads anyway. This is deliberate: the AWS-recommended posture is Block Public Access plus a bucket policy, where every object is _already_ private and throwing would reject the safest configuration. Declare that posture with `S3_OBJECTS_PRIVATE_BY_DEFAULT=true`.
-- **Vercel Blob** — **throws**. Every blob is served from a public CDN URL; there is no configuration that makes this work, so an ambiguous warning would be dishonest.
+- **Vercel Blob** — writes to the private store when `BLOB_PRIVATE_READ_WRITE_TOKEN` is set, and **throws** when it is not. A Vercel store is wholly public or wholly private, so the provider holds one of each and `public` picks between them. Without a private store, storing the object at all would publish it. The reverse holds too: a public upload with no public store (`BLOB_READ_WRITE_TOKEN`) throws.
 - **Local** — writes to a separate private root (`.storage/private/`, gitignored) that Next does not serve. Public uploads still go to `public/uploads/`. Read a private object back with `download()`.
 
 The `upload_to_storage` agent capability enforces this automatically: a binding with `public: false` or `signedUrlTtlSeconds` on a provider that lacks `privateObjects` fails with `private_objects_not_supported` rather than handing the user a world-readable URL. At `TENANCY_MODE=multi` a binding that sets neither is private and signed by default ([Storage and Tenancy](./tenancy.md#private-by-default-at-multi)).
@@ -125,12 +125,20 @@ if (storage && getStorageCapabilities(storage).signedUrls) {
 Integrated with Vercel deployments. Simple setup, CDN-backed. Uses `VercelBlobProviderConfig` interface for typed configuration.
 
 ```bash
-BLOB_READ_WRITE_TOKEN=vercel_blob_...
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...           # Public store
+BLOB_PRIVATE_READ_WRITE_TOKEN=vercel_blob_rw_...   # Private store (optional)
 ```
 
-Get token from: Vercel Dashboard → Storage → Blob
+Get each token from: Vercel Dashboard → Storage → Blob. Create the private store with **Private** access. One project can hold both.
 
-> **Note:** Vercel Blob does not support signed URLs - all files are publicly accessible. Use S3 if you need private file access with time-limited URLs.
+Two stores, like the local provider's two roots:
+
+- **Public** (`BLOB_READ_WRITE_TOKEN`) — the default for every upload, avatars included. `upload()` returns the blob's CDN URL.
+- **Private** (`BLOB_PRIVATE_READ_WRITE_TOKEN`) — anything uploaded with `public: false`. `upload()` returns the signed read route's address (`/api/v1/storage/<key>`), which serves nothing without a token. `getSignedUrl()` mints that token as the local provider does, `org` claim included ([Storage and Tenancy](./tenancy.md#what-each-url-kind-protects)). Vercel's own presigned URLs are not used.
+
+Either store may be configured alone, and an upload that needs the missing one throws. With only a private store, public uploads such as avatars are refused, and the provider warns about it once at start-up.
+
+`download()` reads through the SDK's `get()`, private store first. `delete()` and `deletePrefix()` sweep both stores, because nothing records which store holds a key. A prefix delete succeeds only when both come back clean, which is what erasure relies on. Re-uploading a key with the other visibility removes the copy in the other store, so a file made private is not left readable at its old public URL.
 
 ### Local Provider
 

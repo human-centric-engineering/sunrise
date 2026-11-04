@@ -11,7 +11,7 @@ Configuration for file storage providers (S3, Vercel Blob, local).
 When `STORAGE_PROVIDER` is not set, the system auto-detects:
 
 1. **S3 credentials present** (`S3_BUCKET` + `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY`) → Uses S3
-2. **Vercel Blob token present** (`BLOB_READ_WRITE_TOKEN`) → Uses Vercel Blob
+2. **Vercel Blob token present** (`BLOB_READ_WRITE_TOKEN` or `BLOB_PRIVATE_READ_WRITE_TOKEN`) → Uses Vercel Blob
 3. **No credentials** → Falls back to local filesystem (`public/uploads/`)
 
 **Important:** Local filesystem is NOT suitable for production (files don't persist across deploys).
@@ -201,8 +201,8 @@ S3_USE_ACL=true
 
 ### `BLOB_READ_WRITE_TOKEN`
 
-- **Purpose:** Authentication token for Vercel Blob storage
-- **Required:** ⚠️ Conditionally (required when using Vercel Blob)
+- **Purpose:** Read-write token for the **public** Vercel Blob store: every upload not marked `public: false`, avatars included
+- **Required:** ⚠️ Conditionally (when using Vercel Blob for public files; without it, public uploads are refused)
 - **Type:** String (starts with `vercel_blob_rw_`)
 
 **Example:**
@@ -224,6 +224,16 @@ BLOB_READ_WRITE_TOKEN="vercel_blob_rw_abc123def456..."
 - ⚠️ Automatically available in Vercel deployments
 - ⚠️ Must be manually set for local development
 - ⚠️ Never commit to version control
+
+### `BLOB_PRIVATE_READ_WRITE_TOKEN`
+
+- **Purpose:** Read-write token for a **private** Vercel Blob store: uploads marked `public: false`. Setting it turns on `privateObjects` and `signedUrls` for the provider ([capabilities](../storage/overview.md#capabilities-matrix)).
+- **Required:** ❌ No. Without it, private uploads are refused, and `upload_to_storage` at `TENANCY_MODE=multi` needs a binding with `public: true`.
+- **Type:** String (starts with `vercel_blob_rw_`)
+
+**How to Obtain:** as above, but create the Blob store with **Private** access. A Vercel store is wholly public or wholly private, so a deployment that needs both creates two stores. Copy the private store's read-write token into this variable.
+
+Either token alone makes a working provider. With only this one set, public uploads such as avatars are refused, and the provider warns about it at start-up.
 
 ## Provider Comparison
 

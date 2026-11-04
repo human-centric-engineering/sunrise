@@ -45,6 +45,21 @@ release process.
   follow; don't switch it on in production until confirmation lands. Guide:
   `.context/waitlist/overview.md`.
 
+- **Private files and downloads on Vercel Blob** (#1012, #1155): the Vercel
+  Blob provider can now read objects back (`download()`, through the SDK's
+  `get()`) and hold private files. A new optional env var,
+  `BLOB_PRIVATE_READ_WRITE_TOKEN`, names a second store created with Private
+  access, and `upload({ public: false })` writes there instead of throwing. A
+  private upload returns the signed read route's address, and `getSignedUrl()`
+  mints its token as the local provider does, so `privateObjects` and
+  `signedUrls` are on whenever the private store is configured, and
+  `upload_to_storage` works at `TENANCY_MODE=multi` on Vercel. `delete()` and
+  `deletePrefix()` now sweep both stores. `BLOB_READ_WRITE_TOKEN` is unchanged
+  and still the public store. Either token alone makes a provider, and an
+  upload whose store is missing throws: with only the private token, avatar
+  uploads are refused. `VercelBlobProviderConfig.token` is now optional,
+  alongside the new `privateToken`. Guide: `.context/storage/overview.md`.
+
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is
   (0 first), and an opaque id for this attempt. Set by the `tool_call` and
