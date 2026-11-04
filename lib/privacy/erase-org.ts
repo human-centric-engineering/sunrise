@@ -55,7 +55,9 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
+import { deleteConfirmTokens } from '@/lib/waitlist/tokens';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 import { orgKeyPrefix } from '@/lib/storage/org-keys';
 
@@ -99,6 +101,19 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
     );
   }
 
+  // The org's waitlist entry ids, for their confirmation tokens below. Read
+  // first and with the bypass: at `multi` the route runs in the admin's own
+  // org (or none), where `org_isolation` would hide this org's rows. An entry
+  // that joins between this read and the delete still cascades; only its
+  // token is left, and it names an entry that no longer exists.
+  const readWaitlistIds = async () =>
+    (await prisma.waitlistEntry.findMany({ where: { orgId }, select: { id: true } })).map(
+      (e) => e.id
+    );
+  const waitlistIds = isMultiTenant()
+    ? await runAsSystem(`org erasure: org ${orgId}'s waitlist entries`, readWaitlistIds)
+    : await readWaitlistIds();
+
   const result = await prisma.$transaction(async (tx) => {
     const org = await tx.org.findUnique({
       where: { id: orgId },
@@ -119,6 +134,10 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
       where: { activeOrgId: orgId },
       data: { activeOrgId: null },
     });
+
+    // Waitlist entries cascade with the org, but their confirmation tokens
+    // live in `Verification`, which has no org: deleted by hand (t-977).
+    await deleteConfirmTokens(tx, waitlistIds);
 
     // Memberships and credentials cascade.
     await tx.org.delete({ where: { id: orgId } });

@@ -20,8 +20,19 @@ const tx = vi.hoisted(() => ({
   user: { delete: vi.fn(), deleteMany: vi.fn() },
   orgMembership: { deleteMany: vi.fn() },
 }));
-const db = vi.hoisted(() => ({ $transaction: vi.fn(), org: { findUnique: vi.fn() } }));
+const db = vi.hoisted(() => ({
+  $transaction: vi.fn(),
+  org: { findUnique: vi.fn() },
+  // The org's waitlist entry ids, read before the transaction (t-977).
+  waitlistEntry: { findMany: vi.fn() },
+}));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
+
+const tenancy = vi.hoisted(() => ({
+  isMultiTenant: vi.fn(),
+  runAsSystem: vi.fn(),
+}));
+vi.mock('@/lib/tenancy/context', () => tenancy);
 
 const mockLogger = vi.hoisted(() => ({
   info: vi.fn(),
@@ -46,6 +57,9 @@ const ADMIN = 'cmjbv4i3x00003wsloputgwul';
 beforeEach(() => {
   vi.clearAllMocks();
   db.$transaction.mockImplementation((fn: (client: typeof tx) => Promise<unknown>) => fn(tx));
+  db.waitlistEntry.findMany.mockResolvedValue([]);
+  tenancy.isMultiTenant.mockReturnValue(false);
+  tenancy.runAsSystem.mockImplementation((_reason: string, fn: () => Promise<unknown>) => fn());
   tx.org.findUnique.mockResolvedValue({ id: ORG, _count: { memberships: 3 } });
   tx.verification.deleteMany.mockResolvedValue({ count: 2 });
   tx.session.updateMany.mockResolvedValue({ count: 4 });
@@ -55,6 +69,42 @@ beforeEach(() => {
 });
 
 describe('eraseOrg', () => {
+  it('deletes the confirmation tokens of the org’s waitlist entries, before the org row (t-977)', async () => {
+    db.waitlistEntry.findMany.mockResolvedValue([{ id: 'w1' }, { id: 'w2' }]);
+
+    await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(db.waitlistEntry.findMany).toHaveBeenCalledWith({
+      where: { orgId: ORG },
+      select: { id: true },
+    });
+    expect(tx.verification.deleteMany).toHaveBeenCalledWith({
+      where: { identifier: { in: ['waitlist-confirm:w1', 'waitlist-confirm:w2'] } },
+    });
+    // The entries cascade with the org; their tokens must already be gone.
+    // Call 0 is the invitations' delete; call 1 is the tokens'.
+    expect(tx.verification.deleteMany.mock.calls).toHaveLength(2);
+    expect(tx.verification.deleteMany.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.org.delete.mock.invocationCallOrder[0]
+    );
+    expect(tenancy.runAsSystem).not.toHaveBeenCalled();
+  });
+
+  it('reads the entries with the bypass at multi, where the admin’s own org would hide them', async () => {
+    tenancy.isMultiTenant.mockReturnValue(true);
+    db.waitlistEntry.findMany.mockResolvedValue([{ id: 'w1' }]);
+
+    await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(tenancy.runAsSystem).toHaveBeenCalledWith(
+      expect.stringContaining(ORG),
+      expect.any(Function)
+    );
+    expect(tx.verification.deleteMany).toHaveBeenCalledWith({
+      where: { identifier: { in: ['waitlist-confirm:w1'] } },
+    });
+  });
+
   it('deletes the pending invitations, clears the session pointer, deletes the org — in one transaction', async () => {
     const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
 
