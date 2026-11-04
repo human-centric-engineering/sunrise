@@ -312,8 +312,8 @@ async function erasedAmong(
   }
   const erased = await matchErasedSubjects(tx, {
     addresses,
-    // A waitlist receipt names no account (§125): `includes(null)` would
-    // look for the text "null".
+    // A waitlist receipt names no account (§125). The guard narrows the type;
+    // `matchErasedSubjects()` drops an empty id too.
     userIds: receipts
       .map((r) => r.subjectUserId)
       .filter((id): id is string => id !== null && strings.some((value) => value.includes(id))),
