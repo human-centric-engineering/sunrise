@@ -77,6 +77,61 @@ describe('keepRunningAfterResponse', () => {
     });
   });
 
+  it('starts a function only when after() runs it, and logs its rejection', async () => {
+    const failure = new Error('send failed');
+    const task = vi.fn().mockRejectedValue(failure);
+
+    keepRunningAfterResponse(task, 'Waitlist join email', { entryId: 'e1' });
+
+    // Handed over unstarted: the response goes first
+    expect(task).not.toHaveBeenCalled();
+    const handed = mockAfter.mock.calls[0]?.[0] as () => Promise<unknown>;
+    expect(typeof handed).toBe('function');
+    await expect(handed()).resolves.toBeUndefined();
+    expect(task).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith('Waitlist join email failed', failure, {
+      entryId: 'e1',
+    });
+  });
+
+  it('logs a function that throws before returning a promise, rather than rejecting after()', async () => {
+    const failure = new Error('sync throw');
+
+    keepRunningAfterResponse(() => {
+      throw failure;
+    }, 'test');
+
+    const handed = mockAfter.mock.calls[0]?.[0] as () => Promise<unknown>;
+    await expect(handed()).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith('test failed', failure, {});
+  });
+
+  it('outside a request, starts a function at once, as a promise would already have been', async () => {
+    mockAfter.mockImplementation(() => {
+      throw OUTSIDE_REQUEST;
+    });
+    const task = vi.fn().mockResolvedValue('done');
+
+    expect(() => keepRunningAfterResponse(task, 'test')).not.toThrow();
+    await flush();
+
+    expect(task).toHaveBeenCalledOnce();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('when after() refuses for another reason, still starts a function, and warns', async () => {
+    mockAfter.mockImplementation(() => {
+      throw new Error('waitUntil unavailable');
+    });
+    const task = vi.fn().mockResolvedValue('done');
+
+    keepRunningAfterResponse(task, 'test');
+    await flush();
+
+    expect(task).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledOnce();
+  });
+
   it('outside a request (the dev ticker), lets the task run on and says nothing', async () => {
     mockAfter.mockImplementation(() => {
       throw OUTSIDE_REQUEST;

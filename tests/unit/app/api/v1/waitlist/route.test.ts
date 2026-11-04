@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma } from '@prisma/client';
 import type { WaitlistConfig } from '@/lib/waitlist/config';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -276,6 +277,40 @@ describe('POST /api/v1/waitlist', () => {
     expect(res.status).toBe(200);
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(mockSendMail).toHaveBeenCalledWith('entry-new', 'created');
+  });
+
+  it('starts nothing of the email until the response has gone, then sends it in the install org (t-977)', async () => {
+    // Arrange — after() as Next runs it: the callback held until the response
+    // is done, in the async context it was registered from (Next binds it the
+    // same way, with AsyncLocalStorage.bind)
+    const held: Array<() => unknown> = [];
+    vi.doMock('next/server', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('next/server')>()),
+      after: (task: unknown) => {
+        if (typeof task === 'function') held.push(AsyncLocalStorage.bind(task as () => unknown));
+      },
+    }));
+    const mailOrgs: Array<string | null | undefined> = [];
+    mockSendMail.mockImplementation(async () => {
+      mailOrgs.push(seen.context()?.orgId);
+      return 'sent';
+    });
+    try {
+      const { POST } = await loadRoute(BASE_CONFIG);
+
+      // Act
+      const res = await POST(post({ email: 'a@example.com' }));
+
+      // Assert — answered with the mail not even begun: no read of it to time
+      expect(res.status).toBe(200);
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(held).toHaveLength(1);
+      await held[0]();
+      expect(mockSendMail).toHaveBeenCalledWith('entry-new', 'created');
+      expect(mailOrgs).toEqual([INSTALL_ORG_ID]);
+    } finally {
+      vi.doUnmock('next/server');
+    }
   });
 
   it('gives a member and a non-member the same answer while their emails are still pending (t-977)', async () => {

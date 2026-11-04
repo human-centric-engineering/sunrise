@@ -153,10 +153,11 @@ export async function POST(request: NextRequest): Promise<Response> {
           referrerHost: referrerHost(body.referrer),
           ip: clientIP,
         });
-        // Started inside the org scope, so the mail's reads and writes run in
-        // it; kept alive past the response, which does not wait for it.
+        // A function, not a promise: nothing of the mail (not even the read
+        // deciding whether to send) starts until the response has gone.
+        // Registered inside the org scope, which `after()` carries into it.
         keepRunningAfterResponse(
-          sendWaitlistJoinMail(joined.entryId, joined.outcome),
+          () => sendWaitlistJoinMail(joined.entryId, joined.outcome),
           'Waitlist join email',
           { entryId: joined.entryId }
         );
