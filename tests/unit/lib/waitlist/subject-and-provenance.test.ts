@@ -108,6 +108,7 @@ describe('isWaitlistListOpen', () => {
     fields: [],
     lists: [{ key: 'open' }, { key: 'shut', startsClosed: true }],
     screen: null,
+    retention: { unconfirmedDays: 30 },
   };
 
   it('with no stored row, follows the config’s starting state', async () => {

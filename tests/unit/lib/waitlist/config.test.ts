@@ -27,13 +27,20 @@ describe('resolveWaitlistConfig', () => {
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
-  it('fills the defaults: no fields, one open default list, no screen', () => {
+  it('fills the defaults: no fields, one open default list, no screen, 30-day unconfirmed window', () => {
     expect(resolveWaitlistConfig({ consentVersion: 'v1' })).toEqual({
       consentVersion: 'v1',
       fields: [],
       lists: [{ key: 'default' }],
       screen: null,
+      retention: { unconfirmedDays: 30 },
     });
+  });
+
+  it('keeps the retention window the fork sets', () => {
+    expect(
+      resolveWaitlistConfig({ consentVersion: 'v1', retention: { unconfirmedDays: 14 } })?.retention
+    ).toEqual({ unconfirmedDays: 14 });
   });
 
   it('keeps the fork’s own screen function', () => {
@@ -83,6 +90,12 @@ describe('resolveWaitlistConfig', () => {
     ['duplicate list keys', { consentVersion: 'v1', lists: [{ key: 'a' }, { key: 'a' }] }],
     ['an empty list array', { consentVersion: 'v1', lists: [] }],
     ['a screen that is not a function', { consentVersion: 'v1', screen: 'reject-all' }],
+    ['a zero retention window', { consentVersion: 'v1', retention: { unconfirmedDays: 0 } }],
+    [
+      'a fractional retention window',
+      { consentVersion: 'v1', retention: { unconfirmedDays: 1.5 } },
+    ],
+    ['an unknown retention key', { consentVersion: 'v1', retention: { unconfirmedDay: 30 } }],
   ];
 
   it.each(invalid)('%s switches the waitlist off and logs the problem', (_name, config) => {

@@ -18,6 +18,7 @@ const { mockTx, mockPrisma } = vi.hoisted(() => {
   const mockTx = {
     waitlistEntry: { findUnique: vi.fn(), deleteMany: vi.fn() },
     dataErasureReceipt: { create: vi.fn() },
+    verification: { deleteMany: vi.fn() },
   };
   return {
     mockTx,
@@ -96,6 +97,10 @@ describe('eraseWaitlistEntry', () => {
     expect(result).toEqual({ receiptId: 'r-1', erasedAt: ERASED_AT });
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     expect(mockTx.waitlistEntry.deleteMany).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
+    // Its outstanding confirmation link dies with it (t-977).
+    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
+      where: { identifier: 'waitlist-confirm:entry-1' },
+    });
     expect(writtenReceipt()).toEqual({
       subjectKind: 'waitlist',
       subjectUserId: null,
@@ -170,6 +175,7 @@ describe('eraseWaitlistEntry', () => {
 
     expect(result).toBeNull();
     expect(mockTx.dataErasureReceipt.create).not.toHaveBeenCalled();
+    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
   });
 });
 

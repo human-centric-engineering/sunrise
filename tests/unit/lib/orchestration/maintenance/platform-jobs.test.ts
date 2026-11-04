@@ -49,6 +49,7 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgentsIfStale: vi.fn(),
 }));
 vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
+vi.mock('@/lib/waitlist/retention', () => ({ pruneWaitlistEntries: vi.fn() }));
 
 import { logger } from '@/lib/logging';
 import {
@@ -66,6 +67,7 @@ import {
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { processPendingErasures } from '@/lib/privacy/erasure-requests';
+import { pruneWaitlistEntries } from '@/lib/waitlist/retention';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOBS,
@@ -153,6 +155,7 @@ function mockIdleTasks(): void {
   vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue(SYSTEM_RETENTION_IDLE);
   vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({ reconciled: false });
   vi.mocked(processPendingErasures).mockResolvedValue(ERASURES_IDLE);
+  vi.mocked(pruneWaitlistEntries).mockResolvedValue({ unconfirmedDeleted: 0 });
 }
 
 beforeEach(() => {
@@ -179,6 +182,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       'auditLogRetention',
       'platformAgents',
       'pendingErasures',
+      'waitlistRetention',
     ]);
   });
 
@@ -203,6 +207,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['auditLogRetention', { system: expect.stringContaining('audit') }],
       ['platformAgents', 'per-org'],
       ['pendingErasures', { system: expect.stringContaining('pendingErasures') }],
+      ['waitlistRetention', 'per-org'],
     ]);
   });
 
@@ -395,6 +400,10 @@ describe('runDuePlatformJobs — foundWork', () => {
         vi
           .mocked(enforceRetentionPolicies)
           .mockResolvedValue({ ...RETENTION_IDLE, executionsDeleted: 3 }),
+    ],
+    [
+      'waitlistRetention',
+      () => vi.mocked(pruneWaitlistEntries).mockResolvedValue({ unconfirmedDeleted: 2 }),
     ],
     [
       'auditLogRetention',

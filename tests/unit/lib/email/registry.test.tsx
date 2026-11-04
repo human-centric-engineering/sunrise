@@ -94,6 +94,64 @@ describe('resolveEmailTemplate', () => {
     expect(overrideEl).not.toBeNull();
     expect(overrideEl?.id).toBe(changeEmailProps.currentEmail);
   });
+
+  it('renders both waitlist emails from the platform defaults when nothing overrides them (§125 t-977)', async () => {
+    vi.resetModules();
+    const { resolveEmailTemplate } = await import('@/lib/email/registry');
+    const { default: WaitlistConfirmEmail } = await import('@/emails/waitlist-confirm');
+    const { default: WaitlistAlreadyOnListEmail } =
+      await import('@/emails/waitlist-already-on-list');
+    const confirmProps = {
+      firstName: 'Ada',
+      confirmUrl: 'https://example.com/waitlist/confirm?entry=e&token=t',
+      leaveUrl: 'https://example.com/waitlist/leave?token=l',
+      expiresAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const noteProps = { firstName: null, leaveUrl: 'https://example.com/waitlist/leave?token=l' };
+
+    expect(resolveEmailTemplate('waitlistConfirm', confirmProps)).toEqual(
+      WaitlistConfirmEmail(confirmProps)
+    );
+    expect(resolveEmailTemplate('waitlistAlreadyOnList', noteProps)).toEqual(
+      WaitlistAlreadyOnListEmail(noteProps)
+    );
+  });
+
+  it('lets a fork override each waitlist email, and passes it both links (§125 t-977)', async () => {
+    vi.resetModules();
+    const OverrideConfirm = (props: { confirmUrl: string; leaveUrl: string }): React.ReactElement =>
+      React.createElement('a', {
+        'data-testid': 'confirm',
+        href: props.confirmUrl,
+        id: props.leaveUrl,
+      });
+    const OverrideNote = (props: { leaveUrl: string }): React.ReactElement =>
+      React.createElement('a', { 'data-testid': 'note', href: props.leaveUrl });
+    vi.doMock('@/lib/app/emails', () => ({
+      emailOverrides: { waitlistConfirm: OverrideConfirm, waitlistAlreadyOnList: OverrideNote },
+    }));
+
+    const { resolveEmailTemplate } = await import('@/lib/email/registry');
+
+    const confirm = render(
+      resolveEmailTemplate('waitlistConfirm', {
+        firstName: null,
+        confirmUrl: 'https://example.com/c',
+        leaveUrl: 'https://example.com/l',
+        expiresAt: new Date(),
+      })
+    ).container.querySelector('[data-testid="confirm"]');
+    const note = render(
+      resolveEmailTemplate('waitlistAlreadyOnList', {
+        firstName: null,
+        leaveUrl: 'https://example.com/l2',
+      })
+    ).container.querySelector('[data-testid="note"]');
+
+    expect(confirm?.getAttribute('href')).toBe('https://example.com/c');
+    expect(confirm?.id).toBe('https://example.com/l');
+    expect(note?.getAttribute('href')).toBe('https://example.com/l2');
+  });
 });
 
 // ---------------------------------------------------------------------------

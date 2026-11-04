@@ -245,6 +245,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'auditLogRetention',
       'platformAgents',
       'pendingErasures',
+      'waitlistRetention',
     ]);
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });

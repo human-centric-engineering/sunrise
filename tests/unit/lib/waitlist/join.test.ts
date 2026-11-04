@@ -33,6 +33,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   fields: [],
   lists: [{ key: 'default' }],
   screen: null,
+  retention: { unconfirmedDays: 30 },
 };
 
 const JOIN: WaitlistJoin = {
@@ -93,10 +94,12 @@ beforeEach(() => {
 describe('a first join', () => {
   it('creates an unconfirmed entry, consented now under the config’s version', async () => {
     // Act
-    const outcome = await joinWaitlist(CONFIG, JOIN, NOW);
+    const { outcome, entryId } = await joinWaitlist(CONFIG, JOIN, NOW);
 
     // Assert — looked up by list and address only (the org comes from the context)
     expect(outcome).toBe('created');
+    // The new entry's id, for the email sent after the response (t-977).
+    expect(entryId).toBe('entry-new');
     expect(mockPrisma.waitlistEntry.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { list: 'default', email: 'ada@example.com' } })
     );
@@ -116,7 +119,7 @@ describe('screen()', () => {
     const screen = vi.fn().mockResolvedValue({ action: 'flag', reason: '  disposable-domain ' });
 
     // Act
-    const outcome = await joinWaitlist({ ...CONFIG, screen }, JOIN, NOW);
+    const { outcome } = await joinWaitlist({ ...CONFIG, screen }, JOIN, NOW);
 
     // Assert — the fork saw the join, including the IP it may check against
     expect(outcome).toBe('created');
@@ -128,6 +131,7 @@ describe('screen()', () => {
       ip: '203.0.113.7',
     });
     expect(mockPrisma.waitlistEntry.create).toHaveBeenCalledWith({
+      select: { id: true },
       data: expect.objectContaining({ flaggedReason: 'disposable-domain' }),
     });
   });
@@ -140,7 +144,7 @@ describe('screen()', () => {
     // A JS fork, or a cast, can return anything
     const screen = vi.fn().mockReturnValue(verdict);
 
-    const outcome = await joinWaitlist({ ...CONFIG, screen }, JOIN, NOW);
+    const { outcome } = await joinWaitlist({ ...CONFIG, screen }, JOIN, NOW);
 
     expect(outcome).toBe('created');
     const [{ data }] = mockPrisma.waitlistEntry.create.mock.calls[0] as [
@@ -158,6 +162,7 @@ describe('screen()', () => {
 
     // Assert
     expect(mockPrisma.waitlistEntry.create).toHaveBeenCalledWith({
+      select: { id: true },
       data: expect.objectContaining({ flaggedReason: 'screen-error' }),
     });
     expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -175,10 +180,15 @@ describe('a repeat before confirmation', () => {
     );
 
     // Act
-    const outcome = await joinWaitlist(CONFIG, { ...JOIN, details: { role: 'producer' } }, NOW);
+    const { outcome, entryId } = await joinWaitlist(
+      CONFIG,
+      { ...JOIN, details: { role: 'producer' } },
+      NOW
+    );
 
     // Assert — the whole answer set is the latest one (useCase is gone)
     expect(outcome).toBe('replaced');
+    expect(entryId).toBe('entry-1');
     const data = updateData();
     expect(data).toEqual({ name: 'Ada', details: { role: 'producer' }, flaggedReason: null });
     // …conditional on the row still being unconfirmed and not removed
@@ -210,7 +220,7 @@ describe('a repeat before confirmation', () => {
     mockPrisma.waitlistEntry.updateMany.mockResolvedValueOnce({ count: 0 });
 
     // Act
-    const outcome = await joinWaitlist(CONFIG, JOIN, NOW);
+    const { outcome } = await joinWaitlist(CONFIG, JOIN, NOW);
 
     // Assert — the owner's confirmed answer survived; nothing was overwritten
     expect(outcome).toBe('unchanged');
@@ -226,7 +236,7 @@ describe('a repeat after confirmation', () => {
     );
 
     // Act
-    const outcome = await joinWaitlist(
+    const { outcome } = await joinWaitlist(
       CONFIG,
       { ...JOIN, name: 'Mallory', details: { role: 'producer', useCase: 'sampling' } },
       NOW
@@ -260,7 +270,7 @@ describe('a repeat after confirmation', () => {
       existing({ confirmedAt: EARLIER, details: { role: 'dj' } })
     );
 
-    const outcome = await joinWaitlist(CONFIG, { ...JOIN, details: { role: 'producer' } }, NOW);
+    const { outcome } = await joinWaitlist(CONFIG, { ...JOIN, details: { role: 'producer' } }, NOW);
 
     expect(outcome).toBe('unchanged');
     expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
@@ -288,7 +298,7 @@ describe('a removed entry', () => {
     );
 
     // Act
-    const outcome = await joinWaitlist(CONFIG, { ...JOIN, name: 'New' }, NOW);
+    const { outcome } = await joinWaitlist(CONFIG, { ...JOIN, name: 'New' }, NOW);
 
     // Assert
     expect(outcome).toBe('rejoin-counted');
@@ -308,7 +318,7 @@ describe('races', () => {
     mockPrisma.waitlistEntry.create.mockRejectedValueOnce(uniqueCollision());
 
     // Act
-    const outcome = await joinWaitlist(CONFIG, JOIN, NOW);
+    const { outcome } = await joinWaitlist(CONFIG, JOIN, NOW);
 
     // Assert
     expect(outcome).toBe('replaced');
