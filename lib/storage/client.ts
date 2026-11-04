@@ -138,8 +138,8 @@ function createProvider(
         const provider = createVercelBlobProviderFromEnv();
         if (!provider) {
           logger.error('Vercel Blob provider requested but not configured', {
-            // Either token makes a provider; a public-only install sets the first.
-            missingVars: ['BLOB_READ_WRITE_TOKEN or BLOB_PRIVATE_READ_WRITE_TOKEN'],
+            // Both are missing: either one alone makes a provider.
+            missingVars: ['BLOB_READ_WRITE_TOKEN', 'BLOB_PRIVATE_READ_WRITE_TOKEN'],
           });
         }
         return provider;

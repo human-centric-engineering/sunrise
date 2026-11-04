@@ -389,6 +389,25 @@ describe('UploadToStorageCapability.execute()', () => {
       expect(mockGetSignedUrl).not.toHaveBeenCalled();
     });
 
+    it('names the private store token when Vercel Blob refuses a public:false binding', async () => {
+      // Vercel Blob without BLOB_PRIVATE_READ_WRITE_TOKEN: the fix is a token,
+      // not a different provider.
+      bindCustomConfig({ public: false });
+      mockStorageClient = {
+        name: 'vercel-blob',
+        upload: mockUpload,
+        capabilities: { privateObjects: false, signedUrls: false, download: true },
+      };
+
+      const cap = new UploadToStorageCapability();
+      const result = await cap.execute(BASE_ARGS, BASE_CONTEXT);
+
+      expect(result.error?.code).toBe('private_objects_not_supported');
+      expect(result.error?.message).toContain('BLOB_PRIVATE_READ_WRITE_TOKEN');
+      expect(result.error?.message).not.toContain('switch STORAGE_PROVIDER');
+      expect(mockUpload).not.toHaveBeenCalled();
+    });
+
     it('treats a provider with no declared capabilities as unable to store private objects', async () => {
       bindCustomConfig({ public: false });
       mockStorageClient = { name: 'custom-fork-provider', upload: mockUpload };
@@ -1178,7 +1197,19 @@ describe('UploadToStorageCapability.execute() at TENANCY_MODE=multi', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('signed_url_not_supported');
       expect(result.error?.message).toContain('public: true');
+      // The deployment-side fix: a private store makes Vercel Blob sign URLs.
+      expect(result.error?.message).toContain('BLOB_PRIVATE_READ_WRITE_TOKEN');
       expect(mockUpload).not.toHaveBeenCalled();
+    });
+
+    it('names no Vercel Blob token on another provider that cannot sign', async () => {
+      bindCustomConfig({ signedUrlTtlSeconds: 300 });
+      mockStorageClient = { name: 'custom-fork-provider', upload: mockUpload };
+
+      const result = await executeAsOrg();
+
+      expect(result.error?.code).toBe('signed_url_not_supported');
+      expect(result.error?.message).not.toContain('BLOB_PRIVATE_READ_WRITE_TOKEN');
     });
 
     it('succeeds publicly once the binding opts into public: true', async () => {

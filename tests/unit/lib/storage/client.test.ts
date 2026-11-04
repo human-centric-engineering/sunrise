@@ -221,7 +221,8 @@ describe('lib/storage/client', () => {
       expect(logger.error).toHaveBeenCalledWith(
         'Vercel Blob provider requested but not configured',
         expect.objectContaining({
-          missingVars: expect.arrayContaining(['BLOB_READ_WRITE_TOKEN']),
+          // Either token alone would have made a provider, so both are named.
+          missingVars: ['BLOB_READ_WRITE_TOKEN', 'BLOB_PRIVATE_READ_WRITE_TOKEN'],
         })
       );
     });
