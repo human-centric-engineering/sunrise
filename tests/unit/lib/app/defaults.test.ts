@@ -56,7 +56,7 @@ import { footerCopyright } from '@/lib/app/footer';
 import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
-import { appFrameSrc } from '@/lib/app/csp';
+import { appConnectSrc, appFrameSrc, appMediaSrc, appScriptSrc } from '@/lib/app/csp';
 import {
   appCoverageExclusions,
   appAlwaysRunTests,
@@ -587,10 +587,15 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/csp.ts',
-    risk: 'a stray origin would widen the iframe policy on every install',
+    risk: 'a stray origin would widen the iframe, script, connect or media policy on every install — a script origin runs third-party code with the app’s privileges',
     // These values are spliced straight into a response header, so an
     // accidental default here is a security change, not a cosmetic one.
-    assert: () => expect(appFrameSrc).toEqual([]),
+    assert: () => {
+      expect(appFrameSrc).toEqual([]);
+      expect(appScriptSrc).toEqual([]);
+      expect(appConnectSrc).toEqual([]);
+      expect(appMediaSrc).toEqual([]);
+    },
   },
   {
     seam: 'lib/app/ci.ts',

@@ -18,6 +18,13 @@ release process.
 
 ### Added
 
+- **Third-party scripts, services and audio in the CSP (#841)**: `lib/app/csp.ts`
+  gains `appScriptSrc`, `appConnectSrc` and `appMediaSrc` beside `appFrameSrc`,
+  all shipping empty. Each is held to the same exact-`https://`-origin check as
+  `appFrameSrc` (invalid entries dropped with a warning) and folded into
+  `getCSPConfig()` and the header for dev and prod. A fork that has filled
+  `appFrameSrc` takes the new exports without a merge conflict; keep
+  `appFrameSrc` last in the file.
 - **Waitlist (§125, in progress — joining and the admin page)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes

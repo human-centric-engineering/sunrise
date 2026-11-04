@@ -21,7 +21,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { appFrameSrc } from '@/lib/app/csp';
+import { appConnectSrc, appFrameSrc, appMediaSrc, appScriptSrc } from '@/lib/app/csp';
 import { logger } from '@/lib/logging';
 
 /**
@@ -148,35 +148,76 @@ export function buildCSP(config: CSPConfig): string {
 /**
  * An exact `https://` origin, optionally wildcarded at the left-most label and
  * optionally with a port: `https://player.vimeo.com`, `https://*.example.com`.
+ * The shape every list in `lib/app/csp.ts` is held to.
  *
  * Deliberately narrow. These values are spliced straight into a header, so a
  * `;`, a space, a bare `*`, or a `data:` scheme would either widen the policy
  * or break the directives that follow it.
  */
-const FRAME_SRC_ORIGIN = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const APP_CSP_ORIGIN = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+
+/** How one list of fork-supplied origins is checked, and what a warning names. */
+interface OriginRule {
+  /** The directive the list feeds, e.g. `frame-src`. */
+  directive: string;
+  /** The fork file the list came from. */
+  source: string;
+  /** Whether one entry has an acceptable shape. */
+  accepts: (origin: string) => boolean;
+  /** An example of an acceptable entry, for the warning. */
+  example: string;
+}
 
 /**
- * Validate the fork's `frame-src` additions once, at module load — not per
- * request. An invalid entry is dropped and logged rather than silently trusted.
+ * Keep the entries of a fork-supplied origin list that pass `rule`, once each,
+ * logging the rest. An invalid entry is dropped rather than trusted: it would
+ * be spliced into a header.
  */
-function resolveAppFrameSrc(): string[] {
+function acceptOrigins(origins: readonly string[], rule: OriginRule): string[] {
   const accepted: string[] = [];
 
-  for (const origin of appFrameSrc) {
-    if (FRAME_SRC_ORIGIN.test(origin)) {
-      accepted.push(origin);
+  for (const origin of origins) {
+    if (rule.accepts(origin)) {
+      if (!accepted.includes(origin)) accepted.push(origin);
       continue;
     }
-    logger.warn('Ignoring invalid frame-src origin from lib/app/csp.ts', {
+    logger.warn(`Ignoring invalid ${rule.directive} origin from ${rule.source}`, {
       origin,
-      expected: 'an exact https:// origin, e.g. https://player.vimeo.com',
+      expected: `an exact https:// origin, e.g. ${rule.example}`,
     });
   }
 
   return accepted;
 }
 
-const APP_FRAME_SRC = resolveAppFrameSrc();
+/** The directives a fork may add origins to through `lib/app/csp.ts`. */
+type AppCspDirective = 'script-src' | 'media-src' | 'connect-src' | 'frame-src';
+
+/** Validate one `lib/app/csp.ts` list, paired with the directive it feeds. */
+function appCspAddition(
+  directive: AppCspDirective,
+  origins: readonly string[],
+  example: string
+): readonly [AppCspDirective, string[]] {
+  const rule: OriginRule = {
+    directive,
+    source: 'lib/app/csp.ts',
+    accepts: (origin) => APP_CSP_ORIGIN.test(origin),
+    example,
+  };
+  return [directive, acceptOrigins(origins, rule)];
+}
+
+/**
+ * The fork's additions from `lib/app/csp.ts`, validated once at module load —
+ * not per request, since the lists are constants. Empty in vanilla Sunrise.
+ */
+const APP_CSP_ADDITIONS = [
+  appCspAddition('script-src', appScriptSrc, 'https://challenges.cloudflare.com'),
+  appCspAddition('connect-src', appConnectSrc, 'https://api.example.com'),
+  appCspAddition('media-src', appMediaSrc, 'https://media.example.com'),
+  appCspAddition('frame-src', appFrameSrc, 'https://player.vimeo.com'),
+];
 
 /**
  * Get analytics provider domains for CSP allowlisting
@@ -233,8 +274,10 @@ function getAnalyticsCSPDomains(): { scriptSrc: string[]; connectSrc: string[] }
 /**
  * Get CSP configuration for current environment
  *
- * Automatically includes analytics provider domains when configured, and any
- * `frame-src` origins the fork declared in `lib/app/csp.ts`.
+ * Automatically includes analytics provider domains when configured, and the
+ * `script-src`, `connect-src`, `media-src` and `frame-src` origins the fork
+ * declared in `lib/app/csp.ts`. Code that asks whether the policy allows a host
+ * reads it here, so the additions must land here and not only in the header.
  *
  * @param nonce - Optional per-request nonce for inline script allowlisting
  * @returns CSP configuration object
@@ -248,9 +291,11 @@ export function getCSPConfig(nonce?: string): CSPConfig {
     base['script-src'] = [...base['script-src'], `'nonce-${nonce}'`];
   }
 
-  // Add the fork's own iframe hosts (lib/app/csp.ts — empty in vanilla Sunrise)
-  if (APP_FRAME_SRC.length > 0) {
-    base['frame-src'] = [...new Set([...base['frame-src'], ...APP_FRAME_SRC])];
+  // Add the fork's own hosts (lib/app/csp.ts — every list empty in vanilla Sunrise)
+  for (const [directive, origins] of APP_CSP_ADDITIONS) {
+    if (origins.length > 0) {
+      base[directive] = [...new Set([...base[directive], ...origins])];
+    }
   }
 
   // Add analytics provider domains

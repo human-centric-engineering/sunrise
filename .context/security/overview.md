@@ -140,36 +140,65 @@ const csp = buildCSP(customConfig);
 
 > **Note**: `extendCSP()` is available for routes needing additional CSP permissions (e.g., embedding YouTube videos). Base CSP is applied automatically via `setSecurityHeaders()`.
 
-### Third-party iframes — the `frame-src` seam
+### Third-party hosts — the `lib/app/csp.ts` seam
 
-`frame-src` is `'self'` in both policies. A fork that legitimately embeds a
-third-party iframe (a marketing or onboarding video is the common case) declares
-the hosts in **`lib/app/csp.ts`** instead of editing this security-sensitive
-platform file:
+`frame-src`, `script-src`, `connect-src` and `media-src` are fixed by the
+platform tables above. A fork that legitimately needs a third-party host — an
+embedded video, a vendor's bot check, externally hosted audio — declares it in
+**`lib/app/csp.ts`** instead of editing this security-sensitive platform file:
 
 ```typescript
-// lib/app/csp.ts — fork-owned scaffold, empty in vanilla Sunrise
+// lib/app/csp.ts — fork-owned scaffold, every list empty in vanilla Sunrise
+export const appScriptSrc: string[] = ['https://challenges.cloudflare.com'];
+export const appConnectSrc: string[] = [];
+export const appMediaSrc: string[] = ['https://media.example.com'];
 export const appFrameSrc: string[] = [
   'https://www.youtube-nocookie.com',
   'https://player.vimeo.com',
+  'https://challenges.cloudflare.com',
 ];
 ```
 
-`getCSPConfig()` folds these into `frame-src` for both the dev and prod policy,
-so the global CSP `setSecurityHeaders()` sets already carries them — no
-per-route `extendCSP()` needed.
+| List            | Directive     | Lets the browser…                              |
+| --------------- | ------------- | ---------------------------------------------- |
+| `appFrameSrc`   | `frame-src`   | show pages from these hosts in an iframe       |
+| `appScriptSrc`  | `script-src`  | run scripts served from these hosts            |
+| `appConnectSrc` | `connect-src` | send fetch, XHR and WebSocket requests to them |
+| `appMediaSrc`   | `media-src`   | play `<audio>` and `<video>` from these hosts  |
+
+`getCSPConfig()` folds each list into its directive for both the dev and prod
+policy, after the platform's own values, so the global CSP `setSecurityHeaders()`
+sets already carries them — no per-route `extendCSP()` needed. Because the
+additions land in `getCSPConfig()` and not only in the header string, code that
+asks the policy whether a host is allowed (a widget that stays off until the CSP
+lets it load) gets the same answer the browser does.
 
 **Only exact `https://` origins are accepted** — optionally a left-most wildcard
 (`https://*.example.com`) and a port. A bare `*`, a `data:` scheme, a path, a
 CSP keyword, or anything containing whitespace or `;` is **dropped and logged at
 warn** at module load, because these values are spliced into a response header.
+A repeated origin is listed once.
 
-Keep the list exactly as broad as the feature. The safety argument that makes an
-allowlist acceptable is that the fork's resolver only ever builds iframe `src`s
-on these hosts, from a **validated id** — never from an admin's raw input — so a
-hostile stored value resolves to `null` (no iframe) upstream of the CSP ever
-mattering. Prefer the privacy-preserving host where one exists
-(`youtube-nocookie.com` over `youtube.com`).
+Keep each list exactly as broad as the feature:
+
+- **`appFrameSrc`.** The safety argument that makes an allowlist acceptable is
+  that the fork's resolver only ever builds iframe `src`s on these hosts, from a
+  **validated id** — never from an admin's raw input — so a hostile stored value
+  resolves to `null` (no iframe) upstream of the CSP ever mattering. Prefer the
+  privacy-preserving host where one exists (`youtube-nocookie.com` over
+  `youtube.com`).
+- **`appScriptSrc` is the strongest grant.** A script from a listed host runs
+  with the app's full privileges, so name the vendor's exact script host. A
+  wildcard over a domain where others can publish (a CDN, a shared hosting
+  domain) lets anyone who can publish there run code in your pages.
+- **`appConnectSrc`.** Production keeps `connect-src` at `'self'` so client code
+  cannot send data off-site; outbound calls go through server routes, which need
+  no entry here. Add only the endpoints a third-party script must reach from the
+  browser.
+
+A widget often needs more than one list. Cloudflare Turnstile loads a script and
+renders its challenge in an iframe, so it needs its host in both `appScriptSrc`
+and `appFrameSrc`.
 
 ### Analytics CSP Auto-Configuration
 
