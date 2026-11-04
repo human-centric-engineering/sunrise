@@ -33,9 +33,9 @@ import type {
   SignedUrlOptions,
   StorageObject,
 } from '@/lib/storage/providers/types';
-import { buildStorageAccessUrl } from '@/lib/storage/access-tokens';
+import { buildStorageAccessUrl, storageRoutePath } from '@/lib/storage/access-tokens';
 import { logger } from '@/lib/logging';
-import { validateStorageKey } from '@/lib/storage/providers/validate-key';
+import { storagePathOf, validateStorageKey } from '@/lib/storage/providers/validate-key';
 
 /**
  * Vercel Blob Provider Configuration
@@ -161,20 +161,22 @@ export class VercelBlobProvider implements StorageProvider {
     const staleStore = isPrivate ? this.publicStore : this.privateStore;
     if (staleStore) {
       const outcome = await this.deleteFrom(staleStore, key);
-      if (outcome === 'failed') {
+      if (outcome === 'failed' && staleStore.access === 'public') {
         // Fail the upload even though the write succeeded. Returning success
         // here would tell the caller the object is private while the old copy
-        // is still served publicly. Retrying the upload is safe and idempotent.
+        // is still served publicly. Retrying the upload is safe: it overwrites
+        // the private copy and tries the removal again.
         throw new Error(
           `Uploaded ${key} but could not remove the existing copy in the ` +
-            `${staleStore.access} store — the object may still be readable there`
+            `public store — the object may still be readable there`
         );
       }
-      if (outcome === 'deleted') {
-        logger.info('Removed stale copy of key from the other Vercel Blob store', {
-          key,
-          newVisibility: store.access,
-        });
+      if (outcome === 'failed') {
+        // A copy left in the private store leaks nothing, so a public upload
+        // does not fail for it: an outage in the private store must not stop
+        // avatars uploading. `deleteFrom()` has logged the error, and a
+        // `download()` may return the old private bytes until it is cleared.
+        logger.warn('Left a possible stale copy in the private Vercel Blob store', { key });
       }
     }
 
@@ -182,10 +184,7 @@ export class VercelBlobProvider implements StorageProvider {
     // address a caller can hand out. Point at the signed read route, as
     // LocalProvider does: the path alone won't serve the file — the route
     // requires a token from `getSignedUrl()` — but it is the object's address.
-    // Encoded per segment, matching what `buildStorageAccessUrl()` emits.
-    const url = isPrivate
-      ? `/api/v1/storage/${key.split('/').map(encodeURIComponent).join('/')}`
-      : blob.url;
+    const url = isPrivate ? storageRoutePath(key) : blob.url;
 
     logger.info('File uploaded to Vercel Blob', {
       key,
@@ -355,15 +354,26 @@ export class VercelBlobProvider implements StorageProvider {
    * same key.
    *
    * Uses the SDK's `get()` with a pathname, so the request goes only to the
-   * store the token names — never to a URL a caller supplied.
+   * store each token names. A blob URL is reduced to its pathname first:
+   * handed a URL, `get()` would fetch it as given and send this provider's
+   * tokens to whichever store it names.
+   *
+   * A store that answers with an error, rather than "not found", ends the
+   * read: an outage surfaces as an error instead of falling through to the
+   * other store and being reported as a missing object.
    *
    * @throws If the object is in neither store, or a read fails
    */
   async download(key: string): Promise<StorageObject> {
     validateStorageKey(key);
 
+    // `get()` puts the pathname into the blob URL as given, so encode each
+    // segment: a key with `#`, `?` or `%` would otherwise address another
+    // object or none.
+    const pathname = storagePathOf(key).split('/').map(encodeURIComponent).join('/');
+
     for (const store of this.stores()) {
-      const result = await get(key, {
+      const result = await get(pathname, {
         access: store.access,
         token: store.token,
         abortSignal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),

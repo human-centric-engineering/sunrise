@@ -59,7 +59,8 @@ release process.
   and still the public store. Either token alone makes a provider, and an
   upload whose store is missing throws: with only the private token, avatar
   uploads are refused. `VercelBlobProviderConfig.token` is now optional,
-  alongside the new `privateToken`. Guide: `.context/storage/overview.md`.
+  alongside the new `privateToken`, and `vercelBlobConfigSchema` accepts either
+  or both. Guide: `.context/storage/overview.md`.
 
 - **`CapabilityContext.stepId`, `stepAttempt` and `stepAttemptId`**: the
   workflow step a capability was dispatched from, which retry of it this is

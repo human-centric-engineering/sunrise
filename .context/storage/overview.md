@@ -138,7 +138,7 @@ Two stores, like the local provider's two roots:
 
 Either store may be configured alone, and an upload that needs the missing one throws. With only a private store, public uploads such as avatars are refused, and the provider warns about it once at start-up.
 
-`download()` reads through the SDK's `get()`, private store first. `delete()` and `deletePrefix()` sweep both stores, because nothing records which store holds a key. The exception is a blob URL (`deleteFile()` passes a stored avatar URL straight through): its hostname names its store, so it goes to that store only. A prefix delete succeeds only when both come back clean, which is what erasure relies on. Re-uploading a key with the other visibility removes the copy in the other store, so a file made private is not left readable at its old public URL.
+`download()` reads through the SDK's `get()`, private store first. `delete()` and `deletePrefix()` sweep both stores, because nothing records which store holds a key. The exception is a blob URL (`deleteFile()` passes a stored avatar URL straight through): its hostname names its store, so it goes to that store only. A prefix delete succeeds only when both come back clean, which is what erasure relies on. Re-uploading a key with the other visibility removes the copy in the other store, so a file made private is not left readable at its old public URL. If that removal fails, the upload fails only when the copy left behind is public; a copy left in the private store is logged, so an outage there never stops avatars uploading.
 
 ### Local Provider
 

@@ -258,6 +258,35 @@ describe('lib/storage/providers/vercel-blob', () => {
         ).rejects.toThrow(/could not remove the existing copy in the public store/);
       });
 
+      it('lets a public upload succeed when only the private store fails to clear its copy', async () => {
+        const { put, del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+        const { logger } = await import('@/lib/logging');
+
+        vi.mocked(put).mockResolvedValue({
+          url: 'https://s.public.blob.vercel-storage.com/avatars/user-1/avatar.jpg',
+        } as never);
+        vi.mocked(del).mockRejectedValue(new Error('private store unreachable'));
+
+        const provider = new VercelBlobProvider({ token: PUBLIC, privateToken: PRIVATE });
+
+        // A copy left in the private store leaks nothing, so an outage there
+        // must not stop avatars uploading.
+        const result = await provider.upload(Buffer.from('face'), {
+          key: 'avatars/user-1/avatar.jpg',
+          contentType: 'image/jpeg',
+        });
+
+        expect(result.url).toBe(
+          'https://s.public.blob.vercel-storage.com/avatars/user-1/avatar.jpg'
+        );
+        expect(del).toHaveBeenCalledWith('avatars/user-1/avatar.jpg', { token: PRIVATE });
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Left a possible stale copy in the private Vercel Blob store',
+          { key: 'avatars/user-1/avatar.jpg' }
+        );
+      });
+
       it('makes no stale-copy call when there is only one store', async () => {
         const { put, del } = await import('@vercel/blob');
         const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
@@ -778,6 +807,34 @@ describe('lib/storage/providers/vercel-blob', () => {
         // A failure in the private store is not "not found": it must not fall
         // through to the public store and maybe return a different object.
         expect(get).toHaveBeenCalledTimes(1);
+      });
+
+      it('reduces a blob URL to its pathname, so no token goes to the store the URL names', async () => {
+        const { get } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        vi.mocked(get).mockResolvedValue(blobResult('bytes') as never);
+
+        const provider = new VercelBlobProvider({ token: PUBLIC });
+
+        await provider.download('https://another-store.public.blob.vercel-storage.com/a/b.pdf');
+
+        expect(vi.mocked(get).mock.calls[0][0]).toBe('a/b.pdf');
+      });
+
+      it('encodes each path segment, so a key with # or ? addresses itself', async () => {
+        const { get } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        vi.mocked(get).mockResolvedValue(blobResult('bytes') as never);
+
+        const provider = new VercelBlobProvider({ token: PUBLIC });
+
+        const object = await provider.download('reports#q1/what?.pdf');
+
+        expect(vi.mocked(get).mock.calls[0][0]).toBe('reports%23q1/what%3F.pdf');
+        // The object keeps the caller's key, not the encoded one.
+        expect(object.key).toBe('reports#q1/what?.pdf');
       });
 
       it('refuses an invalid key before any read', async () => {
