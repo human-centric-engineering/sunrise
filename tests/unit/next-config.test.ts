@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match';
 import { frameDenySource } from '@/lib/security/frame-deny-source.cjs';
 
@@ -146,6 +147,33 @@ describe('next.config X-Frame-Options rule (#887)', () => {
     expect(rules).toEqual([
       { source: '/(.*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] },
     ]);
+  });
+
+  it('builds the DENY rule from lib/app/frameable-paths.json through frameDenySource', async () => {
+    // The at-rest test above cannot tell the wiring from a literal '/(.*)', since
+    // the shipped list is empty. So load the config through Node's own require —
+    // the loader next.config.js uses for its dependencies, which vi.mock cannot
+    // reach — with the helper replaced, and check the rule takes its answer.
+    const nodeRequire = createRequire(import.meta.url);
+    const configPath = nodeRequire.resolve('../../next.config.js');
+    const helper = nodeRequire('../../lib/security/frame-deny-source.cjs') as {
+      frameDenySource: (listed: unknown) => string;
+    };
+    const listed: unknown = nodeRequire('../../lib/app/frameable-paths.json');
+    const spy = vi.spyOn(helper, 'frameDenySource').mockReturnValue('/sentinel');
+    delete nodeRequire.cache[configPath];
+    try {
+      const config = nodeRequire(configPath) as { headers: () => Promise<HeaderRule[]> };
+      const rule = (await config.headers()).find((r) =>
+        r.headers.some((header) => header.key === 'X-Frame-Options')
+      );
+
+      expect(spy).toHaveBeenCalledWith(listed);
+      expect(rule?.source).toBe('/sentinel');
+    } finally {
+      spy.mockRestore();
+      delete nodeRequire.cache[configPath];
+    }
   });
 
   it('still sends the other blanket headers on every path', async () => {
