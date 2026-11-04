@@ -109,7 +109,7 @@ covered by the version contract.
   - `lib/app/ci.ts` → `appCoverageExclusions` / `appAlwaysRunTests` / `appOwnerlessSurfaceExceptions` — the fork's own coverage exclusions, whole-tree always-run tests, and files allowed to read an ownerless-capable model outside the access helpers
   - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/credential-paths.ts` → `appCredentialPaths` — route patterns whose dynamic segments are credentials, collapsed to `[param]` in every logged, reported and analytics path (read by `collapseDynamicSegments()` in `lib/logging/redact-path.ts`)
-  - `lib/app/csp.ts` → `appFrameSrc` — extra CSP `frame-src` origins
+  - `lib/app/csp.ts` → `appFrameSrc` / `appScriptSrc` / `appConnectSrc` / `appMediaSrc` — extra CSP `frame-src`, `script-src`, `connect-src` and `media-src` origins
   - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources
   - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
   - `lib/app/emails.ts` → `emailOverrides` — transactional-email template overrides
