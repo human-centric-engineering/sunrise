@@ -41,6 +41,13 @@
  *         owner: { through: { field: 'entry', parent: 'AppJournalEntry' } },
  *         enforced: true,
  *       },
+ *       // Read by a rule rather than one owner — a space's members, say. The
+ *       // data layer narrows every read by it; see the guide's "A fork's read rule".
+ *       AppSpaceNote: {
+ *         kind: 'personal',
+ *         owner: { reader: ({ userId }) => ({ space: { members: { some: { userId } } } }) },
+ *         enforced: true,
+ *       },
  *       // The user link records who did something, not whose the row is.
  *       AppInvoice: { kind: 'not-personal', because: 'Org billing record; userId is who raised it.' },
  *     },

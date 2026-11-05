@@ -184,6 +184,143 @@ model AppDraft {
       );
     });
 
+    describe('a read rule (t-985)', () => {
+      const rule = (r: { userId: string }) => ({ OR: [{ userId: r.userId }] });
+
+      it('accepts a personal model owned by a read rule, with a child through it', () => {
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: {
+            AppJournalEntry: { kind: 'personal', owner: { reader: rule }, enforced: true },
+            AppJournalAttachment: {
+              kind: 'personal',
+              owner: { through: { field: 'entry', parent: 'AppJournalEntry' } },
+              enforced: true,
+            },
+          },
+        });
+        expect(ownerClassificationOf('AppJournalEntry')).toEqual({
+          kind: 'personal',
+          owner: { reader: rule },
+          enforced: true,
+        });
+        expect(auditOwnerClassification(forkSchema, allOwnerClassifications(), forkRows())).toEqual(
+          []
+        );
+      });
+
+      it('refuses one beside an ownerless or alsoVisible arm, and one that is not a function', () => {
+        const error = vi.spyOn(logger, 'error').mockImplementation(() => {});
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: {
+            AppJournalEntry: {
+              kind: 'personal',
+              owner: { reader: rule },
+              ownerless: 'conversation',
+            },
+            AppJournalAttachment: {
+              kind: 'personal',
+              owner: { reader: rule },
+              alsoVisible: ['active-share'],
+            },
+            AppCountry: {
+              kind: 'personal',
+              // A fork's JavaScript can hand the registry anything.
+              owner: { reader: 'userId' } as unknown as { reader: () => object },
+            },
+          },
+        });
+        expect(appOwnerClassifications()).toEqual({});
+        expect(error.mock.calls.map(([, meta]) => meta)).toEqual([
+          {
+            tier: 'app',
+            model: 'AppJournalEntry',
+            reason: '`ownerless` is for core models only',
+          },
+          {
+            tier: 'app',
+            model: 'AppJournalAttachment',
+            reason: '`alsoVisible` is for core models only',
+          },
+          { tier: 'app', model: 'AppCountry', reason: '`owner.reader` must be a function' },
+        ]);
+      });
+
+      it('refuses an owner with two shapes, which would enforce only one of them', () => {
+        const error = vi.spyOn(logger, 'error').mockImplementation(() => {});
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: {
+            AppJournalEntry: {
+              kind: 'personal',
+              owner: { column: 'userId', reader: rule } as unknown as { reader: typeof rule },
+            },
+          },
+        });
+        expect(ownerClassificationOf('AppJournalEntry')).toBeNull();
+        expect(error.mock.calls.map(([, meta]) => meta)).toEqual([
+          {
+            tier: 'app',
+            model: 'AppJournalEntry',
+            reason: '`owner` has column and reader: give it exactly one',
+          },
+        ]);
+      });
+
+      it('accepts a ruled model whose only link is to a model that is not personal', () => {
+        // A space's note: read by the space's members, linked to no user.
+        const spaceSchema = new Map([
+          ...coreSchema(),
+          ...parseSchema([
+            `
+model AppSpace {
+  id String @id
+}
+model AppSpaceNote {
+  id      String   @id
+  spaceId String
+  space   AppSpace @relation(fields: [spaceId], references: [id])
+}
+`,
+          ]),
+        ]);
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: { AppSpaceNote: { kind: 'personal', owner: { reader: rule }, enforced: true } },
+        });
+        expect(
+          auditOwnerClassification(spaceSchema, allOwnerClassifications(), forkRows())
+        ).toEqual([]);
+      });
+
+      it('flags a read rule on a core model, and an enforced one with no id', () => {
+        const noIdSchema = new Map([
+          ...coreSchema(),
+          ...parseSchema([
+            `
+model AppTally {
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  @@id([userId])
+}
+`,
+          ]),
+        ]);
+        const classification: Record<string, OwnerClassification> = {
+          ...allOwnerClassifications(),
+          AiUserMemory: { kind: 'personal', owner: { reader: rule }, enforced: true },
+          AppTally: { kind: 'personal', owner: { reader: rule }, enforced: true },
+        };
+        expect(auditOwnerClassification(noIdSchema, classification, new Set(['AppTally']))).toEqual(
+          [
+            'AiUserMemory has a read rule, which is for fork models only',
+            'AppTally has a read rule and is enforced but has no id',
+          ]
+        );
+      });
+    });
+
     it("clears a tier's row when it re-registers the model malformed", () => {
       vi.spyOn(logger, 'error').mockImplementation(() => {});
       registerAppOwnerClassification({

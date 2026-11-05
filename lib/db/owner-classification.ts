@@ -14,7 +14,8 @@
  *
  *   • **personal** — a row is its owner's. Reached either by a column on the
  *     row (`userId` → User) or `through` a relation to a personal parent (an
- *     `AiMessage` is its conversation's). A model is personal here **because
+ *     `AiMessage` is its conversation's) — or, for a fork's model only, decided
+ *     by a read rule the fork registers (`owner: { reader }`, t-985). A model is personal here **because
  *     the platform already scopes its reads to the owner**: the route layer's
  *     access helpers and ownership declarations are the evidence, and the parity
  *     test (t-801) holds the two together. Classifying something personal that
@@ -51,6 +52,7 @@
  * @see .context/auth/authorization.md — "Owner classification"
  */
 import type { UnattributedReadKind } from '@/lib/auth/orphan-reads';
+import type { OwnerReader } from '@/lib/db/owner-extension';
 import { initAppOwnerClassification } from '@/lib/app/owner-classification';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
@@ -71,7 +73,31 @@ export type OwnerPath =
    * a child with no parent at all. `lib/db/owner-extension.ts` analyses a
    * `through` predicate as the parent's predicate under the relation field.
    */
-  | { through: { field: string; parent: string } };
+  | { through: { field: string; parent: string } }
+  /**
+   * **Fork tiers only** (t-985). A rule that decides which rows a narrowed
+   * caller may read when no single column does — a row read by everyone in
+   * its space, its team, or holding a grant. Returns a Prisma `where` for
+   * this model, built from {@link OwnerReader} alone: pure, no I/O, the same
+   * answer for the same reader. Relation filters are how it reaches other
+   * tables (`space: { members: { some: { userId: reader.userId } } }`).
+   *
+   * **The data layer narrows by it, never refuses for want of proof**
+   * (§115 ruling, 2026-11-05). A list, count, aggregate or group-by gets the
+   * rule ANDed into its `where`; a to-many include gets it ANDed into its own; a
+   * read by unique key, an `update`, `delete` or `upsert`, of a row outside it
+   * is refused; an `updateManyAndReturn` is narrowed and skips such rows.
+   * So a query meant to read every row — a job, an admin total — silently
+   * gets only the caller's readable rows unless it runs inside
+   * `runAcrossOwners(reason, fn)`. A rule that throws, returns a non-object,
+   * or returns a `where` that matches every row by its shape (`{}`,
+   * `{ x: undefined }`, `{ AND: [] }`) refuses the read.
+   *
+   * Takes no `ownerless` or `alsoVisible`: the rule is the whole answer, so
+   * write an ownerless row's readability into it. A `through` child of a
+   * reader-owned model inherits the rule.
+   */
+  | { reader: (reader: OwnerReader) => object };
 
 export type OwnerClassification =
   | {
@@ -395,10 +421,17 @@ function shapeProblem(c: OwnerClassification): string | null {
   if (c.ownerless !== undefined) return '`ownerless` is for core models only';
   const owner: unknown = c.owner;
   if (typeof owner !== 'object' || owner === null) return 'a personal model needs an `owner`';
+  // One owner shape only: a second key would be silently ignored, and the
+  // rule the fork meant would not be the one enforced.
+  const shapes = ['column', 'through', 'reader'].filter((k) => k in owner);
+  if (shapes.length > 1) return `\`owner\` has ${shapes.join(' and ')}: give it exactly one`;
   if ('column' in owner) {
     return typeof owner.column === 'string' && owner.column !== ''
       ? null
       : '`owner.column` is empty';
+  }
+  if ('reader' in owner) {
+    return typeof owner.reader === 'function' ? null : '`owner.reader` must be a function';
   }
   if ('through' in owner) {
     const through: unknown = owner.through;
@@ -413,7 +446,7 @@ function shapeProblem(c: OwnerClassification): string | null {
       ? null
       : '`owner.through` needs a `field` and a `parent`';
   }
-  return '`owner` must be `{ column }` or `{ through: { field, parent } }`';
+  return '`owner` must be `{ column }`, `{ through: { field, parent } }` or `{ reader }`';
 }
 
 /**
