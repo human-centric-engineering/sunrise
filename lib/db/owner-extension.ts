@@ -122,6 +122,7 @@ import {
   type OwnerPath,
 } from '@/lib/db/owner-classification';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
+import { logger } from '@/lib/logging';
 import {
   readInlineSchema,
   readRuntimeDataModel,
@@ -190,8 +191,12 @@ export class OwnerReadRefusedError extends Error {
   ) {
     super(
       `Refused ${model}.${operation} for a caller narrowed to their own rows: ${detail} ` +
-        'Narrow the query with session.subjectFilter, or wrap a deliberate crossing in ' +
-        'runAcrossOwners(reason, fn). See .context/auth/authorization.md ("The owner chokepoint").'
+        (reason === 'read-rule-failed'
+          ? // No filter proves a rule, and a crossing would only hide the fault.
+            "Fix the model's owner.reader in your owner classification. " +
+            'See .context/auth/authorization.md ("A fork\'s read rule").'
+          : 'Narrow the query with session.subjectFilter, or wrap a deliberate crossing in ' +
+            'runAcrossOwners(reason, fn). See .context/auth/authorization.md ("The owner chokepoint").')
     );
     this.name = 'OwnerReadRefusedError';
   }
@@ -662,11 +667,17 @@ function ruleWhere(
   let where: unknown;
   try {
     where = rule({ ...reader, unattributedReads: { ...reader.unattributedReads } });
-  } catch {
-    // The rule's own error is not surfaced: it could carry row content.
+  } catch (err) {
+    // Logged for the fork to debug; never put in the refusal, which a route
+    // may answer with. The rule is pure, so its error carries no row content.
+    logger.error('owner-extension: a read rule threw', {
+      model,
+      operation,
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw new OwnerReadRefusedError(model, operation, 'read-rule-failed', 'its read rule threw.');
   }
-  if (!isRecord(where) || Object.keys(where).length === 0) {
+  if (!isRecord(where) || matchesEverything(where)) {
     throw new OwnerReadRefusedError(
       model,
       operation,
@@ -675,6 +686,25 @@ function ruleWhere(
     );
   }
   return { ...where };
+}
+
+/**
+ * Does this `where` match every row by its shape alone? `{}`, a key whose value
+ * is `undefined` (Prisma drops it: `{ ownerId: undefined }` from a destructuring
+ * slip), an `AND` that is empty or whose every arm matches everything, and an
+ * empty `NOT`. A rule like that would narrow nothing, so it refuses instead.
+ * Not a proof the rule is right — a filter like `{ id: { not: '' } }` passes.
+ */
+function matchesEverything(where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (value === undefined) return true;
+    if (key === 'AND') {
+      const arms: unknown[] = Array.isArray(value) ? value : [value];
+      return arms.every((arm) => isRecord(arm) && matchesEverything(arm));
+    }
+    if (key === 'NOT') return Array.isArray(value) && value.length === 0;
+    return false;
+  });
 }
 
 /**
@@ -793,6 +823,17 @@ function inheritsAlong(schema: OwnerSchema, model: string, key: string, target: 
   );
 }
 
+/**
+ * The relations a `_count: true` on `model` counts: its list relations, as
+ * Prisma counts no to-one. The scan and the rule's narrowing both read this,
+ * so they agree on what a bare `_count` reaches.
+ */
+function countedRelations(schema: OwnerSchema, model: string): string[] {
+  const index = schema.models.get(model);
+  if (!index) return [];
+  return [...index.relations.keys()].filter((rel) => index.lists.has(rel));
+}
+
 function scanArgs(
   schema: OwnerSchema,
   model: string,
@@ -823,11 +864,9 @@ function scanNode(
     if (value === false || value === undefined) continue;
     if (key === '_count') {
       // `_count: true` counts every relation; `_count: { select }` the named ones.
-      // Prisma counts list relations only, so `true` names those.
-      const lists = schema.models.get(model)?.lists;
       const counted: [string, unknown][] =
         value === true
-          ? [...relations.keys()].filter((rel) => lists?.has(rel)).map((rel) => [rel, true])
+          ? countedRelations(schema, model).map((rel) => [rel, true])
           : isRecord(value) && isRecord(value.select)
             ? Object.entries(value.select)
             : [];
@@ -1015,11 +1054,7 @@ function withRuleNarrowing(
         const count = holder._count;
         const select: Record<string, unknown> =
           count === true
-            ? Object.fromEntries(
-                [...(schema.models.get(owner)?.lists ?? [])]
-                  .filter((rel) => schema.models.get(owner)?.relations.has(rel))
-                  .map((rel) => [rel, true])
-              )
+            ? Object.fromEntries(countedRelations(schema, owner).map((rel) => [rel, true]))
             : isRecord(count) && isRecord(count.select)
               ? count.select
               : {};
@@ -1256,20 +1291,27 @@ export function withOwnerChecks(
       // not written. By unique key, that miss is refused rather than reported
       // absent when the row exists — and an upsert is refused before it runs,
       // or it would create a second row beside one the caller cannot see.
+      // A row by this key exists, and the rule does not admit it. Asked
+      // readable-first, so the common case (the caller's own row) is one probe.
+      const foreign = async () =>
+        !(await existsOutside(client, model, narrowed.where)) &&
+        (await existsOutside(client, model, where));
       if (operation === 'upsert') {
-        if (
-          (await existsOutside(client, model, where)) &&
-          !(await existsOutside(client, model, narrowed.where))
-        ) {
-          throw foreignRow();
-        }
+        // Checked before the write, outside the caller's transaction (see
+        // existsOutside): a row created or moved between the probe and the
+        // write is not seen, and the narrowed upsert then creates or fails on
+        // the unique key — it never returns the foreign row.
+        if (await foreign()) throw foreignRow();
         return send(narrowed);
       }
       if (operation === 'updateManyAndReturn') return send(narrowed);
       try {
         return await send(narrowed);
       } catch (err) {
-        if (isNotFound(err) && (await existsOutside(client, model, where))) throw foreignRow();
+        // Only a miss on the target itself is a foreign row: a nested write's
+        // own not-found (a `connect` to a missing row) on a readable target is
+        // the caller's error, and is rethrown as it is.
+        if (isNotFound(err) && (await foreign())) throw foreignRow();
         throw err;
       }
     }

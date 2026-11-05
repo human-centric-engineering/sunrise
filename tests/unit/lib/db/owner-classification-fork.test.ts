@@ -247,6 +247,53 @@ model AppDraft {
         ]);
       });
 
+      it('refuses an owner with two shapes, which would enforce only one of them', () => {
+        const error = vi.spyOn(logger, 'error').mockImplementation(() => {});
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: {
+            AppJournalEntry: {
+              kind: 'personal',
+              owner: { column: 'userId', reader: rule } as unknown as { reader: typeof rule },
+            },
+          },
+        });
+        expect(ownerClassificationOf('AppJournalEntry')).toBeNull();
+        expect(error.mock.calls.map(([, meta]) => meta)).toEqual([
+          {
+            tier: 'app',
+            model: 'AppJournalEntry',
+            reason: '`owner` has column and reader: give it exactly one',
+          },
+        ]);
+      });
+
+      it('accepts a ruled model whose only link is to a model that is not personal', () => {
+        // A space's note: read by the space's members, linked to no user.
+        const spaceSchema = new Map([
+          ...coreSchema(),
+          ...parseSchema([
+            `
+model AppSpace {
+  id String @id
+}
+model AppSpaceNote {
+  id      String   @id
+  spaceId String
+  space   AppSpace @relation(fields: [spaceId], references: [id])
+}
+`,
+          ]),
+        ]);
+        registerAppOwnerClassification({
+          tier: 'app',
+          models: { AppSpaceNote: { kind: 'personal', owner: { reader: rule }, enforced: true } },
+        });
+        expect(
+          auditOwnerClassification(spaceSchema, allOwnerClassifications(), forkRows())
+        ).toEqual([]);
+      });
+
       it('flags a read rule on a core model, and an enforced one with no id', () => {
         const noIdSchema = new Map([
           ...coreSchema(),

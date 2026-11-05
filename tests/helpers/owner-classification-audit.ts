@@ -195,7 +195,10 @@ export function auditOwnerClassification(
       problems.push(`${name} is classified but is not a model in the schema`);
       continue;
     }
-    if (!required.has(name)) {
+    // A read rule is the one shape whose readability need not run through a
+    // user link: a space note is read by the space's members (t-985).
+    const ruled = c.kind === 'personal' && 'reader' in c.owner;
+    if (!required.has(name) && !ruled) {
       problems.push(`${name} is classified but links to no user and no personal model`);
     }
     if (c.kind === 'not-personal') {

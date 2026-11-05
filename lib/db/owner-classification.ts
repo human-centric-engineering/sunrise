@@ -85,11 +85,13 @@ export type OwnerPath =
    * **The data layer narrows by it, never refuses for want of proof**
    * (§115 ruling, 2026-11-05). A list, count, aggregate or group-by gets the
    * rule ANDed into its `where`; a to-many include gets it as its `where`; a
-   * read by unique key, or a returning write, of a row outside it is refused.
+   * read by unique key, an `update`, `delete` or `upsert`, of a row outside it
+   * is refused; an `updateManyAndReturn` is narrowed and skips such rows.
    * So a query meant to read every row — a job, an admin total — silently
    * gets only the caller's readable rows unless it runs inside
-   * `runAcrossOwners(reason, fn)`. A rule that throws, or returns anything but
-   * a non-empty object, refuses the read.
+   * `runAcrossOwners(reason, fn)`. A rule that throws, returns a non-object,
+   * or returns a `where` that matches every row by its shape (`{}`,
+   * `{ x: undefined }`, `{ AND: [] }`) refuses the read.
    *
    * Takes no `ownerless` or `alsoVisible`: the rule is the whole answer, so
    * write an ownerless row's readability into it. A `through` child of a
@@ -419,6 +421,10 @@ function shapeProblem(c: OwnerClassification): string | null {
   if (c.ownerless !== undefined) return '`ownerless` is for core models only';
   const owner: unknown = c.owner;
   if (typeof owner !== 'object' || owner === null) return 'a personal model needs an `owner`';
+  // One owner shape only: a second key would be silently ignored, and the
+  // rule the fork meant would not be the one enforced.
+  const shapes = ['column', 'through', 'reader'].filter((k) => k in owner);
+  if (shapes.length > 1) return `\`owner\` has ${shapes.join(' and ')}: give it exactly one`;
   if ('column' in owner) {
     return typeof owner.column === 'string' && owner.column !== ''
       ? null

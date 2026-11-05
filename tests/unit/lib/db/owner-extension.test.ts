@@ -51,6 +51,8 @@ import {
 import type { UnattributedReads } from '@/lib/auth/orphan-reads';
 import type { SubjectFilter } from '@/lib/auth/authorization';
 
+import { logger } from '@/lib/logging';
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -1141,14 +1143,24 @@ describe('withOwnerChecks — a fork read rule (t-985)', () => {
       () => ruled.aiConversation.delete({ where: { id: CONV } }),
     ]) {
       statements.length = 0;
-      // The narrowed write matches nothing; the existence ask finds the row.
-      tableAnswers = { ai_conversation: [[{ id: CONV }]] };
+      // The narrowed write matches nothing. Asked below this layer: not under
+      // the rule, but there.
+      tableAnswers = { ai_conversation: [[], [{ id: CONV }]] };
       await expect(asMember(write)).rejects.toMatchObject({ reason: 'foreign-row' });
       // The one statement that could change the row carried the rule, so it did not.
       const writes = statements.filter((s) => /^(UPDATE|DELETE)/.test(s.sql));
       expect(writes).toHaveLength(1);
       carriesRule(writes[0]);
     }
+  });
+
+  it('rethrows a nested write’s not-found on a row the rule admits, rather than calling it foreign', async () => {
+    // The update misses (as a `connect` to a missing row would make it), but the
+    // target itself is readable under the rule.
+    tableAnswers = { ai_conversation: [[{ id: CONV }]] };
+    await expect(
+      asMember(() => ruled.aiConversation.update({ where: { id: CONV }, data: { title: 'x' } }))
+    ).rejects.toMatchObject({ code: 'P2025' });
   });
 
   it('keeps not-found for a returning write to a row that does not exist', async () => {
@@ -1159,8 +1171,8 @@ describe('withOwnerChecks — a fork read rule (t-985)', () => {
   });
 
   it('refuses an upsert of a row outside the rule before it writes anything', async () => {
-    // Exists; not under the rule.
-    tableAnswers = { ai_conversation: [[{ id: CONV }], []] };
+    // Not under the rule; there.
+    tableAnswers = { ai_conversation: [[], [{ id: CONV }]] };
     await expect(
       asMember(() =>
         ruled.aiConversation.upsert({
@@ -1231,17 +1243,38 @@ describe('withOwnerChecks — a fork read rule (t-985)', () => {
       () => null,
       () => ({}),
       () => [{ userId: ME }],
+      // Prisma drops an undefined key, so each of these matches every row.
+      () => ({ userId: undefined }),
+      () => ({ AND: [] }),
+      () => ({ AND: {} }),
+      () => ({ AND: [{ userId: undefined }] }),
+      () => ({ NOT: [] }),
     ];
     for (const answer of answers) {
       rule.mockImplementation(answer as typeof ruleOf);
       const refused = asMember(() => ruled.aiConversation.findMany());
       await expect(refused).rejects.toMatchObject({ reason: 'read-rule-failed' });
       await expect(refused).rejects.not.toThrow(/row content/);
+      // The fix it names is the rule, not a crossing that would hide it.
+      await expect(refused).rejects.toThrow(/owner\.reader/);
+      await expect(refused).rejects.not.toThrow(/runAcrossOwners/);
       await expect(asMember(() => ruled.aiMessage.count())).rejects.toMatchObject({
         reason: 'read-rule-failed',
       });
     }
     expect(statements).toHaveLength(0);
+    // A thrown rule is logged for the fork to debug, by model and operation.
+    expect(logger.error).toHaveBeenCalledWith('owner-extension: a read rule threw', {
+      model: 'AiConversation',
+      operation: 'findMany',
+      error: 'row content in here',
+    });
+  });
+
+  it('narrows by a rule that has an undefined key beside a real one', async () => {
+    rule.mockImplementation((r) => ({ userId: r.userId, embedVisitorId: undefined }) as never);
+    await asMember(() => ruled.aiConversation.findMany());
+    expect(statements[0].args).toContain(ME);
   });
 
   it('never proves the rule from a filter, even the rule itself', () => {

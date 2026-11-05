@@ -1350,9 +1350,13 @@ that must see every row in `runAcrossOwners(reason, fn)`, as core's crossings
 are. Refusing instead would have taxed every fork query with restating the rule
 verbatim and refused correct ones; the protection is identical either way.
 
-The rule fails closed. One that throws, or returns anything but a non-empty
-object, refuses the read as `read-rule-failed`, without surfacing the rule's own
-error (`{}` would admit every row: a model with no owner is `not-personal`). A
+The rule fails closed. One that throws, returns a non-object, or returns a
+`where` that matches every row by its shape — `{}`, a key left `undefined`
+(`{ ownerUserId: undefined }`, which Prisma drops), an empty `AND` or `NOT` —
+refuses the read as `read-rule-failed`. A thrown error is logged, never put in
+the refusal. That check is a backstop, not a proof: a rule that admits every
+row some other way (`{ id: { not: '' } }`) is not caught, and a model with no
+owner is `not-personal`. A
 ruled model takes no `ownerless` or `alsoVisible` arm, so write an ownerless
 row's readability into the rule itself. A filter never proves the rule, not
 even the rule repeated, so a route's own narrowing is kept and the rule is
