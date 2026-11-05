@@ -140,6 +140,61 @@ describe('tenancy classification — fork tiers', () => {
     );
   });
 
+  it('refuses a model listed in all three classes, not just the first clash', () => {
+    registerAppTenancyClassification({
+      tier: 'app',
+      system: ['AppThrice'],
+      globalConfig: ['AppThrice'],
+      userOwned: ['AppThrice'],
+    });
+
+    expect(classifyModels(rdm({ AppThrice: {} })).unclassified).toEqual(['AppThrice']);
+  });
+
+  it('keeps refusing a clashed model, from any tier, afterwards', () => {
+    registerAppTenancyClassification({
+      tier: 'app',
+      system: ['AppTwice'],
+      userOwned: ['AppTwice'],
+    });
+    registerAppTenancyClassification({ tier: 'framework', userOwned: ['AppTwice'] });
+    registerAppTenancyClassification({ tier: 'app', userOwned: ['AppTwice'] });
+
+    expect(appTenancyClassifications().has('AppTwice')).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      'tenancy-classification: app classification rejected',
+      expect.objectContaining({
+        tier: 'framework',
+        model: 'AppTwice',
+        reason: 'was listed in two classes; every entry for it is refused',
+      })
+    );
+  });
+
+  it.each([
+    ['empty', ''],
+    ['blank', '  '],
+    ['missing', undefined],
+  ])('drops a contribution whose tier is %s', (_label, tier) => {
+    registerAppTenancyClassification({ tier: tier as unknown as string, userOwned: ['AppKit'] });
+
+    expect(appTenancyClassifications().size).toBe(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      'tenancy-classification: app classification rejected',
+      expect.objectContaining({ reason: '`tier` is required' })
+    );
+  });
+
+  it('records which tier registered each model', () => {
+    registerAppTenancyClassification({ tier: 'framework', system: ['FwJoin'] });
+    registerAppTenancyClassification({ tier: 'app', userOwned: ['AppKit'] });
+
+    expect(Object.fromEntries(appTenancyClassifications())).toEqual({
+      FwJoin: { cls: 'system', tier: 'framework' },
+      AppKit: { cls: 'userOwned', tier: 'app' },
+    });
+  });
+
   it('is idempotent for the same model in the same class', () => {
     registerAppTenancyClassification({ tier: 'app', userOwned: ['AppKit'] });
     registerAppTenancyClassification({ tier: 'app', userOwned: ['AppKit'] });
@@ -253,5 +308,18 @@ describe('tenancy classification — fork tiers', () => {
 
     expect(scanner.GLOBAL_CONFIG_ACCESSORS.has('appLineageNode')).toBe(true);
     expect(scanner.GLOBAL_CONFIG_ACCESSORS.has('aiProviderConfig')).toBe(true);
+
+    // Raw SQL against the fork's table, which has no @@map: its name is the model's.
+    const writes = (body: string): boolean =>
+      scanner.analyzeRoute(
+        {
+          path: 'app/api/v1/fixture/route.ts',
+          source: `export const POST = withAdminAuth(async () => {\n${body}\n});`,
+        },
+        new Set()
+      )[0].writes;
+    expect(writes('await prisma.$executeRaw`UPDATE "AppLineageNode" SET "label" = 1`;')).toBe(true);
+    expect(writes('await prisma.$executeRaw`UPDATE app_lineage_node SET label = 1`;')).toBe(true);
+    expect(writes('await prisma.$executeRaw`UPDATE "AppOther" SET "label" = 1`;')).toBe(false);
   });
 });

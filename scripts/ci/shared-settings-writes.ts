@@ -54,6 +54,8 @@
  * data-layer alternative is Hub idea #21.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import ts from 'typescript';
 import { allGlobalConfigModels } from '@/lib/tenancy/classification';
 
@@ -81,10 +83,40 @@ export const GLOBAL_CONFIG_ACCESSORS: ReadonlySet<string> = new Set(
   SHARED_SETTINGS_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
 );
 
-/** The mapped table names: `AiProviderModel` → `ai_provider_model`. */
-const GLOBAL_CONFIG_TABLES = SHARED_SETTINGS_MODELS.map((model) =>
-  model.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
-);
+/**
+ * Each shared-settings model's table, read from `prisma/schema/*.prisma`: its
+ * `@@map`, or the model name when it has none (a fork's table usually has
+ * none). Core's snake_case guess is kept beside it, so a schema this cannot
+ * read narrows nothing.
+ */
+function tableNamesOf(models: readonly string[]): string[] {
+  const mapped = new Map<string, string>();
+  const dir = path.join(process.cwd(), 'prisma', 'schema');
+  let files: string[] = [];
+  try {
+    files = readdirSync(dir).filter((file) => file.endsWith('.prisma'));
+  } catch {
+    // No schema directory (a test's synthetic cwd): the guesses below still apply.
+  }
+  for (const file of files) {
+    let current: string | null = null;
+    for (const line of readFileSync(path.join(dir, file), 'utf8').split('\n')) {
+      const open = /^model\s+(\w+)\s*\{/.exec(line);
+      if (open) current = open[1];
+      else if (line.startsWith('}')) current = null;
+      const map = current ? /^\s*@@map\("(\w+)"\)/.exec(line) : null;
+      if (map && current) mapped.set(current, map[1]);
+    }
+  }
+  const tables = new Set<string>();
+  for (const model of models) {
+    tables.add(mapped.get(model) ?? model);
+    tables.add(model.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase());
+  }
+  return [...tables];
+}
+
+const GLOBAL_CONFIG_TABLES = tableNamesOf(SHARED_SETTINGS_MODELS);
 const SQL_WRITE = new RegExp(
   String.raw`\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:"?public"?\.)?"?(?:${GLOBAL_CONFIG_TABLES.join('|')})\b`,
   'i'

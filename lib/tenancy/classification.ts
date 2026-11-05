@@ -216,8 +216,10 @@ function hasOrgId(model: RuntimeDataModelModel): boolean {
 }
 
 /**
- * Classify every model in a runtime data model. Pure — the test runs it on
- * the real client and on synthetic fixtures alike.
+ * Classify every model in a runtime data model, against core's lists and the
+ * fork tiers' registrations (running the fork's init on first use). Otherwise
+ * pure: the test runs it on the real client and on synthetic fixtures alike,
+ * and a fixture model a fork has also registered takes the fork's class.
  */
 export function classifyModels(rdm: RuntimeDataModel): ModelClassification {
   const system = new Set<string>(allSystemModels());
@@ -284,7 +286,12 @@ export type AppTenancyClass = 'system' | 'globalConfig' | 'userOwned';
 
 /** One tier's classification of its own models. */
 export interface AppTenancyClassificationContribution {
-  /** `'app'` for a leaf fork, `'framework'` for a framework tier. Diagnostics only. */
+  /**
+   * `'app'` for a leaf fork, `'framework'` for a framework tier. Not only a
+   * label: a model another tier already classified keeps that tier's class,
+   * and the coverage guard holds an `'app'` registration to the leaf's own
+   * models. Required, non-empty.
+   */
   tier: string;
   /** Models that decide or record tenancy. One carrying `orgId` leaves row isolation, and is logged. */
   system?: readonly string[];
@@ -294,10 +301,20 @@ export interface AppTenancyClassificationContribution {
   userOwned?: readonly string[];
 }
 
-/** Fork-registered classes, keyed by model. */
-const appClasses = new Map<string, AppTenancyClass>();
-/** Which tier registered each model, for the duplicate-across-tiers message. */
-const appTiers = new Map<string, string>();
+/** One fork registration: the class, and the tier that registered it. */
+export interface AppTenancyRegistration {
+  cls: AppTenancyClass;
+  tier: string;
+}
+
+/** Fork registrations, keyed by model. */
+const appRegistrations = new Map<string, AppTenancyRegistration>();
+/**
+ * Models a tier listed in two classes. Refused for the life of the registry —
+ * not just at the clash — so a third listing, or another tier, cannot classify
+ * one after its entries were dropped: the coverage guard must name it.
+ */
+const clashedModels = new Set<string>();
 
 const CORE_CLASSIFIED: ReadonlySet<string> = new Set<string>([
   ...SYSTEM_MODELS,
@@ -323,16 +340,16 @@ function rejectApp(tier: string, model: string, why: string): void {
  * calls. Idempotent by model and class.
  *
  * A row is dropped with a log, never thrown, when it names a model on one of
- * core's lists, a model another tier has classified (the first stands), an
- * empty name, or a model this tier has already put in a different class (both
- * entries are dropped, so the model is unclassified and the coverage guard
- * names it).
+ * core's lists, a model another tier has classified (the first stands), or an
+ * empty name; a contribution with no `tier` is dropped whole. A model this tier
+ * lists in two classes loses every entry, now and later, so it stays
+ * unclassified and the coverage guard names it.
  *
  * **Register only your own models.** Core's tenant-owned models are defined by
  * their `orgId` column and listed nowhere, so this cannot refuse one — but the
  * coverage guard (`model-classification.test.ts`) fails naming any registration
- * of a model from a core schema file. Registering one as system would take it
- * out of row isolation.
+ * of a model from a core schema file, or an `'app'` registration of a framework
+ * tier's model. Registering one as system would take it out of row isolation.
  *
  * Name only what this file decides. Whether a model carries `orgId`, and so
  * whether the class is a contradiction, is the coverage guard's to judge
@@ -341,7 +358,11 @@ function rejectApp(tier: string, model: string, why: string): void {
 export function registerAppTenancyClassification(
   contribution: AppTenancyClassificationContribution
 ): void {
-  const { tier } = contribution;
+  const tier = typeof contribution.tier === 'string' ? contribution.tier.trim() : '';
+  if (tier === '') {
+    rejectApp(String(contribution.tier), '<all>', '`tier` is required');
+    return;
+  }
   const lists: ReadonlyArray<readonly [AppTenancyClass, unknown]> = [
     ['system', contribution.system],
     ['globalConfig', contribution.globalConfig],
@@ -363,20 +384,22 @@ export function registerAppTenancyClassification(
         rejectApp(tier, model, 'core already classifies this model');
         continue;
       }
-      const owner = appTiers.get(model);
-      if (owner !== undefined && owner !== tier) {
-        rejectApp(tier, model, `already classified by tier '${owner}'`);
+      if (clashedModels.has(model)) {
+        rejectApp(tier, model, 'was listed in two classes; every entry for it is refused');
         continue;
       }
-      const existing = appClasses.get(model);
-      if (existing !== undefined && existing !== cls) {
-        rejectApp(tier, model, `listed as both '${existing}' and '${cls}'`);
-        appClasses.delete(model);
-        appTiers.delete(model);
+      const existing = appRegistrations.get(model);
+      if (existing !== undefined && existing.tier !== tier) {
+        rejectApp(tier, model, `already classified by tier '${existing.tier}'`);
         continue;
       }
-      appClasses.set(model, cls);
-      appTiers.set(model, tier);
+      if (existing !== undefined && existing.cls !== cls) {
+        rejectApp(tier, model, `listed as both '${existing.cls}' and '${cls}'`);
+        appRegistrations.delete(model);
+        clashedModels.add(model);
+        continue;
+      }
+      appRegistrations.set(model, { cls, tier });
     }
   }
 }
@@ -395,16 +418,17 @@ const appInit = createAppInitGate({
   label: 'tenancy-classification: initAppTenancyClassification',
   subject: 'app tenancy classifications',
   init: initAppTenancyClassification,
-  snapshot: () => ({ classes: new Map(appClasses), tiers: new Map(appTiers) }),
+  snapshot: () => ({ registrations: new Map(appRegistrations), clashed: new Set(clashedModels) }),
   restore: (before) => {
-    restoreMap(appClasses, before.classes);
-    restoreMap(appTiers, before.tiers);
+    restoreMap(appRegistrations, before.registrations);
+    clashedModels.clear();
+    for (const model of before.clashed) clashedModels.add(model);
   },
 });
 
 function appModelsIn(cls: AppTenancyClass): string[] {
   appInit.ensure();
-  return [...appClasses].filter(([, c]) => c === cls).map(([model]) => model);
+  return [...appRegistrations].filter(([, r]) => r.cls === cls).map(([model]) => model);
 }
 
 /** Core's system models and every tier's. */
@@ -422,10 +446,10 @@ export function allUserOwnedModels(): string[] {
   return [...USER_OWNED_MODELS, ...appModelsIn('userOwned')];
 }
 
-/** Only the fork tiers' classifications, by model. */
-export function appTenancyClassifications(): ReadonlyMap<string, AppTenancyClass> {
+/** Only the fork tiers' registrations, by model: the class and the tier that registered it. */
+export function appTenancyClassifications(): ReadonlyMap<string, AppTenancyRegistration> {
   appInit.ensure();
-  return new Map(appClasses);
+  return new Map(appRegistrations);
 }
 
 let exemptionsWarned = false;
@@ -447,8 +471,8 @@ export function warnAboutAppIsolationExemptions(classification: ModelClassificat
 
 /** Test-only: clear the fork registry, re-arm the one-shot init and the warning. */
 export function __resetAppTenancyClassificationForTests(): void {
-  appClasses.clear();
-  appTiers.clear();
+  appRegistrations.clear();
+  clashedModels.clear();
   appInit.reset();
   exemptionsWarned = false;
 }

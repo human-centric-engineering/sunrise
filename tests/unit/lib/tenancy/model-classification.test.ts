@@ -71,6 +71,33 @@ function forkRegisteredCoreModels(
   return [...registered].filter((model) => core.has(model));
 }
 
+/** Every model declared in a framework tier's schema files (`framework-*.prisma`). */
+function frameworkModels(): Set<string> {
+  const names = new Set<string>();
+  for (const file of readdirSync(SCHEMA_DIR).filter((f) => /^framework-.*\.prisma$/.test(f))) {
+    for (const line of readFileSync(path.join(SCHEMA_DIR, file), 'utf8').split('\n')) {
+      const open = MODEL_OPEN.exec(line);
+      if (open) names.add(open[1]);
+    }
+  }
+  return names;
+}
+
+/**
+ * `'app'`-tier registrations naming a framework tier's model. A leaf on a
+ * framework classifies its own models; the framework's keep the framework's
+ * class (or `orgId`), or a leaf could take a framework's tenant-owned model out
+ * of row isolation.
+ */
+function leafRegisteredFrameworkModels(
+  registrations: ReadonlyMap<string, { tier: string }>,
+  framework: ReadonlySet<string>
+): string[] {
+  return [...registrations]
+    .filter(([model, r]) => r.tier === 'app' && framework.has(model))
+    .map(([model]) => model);
+}
+
 /** User-owned models with no link to a user — a person's row that names no person. */
 function userOwnedWithoutUserLink(
   userOwned: readonly string[],
@@ -183,6 +210,13 @@ describe('model classification', () => {
     ).toEqual([]);
   });
 
+  it('has no leaf registration naming a framework tier’s model', () => {
+    expect(
+      leafRegisteredFrameworkModels(appTenancyClassifications(), frameworkModels()),
+      'An app-tier registration may classify only the leaf’s own models; a framework tier’s keep its class.'
+    ).toEqual([]);
+  });
+
   it('lists name only models that exist, and do not overlap', () => {
     const names = new Set(schema.keys());
     const fork = [...appTenancyClassifications().keys()];
@@ -260,6 +294,20 @@ describe('model classification', () => {
       expect(forkRegisteredCoreModels(['AiConversation', 'AppKit'], coreSchema())).toEqual([
         'AiConversation',
       ]);
+    });
+
+    it('names a leaf registration of a framework model, not the framework’s own', () => {
+      const registrations = new Map([
+        ['FrameworkInvoice', { tier: 'app' }],
+        ['FrameworkLedger', { tier: 'framework' }],
+        ['AppKit', { tier: 'app' }],
+      ]);
+      expect(
+        leafRegisteredFrameworkModels(
+          registrations,
+          new Set(['FrameworkInvoice', 'FrameworkLedger'])
+        )
+      ).toEqual(['FrameworkInvoice']);
     });
 
     it('names a user-owned model with no link to a user, and passes one with a link', () => {

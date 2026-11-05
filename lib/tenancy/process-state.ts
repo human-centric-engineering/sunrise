@@ -790,9 +790,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/tenancy/classification.ts',
-    holders: ['appClasses', 'appTiers', 'appInit', 'exemptionsWarned'],
+    holders: ['appRegistrations', 'clashedModels', 'appInit', 'exemptionsWarned'],
     posture: 'no-tenant-data',
-    why: "A fork's tenancy classification of its own MODELS (t-983) — which class each is in, which tier said so — registered from code and the same for every org, plus a warn-once latch; no row data.",
+    why: "A fork's tenancy classification of its own MODELS (t-983) — which class each is in, which tier said so, which clashed — registered from code and the same for every org, plus a warn-once latch; no row data.",
   },
   {
     file: 'lib/tenancy/resolver.ts',
