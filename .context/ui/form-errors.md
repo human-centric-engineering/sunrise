@@ -462,3 +462,7 @@ Not converted, by rule: load errors, test / run / preview / search actions
 the pairwise judge, LLM generation previews, knowledge search), the chat's
 messages (its approval card's approve and reject are converted), and org
 switches. Each is declared in `BOX_EXEMPTIONS` with its reason.
+
+## Testing a failed save
+
+`<SaveError>` takes focus during the commit that shows it, so a test can assert focus straight after `findByRole('alert')`, with no `waitFor`. The exception is a field on a hidden tab, which takes focus on a later frame.

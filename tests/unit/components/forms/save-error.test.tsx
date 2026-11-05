@@ -11,7 +11,7 @@
  * @see components/forms/form-error.tsx
  */
 
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
@@ -36,6 +36,18 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/**
+ * Records what holds focus during the commit that shows a failure. Placed after
+ * `<SaveError>`, so its layout effect runs after that one and before any passive
+ * effect: what it sees is what a test sees the moment the alert appears.
+ */
+function FocusInCommit({ shown, seen }: { shown: unknown; seen: (el: Element | null) => void }) {
+  useLayoutEffect(() => {
+    if (shown) seen(document.activeElement);
+  }, [shown, seen]);
+  return null;
+}
 
 function failure(overrides: Partial<SaveFailure> = {}): SaveFailure {
   return { message: 'Could not save.', stale: false, fields: [], ...overrides };
@@ -94,6 +106,48 @@ function save() {
 }
 
 describe('SaveError', () => {
+  describe('focus timing (t-995)', () => {
+    // Tests assert focus straight after `findByRole('alert')`, so focus has to
+    // land in the commit that shows the alert. Later, and they pass or fail on
+    // scheduling, which failed the 0.17.0 cut's CI on main.
+    it('focuses the summary in the commit that shows it', () => {
+      const seen = vi.fn();
+      const shown = failure();
+      const { rerender } = render(
+        <>
+          <SaveError failure={null} />
+          <FocusInCommit shown={null} seen={seen} />
+        </>
+      );
+
+      rerender(
+        <>
+          <SaveError failure={shown} />
+          <FocusInCommit shown={shown} seen={seen} />
+        </>
+      );
+
+      expect(seen).toHaveBeenCalledExactlyOnceWith(screen.getByRole('alert'));
+    });
+
+    it('focuses a named field in the commit that shows the failure', () => {
+      const seen = vi.fn();
+      const shown = failure({ fields: [{ field: 'email', message: 'Taken.' }] });
+      const page = (current: SaveFailure | null) => (
+        <form>
+          <input name="email" aria-label="Email" />
+          <SaveError failure={current} />
+          <FocusInCommit shown={current} seen={seen} />
+        </form>
+      );
+      const { rerender } = render(page(null));
+
+      rerender(page(shown));
+
+      expect(seen).toHaveBeenCalledExactlyOnceWith(screen.getByLabelText('Email'));
+    });
+  });
+
   it('renders nothing without a failure', () => {
     render(<Harness next={() => failure()} />);
 

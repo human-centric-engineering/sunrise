@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlertCircle, Copy, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -151,7 +151,11 @@ export function SaveError<TField extends string>({
 }: SaveErrorProps<TField>) {
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  // A layout effect, so focus has moved by the time the alert can be seen: a
+  // passive effect runs after the commit, which left `findByRole('alert')`
+  // resolving with focus still on <body>, failing CI now and then. Form tests,
+  // a fork's included, assert focus straight after finding the alert (t-995).
+  useLayoutEffect(() => {
     const box = ref.current;
     if (!failure || !box) return;
     const focusBox = () => {
