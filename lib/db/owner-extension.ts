@@ -655,8 +655,9 @@ export function readablePredicate(
  * A fork's read rule, run for `reader`, failing closed. A rule that throws, or
  * returns anything but a non-empty object, refuses the read: `{}` would admit
  * every row, which is a model with no owner — classify that `not-personal`.
- * The answer is a fresh copy, so a rule handing back a shared constant is not
- * changed by what the layer adds to it.
+ * The rule is handed a copy of the reader, so it cannot change the request's
+ * own scope. Every refusal is logged by model, since it answers 404 and would
+ * otherwise read as empty data rather than a broken rule.
  */
 function ruleWhere(
   model: string,
@@ -678,6 +679,10 @@ function ruleWhere(
     throw new OwnerReadRefusedError(model, operation, 'read-rule-failed', 'its read rule threw.');
   }
   if (!isRecord(where) || matchesEverything(where)) {
+    logger.error('owner-extension: a read rule returned no where to narrow by', {
+      model,
+      operation,
+    });
     throw new OwnerReadRefusedError(
       model,
       operation,
@@ -685,15 +690,16 @@ function ruleWhere(
       'its read rule returned no where to narrow by.'
     );
   }
-  return { ...where };
+  return where;
 }
 
 /**
- * Does this `where` match every row by its shape alone? `{}`, a key whose value
+ * Does this `where` match every row by its shape alone, at its top level? `{}`, a key whose value
  * is `undefined` (Prisma drops it: `{ ownerId: undefined }` from a destructuring
  * slip), an `AND` that is empty or whose every arm matches everything, and an
  * empty `NOT`. A rule like that would narrow nothing, so it refuses instead.
- * Not a proof the rule is right — a filter like `{ id: { not: '' } }` passes.
+ * Not a proof the rule is right: a nested no-op (`space: { members: { some:
+ * { userId: undefined } } }`) or `{ id: { not: '' } }` passes.
  */
 function matchesEverything(where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
@@ -825,8 +831,9 @@ function inheritsAlong(schema: OwnerSchema, model: string, key: string, target: 
 
 /**
  * The relations a `_count: true` on `model` counts: its list relations, as
- * Prisma counts no to-one. The scan and the rule's narrowing both read this,
- * so they agree on what a bare `_count` reaches.
+ * Prisma counts no to-one. Spelled out when a rule narrows one of them; the
+ * scan reads every relation instead, so a list the schema parse missed is
+ * refused rather than counted unchecked.
  */
 function countedRelations(schema: OwnerSchema, model: string): string[] {
   const index = schema.models.get(model);
@@ -864,9 +871,11 @@ function scanNode(
     if (value === false || value === undefined) continue;
     if (key === '_count') {
       // `_count: true` counts every relation; `_count: { select }` the named ones.
+      // Every relation, not only the lists Prisma counts: a list the schema
+      // parse missed is then still checked (and refused) rather than passed.
       const counted: [string, unknown][] =
         value === true
-          ? countedRelations(schema, model).map((rel) => [rel, true])
+          ? [...relations.keys()].map((rel) => [rel, true])
           : isRecord(value) && isRecord(value.select)
             ? Object.entries(value.select)
             : [];
@@ -879,7 +888,9 @@ function scanNode(
           model: target,
           where: isRecord(sel) ? sel.where : undefined,
           keys,
-          toOne: false,
+          // Narrowed by a rule only when it is a list `_count` can carry a
+          // `where` for; otherwise refused, as before.
+          toOne: !(schema.models.get(model)?.lists.has(rel) ?? false),
           counted: rel,
         });
       }

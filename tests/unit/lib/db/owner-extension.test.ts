@@ -1269,6 +1269,11 @@ describe('withOwnerChecks — a fork read rule (t-985)', () => {
       operation: 'findMany',
       error: 'row content in here',
     });
+    // So is a rule that answered nothing usable: a 404 alone reads as empty data.
+    expect(logger.error).toHaveBeenCalledWith(
+      'owner-extension: a read rule returned no where to narrow by',
+      { model: 'AiConversation', operation: 'findMany' }
+    );
   });
 
   it('narrows by a rule that has an undefined key beside a real one', async () => {

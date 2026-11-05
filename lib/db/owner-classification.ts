@@ -84,7 +84,7 @@ export type OwnerPath =
    *
    * **The data layer narrows by it, never refuses for want of proof**
    * (§115 ruling, 2026-11-05). A list, count, aggregate or group-by gets the
-   * rule ANDed into its `where`; a to-many include gets it as its `where`; a
+   * rule ANDed into its `where`; a to-many include gets it ANDed into its own; a
    * read by unique key, an `update`, `delete` or `upsert`, of a row outside it
    * is refused; an `updateManyAndReturn` is narrowed and skips such rows.
    * So a query meant to read every row — a job, an admin total — silently

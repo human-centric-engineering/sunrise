@@ -1351,12 +1351,22 @@ are. Refusing instead would have taxed every fork query with restating the rule
 verbatim and refused correct ones; the protection is identical either way.
 
 The rule fails closed. One that throws, returns a non-object, or returns a
-`where` that matches every row by its shape — `{}`, a key left `undefined`
+`where` that matches every row by its top-level shape — `{}`, a key left `undefined`
 (`{ ownerUserId: undefined }`, which Prisma drops), an empty `AND` or `NOT` —
-refuses the read as `read-rule-failed`. A thrown error is logged, never put in
-the refusal. That check is a backstop, not a proof: a rule that admits every
-row some other way (`{ id: { not: '' } }`) is not caught, and a model with no
-owner is `not-personal`. A
+refuses the read as `read-rule-failed`, logged by model (with a thrown error's
+message, which never goes into the refusal) and answered 404 like any refusal.
+That check is a backstop, not a proof: a nested no-op
+(`space: { members: { some: { userId: undefined } } }`) or a rule that admits
+every row some other way (`{ id: { not: '' } }`) is not caught, and a model
+with no owner is `not-personal`.
+
+An `upsert`'s check runs outside the caller's interactive transaction, as a
+miss on a read by key does. Rows the transaction has written and not committed
+are not seen, so an upsert whose rule depends on them (a membership created
+earlier in the same transaction) is refused. Commit the membership first, or
+write the row with `create` / `update`.
+
+A
 ruled model takes no `ownerless` or `alsoVisible` arm, so write an ownerless
 row's readability into the rule itself. A filter never proves the rule, not
 even the rule repeated, so a route's own narrowing is kept and the rule is
