@@ -23,6 +23,7 @@ import {
   evalCaseHooksFor,
   parseEvalCaseContext,
   registerEvalCaseHooks,
+  registeredEvalCaseHookAgents,
 } from '@/lib/orchestration/evaluations/case-hooks';
 import { logger } from '@/lib/logging';
 
@@ -41,6 +42,7 @@ describe('the hook registry', () => {
     expect(seam.init).not.toHaveBeenCalled();
     expect(evalCaseHooksFor('score-assistant')?.setup).toBe(setup);
     expect(evalCaseHooksFor('other-agent')).toBeNull();
+    expect(registeredEvalCaseHookAgents()).toEqual(['score-assistant']);
     expect(seam.init).toHaveBeenCalledTimes(1);
   });
 

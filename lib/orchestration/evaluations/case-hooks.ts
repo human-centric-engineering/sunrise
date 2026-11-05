@@ -146,6 +146,12 @@ export function evalCaseHooksFor(agentSlug: string): EvalCaseHooks | null {
   return hooksByAgent.get(agentSlug) ?? null;
 }
 
+/** The slugs of the agents with hooks registered, sorted. */
+export function registeredEvalCaseHookAgents(): string[] {
+  appInit.ensure();
+  return [...hooksByAgent.keys()].sort();
+}
+
 /** Test-only: clear the registry and re-arm the one-shot init. */
 export function __resetEvalCaseHooksForTests(): void {
   hooksByAgent.clear();
