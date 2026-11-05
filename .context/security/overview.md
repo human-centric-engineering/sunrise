@@ -252,9 +252,16 @@ export async function resolveAppFrameAncestors(request: Request): Promise<string
 
 Two consequences to design for:
 
-- **A framed page is cross-site, so it gets no session cookie.** The session
-  cookie is `SameSite=Lax`, which the browser does not send inside another
-  site's frame. Frame pages that work signed out.
+- **A framed page usually gets no session cookie.** The session cookie is
+  `SameSite=Lax`, which the browser does not send inside a frame on another
+  site. Frame pages that work signed out. A parent on the app's own registrable
+  domain (`https://customer.app.com` framing `app.com`) is same-site and does
+  get the cookie.
+- **Image-like paths on a listed prefix get no framing header.** The proxy's
+  matcher skips `_next/*`, `favicon.ico` and paths ending in an image extension,
+  and the listed prefix is out of `next.config.js`'s rule. Harmless for images;
+  keep page routes under a framable prefix from ending in one of those
+  extensions.
 - **The proxy's early replies carry no framing header on a listed prefix.** The
   403 from the origin check, the 429 from the rate limiter and the auth
   redirects return before `setSecurityHeaders()` runs, and the listed prefix is

@@ -39,9 +39,16 @@
  *   for anything you do not frame, and cache whatever needs I/O.
  * - A throw is logged and treated as `[]`: the page is not framed.
  *
- * **A framed page is cross-site.** Inside another site's frame the browser does
- * not send this app's session cookie (`SameSite=Lax`), so frame pages that work
- * signed out.
+ * **A framed page usually gets no session cookie.** Inside a frame on another
+ * site the browser does not send this app's `SameSite=Lax` session cookie, so
+ * frame pages that work signed out. (A parent on this app's own registrable
+ * domain, e.g. `https://customer.app.com` framing `app.com`, is same-site, and
+ * does get the cookie.)
+ *
+ * **The proxy does not run on image-like paths.** Its matcher skips `_next/*`,
+ * `favicon.ico` and any path ending `.svg|.png|.jpg|.jpeg|.gif|.webp`, so on a
+ * listed prefix such a path gets no framing header at all. Keep page routes
+ * under a framable prefix from ending in one of those extensions.
  *
  * @example
  * ```ts

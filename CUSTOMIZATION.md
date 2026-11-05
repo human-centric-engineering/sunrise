@@ -1048,7 +1048,7 @@ booking widget), return the sites allowed to frame each request from
 `DENY` that older browsers obey, and a listed prefix alone frames nothing. Return exact
 `https://` origins (no wildcard, no path), answer `[]` from the path for
 everything else, and cache any lookup — it runs on every request. A framed page
-is cross-site and gets no session cookie, so frame pages that work signed out.
+on another site gets no session cookie, so frame pages that work signed out.
 See
 [`.context/security/overview.md`](./.context/security/overview.md#letting-named-sites-frame-a-page--the-frame-ancestors-seam).
 
