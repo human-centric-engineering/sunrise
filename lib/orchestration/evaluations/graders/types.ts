@@ -88,6 +88,18 @@ export interface GraderInput {
    */
   toolCalls?: GraderToolCall[];
   /**
+   * The dataset case's own `metadata`, as authored — whatever a case says
+   * about itself that its input does not (the document it starts from, the
+   * state it expects). Absent when the case carries none (#879).
+   */
+  caseMetadata?: unknown;
+  /**
+   * What the agent's `observe` hook read back after the turn — the state its
+   * tools left behind (`lib/orchestration/evaluations/case-hooks.ts`). Absent
+   * for an agent with no `observe` hook. Passed to graders, never stored.
+   */
+  observed?: unknown;
+  /**
    * User context for model graders. Heuristic graders ignore this; model
    * graders use `userId` when invoking the judge agent via `streamChat`
    * so the resulting conversation + cost rows attribute correctly.

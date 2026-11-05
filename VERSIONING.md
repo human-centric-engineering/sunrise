@@ -119,6 +119,7 @@ covered by the version contract.
   - `lib/app/erasure.ts` → `initAppErasureHooks()` — Art. 17 erasure cleanup hooks and stale-writer declarations (primitives: `registerErasureCleanupHook()` and `registerStaleWriter()` in `lib/privacy/erasure-hooks.ts`)
   - `lib/app/eslint.config.mjs` — the fork's own ESLint tier config, spread into the root config
   - `lib/app/evaluations.ts` → `initAppGraders()` — evaluation grader registry
+  - `lib/app/evaluations.ts` → `initAppEvalCaseHooks()` — per-agent eval case hooks (`registerEvalCaseHooks`)
   - `lib/app/footer.ts` → `footerCopyright` — footer copyright line
   - `lib/app/guard-event-contributors.ts` → `initAppGuardEventContributors()` — output-guard event contributors
   - `lib/app/guard-floor-contributors.ts` → `initAppGuardFloorContributors()` — output-guard floor contributors

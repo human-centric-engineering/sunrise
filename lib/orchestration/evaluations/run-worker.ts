@@ -44,6 +44,12 @@ import {
 } from '@/lib/orchestration/evaluations/run-claim';
 import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
 import { runAgentCase } from '@/lib/orchestration/evaluations/run-cases/agent-case';
+import {
+  evalCaseHooksFor,
+  parseEvalCaseContext,
+  type EvalCaseContext,
+  type EvalCaseHookArgs,
+} from '@/lib/orchestration/evaluations/case-hooks';
 import { runWorkflowCase } from '@/lib/orchestration/evaluations/run-cases/workflow-case';
 import { getGrader, type GraderInput } from '@/lib/orchestration/evaluations/graders';
 // Side-effect import: registers every built-in grader at module load.
@@ -355,6 +361,15 @@ interface ProcessCaseArgs {
  * picking three different judges produces three distinct columns in
  * the summary, all under the `judge_agent` registry entry).
  */
+/**
+ * A hook's error, as stored on the case result. A fork's own message, capped:
+ * it is shown on the case and must not swell the row.
+ */
+function hookErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.length <= 500 ? message : `${message.slice(0, 499)}…`;
+}
+
 function metricKey(entry: MetricConfigEntry): string {
   if (entry.slug === 'judge_agent') {
     const cfg = (entry.config ?? {}) as { agentSlug?: string };
@@ -375,16 +390,34 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
   let toolCalls: GraderInput['toolCalls'] = [];
   let subjectErrorCode: string | undefined;
   let subjectErrorMessage: string | undefined;
+  /** What the agent's `observe` hook read back; absent without one (#879). */
+  let observed: { value: unknown } | undefined;
 
   if (run.subjectKind === 'agent') {
+    const hooks = agentSlug ? evalCaseHooksFor(agentSlug) : null;
+    const hookArgs: EvalCaseHookArgs | null = agentSlug
+      ? { agentSlug, userId: run.userId, runId: run.id, caseRow }
+      : null;
+    // Setup, fresh before every case: seeds the state the case starts from
+    // and names the context the turn runs in. A failure is this case's alone.
+    let context: EvalCaseContext | undefined;
+    if (hooks?.setup && hookArgs) {
+      try {
+        context = parseEvalCaseContext(await hooks.setup(hookArgs));
+      } catch (err) {
+        subjectErrorCode = 'case_setup_failed';
+        subjectErrorMessage = hookErrorMessage(err);
+      }
+    }
     if (!agentSlug) {
       subjectErrorCode = 'agent_slug_unresolved';
-    } else {
+    } else if (!subjectErrorCode) {
       const result = await runAgentCase({
         agentSlug,
         userId: run.userId,
         message: typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input),
         evaluationRunId: run.id,
+        ...(context !== undefined ? { context } : {}),
       });
       subjectOutput = result.assistantText;
       subjectCostUsd = result.costUsd;
@@ -406,6 +439,27 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
       if (result.errorCode) {
         subjectErrorCode = result.errorCode;
         subjectErrorMessage = result.errorMessage;
+      }
+      // Observe, after a turn that completed: what its tools left behind, for
+      // the graders. Skipped when the turn failed, as the graders are.
+      if (!subjectErrorCode && hooks?.observe && hookArgs) {
+        try {
+          observed = {
+            value: await hooks.observe({
+              ...hookArgs,
+              turn: {
+                ...(result.conversationId !== undefined
+                  ? { conversationId: result.conversationId }
+                  : {}),
+                assistantText: result.assistantText,
+                toolCalls: toolCalls ?? [],
+              },
+            }),
+          };
+        } catch (err) {
+          subjectErrorCode = 'case_observe_failed';
+          subjectErrorMessage = hookErrorMessage(err);
+        }
       }
     }
   } else {
@@ -466,6 +520,10 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
         ...(caseRow.expectedOutput ? { expectedOutput: caseRow.expectedOutput } : {}),
         citations,
         toolCalls,
+        ...(caseRow.metadata !== null && caseRow.metadata !== undefined
+          ? { caseMetadata: caseRow.metadata }
+          : {}),
+        ...(observed !== undefined ? { observed: observed.value } : {}),
         judge:
           grader.family === 'model' ? { userId: run.userId, evaluationRunId: run.id } : undefined,
         config: parsed.data,

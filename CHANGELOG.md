@@ -26,6 +26,16 @@ release process.
   The stored `subjectMetadata.toolCalls` is unchanged (`{ slug, args }`), and
   the built-in graders score as before. **Fork sync:** a fork carrying this
   as a core edit (Know Your Synth) takes core's version and drops its own.
+- **Eval case hooks for agents that act through their tools (#879)**: a
+  new init in the fork seam `lib/app/evaluations.ts`,
+  `initAppEvalCaseHooks()` (ships empty), registers per-agent hooks through
+  `registerEvalCaseHooks(agentSlug, { setup, observe })` in
+  `lib/orchestration/evaluations/case-hooks.ts`. `setup` runs before every
+  case and returns the turn's `contextType`, `contextId`, `entityContext` and
+  `scope` (`runAgentCase` gains `context`). `observe` runs after the turn.
+  `GraderInput` gains `caseMetadata` (any subject whose case has metadata) and
+  `observed`. A throwing hook fails only its case, as `case_setup_failed` or
+  `case_observe_failed`. An agent with no hooks runs as before.
 - **A fork's own read rule in the owner layer (#1145)**: `OwnerPath`
   (`lib/db/owner-classification.ts`) gains a third shape, `{ reader }`: a pure
   function from the `OwnerReader` to a Prisma `where`, registered through

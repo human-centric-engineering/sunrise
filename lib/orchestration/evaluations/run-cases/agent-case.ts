@@ -16,6 +16,7 @@ import {
   drainStreamChat,
   type DrainResult,
 } from '@/lib/orchestration/evaluations/drain-stream-chat';
+import type { EvalCaseContext } from '@/lib/orchestration/evaluations/case-hooks';
 
 export interface AgentCaseInput {
   agentSlug: string;
@@ -30,6 +31,12 @@ export interface AgentCaseInput {
    * Drives the empirical cost-estimator's per-role spend lookup.
    */
   evaluationRunId?: string;
+  /**
+   * The chat context an agent's eval `setup` hook gave this case
+   * (`case-hooks.ts`): the same fields a real chat turn carries. Absent, the
+   * request is exactly what it was before hooks existed.
+   */
+  context?: EvalCaseContext;
 }
 
 export type AgentCaseResult = DrainResult;
@@ -40,6 +47,12 @@ export async function runAgentCase(input: AgentCaseInput): Promise<AgentCaseResu
     userId: input.userId,
     message: input.message,
     includeTrace: true,
+    ...(input.context?.contextType !== undefined ? { contextType: input.context.contextType } : {}),
+    ...(input.context?.contextId !== undefined ? { contextId: input.context.contextId } : {}),
+    ...(input.context?.entityContext !== undefined
+      ? { entityContext: input.context.entityContext }
+      : {}),
+    ...(input.context?.scope !== undefined ? { scope: input.context.scope } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     ...(input.evaluationRunId
       ? { costLogMetadata: { evaluationRunId: input.evaluationRunId, role: 'subject' } }
