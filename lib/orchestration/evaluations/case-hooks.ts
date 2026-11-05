@@ -71,7 +71,9 @@ export interface EvalCaseContext {
 }
 
 export interface EvalCaseHooks {
-  setup?: (args: EvalCaseHookArgs) => EvalCaseContext | void | Promise<EvalCaseContext | void>;
+  setup?: (
+    args: EvalCaseHookArgs
+  ) => EvalCaseContext | null | void | Promise<EvalCaseContext | null | void>;
   observe?: (args: EvalCaseHookArgs & { turn: EvalCaseTurn }) => unknown;
 }
 
@@ -82,16 +84,22 @@ export interface EvalCaseHooks {
  */
 const evalCaseContextSchema = z
   .object({
-    contextType: z.string().min(1).optional(),
+    // 'evaluation' routes streamChat to mirror the turn into a manual
+    // evaluation session's log, which a batch case must never write to.
+    contextType: z
+      .string()
+      .min(1)
+      .refine((t) => t !== 'evaluation', "contextType 'evaluation' is reserved for manual sessions")
+      .optional(),
     contextId: z.string().min(1).optional(),
     entityContext: z.record(z.string(), z.unknown()).optional(),
     scope: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
-/** Parse `setup`'s answer; `undefined` (no context) is `{}`. Throws on anything else. */
+/** Parse `setup`'s answer; `undefined` or `null` (no context) is `{}`. Throws on anything else. */
 export function parseEvalCaseContext(value: unknown): EvalCaseContext {
-  if (value === undefined) return {};
+  if (value === undefined || value === null) return {};
   const parsed = evalCaseContextSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(
@@ -117,6 +125,10 @@ const appInit = createAppInitGate({
  * Register `setup` and/or `observe` for the agent with this slug. Call from
  * `initAppEvalCaseHooks()` in `lib/app/evaluations.ts`. Registering the same
  * slug again replaces its hooks, with a warning.
+ *
+ * The slug names an agent your fork defines — a platform agent, say, whose
+ * slug every org's instance shares. The hooks run for any agent with that
+ * slug, in any org, so register them only for slugs your fork owns.
  */
 export function registerEvalCaseHooks(agentSlug: string, hooks: EvalCaseHooks): void {
   const slug = agentSlug.trim();
@@ -137,7 +149,12 @@ export function registerEvalCaseHooks(agentSlug: string, hooks: EvalCaseHooks): 
       agentSlug: slug,
     });
   }
-  hooksByAgent.set(slug, { ...hooks });
+  // Read the hooks off the object, not spread it: a class instance's methods
+  // live on its prototype, which a spread drops. Bound, so `this` still works.
+  const stored: EvalCaseHooks = {};
+  if (typeof hooks.setup === 'function') stored.setup = hooks.setup.bind(hooks);
+  if (typeof hooks.observe === 'function') stored.observe = hooks.observe.bind(hooks);
+  hooksByAgent.set(slug, stored);
 }
 
 /** The hooks registered for this agent, or `null`. */

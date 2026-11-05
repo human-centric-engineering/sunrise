@@ -44,6 +44,8 @@ import {
 } from '@/lib/orchestration/evaluations/run-claim';
 import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
 import { runAgentCase } from '@/lib/orchestration/evaluations/run-cases/agent-case';
+import { describeThrown } from '@/lib/fork-init';
+import { invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import {
   evalCaseHooksFor,
   parseEvalCaseContext,
@@ -355,21 +357,21 @@ interface ProcessCaseArgs {
 }
 
 /**
+ * A hook's error, as stored on the case result. A fork's own message, capped:
+ * it is shown on the case and must not swell the row.
+ */
+function hookErrorMessage(err: unknown): string {
+  const message = describeThrown(err);
+  return message.length <= 500 ? message : `${message.slice(0, 499)}…`;
+}
+
+/**
  * Compute the storage key for a metric in `AiEvaluationCaseResult.metricScores`
  * and in the run-level summary `stats`. For heuristic graders this is
  * just the slug; for `judge_agent` it's the chosen judge's slug (so
  * picking three different judges produces three distinct columns in
  * the summary, all under the `judge_agent` registry entry).
  */
-/**
- * A hook's error, as stored on the case result. A fork's own message, capped:
- * it is shown on the case and must not swell the row.
- */
-function hookErrorMessage(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.length <= 500 ? message : `${message.slice(0, 499)}…`;
-}
-
 function metricKey(entry: MetricConfigEntry): string {
   if (entry.slug === 'judge_agent') {
     const cfg = (entry.config ?? {}) as { agentSlug?: string };
@@ -404,6 +406,11 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
     if (hooks?.setup && hookArgs) {
       try {
         context = parseEvalCaseContext(await hooks.setup(hookArgs));
+        // setup may have rewritten what the context names: drop any cached
+        // copy, or this turn could be given the previous case's document.
+        if (context.contextType !== undefined && context.contextId !== undefined) {
+          invalidateContext(context.contextType, context.contextId, { userId: run.userId });
+        }
       } catch (err) {
         subjectErrorCode = 'case_setup_failed';
         subjectErrorMessage = hookErrorMessage(err);

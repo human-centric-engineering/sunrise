@@ -50,11 +50,6 @@ export type GraderFamily = 'heuristic' | 'model' | 'pairwise';
 // ---------------------------------------------------------------------------
 
 /**
- * What a single-output grader sees for one case. Both heuristic and
- * model graders accept this shape; the worker fills the same struct
- * for every grader configured on the run.
- */
-/**
  * One tool call the subject made, as a grader sees it (#1044).
  *
  * `slug` and `args` say what was called. The rest say how it went, from the
@@ -73,6 +68,11 @@ export interface GraderToolCall {
   resultPreview?: string;
 }
 
+/**
+ * What a single-output grader sees for one case. Both heuristic and
+ * model graders accept this shape; the worker fills the same struct
+ * for every grader configured on the run.
+ */
 export interface GraderInput {
   /** The user's question (agent) or stringified workflow input. */
   userInput: string;

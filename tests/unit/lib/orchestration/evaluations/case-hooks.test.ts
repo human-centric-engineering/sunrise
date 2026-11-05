@@ -40,7 +40,8 @@ describe('the hook registry', () => {
     seam.init.mockImplementation(() => registerEvalCaseHooks('score-assistant', { setup }));
 
     expect(seam.init).not.toHaveBeenCalled();
-    expect(evalCaseHooksFor('score-assistant')?.setup).toBe(setup);
+    void evalCaseHooksFor('score-assistant')?.setup?.({} as never);
+    expect(setup).toHaveBeenCalledTimes(1);
     expect(evalCaseHooksFor('other-agent')).toBeNull();
     expect(registeredEvalCaseHookAgents()).toEqual(['score-assistant']);
     expect(seam.init).toHaveBeenCalledTimes(1);
@@ -73,7 +74,9 @@ describe('the hook registry', () => {
     registerEvalCaseHooks('agent', { observe: first });
     registerEvalCaseHooks('agent', { observe: second });
 
-    expect(evalCaseHooksFor('agent')?.observe).toBe(second);
+    void evalCaseHooksFor('agent')?.observe?.({} as never);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       'registerEvalCaseHooks: replacing the hooks already registered',
       { agentSlug: 'agent' }
@@ -84,6 +87,7 @@ describe('the hook registry', () => {
 describe('parseEvalCaseContext', () => {
   it('reads no answer as no context, and keeps the four fields', () => {
     expect(parseEvalCaseContext(undefined)).toEqual({});
+    expect(parseEvalCaseContext(null)).toEqual({});
     const full = {
       contextType: 'score',
       contextId: 'doc-1',
@@ -97,7 +101,10 @@ describe('parseEvalCaseContext', () => {
     expect(() => parseEvalCaseContext({ conversationId: 'c1' })).toThrow(/invalid context/);
     expect(() => parseEvalCaseContext({ contextId: 7 })).toThrow(/contextId/);
     expect(() => parseEvalCaseContext({ scope: { module: 1 } })).toThrow(/scope/);
-    expect(() => parseEvalCaseContext(null)).toThrow(/invalid context/);
+    // The manual-session flag: a batch case must never write that session's log.
+    expect(() => parseEvalCaseContext({ contextType: 'evaluation', contextId: 's1' })).toThrow(
+      /reserved for manual sessions/
+    );
     expect(() => parseEvalCaseContext('score')).toThrow(/invalid context/);
   });
 });

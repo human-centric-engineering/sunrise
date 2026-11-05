@@ -67,6 +67,10 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/chat/context-builder', () => ({
+  invalidateContext: vi.fn(),
+}));
+
 // The fork seam, emptied: these cases register their own hooks, and a fork that
 // fills the real one must not change what they assert.
 vi.mock('@/lib/app/evaluations', () => ({
@@ -85,6 +89,7 @@ const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { processPendingEvaluationRuns } = await import('@/lib/orchestration/evaluations/run-worker');
 const { registerEvalCaseHooks, __resetEvalCaseHooksForTests } =
   await import('@/lib/orchestration/evaluations/case-hooks');
+const { invalidateContext } = await import('@/lib/orchestration/chat/context-builder');
 
 const mockedClaim = claimNextRun as unknown as ReturnType<typeof vi.fn>;
 const mockedMarkTerminal = markTerminal as unknown as ReturnType<typeof vi.fn>;
@@ -1213,6 +1218,64 @@ describe('case hooks', () => {
       contextType: 'score',
       contextId: 'doc-2',
     });
+    // setup may have rewritten what the context names: its cached copy is
+    // dropped before the turn reads it.
+    expect(vi.mocked(invalidateContext).mock.calls).toEqual([
+      ['score', 'doc-1', { userId: 'user-1' }],
+      ['score', 'doc-2', { userId: 'user-1' }],
+    ]);
+    const [invalidated1] = vi.mocked(invalidateContext).mock.invocationCallOrder;
+    expect(invalidated1 < turn1).toBe(true);
+  });
+
+  it('fails only the case when a hook throws a value that cannot become a string', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: ({ caseRow }) => {
+        if (caseRow.position === 1) throw Object.create(null);
+        return null;
+      },
+    });
+    mockedRunAgent.mockResolvedValue(drainOk());
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1), makeCase(2)]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result.failed).toBe(0);
+    const [first, second] = createResult.mock.calls.map((c) => c[0].data);
+    expect(first).toMatchObject({
+      errorCode: 'case_setup_failed',
+      errorMessage: 'a value that cannot be converted to a string',
+    });
+    // A setup answering null means no context, as undefined does.
+    expect(second.errorCode).toBeNull();
+    expect(mockedRunAgent.mock.calls[0][0]).not.toHaveProperty('context.contextType');
+  });
+
+  it('runs hooks written as a class, with this bound', async () => {
+    class ScoreHooks {
+      readonly contextId = 'doc-from-class';
+      setup() {
+        return { contextType: 'score', contextId: this.contextId };
+      }
+      observe() {
+        return { from: this.contextId };
+      }
+    }
+    registerEvalCaseHooks('score-assistant', new ScoreHooks());
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedRunAgent.mock.calls[0][0].context).toEqual({
+      contextType: 'score',
+      contextId: 'doc-from-class',
+    });
+    const [graded] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(graded.observed).toEqual({ from: 'doc-from-class' });
   });
 
   it('observes after the turn, and hands graders the observed state and the case metadata', async () => {

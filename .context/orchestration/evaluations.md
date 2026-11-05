@@ -214,9 +214,14 @@ export function initAppEvalCaseHooks(): void {
   the state the case starts from and returns the chat context the turn
   carries: `contextType`, `contextId`, `entityContext` and `scope`, the
   fields a real chat turn carries, and nothing else (an unknown key fails
-  the case rather than being dropped). Every case runs as the run's user,
-  so `setup` is also where per-user state a tool keeps is reset: nothing
-  else stops case N's writes from reaching case N+1.
+  the case rather than being dropped). `undefined` or `null` means no
+  context. `contextType: 'evaluation'` is refused: it would mirror the
+  case into a manual evaluation session's log. The context builder's
+  cached copy of what the context names is dropped after `setup`, so a
+  `setup` that re-seeds the same `contextId` every case is read fresh.
+  Every case runs as the run's user, so `setup` is also where per-user
+  state a tool keeps is reset: nothing else stops case N's writes from
+  reaching case N+1.
 - **`observe`** runs after a turn that completed. It is given the turn
   (conversation id, reply text, tool calls with their outcomes) and
   returns whatever graders should see, as `observed`. It is passed to
@@ -229,6 +234,9 @@ export function initAppEvalCaseHooks(): void {
   turn is not run) or `case_observe_failed`. The error message is stored
   on the case, capped at 500 characters. Its graders are skipped, as on a
   subject error, and the run goes on to the next case.
+- Hooks are keyed by agent slug, in every org. Register them for an agent
+  your fork defines (a platform agent's slug is shared by its instance in
+  every org), not for a slug an org could also choose for its own agent.
 - An agent with no hooks is run exactly as before. There is no teardown
   hook: the next case's `setup` does the reset. Workflow subjects have no
   hooks, because a workflow can seed and read state in its own steps.

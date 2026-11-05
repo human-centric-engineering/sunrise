@@ -5,9 +5,9 @@
  * evaluation case. The judge side uses the same helper from the
  * `judge_agent` grader.
  *
- * Deliberately does NOT set `contextType: 'evaluation'` — that flag
- * routes streamChat to write `AiEvaluationLog` rows for manual
- * sessions. Batch runs write to `AiEvaluationCaseResult` instead, so
+ * Never sets `contextType: 'evaluation'` — that flag routes streamChat
+ * to write `AiEvaluationLog` rows for manual sessions — and an eval
+ * `setup` hook's context cannot either (`case-hooks.ts` refuses it). Batch runs write to `AiEvaluationCaseResult` instead, so
  * we let streamChat persist the standard AiMessage rows (as a normal
  * conversation row) without mirroring them into evaluation logs.
  */
@@ -47,12 +47,8 @@ export async function runAgentCase(input: AgentCaseInput): Promise<AgentCaseResu
     userId: input.userId,
     message: input.message,
     includeTrace: true,
-    ...(input.context?.contextType !== undefined ? { contextType: input.context.contextType } : {}),
-    ...(input.context?.contextId !== undefined ? { contextId: input.context.contextId } : {}),
-    ...(input.context?.entityContext !== undefined
-      ? { entityContext: input.context.entityContext }
-      : {}),
-    ...(input.context?.scope !== undefined ? { scope: input.context.scope } : {}),
+    // Parsed by `parseEvalCaseContext`: only the four fields, absent ones omitted.
+    ...input.context,
     ...(input.signal ? { signal: input.signal } : {}),
     ...(input.evaluationRunId
       ? { costLogMetadata: { evaluationRunId: input.evaluationRunId, role: 'subject' } }
