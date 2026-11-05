@@ -18,6 +18,10 @@
  * const response = NextResponse.next();
  * setSecurityHeaders(response);
  * ```
+ *
+ * Tenancy posture: shared-by-decision — `warnedOrigins` can hold an invalid
+ * origin from an org's stored data, only ever to skip a repeat warning
+ * (lib/tenancy/process-state.ts).
  */
 
 import { NextResponse } from 'next/server';
