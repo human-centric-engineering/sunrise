@@ -156,7 +156,12 @@ person's own.
   your sender either.
 - **At most one email an hour per entry**, both kinds together, claimed with
   a conditional write on `lastEmailedAt`. The form cannot be used to flood an
-  inbox from your sender.
+  inbox from your sender. The "already on the list" note waits longer: 30 days
+  since the entry's last email (`WAITLIST_NOTE_INTERVAL_MS`), so anyone who
+  types a confirmed address cannot mail its owner every hour for good.
+- **Only a real send counts.** A send that fails, or that `sendEmail` reports
+  as `disabled` (email not configured, in development and test), gives the
+  slot back and withdraws the link it minted.
 - **At most three confirmation links per entry, ever**
   (`WAITLIST_CONFIRM_MAX_LINKS`, counted in `confirmLinksSent`). Each link
   restarts the entry's retention window, so without a cap a stranger
@@ -280,9 +285,7 @@ An unconfirmed entry's window starts at `confirmWindowFrom`: its join, its
 latest confirmation link, or an admin's Restore, whichever came last. It is
 never shorter than the link's seven days, so retention never deletes an entry
 while a link to confirm it still works, and a restored entry is not deleted on
-the next run. An entry from before confirmation existed starts its window at
-the migration that added the column, not at its join: it was never sent a
-link. A removed unconfirmed entry waits out the removed window instead. Every deleted entry's
+the next run. A removed unconfirmed entry waits out the removed window instead. Every deleted entry's
 confirmation tokens cascade with it.
 These deletions are retention, not erasure requests, and write no receipt.
 **The windows hold with no config.** A fork that drops its waitlist config

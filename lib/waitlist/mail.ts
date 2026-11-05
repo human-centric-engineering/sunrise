@@ -10,9 +10,15 @@
  * **At most one an hour per entry**, both kinds together, claimed by a
  * conditional write on `lastEmailedAt` so two concurrent joins cannot both
  * send. Without it the form would put up to the IP limit's worth of mail from
- * our sender into any inbox someone types. A send that fails gives the slot
- * back and withdraws the link it minted, so the next join can try again and
- * the links already in the inbox are untouched.
+ * our sender into any inbox someone types. A send that did not go out — it
+ * failed, or email is not configured — gives the slot back and withdraws the
+ * link it minted, so the next join can try again and the links already in the
+ * inbox are untouched.
+ *
+ * **The "already on the list" note waits {@link WAITLIST_NOTE_INTERVAL_MS}
+ * since the entry's last email.** It tells the owner nothing they need soon,
+ * and an hourly allowance would let anyone who types a confirmed address mail
+ * its owner every hour for good.
  *
  * **At most {@link WAITLIST_CONFIRM_MAX_LINKS} confirmation links per entry,
  * ever.** Each one moves the entry's retention window (`confirmWindowFrom`),
@@ -41,6 +47,12 @@ import { confirmUrl, issueConfirmToken, leaveUrl } from '@/lib/waitlist/tokens';
 
 /** The shortest gap between two waitlist emails to one entry. */
 export const WAITLIST_MAIL_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * The shortest gap before the "already on the list" note, since the entry's
+ * last email of either kind.
+ */
+export const WAITLIST_NOTE_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** The most confirmation links one entry is ever sent. */
 export const WAITLIST_CONFIRM_MAX_LINKS = 3;
@@ -78,21 +90,21 @@ export function mailForOutcome(
 
 /**
  * A claimed slot: what the claim changed, to put back if the send fails. A
- * confirmation link's claim also moved the retention window and the link
- * count; the note's moved only `lastEmailedAt`.
+ * confirmation link's claim (`link`) also moved the retention window and the
+ * link count; the note's moved only `lastEmailedAt`.
  */
-interface MailSlot {
-  previous: Date | null;
-  previousWindowFrom: Date | null;
-}
+type MailSlot =
+  | { link: true; previous: Date | null; previousWindowFrom: Date }
+  | { link: false; previous: Date | null };
 
 /** Why no slot was claimed. */
-type NoSlot = 'gone' | 'flagged' | 'hourly' | 'link-limit';
+type NoSlot = 'gone' | 'flagged' | 'recent' | 'link-limit';
 
 /**
  * Take this hour's email for the entry. The slot when the caller may send,
  * else why not: the entry is gone or removed, `screen()` flagged it, one went
- * out in the last hour, or it has had all its confirmation links. The write
+ * out too recently (the hour, or the note's longer wait), or it has had all
+ * its confirmation links. The write
  * is conditional on the values read, so of two concurrent joins only one gets
  * the slot.
  */
@@ -114,8 +126,9 @@ async function claimMailSlot(
   if (!entry || entry.removedAt) return 'gone';
   if (entry.flaggedReason) return 'flagged';
   const previous = entry.lastEmailedAt ?? null;
-  if (previous && previous.getTime() > now.getTime() - WAITLIST_MAIL_INTERVAL_MS) return 'hourly';
   const link = kind === 'waitlistConfirm';
+  const interval = link ? WAITLIST_MAIL_INTERVAL_MS : WAITLIST_NOTE_INTERVAL_MS;
+  if (previous && previous.getTime() > now.getTime() - interval) return 'recent';
   if (link && entry.confirmLinksSent >= WAITLIST_CONFIRM_MAX_LINKS) return 'link-limit';
   const { count } = await prisma.waitlistEntry.updateMany({
     where: {
@@ -129,8 +142,10 @@ async function claimMailSlot(
       ? { lastEmailedAt: now, confirmWindowFrom: now, confirmLinksSent: { increment: 1 } }
       : { lastEmailedAt: now },
   });
-  if (count !== 1) return 'hourly';
-  return { previous, previousWindowFrom: link ? entry.confirmWindowFrom : null };
+  if (count !== 1) return 'recent';
+  return link
+    ? { link: true, previous, previousWindowFrom: entry.confirmWindowFrom }
+    : { link: false, previous };
 }
 
 /**
@@ -149,7 +164,7 @@ async function releaseMailSlot(
   try {
     await prisma.waitlistEntry.updateMany({
       where: { id: entryId, lastEmailedAt: now },
-      data: slot.previousWindowFrom
+      data: slot.link
         ? {
             lastEmailedAt: slot.previous,
             confirmWindowFrom: slot.previousWindowFrom,
@@ -167,7 +182,7 @@ async function releaseMailSlot(
 const NO_SLOT_LOG: Record<NoSlot, string> = {
   gone: 'Waitlist email skipped: the entry is gone or removed',
   flagged: 'Waitlist email skipped: the entry is flagged',
-  hourly: 'Waitlist email skipped: one was sent in the last hour',
+  recent: 'Waitlist email skipped: one was sent too recently',
   'link-limit': 'Waitlist email skipped: the entry has had all its confirmation links',
 };
 
@@ -222,7 +237,9 @@ export async function sendWaitlistJoinMail(
     }
 
     const result = await sendEmail({ to: entry.email, subject, react });
-    if (result.success) {
+    // Only a real send keeps the claim: `disabled` (email not configured, in
+    // development and test) reports success but put nothing in an inbox.
+    if (result.success && result.status === 'sent') {
       logger.info('Waitlist email sent', { entryId, kind, status: result.status });
       return 'sent';
     }

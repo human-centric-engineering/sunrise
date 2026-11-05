@@ -23,9 +23,7 @@
  *     admin restore. The window is at least the link's seven days. Nothing
  *     proves the address is the person's own, so it is not kept for long, and
  *     the link cap (`WAITLIST_CONFIRM_MAX_LINKS`) stops resubmissions from
- *     keeping it forever. An entry from before t-977 starts its window at the
- *     migration that added the column, never at its join: it was never sent a
- *     link. A removed entry waits out the removed window instead, so its
+ *     keeping it forever. A removed entry waits out the removed window instead, so its
  *     "stays removed" protection is not cut short; an entry linked to an
  *     account is never deleted here.
  *   • **Joined** — linked to its account and erased with it; never here, also

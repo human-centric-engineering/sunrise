@@ -62,9 +62,16 @@ export function keepRunningAfterResponse(
         logger.error(`${label} failed`, err, meta);
       }
     );
-  const handed =
-    typeof task === 'function' ? () => settle(Promise.resolve().then(task)) : settle(task);
-  const start = typeof handed === 'function' ? handed : null;
+  // `start` is set for a function, not yet started, and is what `after()` is
+  // handed; a promise has already started and is handed as it is.
+  let start: (() => Promise<void>) | null = null;
+  let handed: Promise<void> | (() => Promise<void>);
+  if (typeof task === 'function') {
+    start = () => settle(Promise.resolve().then(task));
+    handed = start;
+  } else {
+    handed = settle(task);
+  }
   try {
     after(handed);
   } catch (err) {

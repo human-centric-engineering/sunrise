@@ -40,6 +40,7 @@ import {
   sendWaitlistJoinMail,
   WAITLIST_CONFIRM_MAX_LINKS,
   WAITLIST_MAIL_INTERVAL_MS,
+  WAITLIST_NOTE_INTERVAL_MS,
 } from '@/lib/waitlist/mail';
 import { verifyLeaveToken } from '@/lib/waitlist/tokens';
 
@@ -201,6 +202,49 @@ describe('sendWaitlistJoinMail', () => {
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('sends the note only once its longer wait has passed, so a confirmed owner is not mailed hourly', async () => {
+    // Arrange — two hours since the last email: the hour has passed, the note's wait has not
+    const twoHoursAgo = new Date(NOW.getTime() - 2 * WAITLIST_MAIL_INTERVAL_MS);
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ lastEmailedAt: twoHoursAgo }));
+
+    // Act
+    const result = await sendWaitlistJoinMail('entry-1', 'unchanged', NOW);
+
+    // Assert
+    expect(result).toBe('capped');
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('sends the note again once its wait has passed', async () => {
+    const longAgo = new Date(NOW.getTime() - WAITLIST_NOTE_INTERVAL_MS - 1);
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow({ lastEmailedAt: longAgo }));
+
+    expect(await sendWaitlistJoinMail('entry-1', 'filled', NOW)).toBe('sent');
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
+      where: { id: 'entry-1', removedAt: null, flaggedReason: null, lastEmailedAt: longAgo },
+      data: { lastEmailedAt: NOW },
+    });
+  });
+
+  it('counts a send with email not configured as not sent, so the link is not used up', async () => {
+    // Arrange — sendEmail reports success with status disabled in development and test
+    mockSendEmail.mockResolvedValue({ success: true, status: 'disabled', id: 'mock-1' });
+
+    // Act
+    const result = await sendWaitlistJoinMail('entry-1', 'created', NOW);
+
+    // Assert — the claim is undone as for a failed send
+    expect(result).toBe('not-sent');
+    expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'entry-1', lastEmailedAt: NOW },
+      data: { lastEmailedAt: null, confirmWindowFrom: JOINED, confirmLinksSent: { decrement: 1 } },
+    });
+    expect(mockPrisma.waitlistConfirmToken.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'v-new' },
+    });
+  });
+
   it('sends nothing when a concurrent join took the slot between the read and the write', async () => {
     // Arrange — the conditional claim matched no row
     mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
@@ -272,7 +316,7 @@ describe('sendWaitlistJoinMail', () => {
     expect(mockPrisma.waitlistConfirmToken.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('sends a confirmed repeat the note, under the same cap, with no confirm link', async () => {
+  it('sends a confirmed repeat the note, with no confirm link', async () => {
     // Act
     const result = await sendWaitlistJoinMail('entry-1', 'unchanged', NOW);
 

@@ -47,7 +47,7 @@ release process.
 - **Waitlist confirmation and leaving (§125 t-977)**: a join now emails the
   joiner, after the response — a confirmation link to a new or unconfirmed
   entry, an "already on the list" note to a confirmed one — at most once an
-  hour per entry. New public routes `POST /api/v1/waitlist/confirm` and
+  hour per entry, and the note at most once in 30 days. New public routes `POST /api/v1/waitlist/confirm` and
   `POST /api/v1/waitlist/leave`, and the pages their links open
   (`/waitlist/confirm`, `/waitlist/leave`). Two new email kinds in
   `EmailPropsMap`, `waitlistConfirm` and `waitlistAlreadyOnList`, overridable
