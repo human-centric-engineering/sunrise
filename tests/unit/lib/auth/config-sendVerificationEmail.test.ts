@@ -216,6 +216,17 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
       );
     });
 
+    it("should leave a caller's own callback path alone", async () => {
+      const user = createMockUser({ id: 'user-31', email: 'own@example.com', name: 'Own' });
+      const url = 'https://example.com/verify?token=xyz&callbackURL=%2Fsettings';
+
+      await sendVerificationEmailHook({ user, url, token: 'xyz' });
+
+      expect(VerifyEmailEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ verificationUrl: url })
+      );
+    });
+
     it('should pass URL through unchanged when callbackURL pattern is not present', async () => {
       // Arrange: URL without the expected callbackURL=%2F pattern
       const user = createMockUser({
@@ -298,6 +309,25 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
       });
 
       expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'new@example.com' }));
+    });
+
+    it('marks the callback so the page can say the address changed', async () => {
+      // The click may leave the user signed out, and on an unverified account
+      // verifies nothing, so the page must not take its signup path.
+      const user = createMockUser({ id: 'user-30', email: 'new@example.com', name: 'Mover' });
+
+      await sendVerificationEmailHook({
+        user,
+        url: 'https://example.com/verify?token=abc&callbackURL=%2F',
+        token: 'change-token',
+      });
+
+      expect(VerifyEmailEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          verificationUrl:
+            'https://example.com/verify?token=abc&callbackURL=%2Fverify-email%2Fcallback%3FemailChanged%3D1',
+        })
+      );
     });
 
     it('does not consult the invitation table at all for a change', async () => {

@@ -48,7 +48,7 @@ import {
   isFirstHumanBootstrap,
 } from '@/lib/auth/signup-mode';
 import { parseEmailChangeToken, getVerificationTokenFromRequest } from '@/lib/auth/change-email';
-import { revokeUserSessions, findMostRecentSessionToken } from '@/lib/auth/sessions';
+import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
@@ -761,10 +761,12 @@ export async function afterEmailVerificationHook(
     // The address has just changed. Two things follow, neither of which applies
     // to a signup.
     //
-    // 1. Revoke other sessions. This is the point the change actually commits,
+    // 1. Revoke sessions. This is the point the change actually commits,
     //    and the whole reason #489 is a security issue: without this, a session
     //    stolen before the change survives it. Anything holding a cookie from
-    //    before this moment loses it.
+    //    before this moment loses it, except the session this click itself
+    //    carries. An unverified account never reaches this hook; see
+    //    .context/auth/security.md.
     //
     //    Best-effort by design. better-auth does NOT wrap this callback in its
     //    error handling (unlike the send-email callbacks), so a throw here
@@ -772,17 +774,25 @@ export async function afterEmailVerificationHook(
     //    been written — the user would see an error for a change that did in
     //    fact succeed. Log and continue instead.
     try {
-      const current = await auth.api.getSession({ headers: request?.headers ?? new Headers() });
-      // If this request carries no visible session, better-auth may have just
-      // minted one (the new-address click from a cookie-less browser/device is
-      // the ordinary case, not an edge one) — see
-      // findMostRecentSessionToken's doc for why the newest row is safe to
-      // spare here without weakening the revocation.
-      const exceptSessionToken =
-        current?.session?.token ?? (await findMostRecentSessionToken(user.id));
+      // A failed lookup is the same as no session: revoke everything rather
+      // than leave a stolen session alive because the check could not run.
+      const current = await auth.api
+        .getSession({ headers: request?.headers ?? new Headers() })
+        .catch((error: unknown) => {
+          logger.warn('Could not read the session during an email change', {
+            userId: user.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+      // Spare only a session this request proves it holds. A new-address click
+      // from a cookie-less browser or device is the ordinary case: better-auth
+      // (since 1.7.16) mints no session for it, so there is nothing to keep, and
+      // the newest row could be a stolen one. Every session goes, and the user
+      // signs in again at the new address.
       await revokeUserSessions({
         userId: user.id,
-        exceptSessionToken,
+        exceptSessionToken: current?.session?.token ?? null,
         reason: 'email_changed',
       });
     } catch (error) {
@@ -884,7 +894,14 @@ export async function sendVerificationEmailHook({
 
   // Replace the default callbackURL (/) with our verification callback page
   // This page handles both success (redirect to dashboard) and error states (show resend option)
-  const verificationUrl = url.replace('callbackURL=%2F', 'callbackURL=%2Fverify-email%2Fcallback');
+  // A change is marked, because the page cannot say "verified" or redirect for
+  // one: the click may leave the user signed out, and on an unverified account
+  // it moves the address without verifying it.
+  const callbackPath = emailChange
+    ? '%2Fverify-email%2Fcallback%3FemailChanged%3D1'
+    : '%2Fverify-email%2Fcallback';
+  // Only the default: a caller's own callback is left alone, not prefixed.
+  const verificationUrl = url.replace(/callbackURL=%2F(?=&|$)/, `callbackURL=${callbackPath}`);
 
   await sendEmail({
     to: user.email,
@@ -1230,8 +1247,8 @@ export const auth = betterAuth({
     // because a session expires and an email address does not. With it, the
     // change is a two-step the attacker cannot finish: approve from the current
     // inbox, then verify at the new one. The database is untouched until the
-    // second step, and `afterEmailVerificationHook` revokes other sessions when
-    // it lands.
+    // second step, and `afterEmailVerificationHook` revokes sessions when it
+    // lands.
     //
     // `updateEmailWithoutVerification` is deliberately left off. It would let an
     // unverified account skip straight to a direct write, and the token it mints

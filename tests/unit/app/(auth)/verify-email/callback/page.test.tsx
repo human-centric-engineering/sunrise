@@ -165,6 +165,48 @@ describe('VerifyCallbackClientContent', () => {
     });
   });
 
+  describe('Email change (emailChanged=1)', () => {
+    beforeEach(async () => {
+      const { useRouter, useSearchParams } = await import('next/navigation');
+      vi.mocked(useRouter).mockReturnValue(mockRouter);
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('emailChanged=1') as unknown as ReturnType<typeof useSearchParams>
+      );
+    });
+
+    it('says the address changed and how to sign in, without claiming it was verified', () => {
+      render(<VerifyCallbackClientContent />);
+
+      expect(screen.getByText('Email address changed')).toBeInTheDocument();
+      expect(screen.getByText(/use your new address/i)).toBeInTheDocument();
+      expect(screen.queryByText('Email Verified!')).not.toBeInTheDocument();
+    });
+
+    it('does not redirect, and links on to the auth landing route', () => {
+      render(<VerifyCallbackClientContent />);
+
+      expect(mockRouter.replace).not.toHaveBeenCalled();
+      expect(screen.getByRole('link', { name: /continue to/i })).toHaveAttribute(
+        'href',
+        AUTH_LANDING_ROUTE
+      );
+    });
+
+    it('shows the error state when the click failed', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('emailChanged=1&error=invalid_token') as unknown as ReturnType<
+          typeof useSearchParams
+        >
+      );
+
+      render(<VerifyCallbackClientContent />);
+
+      expect(screen.getByText('Verification Link Expired')).toBeInTheDocument();
+      expect(screen.queryByText('Email address changed')).not.toBeInTheDocument();
+    });
+  });
+
   /**
    * Error State Tests (With Error Parameter)
    *

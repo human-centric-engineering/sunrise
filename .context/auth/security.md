@@ -178,8 +178,9 @@ edit, and it is treated as one (#489). Three controls apply:
 2. **Re-authentication.** `PATCH /api/v1/users/me` requires `currentPassword`
    alongside `email`. OAuth-only accounts (no credential row) are exempt, since
    they have no password to confirm.
-3. **Session revocation.** When the change finally lands,
-   `afterEmailVerificationHook` revokes the user's other sessions — subject to
+3. **Session revocation.** When the change finally lands on a verified account,
+   `afterEmailVerificationHook` revokes the user's sessions, sparing only one
+   the verification click itself carries — subject to
    the up-to-5-minute cookie-cache staleness window every revocation in this
    app has; see [Session Revocation](#session-revocation) above.
 
@@ -205,22 +206,30 @@ session. A session expires; control of the account's address does not.
 - `sendChangeEmailConfirmation` only fires when the current address is already
   verified. An unverified account has no inbox worth asking, so it goes straight
   to verifying the new address, with no approval gate.
+- **Known limitation: an unverified account gets no revocation on an email
+  change.** Since better-auth 1.7.16, `afterEmailVerification` fires on this path
+  only when the account was already verified, and the new address stays
+  unverified. So nothing revokes sessions here. It applies wherever an
+  unverified account holds a session: `REQUIRE_EMAIL_VERIFICATION=false`, an
+  admin clearing `emailVerified` on a signed-in user, or an OAuth sign-in that
+  reports the address unverified.
 - Revocation identifies "the current session" via `auth.api.getSession` on the
   hook's request, which only sees a cookie the browser actually sent. Clicking
   the new-address verification link from a device or browser with no app
-  cookie — routine, since mail links often open elsewhere — is a case
-  better-auth handles by minting a session server-side _before_ calling this
-  hook and setting its cookie _after_. `getSession` can't see that session, and
-  revoking "everything" when it returns null would delete the very session the
-  response is about to hand back. `findMostRecentSessionToken` covers this: the
-  newest session row is that just-minted one, since a stolen session (which
-  predates the change) can never be newer.
+  cookie is routine, since mail links often open elsewhere. Since better-auth
+  1.7.16 that click mints no session, so `getSession` returns null and every
+  session is revoked: the user signs in again at the new address, and the
+  callback page says so (`emailChanged=1`, added by `sendVerificationEmailHook`).
+  Do not fall back to "the newest session row". With nothing minted, that row
+  is a session from before the change, and it may be the stolen one.
+  `tests/unit/lib/auth/better-auth-email-change.test.ts` pins both 1.7.16
+  behaviours against the real library.
 - **Known limitation: no collision guard on the target address across the token
   lifetime.** `email` has `@@unique` (`prisma/schema/auth.prisma`), but nothing
   re-checks it between the approval click and the final verification — a window
   that's now the full 24-hour token life, not one request. If two users start a
   change to the same address and both complete verification inside that window,
-  the second one hits `internalAdapter.updateUserByEmail` inside better-auth's
+  the second one hits `internalAdapter.updateUser` inside better-auth's
   own route with no surrounding `try/catch`
   (`node_modules/better-auth/dist/api/routes/email-verification.mjs`), so the
   unique-constraint violation surfaces as an unhandled error rather than a clean
