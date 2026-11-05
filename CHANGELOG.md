@@ -32,10 +32,15 @@ release process.
   `registerEvalCaseHooks(agentSlug, { setup, observe })` in
   `lib/orchestration/evaluations/case-hooks.ts`. `setup` runs before every
   case and returns the turn's `contextType`, `contextId`, `entityContext` and
-  `scope` (`runAgentCase` gains `context`). `observe` runs after the turn.
-  `GraderInput` gains `caseMetadata` (any subject whose case has metadata) and
-  `observed`. A throwing hook fails only its case, as `case_setup_failed` or
-  `case_observe_failed`. An agent with no hooks runs as before.
+  `scope` (`runAgentCase` gains `context`), within the chat API's limits;
+  `contextType` and `contextId` come together, and `contextType`
+  `'evaluation'` (exported as `EVALUATION_CONTEXT_TYPE`) is refused.
+  `observe` runs after the turn. `GraderInput` gains `caseMetadata` (any
+  subject whose case has metadata) and `observed`. A throwing hook fails only
+  its case, as `case_setup_failed` or `case_observe_failed`. If the init itself
+  throws, every agent case is refused rather than scored without its setup.
+  `registeredEvalCaseHookAgents()` lists the hooked agents. An agent with no
+  hooks runs as before.
 - **A fork's own read rule in the owner layer (#1145)**: `OwnerPath`
   (`lib/db/owner-classification.ts`) gains a third shape, `{ reader }`: a pure
   function from the `OwnerReader` to a Prisma `where`, registered through
