@@ -27,8 +27,8 @@ release process.
 > (third-party origins, and framable pages), tenancy classification and read
 > rules in the owner layer. A crashed workflow run now resumes where it had
 > got to, and Vercel Blob reads files back and holds private ones. Measured
-> against `v0.16.0`: 27 PRs merged, no direct commits, 20 issues closed; the
-> suite is 1,528 files and 31,782 tests.
+> against `v0.16.0`: 27 PRs merged, no direct commits, 20 issues closed (17
+> fixed here, 3 fixed in earlier releases); the suite is 1,528 files and 31,782 tests.
 >
 > ## What a fork has to do
 >
@@ -60,10 +60,13 @@ release process.
 >   `lib/app/frameable-paths.json`. A copy of `nginx.conf`'s
 >   `X-Frame-Options: SAMEORIGIN` should go too.
 > - Script, service and audio origins go in `lib/app/csp.ts`; keep
->   `appFrameSrc` last in the file.
+>   `appFrameSrc` last in the file. `appScriptSrc` takes no wildcard: an entry
+>   like `https://*.vendor.com` is dropped with only a log warning, and the
+>   browser then blocks the script.
 > - A core edit passing tool outcomes to graders is now core's, so drop it.
-> - A login-page line pointing at your own waitlist can go, if you move to
->   `waitlistConfig`.
+> - A login-page line pointing at your own waitlist can go if you move to
+>   `waitlistConfig` and run `SIGNUP_MODE=invite_only`. Core's notice shows only
+>   then, so on any other mode, keep yours.
 >
 > Edits you keep to Sunrise's files now have one convention, a divergence
 > ledger: see `CUSTOMIZATION.md`.
@@ -73,7 +76,9 @@ release process.
 > `<SaveError>`, and every `<form>` fails until it has `noValidate`. Before
 > adding `noValidate`, check the form's schema holds every limit its inputs
 > declare. The opt-out comments are under Added, and the recipes are in
-> `.context/ui/form-errors.md`.
+> `.context/ui/form-errors.md`. It also fails if you deleted or rewrote a core
+> component named in `BOX_EXEMPTIONS`, because that entry no longer matches a
+> box. Remove the entry, and add a divergence-ledger row.
 >
 > **Your type-check will flag:** a hand-built `UserCreatedContext` (add
 > `invitation: null`), and code reading `DataErasureReceipt.subjectUserId`,
@@ -90,9 +95,11 @@ release process.
 > **Changes a build will not catch:**
 >
 > - **Email-change links minted before you deploy stop working.** better-auth
->   1.7.16 rejects a change token with no `userId`, so the link reads as
->   expired, and the resend form on that page can't restart a change. Anyone
->   part-way through starts again from their profile.
+>   1.7.16 rejects a change token with no `userId`. An approval link, the first
+>   step, lands on the home page with no message, so the user may wait for a
+>   second email that never comes. A new-address link reads as expired, and
+>   the resend form on that page can't restart a change. Anyone part-way
+>   through starts again from their profile.
 > - **The new-address click no longer signs anyone in.** A click from a browser
 >   with no session revokes every session on the account, the one that started
 >   the change included, and the user signs in again at the new address. A
@@ -124,8 +131,8 @@ release process.
 >
 > - `zod` < 4.6.6 (high, memory exhaustion on oversized input), under
 >   `@vercel/blob` → `@vercel/oidc` → `@vercel/cli-config`, which pins zod
->   4.1.11 exactly. The fix is in `@vercel/oidc` 4, and `@vercel/blob` 2.8.2,
->   the latest, accepts only 3.x. That copy only validates the Vercel CLI's own
+>   4.1.11 exactly. The first clean release is `@vercel/oidc` 4.0.6, and
+>   `@vercel/blob` 2.8.2, the latest, accepts only 3.x. That copy only validates the Vercel CLI's own
 >   config files on disk, not untrusted input. Sunrise's own zod is 4.6.7.
 > - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`, which
 >   pins 6.0.10 exactly, as in 0.16.0. It parses only the app's own CSS, at
@@ -135,8 +142,10 @@ release process.
 >   app's own template files, not at runtime. `minimatch` is also under
 >   `typescript-eslint`, dev-only.
 > - `deepmerge` (low, prototype poisoning), under `@react-email/components` →
->   `@react-email/render` 2.0.6 → `html-to-text` 9. No fixed version exists.
->   It merges the renderer's own options, not user input.
+>   `@react-email/render` 2.0.6 → `html-to-text` 9. `deepmerge` has no fixed
+>   version, and `@react-email/components` 1.0.12, the latest, pins that render
+>   exactly; render 2.2.0 no longer uses it. It merges the renderer's own
+>   options, not user input.
 
 ### Added
 
@@ -507,9 +516,10 @@ release process.
   re-checked against accounts created that way before this release (#1136,
   t-973).
 - **better-auth 1.7.18 and Next.js 16.4.5.** better-auth 1.7.16 fixes, among
-  others, revoked sessions staying usable through the cookie cache, email
-  verification links working for another account, and a string
-  `email_verified: "false"` being read as verified. Next.js 16.4.5 carries
+  others, email verification links working for another account and a string
+  `email_verified: "false"` being read as verified. Its fix for revoked sessions
+  staying usable covers secondary storage and named flows; Sunrise revokes rows
+  directly, so its up-to-5-minute cookie-cache window remains. Next.js 16.4.5 carries
   seven moderate advisories, including cross-user `use cache` disclosure, an
   SVG optimizer bypass and `HttpOnly` cookie exposure on Edge routes (t-994).
 
