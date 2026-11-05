@@ -1031,25 +1031,24 @@ the hosts in `appFrameSrc`, `appScriptSrc`, `appConnectSrc` or `appMediaSrc`
 rather than editing `lib/security/headers.ts`; the platform folds them into the
 global CSP and into `getCSPConfig()`. Only exact `https://` origins are accepted
 (a left-most wildcard and a port are fine) — anything else is dropped and logged
-at warn, because these values are spliced into a response header. Keep each list
-exactly as broad as the feature: build iframe `src`s only on listed hosts from a
+at warn, because these values are spliced into a response header, and
+`appScriptSrc` takes no wildcard. Keep each list exactly as broad as the feature: build iframe `src`s only on listed hosts from a
 **validated id**, never from an admin's raw input, and name a vendor's exact
 script host, since a listed script host runs code with your app's privileges.
 See
 [`.context/security/overview.md`](./.context/security/overview.md#third-party-hosts--the-libappcspts-seam).
 
-**Pages other sites may frame — `lib/app/frame-ancestors.ts` and
-`lib/app/frameable-paths.json`.** Every response refuses framing. To let a
+**Pages other sites may frame — `lib/app/frameable-paths.json` and
+`lib/app/frame-ancestors.ts`.** Every response refuses framing. To let a
 customer's own site embed one family of your pages (an embeddable form, a
-booking widget), return the sites allowed to frame each request from
-`resolveAppFrameAncestors(request)`, and list those pages' path prefixes
-(`"/embed/"`) in `frameable-paths.json` so `next.config.js` leaves its static
-`DENY` off them. Fill both: without the listing the page carries a contradicting
-`DENY` that older browsers obey, and a listed prefix alone frames nothing. Return exact
-`https://` origins (no wildcard, no path), answer `[]` from the path for
-everything else, and cache any lookup — it runs on every request. A framed page
-on another site gets no session cookie, so frame pages that work signed out.
-See
+booking widget), list those pages' path prefixes (`"/embed/"`) in
+`frameable-paths.json`, and return the sites allowed to frame each request from
+`resolveAppFrameAncestors(request)`. The proxy asks the resolver only for paths
+under a listed prefix, and `next.config.js` leaves those prefixes out of its
+static `DENY`; a listed prefix frames nothing until the resolver names a site.
+Return exact `https://` origins (no wildcard, no path) and cache any lookup — it
+runs on every request under a listed prefix. A framed page on another site gets
+no session cookie, so frame pages that work signed out. See
 [`.context/security/overview.md`](./.context/security/overview.md#letting-named-sites-frame-a-page--the-frame-ancestors-seam).
 
 **Database drift probes — `lib/app/db-drift.ts`.** Register the Prisma-_unmodelled_

@@ -11,21 +11,16 @@
  * one family of pages that a customer embeds on their own site — an embeddable
  * form, a booking widget, a questionnaire — not for framing the whole app.
  *
- * Auto-wired: `proxy.ts` awaits this on every request it handles, before it
- * sets the security headers. A non-empty answer replaces `frame-ancestors
- * 'none'` with those origins and drops `X-Frame-Options` for that response,
- * since that header cannot name a site.
- *
- * **List the path prefixes in `lib/app/frameable-paths.json` too.**
- * `next.config.js` adds its own `X-Frame-Options: DENY` to every path except
- * those, and a header it adds cannot be removed per request. A page answered
- * here but outside that list carries both your `frame-ancestors` and that
- * DENY: current browsers follow `frame-ancestors` and frame it, older ones that
- * only read `X-Frame-Options` refuse it. Listing the prefix makes the response
- * say one thing. On a listed prefix every page still gets DENY and
+ * **Only paths under a prefix in `lib/app/frameable-paths.json` ask it.** List
+ * the prefixes of the pages you frame there (`"/embed/"`); `proxy.ts` awaits
+ * this for a request under one of them, before it sets the security headers,
+ * and never calls it for any other path. A non-empty answer replaces
+ * `frame-ancestors 'none'` with those origins and drops `X-Frame-Options` for
+ * that response, since that header cannot name a site. `next.config.js` leaves
+ * the same prefixes out of its static `X-Frame-Options: DENY`, which it could
+ * not remove per request. On a listed prefix every page still gets DENY and
  * `frame-ancestors 'none'` whenever this answers `[]`, so listing a prefix
- * frames nothing by itself. The exceptions are the proxy's
- * early replies (the 403 origin check, the 429 rate limit, its redirects),
+ * frames nothing by itself. The exceptions are the proxy's early replies (the 403 origin check, the 429 rate limit, its redirects),
  * which return before the security headers are set and so carry no framing
  * header on a listed prefix. They are JSON or redirects, with nothing to click.
  *
@@ -35,8 +30,10 @@
  *   `http://localhost[:port]` is accepted too, for trying an embed locally. The
  *   platform validates every answer and drops anything else with a warning,
  *   because the list is spliced into a header.
- * - Keep it cheap. It runs on every request, so answer `[]` from the path alone
- *   for anything you do not frame, and cache whatever needs I/O.
+ * - Keep it cheap. It runs on every request under a listed prefix, and a slow
+ *   answer holds that page up, so cache whatever needs I/O.
+ * - A malformed answer (not an array, a non-string entry, a port outside
+ *   1–65535) is dropped like an invalid origin. Each bad value is logged once.
  * - A throw is logged and treated as `[]`: the page is not framed.
  *
  * **A framed page usually gets no session cookie.** Inside a frame on another

@@ -56,6 +56,8 @@ vi.mock('@/lib/app/protected-routes', () => ({
 vi.mock('@/lib/app/frame-ancestors', () => ({
   resolveAppFrameAncestors: vi.fn(async () => []),
 }));
+// …and lists `/embed/` as framable, so only paths under it consult the resolver.
+vi.mock('@/lib/app/frameable-paths.json', () => ({ default: ['/embed/'] }));
 
 // Signup mode (#463). Default `open` so every other test in this file sees the
 // template's default behaviour; the invite_only block below drives it true.
@@ -783,6 +785,22 @@ describe('proxy (project root)', () => {
         expect.objectContaining({ hint: expect.stringContaining('lib/app/frame-ancestors.ts') })
       );
       errorSpy.mockRestore();
+    });
+
+    it('does not ask the resolver for a path outside the listed prefixes', async () => {
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+      // Even a resolver that would name a site: an unlisted path is never framable.
+      vi.mocked(resolveAppFrameAncestors).mockResolvedValue(['https://www.client.com']);
+
+      for (const path of ['/', '/embedded/x', '/admin/embed/x', '/api/v1/embed/x']) {
+        vi.mocked(setSecurityHeaders).mockClear();
+        const response = await proxy(createMockRequest(path, { cookies: {} }));
+        expect(setSecurityHeaders, path).toHaveBeenCalledWith(response, expect.any(String), {
+          frameAncestors: [],
+        });
+      }
+      expect(resolveAppFrameAncestors).not.toHaveBeenCalled();
+      vi.mocked(resolveAppFrameAncestors).mockResolvedValue([]);
     });
 
     it('does not ask the resolver for a request the proxy answers early', async () => {

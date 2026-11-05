@@ -173,11 +173,12 @@ additions land in `getCSPConfig()` and not only in the header string, code that
 asks the policy whether a host is allowed (a widget that stays off until the CSP
 lets it load) gets the same answer the browser does.
 
-**Only exact `https://` origins are accepted** — optionally a left-most wildcard
-(`https://*.example.com`) and a port. A bare `*`, a `data:` scheme, a path, a
-CSP keyword, or anything containing whitespace or `;` is **dropped and logged at
-warn** at module load, because these values are spliced into a response header.
-A repeated origin is listed once.
+**Only exact `https://` origins are accepted** — optionally a port in 1–65535,
+and, in every list but `appScriptSrc`, a left-most wildcard
+(`https://*.example.com`). A bare `*`, a `data:` scheme, a path, a CSP keyword,
+or anything containing whitespace or `;` is **dropped and logged at warn** at
+module load, because these values are spliced into a response header. A
+repeated origin is listed once, including one an analytics provider also adds.
 
 Keep each list exactly as broad as the feature:
 
@@ -189,8 +190,9 @@ Keep each list exactly as broad as the feature:
   `youtube.com`).
 - **`appScriptSrc` is the strongest grant.** A script from a listed host runs
   with the app's full privileges, so name the vendor's exact script host. A
-  wildcard over a domain where others can publish (a CDN, a shared hosting
-  domain) lets anyone who can publish there run code in your pages.
+  wildcard is refused in this list: `*.` over a domain where others can publish
+  (`*.github.io`, `*.vercel.app`) would let anyone who can publish there run
+  code in your pages.
 - **`appConnectSrc`.** Production keeps `connect-src` at `'self'` so client code
   cannot send data off-site; outbound calls go through server routes, which need
   no entry here. Add only the endpoints a third-party script must reach from the
@@ -209,48 +211,47 @@ a customer's own site (an embeddable form, a booking widget, a questionnaire)
 fills two fork-owned files, and nothing changes for an install that fills
 neither:
 
-```typescript
-// lib/app/frame-ancestors.ts — ships answering [] for every request
-export async function resolveAppFrameAncestors(request: Request): Promise<string[]> {
-  const { pathname } = new URL(request.url);
-  if (!pathname.startsWith('/embed/')) return [];
-  return getAllowedEmbedOrigins(pathname.split('/')[2]); // your lookup, cached
-}
-```
-
 ```json
 // lib/app/frameable-paths.json — ships []
 ["/embed/"]
 ```
 
-- **The resolver decides per request.** `proxy.ts` awaits it before
+```typescript
+// lib/app/frame-ancestors.ts — ships answering [] for every request
+export async function resolveAppFrameAncestors(request: Request): Promise<string[]> {
+  const widgetId = new URL(request.url).pathname.split('/')[2];
+  return getAllowedEmbedOrigins(widgetId); // your lookup, cached
+}
+```
+
+- **The path list says which pages can be framed at all.** Only plain
+  `/segment/` prefixes are accepted; anything else is ignored. Both
+  `next.config.js` and `proxy.ts` read it through one helper
+  (`lib/security/frame-deny-source.cjs`), so they agree. `next.config.js` leaves
+  the listed prefixes out of its static `X-Frame-Options: DENY`, a header the
+  proxy could not remove per request. (A `has`/`missing` condition on a header
+  the proxy sets does not work instead: `next.config` headers match the
+  browser's original request, not the proxy's, and a client can send that
+  header itself.) Listing a prefix frames nothing by itself — the proxy still
+  sends `DENY` there unless the resolver answers.
+- **The resolver decides per request, under a listed prefix only.** `proxy.ts`
+  awaits it for a request whose path starts with a listed prefix (exact case),
+  and never calls it for any other path, then calls
   `setSecurityHeaders(response, nonce, { frameAncestors })`. A non-empty answer
   replaces `frame-ancestors 'none'` with those origins and removes
   `X-Frame-Options` for that response, because that header cannot name a site
   (`ALLOW-FROM` is obsolete). `[]`, or a resolver that throws (logged at error),
   leaves the response refused.
-- **The path list is for `next.config.js`.** Its `X-Frame-Options: DENY` is a
-  static header the proxy cannot remove per request, so the rule's `source`
-  leaves out the listed prefixes (`lib/security/frame-deny-source.cjs`). A
-  `has`/`missing` condition on a header the proxy sets does not work instead:
-  `next.config` headers match the browser's original request, not the proxy's,
-  and a client can send that header itself. Without the listing, a page the
-  resolver answers for carries both its `frame-ancestors` and the static
-  `DENY`: current browsers follow `frame-ancestors` (it takes precedence over
-  `X-Frame-Options`) and frame it, but a browser that only reads
-  `X-Frame-Options` refuses it. Listing a prefix frames nothing by itself — the
-  proxy still sends `DENY` there unless the resolver answers. Only plain
-  `/segment/` prefixes are accepted; anything else is ignored.
-- **Origins are held to the narrowest shape**: exact `https://host[:port]`, no
-  wildcard and no path, because the answer is often stored data (the sites a
-  customer named). Outside production `http://localhost[:port]` is accepted
-  too, so an embed can be tried locally. Anything else is dropped with a
-  warning.
-- **Keep the resolver cheap.** It runs on every request the proxy handles, so
-  answer `[]` from the path for anything you do not frame, and cache whatever
-  needs I/O.
+- **Origins are held to the narrowest shape**: exact `https://host[:port]`
+  (port 1–65535), no wildcard and no path, because the answer is often stored
+  data (the sites a customer named). Outside production `http://localhost[:port]`
+  is accepted too, so an embed can be tried locally. Anything else — including
+  an answer that is not an array, or a non-string entry — is dropped, and each
+  bad value is logged at warn once per process, not on every request.
+- **Keep the resolver cheap.** It runs on every request under a listed prefix,
+  and a slow answer holds that page up, so cache whatever needs I/O.
 
-Two consequences to design for:
+Three consequences to design for:
 
 - **A framed page usually gets no session cookie.** The session cookie is
   `SameSite=Lax`, which the browser does not send inside a frame on another

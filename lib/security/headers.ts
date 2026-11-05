@@ -146,15 +146,25 @@ export function buildCSP(config: CSPConfig): string {
 }
 
 /**
- * An exact `https://` origin, optionally wildcarded at the left-most label and
- * optionally with a port: `https://player.vimeo.com`, `https://*.example.com`.
- * The shape every list in `lib/app/csp.ts` is held to.
+ * Exact `https://` origins, optionally with a port: `https://player.vimeo.com`,
+ * `https://media.example.com:8443`. The wildcard form also allows `*.` as the
+ * left-most label (`https://*.example.com`).
  *
  * Deliberately narrow. These values are spliced straight into a header, so a
  * `;`, a space, a bare `*`, or a `data:` scheme would either widen the policy
  * or break the directives that follow it.
  */
-const APP_CSP_ORIGIN = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const HTTPS_ORIGIN = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const HTTPS_ORIGIN_WITH_WILDCARD = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const LOCALHOST_ORIGIN = /^http:\/\/localhost(:\d{1,5})?$/i;
+
+/** True unless the origin names a port outside 1–65535, which a browser would ignore. */
+function portInRange(origin: string): boolean {
+  const port = /:(\d+)$/.exec(origin)?.[1];
+  if (port === undefined) return true;
+  const value = Number(port);
+  return value >= 1 && value <= 65535;
+}
 
 /** How one list of fork-supplied origins is checked, and what a warning names. */
 interface OriginRule {
@@ -169,25 +179,46 @@ interface OriginRule {
 }
 
 /**
+ * Invalid origins already warned about, so a bad value in stored data warns
+ * once per process rather than on every request that reads it. Capped, since
+ * the values can come from data.
+ */
+const warnedOrigins = new Set<string>();
+const MAX_WARNED_ORIGINS = 1000;
+
+/**
  * Keep the entries of a fork-supplied origin list that pass `rule`, once each,
  * logging the rest. An invalid entry is dropped rather than trusted: it would
- * be spliced into a header.
+ * be spliced into a header. Takes `unknown` because a per-request answer can
+ * come from stored data whatever its declared type: anything but an array
+ * yields no origins, and a non-string entry is dropped like any other.
  */
-function acceptOrigins(origins: readonly string[], rule: OriginRule): string[] {
+function acceptOrigins(origins: unknown, rule: OriginRule): string[] {
   const accepted: string[] = [];
+  if (!Array.isArray(origins)) {
+    if (origins !== undefined && origins !== null) warnOnce(rule, origins);
+    return accepted;
+  }
 
-  for (const origin of origins) {
-    if (rule.accepts(origin)) {
+  for (const origin of origins as unknown[]) {
+    if (typeof origin === 'string' && rule.accepts(origin) && portInRange(origin)) {
       if (!accepted.includes(origin)) accepted.push(origin);
       continue;
     }
-    logger.warn(`Ignoring invalid ${rule.directive} origin from ${rule.source}`, {
-      origin,
-      expected: `an exact https:// origin, e.g. ${rule.example}`,
-    });
+    warnOnce(rule, origin);
   }
 
   return accepted;
+}
+
+function warnOnce(rule: OriginRule, origin: unknown): void {
+  const key = `${rule.directive}\u0000${typeof origin === 'string' ? origin : JSON.stringify(origin)}`;
+  if (warnedOrigins.has(key)) return;
+  if (warnedOrigins.size < MAX_WARNED_ORIGINS) warnedOrigins.add(key);
+  logger.warn(`Ignoring invalid ${rule.directive} origin from ${rule.source}`, {
+    origin,
+    expected: `an exact https:// origin, e.g. ${rule.example}`,
+  });
 }
 
 /** The directives a fork may add origins to through `lib/app/csp.ts`. */
@@ -197,12 +228,14 @@ type AppCspDirective = 'script-src' | 'media-src' | 'connect-src' | 'frame-src';
 function appCspAddition(
   directive: AppCspDirective,
   origins: readonly string[],
-  example: string
+  example: string,
+  { wildcard }: { wildcard: boolean }
 ): readonly [AppCspDirective, string[]] {
+  const shape = wildcard ? HTTPS_ORIGIN_WITH_WILDCARD : HTTPS_ORIGIN;
   const rule: OriginRule = {
     directive,
     source: 'lib/app/csp.ts',
-    accepts: (origin) => APP_CSP_ORIGIN.test(origin),
+    accepts: (origin) => shape.test(origin),
     example,
   };
   return [directive, acceptOrigins(origins, rule)];
@@ -211,31 +244,34 @@ function appCspAddition(
 /**
  * The fork's additions from `lib/app/csp.ts`, validated once at module load —
  * not per request, since the lists are constants. Empty in vanilla Sunrise.
+ *
+ * `script-src` takes no wildcard: a script host runs code with the app's full
+ * privileges, and `*.` over a domain where others can publish (`*.github.io`,
+ * `*.vercel.app`) would let anyone there do so.
  */
 const APP_CSP_ADDITIONS = [
-  appCspAddition('script-src', appScriptSrc, 'https://challenges.cloudflare.com'),
-  appCspAddition('connect-src', appConnectSrc, 'https://api.example.com'),
-  appCspAddition('media-src', appMediaSrc, 'https://media.example.com'),
-  appCspAddition('frame-src', appFrameSrc, 'https://player.vimeo.com'),
+  appCspAddition('script-src', appScriptSrc, 'https://challenges.cloudflare.com', {
+    wildcard: false,
+  }),
+  appCspAddition('connect-src', appConnectSrc, 'https://api.example.com', { wildcard: true }),
+  appCspAddition('media-src', appMediaSrc, 'https://media.example.com', { wildcard: true }),
+  appCspAddition('frame-src', appFrameSrc, 'https://player.vimeo.com', { wildcard: true }),
 ];
 
 /**
- * An exact origin a page may be framed by: `https://host[:port]`. No wildcard
- * and no path — unlike the `lib/app/csp.ts` lists, this one comes from a fork's
- * per-request answer (often stored data, such as the sites a customer named), so
- * it is held to the narrowest shape. Outside production `http://localhost[:port]`
- * is also accepted, so an embedding page can be tried locally.
+ * The rule for `lib/app/frame-ancestors.ts` answers, checked per request: an
+ * exact `https://host[:port]`, no wildcard and no path. Unlike the
+ * `lib/app/csp.ts` lists, this one comes from a per-request answer (often
+ * stored data, such as the sites a customer named), so it is held to the
+ * narrowest shape. Outside production `http://localhost[:port]` is also
+ * accepted, so an embedding page can be tried locally.
  */
-const FRAME_ANCESTOR_ORIGIN = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
-const LOCAL_FRAME_ANCESTOR_ORIGIN = /^http:\/\/localhost(:\d{1,5})?$/i;
-
-/** The rule for `lib/app/frame-ancestors.ts` answers, checked per request. */
 const FRAME_ANCESTORS_RULE: OriginRule = {
   directive: 'frame-ancestors',
   source: 'lib/app/frame-ancestors.ts',
   accepts: (origin) =>
-    FRAME_ANCESTOR_ORIGIN.test(origin) ||
-    (process.env.NODE_ENV !== 'production' && LOCAL_FRAME_ANCESTOR_ORIGIN.test(origin)),
+    HTTPS_ORIGIN.test(origin) ||
+    (process.env.NODE_ENV !== 'production' && LOCALHOST_ORIGIN.test(origin)),
   example: 'https://www.example.com',
 };
 
@@ -321,10 +357,10 @@ export function getCSPConfig(nonce?: string): CSPConfig {
   // Add analytics provider domains
   const analytics = getAnalyticsCSPDomains();
   if (analytics.scriptSrc.length > 0) {
-    base['script-src'] = [...base['script-src'], ...analytics.scriptSrc];
+    base['script-src'] = [...new Set([...base['script-src'], ...analytics.scriptSrc])];
   }
   if (analytics.connectSrc.length > 0) {
-    base['connect-src'] = [...base['connect-src'], ...analytics.connectSrc];
+    base['connect-src'] = [...new Set([...base['connect-src'], ...analytics.connectSrc])];
   }
 
   return base;
@@ -392,7 +428,7 @@ export function setSecurityHeaders(
   // The sites this response may be framed by, from the fork's
   // lib/app/frame-ancestors.ts. Empty (the default, and always in vanilla
   // Sunrise) keeps `frame-ancestors 'none'` and DENY below.
-  const frameAncestors = acceptOrigins(options.frameAncestors ?? [], FRAME_ANCESTORS_RULE);
+  const frameAncestors = acceptOrigins(options.frameAncestors, FRAME_ANCESTORS_RULE);
 
   // Content Security Policy - environment-specific, nonce-based in production
   const csp = getCSPConfig(nonce);

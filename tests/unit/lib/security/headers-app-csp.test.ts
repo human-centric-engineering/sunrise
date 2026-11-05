@@ -62,24 +62,28 @@ async function loadHeadersWith(lists: Partial<Record<SeamList, string[]>>) {
 const LISTS = [
   {
     list: 'appFrameSrc',
+    wildcard: true,
     directive: 'frame-src',
     dev: ["'self'"],
     prod: ["'self'"],
   },
   {
     list: 'appScriptSrc',
+    wildcard: false,
     directive: 'script-src',
     dev: ["'self'", "'unsafe-eval'", "'unsafe-inline'"],
     prod: ["'self'"],
   },
   {
     list: 'appConnectSrc',
+    wildcard: true,
     directive: 'connect-src',
     dev: ["'self'", 'webpack://*', 'ws://localhost:*', 'wss://localhost:*'],
     prod: ["'self'"],
   },
   {
     list: 'appMediaSrc',
+    wildcard: true,
     directive: 'media-src',
     dev: ["'self'", 'blob:'],
     prod: ["'self'", 'blob:'],
@@ -110,7 +114,7 @@ describe('CSP app seam (lib/app/csp.ts)', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  describe.each(LISTS)('$list → $directive', ({ list, directive, dev, prod }) => {
+  describe.each(LISTS)('$list → $directive', ({ list, directive, dev, prod, wildcard }) => {
     it('adds the fork origins after the platform values, in config and header', async () => {
       const { getCSP, getCSPConfig } = await loadHeadersWith({
         [list]: ['https://one.example.com', 'https://two.example.com'],
@@ -133,16 +137,18 @@ describe('CSP app seam (lib/app/csp.ts)', () => {
       expect(getCSPConfig()[directive]).toEqual([...prod, 'https://one.example.com']);
     });
 
-    it('accepts a left-most wildcard and a port', async () => {
+    it('accepts a port in range, and drops one out of range', async () => {
       const { getCSPConfig } = await loadHeadersWith({
-        [list]: ['https://*.example.com', 'https://media.example.com:8443'],
+        [list]: ['https://media.example.com:65535', 'https://media.example.com:65536'],
       });
 
-      expect(getCSPConfig()[directive]).toEqual([
-        ...dev,
-        'https://*.example.com',
-        'https://media.example.com:8443',
-      ]);
+      expect(getCSPConfig()[directive]).toEqual([...dev, 'https://media.example.com:65535']);
+    });
+
+    it(`${wildcard ? 'accepts' : 'drops'} a left-most wildcard`, async () => {
+      const { getCSPConfig } = await loadHeadersWith({ [list]: ['https://*.example.com'] });
+
+      expect(getCSPConfig()[directive]).toEqual(wildcard ? [...dev, 'https://*.example.com'] : dev);
     });
 
     it.each([
@@ -202,5 +208,17 @@ describe('CSP app seam (lib/app/csp.ts)', () => {
     });
 
     expect(getCSPConfig()['media-src']).toEqual(["'self'", 'blob:', 'https://media.example.com']);
+  });
+
+  it('lists a fork origin that analytics also adds only once', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_DOMAIN', 'example.com');
+    const { getCSPConfig } = await loadHeadersWith({
+      appScriptSrc: ['https://plausible.io'],
+      appConnectSrc: ['https://plausible.io'],
+    });
+    const config = getCSPConfig();
+
+    expect(config['script-src'].filter((v) => v === 'https://plausible.io')).toHaveLength(1);
+    expect(config['connect-src'].filter((v) => v === 'https://plausible.io')).toHaveLength(1);
   });
 });

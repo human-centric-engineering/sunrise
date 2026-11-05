@@ -125,9 +125,12 @@ describe('next.config allowedDevOrigins', () => {
  * itself loads, and the one coverage records. An ESM import of a `.cjs` file
  * gets a separate copy.
  */
-const { frameDenySource } = createRequire(import.meta.url)(
+const { frameDenySource, frameablePrefixes } = createRequire(import.meta.url)(
   '../../lib/security/frame-deny-source.cjs'
-) as { frameDenySource: (listed: unknown) => string };
+) as {
+  frameDenySource: (listed: unknown) => string;
+  frameablePrefixes: (listed: unknown) => string[];
+};
 
 describe('next.config X-Frame-Options rule (#887)', () => {
   interface HeaderRule {
@@ -227,5 +230,13 @@ describe('next.config X-Frame-Options rule (#887)', () => {
 
   it('keeps the valid prefixes of a mixed list, once each', () => {
     expect(frameDenySource(['/embed/', '/', '/embed/', '/q/'])).toBe('/((?!embed/|q/).*)');
+  });
+
+  it('gives the proxy the same prefixes the rule leaves out, as listed', () => {
+    const listed = ['/embed/', '/', '/embed/', 'q/', '/q/', 42];
+
+    expect(frameablePrefixes(listed)).toEqual(['/embed/', '/q/']);
+    expect(frameDenySource(listed)).toBe('/((?!embed/|q/).*)');
+    expect(frameablePrefixes({ '/embed/': true })).toEqual([]);
   });
 });

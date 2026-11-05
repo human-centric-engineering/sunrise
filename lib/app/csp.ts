@@ -11,7 +11,8 @@
  * a host is allowed gets the same answer the browser does.
  *
  * Only exact `https://` origins are accepted — `https://player.vimeo.com`,
- * `https://*.example.com`. Anything else (a bare `*`, a `data:` scheme, a
+ * `https://*.example.com` (no wildcard in `appScriptSrc`), with a port in
+ * 1–65535 if any. Anything else (a bare `*`, a `data:` scheme, a
  * value with whitespace or `;`) is dropped with a warning rather than widening
  * the policy, because these lists are spliced into a header.
  *
@@ -25,7 +26,8 @@
  *   (`youtube-nocookie.com` over `youtube.com`).
  * - **`appScriptSrc`** — the strongest grant here: any script served from these
  *   hosts runs with this app's full privileges. Name the vendor's exact script
- *   host, never a wildcard over a domain where others can publish.
+ *   host; a wildcard is refused here, since `*.` over a domain where others can
+ *   publish would let anyone there run code in your pages.
  * - **`appConnectSrc`** — the browser may send requests (fetch, XHR, WebSocket)
  *   to these hosts. The platform keeps this at `'self'` so client code cannot
  *   ship data off-site; add only the endpoints a third-party script must reach

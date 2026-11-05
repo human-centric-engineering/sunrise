@@ -135,6 +135,70 @@ describe('setSecurityHeaders frameAncestors', () => {
     expect(prod.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
+  it.each([
+    ['an object', { a: 'https://www.client.com' }],
+    ['a string', 'https://www.client.com'],
+    ['a number', 42],
+  ])('treats %s in place of a list as no answer, and keeps DENY', (_label, answer) => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const response = NextResponse.next();
+
+    // A resolver returning stored data typed `as string[]` can hand over anything.
+    expect(() =>
+      setSecurityHeaders(response, 'nonce', {
+        frameAncestors: answer as unknown as readonly string[],
+      })
+    ).not.toThrow();
+    expect(frameAncestorsOf(response)).toBe("frame-ancestors 'none'");
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+  });
+
+  it('drops non-string entries and keeps the valid ones', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const response = NextResponse.next();
+
+    setSecurityHeaders(response, 'nonce', {
+      frameAncestors: [null, 7, 'https://www.client.com'] as unknown as readonly string[],
+    });
+
+    expect(frameAncestorsOf(response)).toBe('frame-ancestors https://www.client.com');
+  });
+
+  it.each([
+    'https://www.client.com:0',
+    'https://www.client.com:65536',
+    'https://www.client.com:99999',
+  ])('drops %s, a port no browser would use', (origin) => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const response = NextResponse.next();
+
+    setSecurityHeaders(response, 'nonce', { frameAncestors: [origin] });
+
+    expect(frameAncestorsOf(response)).toBe("frame-ancestors 'none'");
+  });
+
+  it('accepts the highest valid port', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const response = NextResponse.next();
+
+    setSecurityHeaders(response, 'nonce', { frameAncestors: ['https://www.client.com:65535'] });
+
+    expect(frameAncestorsOf(response)).toBe('frame-ancestors https://www.client.com:65535');
+  });
+
+  it('warns about a bad stored origin once, not on every request', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const origin = 'https://www.repeat-offender.com/';
+
+    for (let i = 0; i < 3; i++) {
+      setSecurityHeaders(NextResponse.next(), 'nonce', { frameAncestors: [origin] });
+    }
+
+    expect(
+      warn.mock.calls.filter(([, ctx]) => (ctx as { origin: unknown }).origin === origin)
+    ).toHaveLength(1);
+  });
+
   it('does not accept a localhost look-alike outside production', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const response = NextResponse.next();
