@@ -158,7 +158,13 @@ describe('setSecurityHeaders frameAncestors', () => {
     const response = NextResponse.next();
 
     setSecurityHeaders(response, 'nonce', {
-      frameAncestors: [null, 7, 'https://www.client.com'] as unknown as readonly string[],
+      // A nested array stringifies to a valid origin; only a real string may pass.
+      frameAncestors: [
+        null,
+        7,
+        ['https://nested.client.com'],
+        'https://www.client.com',
+      ] as unknown as readonly string[],
     });
 
     expect(frameAncestorsOf(response)).toBe('frame-ancestors https://www.client.com');
