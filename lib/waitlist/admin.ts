@@ -20,6 +20,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { requireOrgId } from '@/lib/tenancy/context';
 import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import { revokeEntryInvitations } from '@/lib/waitlist/invitations';
 import { getWaitlistListStates } from '@/lib/waitlist/lists';
 
 /** Which entries a list or export shows beyond the default (confirmed, active). */
@@ -224,12 +225,17 @@ async function groupCount(where: Prisma.WaitlistEntryWhereInput): Promise<Map<st
  * to keep it, and the prune must not undo that on its next run. Null when no
  * entry has that id in this org; `changed` is false when it was already in
  * that state, so the caller records only a change that happened.
+ *
+ * **Removing revokes the entry's invitations** (`revokeEntryInvitations()`):
+ * someone taken off the list must not be able to sign up with a link sent
+ * before. Run on every removal, a repeat included, so a revoke that failed
+ * once is retried. Restoring sends nothing; the admin invites again.
  */
 export async function setWaitlistEntryRemoved(
   id: string,
   removed: boolean,
   now: Date = new Date()
-): Promise<{ entry: AdminWaitlistEntry; changed: boolean } | null> {
+): Promise<{ entry: AdminWaitlistEntry; changed: boolean; invitationsRevoked: number } | null> {
   // Zero rows updated means already in that state, or no such entry; the
   // read after tells which.
   const { count } = await prisma.waitlistEntry.updateMany({
@@ -240,7 +246,9 @@ export async function setWaitlistEntryRemoved(
     where: { id },
     select: WAITLIST_ENTRY_SELECT,
   });
-  return entry ? { entry, changed: count > 0 } : null;
+  if (!entry) return null;
+  const invitationsRevoked = removed ? await revokeEntryInvitations(entry.email, entry.id) : 0;
+  return { entry, changed: count > 0, invitationsRevoked };
 }
 
 /**

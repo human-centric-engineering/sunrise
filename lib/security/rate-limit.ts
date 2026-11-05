@@ -225,6 +225,20 @@ export const waitlistLimiter = createRateLimiter({
 });
 
 /**
+ * Rate limiter for waitlist invite waves (§125 t-978)
+ * Limit: 5 waves per hour per admin
+ *
+ * A wave sends up to `WAITLIST_INVITE_WAVE_MAX` invitations in one request, so
+ * `inviteLimiter` (10 per 15 minutes, one per invitation) is the wrong bound
+ * for it: a wave has its own cap on rows, and this bounds how many waves.
+ */
+export const waitlistInviteWaveLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.WAITLIST_INVITE_WAVE_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.WAITLIST_INVITE_WAVE,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Rate limiter for verification email requests
  * Limit: 3 requests per 15 minutes per IP
  *

@@ -7,7 +7,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 const { mockConfig, mockSetRemoved, mockErase, mockAudit, mockLog } = vi.hoisted(() => {
   const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
@@ -41,6 +45,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 const ID = 'cmw0s7r0x000q08le5j01nd17';
 const ENTRY = { id: ID, email: 'ada@example.com', name: 'Ada', list: 'default', removedAt: null };
@@ -65,7 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockConfig.current = CONFIG;
   vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-  mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: true });
+  mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: true, invitationsRevoked: 0 });
   mockErase.mockResolvedValue({
     receiptId: 'r-1',
     erasedAt: new Date('2026-11-04T10:00:00Z'),
@@ -89,9 +94,19 @@ describe('PATCH /api/v1/admin/waitlist/:id', () => {
     );
   });
 
+  it('audits how many invitations a removal revoked', async () => {
+    mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: true, invitationsRevoked: 1 });
+
+    await PATCH(patch({ removed: true }), ctx());
+
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: { invitationsRevoked: 1 } })
+    );
+  });
+
   it('answers the entry but records nothing when it was already in that state', async () => {
     // A double click, or a second admin on a stale page.
-    mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: false });
+    mockSetRemoved.mockResolvedValue({ entry: ENTRY, changed: false, invitationsRevoked: 0 });
 
     const response = await PATCH(patch({ removed: true }), ctx());
 

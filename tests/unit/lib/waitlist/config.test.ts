@@ -34,8 +34,22 @@ describe('resolveWaitlistConfig', () => {
       lists: [{ key: 'default' }],
       screen: null,
       retention: { unconfirmedDays: 30, removedDays: 90, closedListMonths: 12 },
+      joinPath: '/',
     });
   });
+
+  it('takes a joinPath on this site', () => {
+    expect(resolveWaitlistConfig({ consentVersion: 'v1', joinPath: '/#waitlist' })?.joinPath).toBe(
+      '/#waitlist'
+    );
+  });
+
+  it.each(['//evil.example', '/\\evil.example', 'https://evil.example', 'waitlist', '/a b'])(
+    'switches the waitlist off for a joinPath that is not a path on this site: %s',
+    (joinPath) => {
+      expect(resolveWaitlistConfig({ consentVersion: 'v1', joinPath })).toBeNull();
+    }
+  );
 
   it('keeps the default for a window the fork sets to undefined', () => {
     // `removedDays: env.X ? Number(env.X) : undefined` — a spread would let

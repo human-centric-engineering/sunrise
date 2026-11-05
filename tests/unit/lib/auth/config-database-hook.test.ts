@@ -74,6 +74,11 @@ const mockPendingSignup = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/auth/pending-signup', () => mockPendingSignup);
 
+// The waitlist link (§125 t-978) is asserted on what the hook hands it and
+// when; its own update is covered by tests/unit/lib/waitlist/link.test.ts.
+const mockLinkWaitlist = vi.hoisted(() => ({ linkWaitlistEntryToAccount: vi.fn() }));
+vi.mock('@/lib/waitlist/link', () => mockLinkWaitlist);
+
 // ---------------------------------------------------------------------------
 // Mutable env object — individual tests mutate fields to exercise branches.
 // Reset in beforeEach.
@@ -363,6 +368,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     mockPendingSignup.wasInvitationAccepted.mockResolvedValue(false);
     mockPendingSignup.getRedeemedInvitation.mockResolvedValue(null);
     mockPendingSignup.setPendingSignup.mockResolvedValue(undefined);
+    mockLinkWaitlist.linkWaitlistEntryToAccount.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -2114,6 +2120,121 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
 
         expect(seen).toEqual([expect.objectContaining({ viaInvitation: true, invitation: null })]);
+      });
+    });
+
+    describe('waitlist link (§125 t-978)', () => {
+      let seen: UserCreatedContext[];
+      let order: string[];
+      const WAITLIST_INVITATION = {
+        invitedAt: '2026-11-01T10:00:00.000Z',
+        invitedBy: 'admin-id',
+        orgId: 'org-acme',
+        waitlistEntryId: 'entry-1',
+      };
+
+      beforeEach(() => {
+        seen = [];
+        order = [];
+        __resetUserCreatedHooksForTests();
+        registerUserCreatedHook('test', (ctx) => {
+          order.push('dispatch');
+          seen.push(ctx);
+        });
+        mockLinkWaitlist.linkWaitlistEntryToAccount.mockImplementation(async () => {
+          order.push('link');
+          return true;
+        });
+      });
+
+      afterEach(() => {
+        __resetUserCreatedHooksForTests();
+      });
+
+      it('links the entry on the OAuth path, before the fork hooks run', async () => {
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(WAITLIST_INVITATION);
+        const mockUser = makeUserCreateData({ id: 'oauth-wl', email: 'wl@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).toHaveBeenCalledTimes(1);
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).toHaveBeenCalledWith({
+          entryId: 'entry-1',
+          userId: 'oauth-wl',
+          email: 'wl@example.com',
+        });
+        expect(order).toEqual(['link', 'dispatch']);
+        expect(seen[0]?.invitation).toEqual(WAITLIST_INVITATION);
+      });
+
+      it('links the entry on the password path from the invitation accept-invite carried', async () => {
+        const mockUser = makeUserCreateData({ id: 'pw-wl', email: 'pw@example.com' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2026-11-01T10:00:00.000Z',
+          waitlistEntryId: 'entry-2',
+        };
+
+        await runInvitedSignup(
+          () => userCreateAfterHook(mockUser, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).toHaveBeenCalledTimes(1);
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).toHaveBeenCalledWith({
+          entryId: 'entry-2',
+          userId: 'pw-wl',
+          email: 'pw@example.com',
+        });
+        expect(order).toEqual(['link', 'dispatch']);
+        expect(seen[0]?.invitation).toEqual({
+          invitedAt: metadata.invitedAt,
+          invitedBy: 'admin-id',
+          orgId: INSTALL_ORG_ID,
+          waitlistEntryId: 'entry-2',
+        });
+      });
+
+      it('does not link, and names no waitlistEntryId, for an invitation that carries none', async () => {
+        const plain = { invitedAt: 'x', invitedBy: 'admin-id', orgId: 'org-acme' };
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(plain);
+        const mockUser = makeUserCreateData({ id: 'oauth-plain', email: 'p@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).not.toHaveBeenCalled();
+        expect(seen[0]?.invitation).toEqual(plain);
+        expect(seen[0]?.invitation).not.toHaveProperty('waitlistEntryId');
+      });
+
+      it('does not add a waitlistEntryId key to a password invitation without one', async () => {
+        const mockUser = makeUserCreateData({ id: 'pw-plain', email: 'pp@example.com' });
+
+        await runInvitedSignup(() => userCreateAfterHook(mockUser, { path: '/sign-up/email' }), {
+          name: 'x',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: 'later',
+        });
+
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).not.toHaveBeenCalled();
+        expect(seen[0]?.invitation).toBeTruthy();
+        expect(seen[0]?.invitation).not.toHaveProperty('waitlistEntryId');
+      });
+
+      it('does not link a sign-up that redeemed no invitation, even if stale state names an entry', async () => {
+        // viaInvitation is false: the stale record must not be trusted.
+        mockPendingSignup.getRedeemedInvitation.mockResolvedValue(WAITLIST_INVITATION);
+        const mockUser = makeUserCreateData({ id: 'stranger', email: 's@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(mockLinkWaitlist.linkWaitlistEntryToAccount).not.toHaveBeenCalled();
+        expect(seen[0]?.invitation).toBeNull();
       });
     });
 

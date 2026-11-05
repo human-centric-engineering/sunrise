@@ -4,6 +4,8 @@
  * PATCH  /api/v1/admin/waitlist/:id — `{ removed: boolean }`, the state to
  *   reach: remove the entry from the list (the row stays; Art. 15 still
  *   discloses it) or restore it. Idempotent under double clicks and two admins.
+ *   Removing revokes any invitation the entry was sent (§125 t-978), so its
+ *   link stops working; restoring sends nothing.
  * DELETE /api/v1/admin/waitlist/:id — erase it: delete the row, write a
  *   waitlist erasure receipt, and delete a pending invitation this org issued
  *   for the address (`eraseWaitlistEntry()`). A second DELETE is a 404: the
@@ -46,7 +48,7 @@ export const PATCH = withAdminAuth<Params>(
 
     const result = await setWaitlistEntryRemoved(id, removed);
     if (!result) throw new NotFoundError('Waitlist entry not found');
-    const { entry, changed } = result;
+    const { entry, changed, invitationsRevoked } = result;
     // Already in that state (a double click, a second admin): the answer is
     // the same, and nothing is recorded that did not happen.
     if (!changed) return successResponse(entry);
@@ -57,9 +59,15 @@ export const PATCH = withAdminAuth<Params>(
       entityType: 'waitlist_entry',
       entityId: id,
       entityName: entry.list,
+      ...(removed ? { metadata: { invitationsRevoked } } : {}),
       clientIp: getClientIP(request),
     });
-    log.info('Waitlist entry updated', { recordId: id, list: entry.list, removed });
+    log.info('Waitlist entry updated', {
+      recordId: id,
+      list: entry.list,
+      removed,
+      invitationsRevoked,
+    });
     return successResponse(entry);
   },
   { tier: 'org', ownership: WAITLIST_ADMIN_OWNERSHIP }

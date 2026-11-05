@@ -8,7 +8,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 const { mockConfig, mockList } = vi.hoisted(() => {
   const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
@@ -40,6 +44,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 
 function get(query = ''): NextRequest {
