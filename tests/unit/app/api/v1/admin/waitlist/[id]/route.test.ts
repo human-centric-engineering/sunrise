@@ -7,7 +7,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 const { mockConfig, mockSetRemoved, mockErase, mockAudit, mockLog } = vi.hoisted(() => {
   const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
@@ -41,6 +45,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 const ID = 'cmw0s7r0x000q08le5j01nd17';
 const ENTRY = { id: ID, email: 'ada@example.com', name: 'Ada', list: 'default', removedAt: null };

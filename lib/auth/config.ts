@@ -12,6 +12,7 @@ import { validateEmailConfig } from '@/lib/email/client';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
 import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
+import { linkWaitlistEntryToAccount } from '@/lib/waitlist/link';
 import type { InvitationMetadata } from '@/lib/validations/admin';
 import {
   activeOrgForSession,
@@ -139,6 +140,8 @@ function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
     invitedBy: metadata.invitedBy,
     // The same rule the membership is decided by, so the two cannot disagree.
     orgId: invitedOrgId(metadata),
+    // Only when present, so every other invitation reads exactly as before.
+    ...(metadata.waitlistEntryId ? { waitlistEntryId: metadata.waitlistEntryId } : {}),
   };
 }
 
@@ -656,6 +659,18 @@ export async function userCreateAfterHook(
       userId: user.id,
       userEmail: user.email,
       signupMethod,
+    });
+  }
+
+  // The waitlist entry this invitation was sent from (§125 t-978), linked to
+  // the account by the id the invitation carried — never by the address — on
+  // the password and the OAuth path alike. Core's own work, so it runs before
+  // the fork's hooks, and they see the entry linked. Never throws.
+  if (redeemed?.waitlistEntryId) {
+    await linkWaitlistEntryToAccount({
+      entryId: redeemed.waitlistEntryId,
+      userId: user.id,
+      email: user.email,
     });
   }
 

@@ -24,7 +24,11 @@
 import { prisma } from '@/lib/db/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 import {
   countWaitlistEntries,
   listWaitlistEntries,
@@ -55,6 +59,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: OPEN }, { key: CLOSED_LONG }, { key: CLOSED_RECENT }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 
 async function dbReachable(): Promise<boolean> {

@@ -15,6 +15,11 @@
  *
  * Restoring a removed entry asks first: a removed address that re-joined
  * shows "Re-submitted ×N", and restoring undoes someone's removal.
+ *
+ * Inviting (t-978): a row that can be invited has Invite (Resend once it has
+ * been); ticked rows go as one wave; "Invite a wave" picks the next N or a
+ * random N. Only a confirmed, unflagged entry still on the list can be ticked
+ * or invited — the server refuses the rest anyway, and says why.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -53,6 +58,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SaveError } from '@/components/forms/form-error';
+import {
+  postWave,
+  WaitlistInviteWaveDialog,
+  WaveSummary,
+  type WaveResult,
+} from '@/components/admin/waitlist/waitlist-invite-wave-dialog';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
@@ -64,6 +75,7 @@ import { parsePaginationMeta } from '@/lib/validations/common';
 import {
   WAITLIST_ADMIN_DEFAULT_SORT,
   WAITLIST_ADMIN_PAGE_SIZE,
+  WAITLIST_INVITE_WAVE_MAX,
   type WaitlistFieldShape,
 } from '@/lib/validations/waitlist';
 
@@ -100,7 +112,7 @@ export interface WaitlistEntriesTableProps {
   initial: WaitlistPage | null;
   /** The most rows one export carries (`WAITLIST_EXPORT_MAX_ROWS`). */
   exportMaxRows: number;
-  /** Called after a remove, restore or erase succeeded, so the counts can follow. */
+  /** Called after a remove, restore, erase or invite succeeded, so the counts can follow. */
   onChanged?: () => void;
 }
 
@@ -147,6 +159,25 @@ function answers(entry: WaitlistEntryRow, fields: readonly WaitlistFieldShape[])
     const shown = f.options?.find((o) => o.value === value)?.label ?? value;
     return [`${f.label}: ${shown}`];
   });
+}
+
+/** Whether the server would invite this entry: confirmed, on the list, unflagged, not signed up. */
+export function canInvite(entry: WaitlistEntryRow): boolean {
+  return (
+    entry.confirmedAt !== null &&
+    entry.removedAt === null &&
+    entry.joinedAt === null &&
+    entry.flaggedReason === null
+  );
+}
+
+/** What a single invite did, for the line above the table. */
+function inviteNotice(outcome: string, emailStatus: string): string {
+  const what = outcome === 'resent' ? 'Invitation resent' : 'Invitation sent';
+  if (emailStatus === 'sent') return `${what}.`;
+  return `${what === 'Invitation sent' ? 'Invitation created' : 'Invitation renewed'}, but the email did not go${
+    emailStatus === 'disabled' ? ' (email is not set up)' : ''
+  }. Use Resend to try again.`;
 }
 
 function StateBadges({ entry }: { entry: WaitlistEntryRow }) {
@@ -203,6 +234,12 @@ export function WaitlistEntriesTable({
     fallback: 'Could not erase the entry. Try again.',
     fields: NO_SERVER_FIELDS,
   });
+
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [notice, setNotice] = useState<string | null>(null);
+  const [waveOpen, setWaveOpen] = useState(false);
+  const [selectedWave, setSelectedWave] = useState<WaveResult | null>(null);
+  const [invitingSelected, setInvitingSelected] = useState(false);
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -265,6 +302,11 @@ export function WaitlistEntriesTable({
     void load();
   }, [load]);
 
+  // A selection is of rows on screen: another page, filter or sort starts afresh.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [filters, page, sortBy, sortOrder]);
+
   // Search waits for a pause in typing, so each keystroke is not a request.
   useEffect(() => {
     if (searchText === filters.q) return;
@@ -306,6 +348,53 @@ export function WaitlistEntriesTable({
     } finally {
       setBusyId(null);
     }
+  };
+
+  const invite = async (entry: WaitlistEntryRow) => {
+    rowSave.clear();
+    setNotice(null);
+    setSelectedWave(null);
+    setBusyId(entry.id);
+    try {
+      const data = await apiClient.post<unknown>(API.ADMIN.waitlistEntryInvite(entry.id));
+      const outcome = isRecord(data) && typeof data.outcome === 'string' ? data.outcome : 'invited';
+      const emailStatus =
+        isRecord(data) && typeof data.emailStatus === 'string' ? data.emailStatus : 'sent';
+      setNotice(inviteNotice(outcome, emailStatus));
+      onChanged?.();
+      await load();
+    } catch (err) {
+      rowSave.report(err);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const inviteSelected = async () => {
+    rowSave.clear();
+    setNotice(null);
+    setSelectedWave(null);
+    setInvitingSelected(true);
+    try {
+      const result = await postWave({ mode: 'ids', ids: [...selected] });
+      setSelectedWave(result);
+      setSelected(new Set());
+      onChanged?.();
+      await load();
+    } catch (err) {
+      rowSave.report(err);
+    } finally {
+      setInvitingSelected(false);
+    }
+  };
+
+  const toggleSelected = (id: string, on: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   };
 
   const handleRestore = async () => {
@@ -385,6 +474,10 @@ export function WaitlistEntriesTable({
   };
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const invitableOnPage = entries.filter(canInvite);
+  const allOnPageSelected =
+    invitableOnPage.length > 0 && invitableOnPage.every((e) => selected.has(e.id));
+  const columns = lists.length > 1 ? 10 : 9;
   const sortIcon = (field: SortField) =>
     sortBy !== field ? null : sortOrder === 'asc' ? (
       <ArrowUp className="ml-1 inline h-3 w-3" aria-hidden />
@@ -471,6 +564,25 @@ export function WaitlistEntriesTable({
             </Label>
           </div>
         ))}
+        <div className="flex items-center gap-2 pb-1">
+          <Button
+            size="sm"
+            onClick={() => void inviteSelected()}
+            disabled={
+              selected.size === 0 || selected.size > WAITLIST_INVITE_WAVE_MAX || invitingSelected
+            }
+          >
+            {invitingSelected ? 'Inviting…' : `Invite selected (${selected.size})`}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setWaveOpen(true)}>
+            Invite a wave…
+          </Button>
+          <FieldHelp title="Inviting">
+            An invitation emails a link to create an account. Only people who have confirmed their
+            address, are still on the list and are not flagged can be invited, up to{' '}
+            {WAITLIST_INVITE_WAVE_MAX} at a time. When they sign up, their entry shows Signed up.
+          </FieldHelp>
+        </div>
         <div className="ml-auto flex items-center gap-2 pb-1">
           <span className="text-muted-foreground text-xs">
             Up to {exportMaxRows.toLocaleString()} rows, with these filters
@@ -497,11 +609,29 @@ export function WaitlistEntriesTable({
         </p>
       )}
       <SaveError failure={rowSave.failure} />
+      {notice && (
+        <p role="status" className="text-sm">
+          {notice}
+        </p>
+      )}
+      {selectedWave && <WaveSummary result={selectedWave} />}
 
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <Checkbox
+                  aria-label="Select everyone on this page who can be invited"
+                  checked={allOnPageSelected}
+                  disabled={invitableOnPage.length === 0}
+                  onCheckedChange={(checked) =>
+                    setSelected(
+                      checked === true ? new Set(invitableOnPage.map((e) => e.id)) : new Set()
+                    )
+                  }
+                />
+              </TableHead>
               <TableHead>
                 <button type="button" onClick={() => sortOn('email')}>
                   Address{sortIcon('email')}
@@ -528,16 +658,22 @@ export function WaitlistEntriesTable({
           <TableBody>
             {entries.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={lists.length > 1 ? 9 : 8}
-                  className="text-muted-foreground py-8 text-center"
-                >
+                <TableCell colSpan={columns} className="text-muted-foreground py-8 text-center">
                   {loading ? 'Loading…' : error ? 'Nothing to show.' : 'No one matches.'}
                 </TableCell>
               </TableRow>
             ) : (
               entries.map((entry) => (
                 <TableRow key={entry.id}>
+                  <TableCell>
+                    {canInvite(entry) && (
+                      <Checkbox
+                        aria-label={`Select ${entry.email}`}
+                        checked={selected.has(entry.id)}
+                        onCheckedChange={(checked) => toggleSelected(entry.id, checked === true)}
+                      />
+                    )}
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{entry.email}</TableCell>
                   <TableCell>{entry.name ?? '—'}</TableCell>
                   {lists.length > 1 && <TableCell>{entry.list}</TableCell>}
@@ -559,6 +695,15 @@ export function WaitlistEntriesTable({
                     <StateBadges entry={entry} />
                   </TableCell>
                   <TableCell className="space-x-2 text-right whitespace-nowrap">
+                    {canInvite(entry) && (
+                      <Button
+                        size="sm"
+                        onClick={() => void invite(entry)}
+                        disabled={busyId === entry.id}
+                      >
+                        {entry.invitedAt ? 'Resend' : 'Invite'}
+                      </Button>
+                    )}
                     {entry.removedAt ? (
                       <Button
                         variant="outline"
@@ -617,6 +762,17 @@ export function WaitlistEntriesTable({
           </Button>
         </div>
       </div>
+
+      <WaitlistInviteWaveDialog
+        open={waveOpen}
+        onOpenChange={setWaveOpen}
+        lists={lists}
+        fields={fields}
+        onInvited={() => {
+          onChanged?.();
+          void load();
+        }}
+      />
 
       <AlertDialog open={restoreTarget !== null} onOpenChange={restoreDialog.onOpenChange}>
         <AlertDialogContent>

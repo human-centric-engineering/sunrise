@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoginForm } from '@/components/forms/login-form';
+import { WaitlistLoginNotice } from '@/components/waitlist/waitlist-login-notice';
 import { BRAND } from '@/lib/brand';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
@@ -39,6 +40,8 @@ export default function LoginPage() {
             </Link>
           </div>
         )}
+        {/* Under invite_only, the way in is the waitlist, when the app has one. */}
+        {isInviteOnly() && <WaitlistLoginNotice />}
 
         {/* Password Reset Link */}
         <div className="text-center text-sm">

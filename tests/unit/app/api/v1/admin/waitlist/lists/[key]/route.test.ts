@@ -4,7 +4,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 const { mockConfig, mockSetOpen, mockAudit } = vi.hoisted(() => {
   const mockConfig: { current: ResolvedWaitlistConfig | null } = { current: null };
@@ -34,6 +38,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }, { key: 'beta' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 const CHANGED_AT = new Date('2026-11-04T10:00:00Z');
 

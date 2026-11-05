@@ -10,7 +10,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const { mockPrisma } = vi.hoisted(() => ({
@@ -45,6 +49,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }, { key: 'beta', startsClosed: true }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 
 const NOW = new Date('2026-11-04T12:00:00Z');

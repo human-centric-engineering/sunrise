@@ -10,7 +10,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 import type { WaitlistJoin } from '@/lib/waitlist/join';
 
 const { mockPrisma, mockLogger } = vi.hoisted(() => ({
@@ -34,6 +38,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 
 const JOIN: WaitlistJoin = {

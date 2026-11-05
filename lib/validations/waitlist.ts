@@ -175,6 +175,47 @@ export const waitlistListPatchSchema = z.object({ open: z.boolean() }).strict();
 /** A list key in a route path. */
 export const waitlistListKeySchema = listKeySchema;
 
+// ── Invites (§125 t-978) ────────────────────────────────────────────────────
+
+/**
+ * The most entries one invite wave sends to (decision 7: a wave has its own
+ * cap). Each is an email from the app's sender, sent in turn inside the
+ * request; the page states it beside the button.
+ */
+export const WAITLIST_INVITE_WAVE_MAX = 50;
+
+const waveCountSchema = z.number().int().min(1).max(WAITLIST_INVITE_WAVE_MAX);
+
+/** Narrow a `next` or `sample` wave: one list, and/or one answer to a declared field. */
+const waveNarrowing = {
+  list: listKeySchema.optional(),
+  answer: z
+    .object({
+      field: z.string().min(1).max(40),
+      value: z.string().min(1).max(200),
+    })
+    .strict()
+    .optional(),
+};
+
+/**
+ * `POST /api/v1/admin/waitlist/invite` — who a wave invites: the rows the
+ * admin ticked (`ids`), the next `count` by join date (`next`), or `count`
+ * chosen at random (`sample`) among those not yet invited.
+ */
+export const waitlistInviteWaveSchema = z.discriminatedUnion('mode', [
+  z
+    .object({
+      mode: z.literal('ids'),
+      ids: z.array(z.string().min(1).max(100)).min(1).max(WAITLIST_INVITE_WAVE_MAX),
+    })
+    .strict(),
+  z.object({ mode: z.literal('next'), count: waveCountSchema, ...waveNarrowing }).strict(),
+  z.object({ mode: z.literal('sample'), count: waveCountSchema, ...waveNarrowing }).strict(),
+]);
+
+export type WaitlistInviteWaveInput = z.infer<typeof waitlistInviteWaveSchema>;
+
 /**
  * `POST /api/v1/waitlist/confirm` (§125 t-977). Shape only: a token that is
  * well-formed but wrong gets the same answer as an expired or used one.

@@ -85,11 +85,14 @@ export const API = {
     /** Feature flag by ID */
     featureFlag: (id: string): string => `/api/v1/admin/feature-flags/${id}`,
 
-    /** The org's waitlist (§125): list, counts, export, one entry, one list's state */
+    /** The org's waitlist (§125): list, counts, export, invites, one entry, one list's state */
     WAITLIST: '/api/v1/admin/waitlist',
     WAITLIST_COUNTS: '/api/v1/admin/waitlist/counts',
     WAITLIST_EXPORT: '/api/v1/admin/waitlist/export',
+    WAITLIST_INVITE_WAVE: '/api/v1/admin/waitlist/invite',
     waitlistEntry: (id: string): string => `/api/v1/admin/waitlist/${encodeURIComponent(id)}`,
+    waitlistEntryInvite: (id: string): string =>
+      `/api/v1/admin/waitlist/${encodeURIComponent(id)}/invite`,
     waitlistList: (key: string): string =>
       `/api/v1/admin/waitlist/lists/${encodeURIComponent(key)}`,
 

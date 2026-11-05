@@ -8,7 +8,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 import { WAITLIST_EXPORT_MAX_ROWS } from '@/lib/validations/waitlist';
 
 const { mockConfig, mockPrisma, mockCheck, mockLog } = vi.hoisted(() => {
@@ -50,6 +54,7 @@ const CONFIG: ResolvedWaitlistConfig = {
   lists: [{ key: 'default' }],
   screen: null,
   retention: DEFAULT_WAITLIST_RETENTION,
+  joinPath: DEFAULT_WAITLIST_JOIN_PATH,
 };
 
 const T = new Date('2026-11-01T09:00:00Z');

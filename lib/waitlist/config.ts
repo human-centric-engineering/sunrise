@@ -90,6 +90,13 @@ export interface WaitlistConfig {
    * Every window has a default.
    */
   retention?: WaitlistRetention;
+  /**
+   * Where the app shows its join form — a path on this site, such as `/` or
+   * `/#waitlist` (§125 t-978). Under `SIGNUP_MODE=invite_only` the login page
+   * points people there instead of at a sign-up page that would refuse them.
+   * Default `/`.
+   */
+  joinPath?: string;
 }
 
 /** Retention windows (§125). Each is optional; the defaults are the spec's. */
@@ -121,7 +128,11 @@ export interface ResolvedWaitlistConfig {
   lists: readonly WaitlistListDeclaration[];
   screen: WaitlistConfig['screen'] | null;
   retention: Required<WaitlistRetention>;
+  joinPath: string;
 }
+
+/** Where the login page points when the config names no {@link WaitlistConfig.joinPath}. */
+export const DEFAULT_WAITLIST_JOIN_PATH = '/';
 
 const KEY = /^[a-z][a-z0-9_-]{0,39}$/i;
 
@@ -185,6 +196,13 @@ const configSchema = z.object({
     })
     .strict()
     .optional(),
+  // A path on this site: one leading `/`, never `//` (another host) or a
+  // backslash, which some browsers read as `/`.
+  joinPath: z
+    .string()
+    .max(200)
+    .regex(/^\/(?![/\\])[^\\\s]*$/, 'joinPath is a path on this site, starting with one /')
+    .optional(),
 });
 
 type Cached = { resolved: ResolvedWaitlistConfig | null };
@@ -225,6 +243,7 @@ export function resolveWaitlistConfig(
       closedListMonths:
         parsed.data.retention?.closedListMonths ?? DEFAULT_WAITLIST_RETENTION.closedListMonths,
     },
+    joinPath: parsed.data.joinPath ?? DEFAULT_WAITLIST_JOIN_PATH,
   };
 }
 

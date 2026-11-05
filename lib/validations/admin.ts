@@ -205,6 +205,12 @@ export const invitationMetadataSchema = z.object({
   orgId: z.string().optional(),
   /** Their role in that org. Absent ⇒ `MEMBER` (or `OWNER`, see the membership rule). */
   orgRole: z.enum(ORG_ROLES).optional(),
+  /**
+   * The waitlist entry this invitation was sent from (§125 t-978). Absent for
+   * every other invitation. The sign-up that redeems it links that entry to
+   * the new account by this id, never by the address.
+   */
+  waitlistEntryId: z.string().min(1).optional(),
 });
 
 export type InvitationMetadata = z.infer<typeof invitationMetadataSchema>;

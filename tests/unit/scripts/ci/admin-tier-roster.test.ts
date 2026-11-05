@@ -324,10 +324,12 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/workflows/route.ts#GET',
       'app/api/v1/admin/orchestration/workflows/route.ts#POST',
       'app/api/v1/admin/orchestration/workflows/templates/route.ts#GET',
+      'app/api/v1/admin/waitlist/[id]/invite/route.ts#POST',
       'app/api/v1/admin/waitlist/[id]/route.ts#DELETE',
       'app/api/v1/admin/waitlist/[id]/route.ts#PATCH',
       'app/api/v1/admin/waitlist/counts/route.ts#GET',
       'app/api/v1/admin/waitlist/export/route.ts#GET',
+      'app/api/v1/admin/waitlist/invite/route.ts#POST',
       'app/api/v1/admin/waitlist/lists/[key]/route.ts#PATCH',
       'app/api/v1/admin/waitlist/route.ts#GET',
     ]);

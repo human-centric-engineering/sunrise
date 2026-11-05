@@ -74,6 +74,13 @@ export interface RedeemedInvitation {
   invitedBy: string;
   /** The org it invited the user into: the install org when it named none. */
   orgId: string;
+  /**
+   * The waitlist entry it was sent from, when an admin invited the user from
+   * the waitlist (§125). Absent for every other invitation. Sunrise links the
+   * entry to the account itself before the hooks run; this is for a hook that
+   * keeps its own rows about the entry.
+   */
+  waitlistEntryId?: string;
 }
 
 /** A unit of app-owned work that runs once, after a user row is created. */

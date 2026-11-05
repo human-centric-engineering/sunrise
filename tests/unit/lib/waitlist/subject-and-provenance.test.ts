@@ -24,7 +24,11 @@ import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { localeFromAcceptLanguage, referrerHost } from '@/lib/waitlist/provenance';
 import { isWaitlistListOpen } from '@/lib/waitlist/lists';
 import { buildWaitlistJoinSchema } from '@/lib/validations/waitlist';
-import { DEFAULT_WAITLIST_RETENTION, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_JOIN_PATH,
+  DEFAULT_WAITLIST_RETENTION,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -109,6 +113,7 @@ describe('isWaitlistListOpen', () => {
     lists: [{ key: 'open' }, { key: 'shut', startsClosed: true }],
     screen: null,
     retention: DEFAULT_WAITLIST_RETENTION,
+    joinPath: DEFAULT_WAITLIST_JOIN_PATH,
   };
 
   it('with no stored row, follows the config’s starting state', async () => {
