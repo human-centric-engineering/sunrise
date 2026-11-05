@@ -1,9 +1,9 @@
 # Fork Init Seams
 
-Eighteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
+Nineteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
 core registry runs the fork's `initApp*()` function **once, lazily, before its
 first read**. (Most of `lib/app/` is not this — the majority of those files are
-value and config scaffolds with no init function at all, and two of the twenty
+value and config scaffolds with no init function at all, and two of the twenty-one
 `initApp*` exports are different shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -68,6 +68,7 @@ Three properties come with it:
 | `owner-classification.ts`          | `initAppOwnerClassification`         | `lib/db/owner-classification.ts`                            | roll back, log, degrade        |
 | `platform-agents.ts`               | `initAppPlatformAgents`              | `lib/orchestration/agents/platform-agents.ts`               | roll back, log, degrade        |
 | `provider-credentials.ts`          | `initAppProviderCredentials`         | `lib/orchestration/llm/provider-credentials.ts`             | roll back, log, **refuse**     |
+| `tenancy-classification.ts`        | `initAppTenancyClassification`       | `lib/tenancy/classification.ts`                             | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 
 ## The other family: `registerApp*`

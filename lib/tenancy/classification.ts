@@ -2,7 +2,7 @@
  * Model classification — which tables are a tenant's, which are the
  * platform's, which are the system's (§107 t-705).
  *
- * Every Prisma model is exactly one of three things, and
+ * Every Prisma model is exactly one of four things, and
  * `tests/unit/lib/tenancy/model-classification.test.ts` fails naming any model
  * that is none of them — including a fork's own:
  *
@@ -15,6 +15,16 @@
  *     every org shares. A `createdBy` on these is provenance, not ownership.
  *   • **system** — {@link SYSTEM_MODELS}: identity, audit and bootstrap rows
  *     that decide or record tenancy rather than belong to a tenant.
+ *   • **user-owned** — {@link USER_OWNED_MODELS} (t-984, #1041): rows a person
+ *     owns outside any org — a drummer's kits, a practice run. No `orgId` (a
+ *     person spans orgs), and a link to a user. Neither isolated by org nor a
+ *     shared setting: routes writing one are not asked to declare a
+ *     shared-settings write. A `per-org` job must not sweep one — it would run
+ *     once per active org (`.context/architecture/multi-tenancy.md`).
+ *
+ * A fork classifies its own models through `lib/app/tenancy-classification.ts`
+ * (t-983, #964), never by editing these lists; {@link classifyModels} reads
+ * core's lists and every tier's registrations alike.
  *
  * **Never delete a model from an allowlist to make the test pass.** A model
  * that leaves an allowlist without gaining `orgId` is unclassified, and the
@@ -31,6 +41,10 @@
  * @see .context/architecture/multi-tenancy-design.md — principles 4 and 5
  * @see lib/privacy/org-sources.ts — what an org receives from each tenant-owned model
  */
+
+import { initAppTenancyClassification } from '@/lib/app/tenancy-classification';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { logger } from '@/lib/logging';
 
 /**
  * System rows: they decide or record tenancy rather than belong to a tenant.
@@ -76,6 +90,15 @@ export const GLOBAL_CONFIG_MODELS = [
   'McpServerConfig',
   'AiOrchestrationSettings',
 ] as const;
+
+/**
+ * Rows a person owns outside any org (t-984). Empty in core today: core's
+ * per-person rows (`Session`, `Account`) decide or record identity, and are
+ * system. The class exists for forks' product data, declared through the seam.
+ */
+// Frozen, not `[] as const`: an empty literal reads as a registry filled later,
+// and this list is core's, fixed at build time.
+export const USER_OWNED_MODELS: readonly string[] = Object.freeze<string[]>([]);
 
 export type SystemModel = (typeof SYSTEM_MODELS)[number];
 export type GlobalConfigModel = (typeof GLOBAL_CONFIG_MODELS)[number];
@@ -173,10 +196,19 @@ export interface ModelClassification {
   tenantOwned: TenantOwnedModel[];
   globalConfig: string[];
   system: string[];
-  /** Models that are none of the three — the build fails while this is non-empty. */
+  userOwned: string[];
+  /** Models that are none of the four — the build fails while this is non-empty. */
   unclassified: string[];
-  /** Allowlisted models that also carry `orgId` — a contradiction (system models excepted). */
+  /**
+   * Global-config or user-owned models that also carry `orgId` — a
+   * contradiction. A system model may carry one (`OrgMembership`).
+   */
   contradictions: string[];
+  /**
+   * System models that carry `orgId`, and so are left out of row isolation on
+   * purpose — `OrgMembership` in core. A fork's entry here is logged.
+   */
+  systemWithOrgId: string[];
 }
 
 function hasOrgId(model: RuntimeDataModelModel): boolean {
@@ -188,21 +220,28 @@ function hasOrgId(model: RuntimeDataModelModel): boolean {
  * the real client and on synthetic fixtures alike.
  */
 export function classifyModels(rdm: RuntimeDataModel): ModelClassification {
-  const system = new Set<string>(SYSTEM_MODELS);
-  const global = new Set<string>(GLOBAL_CONFIG_MODELS);
+  const system = new Set<string>(allSystemModels());
+  const global = new Set<string>(allGlobalConfigModels());
+  const userOwned = new Set<string>(allUserOwnedModels());
   const out: ModelClassification = {
     tenantOwned: [],
     globalConfig: [],
     system: [],
+    userOwned: [],
     unclassified: [],
     contradictions: [],
+    systemWithOrgId: [],
   };
   for (const [name, model] of Object.entries(rdm.models).sort(([a], [b]) => a.localeCompare(b))) {
     const org = hasOrgId(model);
     if (system.has(name)) {
       out.system.push(name);
+      if (org) out.systemWithOrgId.push(name);
     } else if (global.has(name)) {
       out.globalConfig.push(name);
+      if (org) out.contradictions.push(name);
+    } else if (userOwned.has(name)) {
+      out.userOwned.push(name);
       if (org) out.contradictions.push(name);
     } else if (org) {
       out.tenantOwned.push({ model: name, table: model.dbName ?? name });
@@ -229,9 +268,181 @@ const rosters = new WeakMap<object, ReadonlyMap<string, string>>();
 export function tenantOwnedModels(client: object): ReadonlyMap<string, string> {
   let roster = rosters.get(client);
   if (!roster) {
-    const { tenantOwned } = classifyModels(readRuntimeDataModel(client));
+    const classification = classifyModels(readRuntimeDataModel(client));
+    warnAboutAppIsolationExemptions(classification);
+    const { tenantOwned } = classification;
     roster = new Map(tenantOwned.map((m) => [m.model, m.table]));
     rosters.set(client, roster);
   }
   return roster;
+}
+
+// ── fork tiers (t-983) ───────────────────────────────────────────────────────
+
+/** The classes a fork tier may put its own models in. Tenant-owned is never registered: it is the `orgId` column. */
+export type AppTenancyClass = 'system' | 'globalConfig' | 'userOwned';
+
+/** One tier's classification of its own models. */
+export interface AppTenancyClassificationContribution {
+  /** `'app'` for a leaf fork, `'framework'` for a framework tier. Diagnostics only. */
+  tier: string;
+  /** Models that decide or record tenancy. One carrying `orgId` leaves row isolation, and is logged. */
+  system?: readonly string[];
+  /** Platform configuration every org shares. Routes writing one must declare it (`writesSharedSettings`). */
+  globalConfig?: readonly string[];
+  /** Rows a person owns outside any org: no `orgId`, and a link to a user. */
+  userOwned?: readonly string[];
+}
+
+/** Fork-registered classes, keyed by model. */
+const appClasses = new Map<string, AppTenancyClass>();
+/** Which tier registered each model, for the duplicate-across-tiers message. */
+const appTiers = new Map<string, string>();
+
+const CORE_CLASSIFIED: ReadonlySet<string> = new Set<string>([
+  ...SYSTEM_MODELS,
+  ...GLOBAL_CONFIG_MODELS,
+  ...USER_OWNED_MODELS,
+]);
+
+function rejectApp(tier: string, model: string, why: string): void {
+  // A dropped row leaves the model unclassified (the coverage guard names it)
+  // or keeps an earlier classification (this log is then the only signal).
+  logger.error('tenancy-classification: app classification rejected', {
+    tier,
+    model,
+    reason: why,
+  });
+}
+
+/**
+ * Classify your tier's own models for tenancy.
+ *
+ * Call from `lib/app/tenancy-classification.ts`'s
+ * `initAppTenancyClassification()`, or from a framework tier's function that it
+ * calls. Idempotent by model and class.
+ *
+ * A row is dropped with a log, never thrown, when it names a model core
+ * already classifies (a fork cannot move a core model), a model another tier
+ * has classified (the first stands), an empty name, or a model this tier has
+ * already put in a different class (both entries are dropped, so the model is
+ * unclassified and the coverage guard names it).
+ *
+ * Name only what this file decides. Whether a model carries `orgId`, and so
+ * whether the class is a contradiction, is the coverage guard's to judge
+ * against the schema.
+ */
+export function registerAppTenancyClassification(
+  contribution: AppTenancyClassificationContribution
+): void {
+  const { tier } = contribution;
+  const lists: ReadonlyArray<readonly [AppTenancyClass, unknown]> = [
+    ['system', contribution.system],
+    ['globalConfig', contribution.globalConfig],
+    ['userOwned', contribution.userOwned],
+  ];
+  for (const [cls, models] of lists) {
+    if (models === undefined) continue;
+    if (!Array.isArray(models)) {
+      rejectApp(tier, `<${cls}>`, `\`${cls}\` must be an array of model names`);
+      continue;
+    }
+    for (const raw of models as unknown[]) {
+      const model = typeof raw === 'string' ? raw.trim() : '';
+      if (model === '') {
+        rejectApp(tier, String(raw), 'model is empty or not a string');
+        continue;
+      }
+      if (CORE_CLASSIFIED.has(model)) {
+        rejectApp(tier, model, 'core already classifies this model');
+        continue;
+      }
+      const owner = appTiers.get(model);
+      if (owner !== undefined && owner !== tier) {
+        rejectApp(tier, model, `already classified by tier '${owner}'`);
+        continue;
+      }
+      const existing = appClasses.get(model);
+      if (existing !== undefined && existing !== cls) {
+        rejectApp(tier, model, `listed as both '${existing}' and '${cls}'`);
+        appClasses.delete(model);
+        appTiers.delete(model);
+        continue;
+      }
+      appClasses.set(model, cls);
+      appTiers.set(model, tier);
+    }
+  }
+}
+
+/**
+ * Run the fork's classification init once, lazily, rolling a partial init
+ * back — see `lib/fork-init.ts`.
+ *
+ * **A throwing init degrades rather than refusing.** A throw leaves every fork
+ * model as core alone would see it: one with `orgId` tenant-owned (isolated —
+ * the safe side), one without unclassified, which the coverage guard names.
+ * Refusing would mean failing the Prisma client, which is built from
+ * {@link classifyModels}, and every read in the app with it.
+ */
+const appInit = createAppInitGate({
+  label: 'tenancy-classification: initAppTenancyClassification',
+  subject: 'app tenancy classifications',
+  init: initAppTenancyClassification,
+  snapshot: () => ({ classes: new Map(appClasses), tiers: new Map(appTiers) }),
+  restore: (before) => {
+    restoreMap(appClasses, before.classes);
+    restoreMap(appTiers, before.tiers);
+  },
+});
+
+function appModelsIn(cls: AppTenancyClass): string[] {
+  appInit.ensure();
+  return [...appClasses].filter(([, c]) => c === cls).map(([model]) => model);
+}
+
+/** Core's system models and every tier's. */
+export function allSystemModels(): string[] {
+  return [...SYSTEM_MODELS, ...appModelsIn('system')];
+}
+
+/** Core's shared-settings models and every tier's — what the shared-settings scanner covers. */
+export function allGlobalConfigModels(): string[] {
+  return [...GLOBAL_CONFIG_MODELS, ...appModelsIn('globalConfig')];
+}
+
+/** Core's user-owned models and every tier's. */
+export function allUserOwnedModels(): string[] {
+  return [...USER_OWNED_MODELS, ...appModelsIn('userOwned')];
+}
+
+/** Only the fork tiers' classifications, by model. */
+export function appTenancyClassifications(): ReadonlyMap<string, AppTenancyClass> {
+  appInit.ensure();
+  return new Map(appClasses);
+}
+
+let exemptionsWarned = false;
+
+/**
+ * Log, once per process, every fork system model that carries `orgId`: it is
+ * left out of row isolation by that registration, and nothing else says so.
+ */
+export function warnAboutAppIsolationExemptions(classification: ModelClassification): void {
+  if (exemptionsWarned) return;
+  const exempt = classification.systemWithOrgId.filter((model) => !CORE_CLASSIFIED.has(model));
+  if (exempt.length === 0) return;
+  exemptionsWarned = true;
+  logger.warn('tenancy-classification: fork system models carry orgId and are not row-isolated', {
+    models: exempt,
+    hint: 'Registered as system in lib/app/tenancy-classification.ts. Their rows are readable across orgs at TENANCY_MODE=multi. Intended for a join that decides the tenant, as OrgMembership is in core.',
+  });
+}
+
+/** Test-only: clear the fork registry, re-arm the one-shot init and the warning. */
+export function __resetAppTenancyClassificationForTests(): void {
+  appClasses.clear();
+  appTiers.clear();
+  appInit.reset();
+  exemptionsWarned = false;
 }

@@ -26,7 +26,8 @@
  *   and their `Many` forms) on a property or element access named for a
  *   global-config model, on any receiver: `prisma.featureFlag.create`,
  *   `tx.aiCapability.update`, `db['knowledgeTag'].upsert`. The model names are
- *   derived from `GLOBAL_CONFIG_MODELS`, so a model added there is covered.
+ *   derived from `GLOBAL_CONFIG_MODELS` and the fork tiers' shared-settings
+ *   registrations, so a model added to either is covered.
  * - SQL text — any string or template piece — that writes one of their tables
  *   (`UPDATE`, `INSERT INTO`, `DELETE FROM`).
  * - A call to a **writer**: a top-level function in any source file it is
@@ -54,7 +55,7 @@
  */
 
 import ts from 'typescript';
-import { GLOBAL_CONFIG_MODELS } from '@/lib/tenancy/classification';
+import { allGlobalConfigModels } from '@/lib/tenancy/classification';
 
 /** Writes that only add a row; an `upsert` joins them when its `update` is `{}`. */
 const CREATE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn']);
@@ -69,13 +70,19 @@ const WRITE_METHODS = new Set([
   'deleteMany',
 ]);
 
+/**
+ * Core's shared-settings models and every fork tier's
+ * (`lib/app/tenancy-classification.ts`, t-983), read once.
+ */
+const SHARED_SETTINGS_MODELS = allGlobalConfigModels();
+
 /** `AiProviderModel` → `aiProviderModel`, the client accessor. */
 export const GLOBAL_CONFIG_ACCESSORS: ReadonlySet<string> = new Set(
-  GLOBAL_CONFIG_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
+  SHARED_SETTINGS_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
 );
 
 /** The mapped table names: `AiProviderModel` → `ai_provider_model`. */
-const GLOBAL_CONFIG_TABLES = GLOBAL_CONFIG_MODELS.map((model) =>
+const GLOBAL_CONFIG_TABLES = SHARED_SETTINGS_MODELS.map((model) =>
   model.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
 );
 const SQL_WRITE = new RegExp(

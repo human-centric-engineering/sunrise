@@ -127,6 +127,10 @@ import {
   __resetAppOwnerClassificationForTests,
 } from '@/lib/db/owner-classification';
 import {
+  appTenancyClassifications,
+  __resetAppTenancyClassificationForTests,
+} from '@/lib/tenancy/classification';
+import {
   DEFAULT_AUTHORIZATION_POLICY,
   getAuthorizationPolicy,
   hasAppAuthorizationPolicy,
@@ -331,6 +335,15 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       __resetAppOwnerClassificationForTests();
       // The read triggers the lazy init, so this exercises the REAL file.
       expect(appOwnerClassifications()).toEqual({});
+    },
+  },
+  {
+    seam: 'lib/app/tenancy-classification.ts',
+    risk: 'a stray classification would take a model out of the coverage guard’s question on every install, put routes writing it under the shared-settings rule, or — as system on a model with orgId — leave its rows out of row isolation',
+    assert: () => {
+      __resetAppTenancyClassificationForTests();
+      // The read triggers the lazy init, so this exercises the REAL file.
+      expect(appTenancyClassifications().size).toBe(0);
     },
   },
   {

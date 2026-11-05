@@ -82,6 +82,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   classifyModels,
+  warnAboutAppIsolationExemptions,
   foreignKeyRelations,
   readInlineSchema,
   readRuntimeDataModel,
@@ -159,9 +160,11 @@ export interface TenancySchema {
 /** Derive {@link TenancySchema} from a generated client. */
 export function readTenancySchema(client: unknown): TenancySchema {
   const rdm = readRuntimeDataModel(client);
+  const classification = classifyModels(rdm);
+  warnAboutAppIsolationExemptions(classification);
   return {
     rdm,
-    tenantOwned: new Set(classifyModels(rdm).tenantOwned.map((m) => m.model)),
+    tenantOwned: new Set(classification.tenantOwned.map((m) => m.model)),
     fkRelations: foreignKeyRelations(readInlineSchema(client)),
   };
 }
