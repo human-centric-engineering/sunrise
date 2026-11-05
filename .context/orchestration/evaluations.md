@@ -161,6 +161,96 @@ A parity test asserts every slug in `KNOWN_GRADER_SLUGS` is registered
 after the barrel import — a grader file that forgets `registerGrader`
 fails CI rather than silently disappearing from the picker.
 
+### What a grader sees of the tool calls
+
+`GraderInput.toolCalls` lists the subject's tool calls in order, each a
+`GraderToolCall`: `slug` and `args`, and for an agent subject how the
+call went (#1044) — `success`, `errorCode` when it failed, and
+`resultPreview`. So a grader can check that a search found the right
+thing, or that an empty search should have made the agent say it was
+answering from memory, without re-running the search.
+
+`resultPreview` is the capability's `redactProvenance()` output: the
+redacted, capped preview (480 characters unless the capability shapes its
+own) that is already persisted on the subject conversation's message
+provenance. A capability whose result matters to graders can shape its
+preview for them, as a search tool returning `{ success, links }` does.
+It is a preview, not the full result: a grader that needs what a tool
+changed reads that state another way.
+
+The outcome fields reach graders only. The stored
+`subjectMetadata.toolCalls` keeps `{ slug, args }`, so nothing stored
+changes, and the built-in graders, which read only `slug`, score as
+before.
+
+Graders also receive the case's own `metadata` as `caseMetadata`, for
+any subject, when the case carries some, and `observed` when the agent
+has an `observe` hook (below).
+
+### Setting up and observing a case
+
+An agent whose job is to change things through its tools cannot be judged
+on its reply alone. A case has to start from a known state, and a grader
+has to see what the tools left behind (#879). A fork registers per-agent
+hooks in `lib/app/evaluations.ts` → `initAppEvalCaseHooks()`, which the
+hook registry (`lib/orchestration/evaluations/case-hooks.ts`) runs once,
+lazily, like `initAppGraders()`:
+
+```ts
+import { registerEvalCaseHooks } from '@/lib/orchestration/evaluations/case-hooks';
+
+export function initAppEvalCaseHooks(): void {
+  registerEvalCaseHooks('score-assistant', {
+    setup: async ({ userId, caseRow }) => {
+      const doc = await seedScore(userId, caseRow.metadata);
+      return { contextType: 'score', contextId: doc.id };
+    },
+    observe: ({ userId }) => readScore(userId),
+  });
+}
+```
+
+- **`setup`** runs fresh before every case, for agent subjects. It seeds
+  the state the case starts from and returns the chat context the turn
+  carries: `contextType`, `contextId`, `entityContext` and `scope`, the
+  fields a real chat turn carries, and nothing else (an unknown key fails
+  the case rather than being dropped), within the chat API's own limits.
+  `contextType` and `contextId` go together, since the context builder
+  reads a context only from both. `undefined` or `null` means no
+  context. `contextType: 'evaluation'` is refused (by `runAgentCase`
+  too): it would mirror the
+  case into a manual evaluation session's log. The context builder's
+  cached copy of what the context names is dropped after `setup`, so a
+  `setup` that re-seeds the same `contextId` every case is read fresh.
+  Every case runs as the run's user, so `setup` is also where per-user
+  state a tool keeps is reset: nothing else stops case N's writes from
+  reaching case N+1.
+- **`observe`** runs after a turn that completed. It is given the turn
+  (conversation id, reply text, tool calls with their outcomes) and
+  returns whatever graders should see, as `observed`. It is passed to
+  graders and never stored: what is kept is the grader's score and
+  reasoning.
+- Both are given `agentSlug`, `userId`, `runId` and a copy of the case
+  row, so a hook that edits it changes neither the message sent nor what
+  the graders read. They
+  run inside the run's org context, since the worker is a per-org job, so
+  a hook reads its org with `requireOrgId()`.
+- **A hook that throws fails that case only**: `case_setup_failed` (the
+  turn is not run) or `case_observe_failed`. The error message is stored
+  on the case, capped at 500 characters. Its graders are skipped, as on a
+  subject error, and the run goes on to the next case.
+- **If `initAppEvalCaseHooks()` itself throws**, every agent case is
+  refused as `case_setup_failed`, naming the error. Which agents it meant
+  to hook is unknown, and a case run without its `setup` would be scored
+  against whatever the previous case left. This is unlike the grader
+  seam, which degrades.
+- Hooks are keyed by agent slug, in every org. Register them for an agent
+  your fork defines (a platform agent's slug is shared by its instance in
+  every org), not for a slug an org could also choose for its own agent.
+- An agent with no hooks is run exactly as before. There is no teardown
+  hook: the next case's `setup` does the reset. Workflow subjects have no
+  hooks, because a workflow can seed and read state in its own steps.
+
 ### Fork-owned graders (`lib/app/evaluations.ts`)
 
 `registerGrader` was always exported, but nothing outside this package's

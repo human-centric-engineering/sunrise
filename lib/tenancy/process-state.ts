@@ -597,6 +597,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A WeakMap from a run's live ExecutionContext to that run's walk position (step ids, counts) so its checkpoint can save it (t-966). The key is an object only that run holds, so no run in another org can be handed the entry, and it is collected with the run.",
   },
   {
+    file: 'lib/orchestration/evaluations/case-hooks.ts',
+    holders: ['hooksByAgent', 'initFailure', 'appInit'],
+    posture: 'no-tenant-data',
+    why: "Eval case hooks by agent slug, all registered from the fork's code, and the fork init's failure message once it has thrown; a hook's own state lives in its tables, not here.",
+  },
+  {
     file: 'lib/orchestration/evaluations/graders/registry.ts',
     holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',

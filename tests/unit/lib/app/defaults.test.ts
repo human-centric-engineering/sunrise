@@ -102,6 +102,10 @@ import {
   __resetGraderRegistryForTests,
 } from '@/lib/orchestration/evaluations/graders/registry';
 import {
+  registeredEvalCaseHookAgents,
+  __resetEvalCaseHooksForTests,
+} from '@/lib/orchestration/evaluations/case-hooks';
+import {
   CORE_PLATFORM_AGENTS,
   listPlatformAgents,
   __resetPlatformAgentsForTests,
@@ -495,7 +499,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/evaluations.ts',
-    risk: 'a stray grader would appear in every install\u2019s metric picker \u2014 and, on a slug core already uses, would silently rescore every run',
+    risk: 'a stray grader would appear in every install\u2019s metric picker \u2014 and, on a slug core already uses, would silently rescore every run; a stray case hook would run setup and observe around every eval case of that agent',
     assert: () => {
       // The registry module is driven directly, so core's barrel has not
       // side-effect-registered anything: whatever listGraders() returns here
@@ -503,6 +507,9 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // the REAL file.
       __resetGraderRegistryForTests();
       expect(listGraders()).toEqual([]);
+      // The file's second init, initAppEvalCaseHooks(), the same way.
+      __resetEvalCaseHooksForTests();
+      expect(registeredEvalCaseHookAgents()).toEqual([]);
     },
   },
   {

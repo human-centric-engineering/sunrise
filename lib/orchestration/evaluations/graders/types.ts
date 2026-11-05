@@ -50,6 +50,25 @@ export type GraderFamily = 'heuristic' | 'model' | 'pairwise';
 // ---------------------------------------------------------------------------
 
 /**
+ * One tool call the subject made, as a grader sees it (#1044).
+ *
+ * `slug` and `args` say what was called. The rest say how it went, from the
+ * subject's trace: whether it succeeded, the error code when it did not, and
+ * the capability's `resultPreview` — its `redactProvenance()` output, redacted
+ * and capped (480 characters by default), which a capability can shape for
+ * graders. The outcome fields are filled for agent subjects and absent
+ * otherwise. They reach graders only: the stored `subjectMetadata.toolCalls`
+ * keeps `{ slug, args }`.
+ */
+export interface GraderToolCall {
+  slug: string;
+  args?: Record<string, unknown>;
+  success?: boolean;
+  errorCode?: string;
+  resultPreview?: string;
+}
+
+/**
  * What a single-output grader sees for one case. Both heuristic and
  * model graders accept this shape; the worker fills the same struct
  * for every grader configured on the run.
@@ -63,8 +82,23 @@ export interface GraderInput {
   expectedOutput?: string;
   /** Citations the subject emitted, used by faithfulness / RAG graders. */
   citations?: Citation[];
-  /** Tool/capability calls the subject made — used by trajectory graders. */
-  toolCalls?: Array<{ slug: string; args?: Record<string, unknown> }>;
+  /**
+   * Tool/capability calls the subject made, in order, with how each went —
+   * used by trajectory graders and by graders that check what a search found.
+   */
+  toolCalls?: GraderToolCall[];
+  /**
+   * The dataset case's own `metadata`, as authored — whatever a case says
+   * about itself that its input does not (the document it starts from, the
+   * state it expects). Absent when the case carries none (#879).
+   */
+  caseMetadata?: unknown;
+  /**
+   * What the agent's `observe` hook read back after the turn — the state its
+   * tools left behind (`lib/orchestration/evaluations/case-hooks.ts`). Absent
+   * for an agent with no `observe` hook. Passed to graders, never stored.
+   */
+  observed?: unknown;
   /**
    * User context for model graders. Heuristic graders ignore this; model
    * graders use `userId` when invoking the judge agent via `streamChat`

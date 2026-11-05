@@ -128,3 +128,60 @@ describe('runAgentCase', () => {
     expect(call.costLogMetadata).toEqual({ evaluationRunId: 'run-42', role: 'subject' });
   });
 });
+
+describe('runAgentCase — a setup hook’s context (#879)', () => {
+  it('puts the four context fields on the chat request', async () => {
+    mockedDrain.mockResolvedValueOnce(drainResult());
+
+    await runAgentCase({
+      agentSlug: 'score-assistant',
+      userId: 'u',
+      message: 'm',
+      context: {
+        contextType: 'score',
+        contextId: 'doc-1',
+        entityContext: { bars: 4 },
+        scope: { module: 'scores' },
+      },
+    });
+
+    expect(mockedDrain.mock.calls[0][0]).toMatchObject({
+      contextType: 'score',
+      contextId: 'doc-1',
+      entityContext: { bars: 4 },
+      scope: { module: 'scores' },
+    });
+  });
+
+  it('sends exactly the old request with no context, or an empty one', async () => {
+    mockedDrain.mockResolvedValue(drainResult());
+    const base = { agentSlug: 'a', userId: 'u', message: 'm', evaluationRunId: 'run-1' };
+    const expected = {
+      agentSlug: 'a',
+      userId: 'u',
+      message: 'm',
+      includeTrace: true,
+      costLogMetadata: { evaluationRunId: 'run-1', role: 'subject' },
+    };
+
+    await runAgentCase(base);
+    await runAgentCase({ ...base, context: {} });
+
+    expect(mockedDrain.mock.calls[0][0]).toEqual(expected);
+    expect(mockedDrain.mock.calls[1][0]).toEqual(expected);
+  });
+});
+
+describe('runAgentCase — the manual-session context type', () => {
+  it("refuses contextType 'evaluation' before any turn runs", async () => {
+    await expect(
+      runAgentCase({
+        agentSlug: 'a',
+        userId: 'u',
+        message: 'm',
+        context: { contextType: 'evaluation', contextId: 'session-1' },
+      })
+    ).rejects.toThrow(/reserved for manual evaluation sessions/);
+    expect(mockedDrain).not.toHaveBeenCalled();
+  });
+});

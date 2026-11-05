@@ -67,6 +67,17 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/chat/context-builder', () => ({
+  invalidateContext: vi.fn(),
+}));
+
+// The fork seam, emptied: these cases register their own hooks, and a fork that
+// fills the real one must not change what they assert.
+vi.mock('@/lib/app/evaluations', () => ({
+  initAppGraders: vi.fn(),
+  initAppEvalCaseHooks: vi.fn(),
+}));
+
 const { prisma } = await import('@/lib/db/client');
 const { claimNextRun, markTerminal, releaseLease } =
   await import('@/lib/orchestration/evaluations/run-claim');
@@ -76,6 +87,10 @@ const { runWorkflowCase } = await import('@/lib/orchestration/evaluations/run-ca
 const { getGrader } = await import('@/lib/orchestration/evaluations/graders');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { processPendingEvaluationRuns } = await import('@/lib/orchestration/evaluations/run-worker');
+const { registerEvalCaseHooks, __resetEvalCaseHooksForTests } =
+  await import('@/lib/orchestration/evaluations/case-hooks');
+const { invalidateContext } = await import('@/lib/orchestration/chat/context-builder');
+const { initAppEvalCaseHooks } = await import('@/lib/app/evaluations');
 
 const mockedClaim = claimNextRun as unknown as ReturnType<typeof vi.fn>;
 const mockedMarkTerminal = markTerminal as unknown as ReturnType<typeof vi.fn>;
@@ -167,6 +182,7 @@ function drainOk(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  __resetEvalCaseHooksForTests();
   // Sensible defaults — individual tests override what they care about.
   mockedHash.mockReturnValue('HASH_OK');
   countResults.mockResolvedValue(0);
@@ -1064,5 +1080,373 @@ describe('aggregation', () => {
       passRate: null,
       scoredCount: 0,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What a grader sees of the subject's tool calls (#1044, t-986)
+// ---------------------------------------------------------------------------
+
+describe('tool outcomes for graders', () => {
+  // The trace shape `drainStreamChat` collects from `capability_result` events.
+  const searchHit = {
+    slug: 'search_knowledge_base',
+    arguments: { query: 'filter envelope' },
+    latencyMs: 12,
+    success: true,
+    resultPreview: '{"success":true,"links":["/docs/filter-envelope"]}',
+  };
+  const searchFailed = {
+    slug: 'search_knowledge_base',
+    arguments: { query: 'nothing' },
+    latencyMs: 9,
+    success: false,
+    errorCode: 'embedding_unavailable',
+  };
+
+  function runOneCase(metricSlug: string, config: Record<string, unknown> = {}) {
+    mockedClaim.mockResolvedValueOnce(makeRun({ metricConfigs: [{ slug: metricSlug, config }] }));
+    findManyCases.mockResolvedValueOnce([makeCase(1)]);
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedRunAgent.mockResolvedValueOnce(drainOk({ toolCalls: [searchHit, searchFailed] }));
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  }
+
+  it('hands each grader whether every call worked and what it returned', async () => {
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runOneCase('exact_match');
+
+    await processPendingEvaluationRuns();
+
+    expect(grader.grade).toHaveBeenCalledTimes(1);
+    const [input] = grader.grade.mock.calls[0] as unknown as [{ toolCalls: unknown }];
+    expect(input.toolCalls).toEqual([
+      {
+        slug: 'search_knowledge_base',
+        args: { query: 'filter envelope' },
+        success: true,
+        resultPreview: '{"success":true,"links":["/docs/filter-envelope"]}',
+      },
+      {
+        slug: 'search_knowledge_base',
+        args: { query: 'nothing' },
+        success: false,
+        errorCode: 'embedding_unavailable',
+      },
+    ]);
+  });
+
+  it('stores the calls as before: slug and args only', async () => {
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runOneCase('exact_match');
+
+    await processPendingEvaluationRuns();
+
+    expect(createResult.mock.calls[0][0].data.subjectMetadata.toolCalls).toEqual([
+      { slug: 'search_knowledge_base', args: { query: 'filter envelope' } },
+      { slug: 'search_knowledge_base', args: { query: 'nothing' } },
+    ]);
+  });
+
+  it('leaves the built-in trajectory grader scoring exactly as it did', async () => {
+    const { toolWasCalledGrader } = await vi.importActual<
+      typeof import('@/lib/orchestration/evaluations/graders/heuristic/tool-was-called')
+    >('@/lib/orchestration/evaluations/graders/heuristic/tool-was-called');
+    const spy = vi.spyOn(toolWasCalledGrader, 'grade');
+    mockedGetGrader.mockReturnValue(toolWasCalledGrader);
+    runOneCase('tool_was_called', { slug: 'search_knowledge_base', min: 2 });
+
+    await processPendingEvaluationRuns();
+
+    // Two calls counted, failed one included, as before the outcome fields.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(createResult.mock.calls[0][0].data.metricScores.tool_was_called).toMatchObject({
+      score: 1,
+      passed: true,
+      reasoning: 'Tool "search_knowledge_base" called 2 time(s) (≥ 2).',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-agent case hooks (#879, t-987)
+// ---------------------------------------------------------------------------
+
+describe('case hooks', () => {
+  const trace = {
+    slug: 'write_bars',
+    arguments: { bars: [1, 2] },
+    latencyMs: 5,
+    success: true,
+    resultPreview: '{"written":2}',
+  };
+
+  function runCases(cases: ReturnType<typeof makeCase>[]) {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce(cases);
+    findAgent.mockResolvedValueOnce({ slug: 'score-assistant' });
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  }
+
+  it('runs setup fresh before every case and puts its context on that case’s turn', async () => {
+    const setup = vi.fn(({ caseRow }: { caseRow: { position: number } }) => ({
+      contextType: 'score',
+      contextId: `doc-${caseRow.position}`,
+    }));
+    registerEvalCaseHooks('score-assistant', { setup });
+    mockedRunAgent.mockResolvedValue(drainOk());
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1), makeCase(2)]);
+
+    await processPendingEvaluationRuns();
+
+    // setup 1, turn 1, setup 2, turn 2: fresh before every case.
+    const [setup1, setup2] = setup.mock.invocationCallOrder;
+    const [turn1, turn2] = mockedRunAgent.mock.invocationCallOrder;
+    expect(setup1 < turn1 && turn1 < setup2 && setup2 < turn2).toBe(true);
+    expect(setup.mock.calls[0][0]).toMatchObject({
+      agentSlug: 'score-assistant',
+      userId: 'user-1',
+      runId: 'run-1',
+      caseRow: { id: 'case-1', position: 1 },
+    });
+    expect(mockedRunAgent.mock.calls[0][0].context).toEqual({
+      contextType: 'score',
+      contextId: 'doc-1',
+    });
+    expect(mockedRunAgent.mock.calls[1][0].context).toEqual({
+      contextType: 'score',
+      contextId: 'doc-2',
+    });
+    // setup may have rewritten what the context names: its cached copy is
+    // dropped before the turn reads it.
+    expect(vi.mocked(invalidateContext).mock.calls).toEqual([
+      ['score', 'doc-1', { userId: 'user-1' }],
+      ['score', 'doc-2', { userId: 'user-1' }],
+    ]);
+    const [invalidated1] = vi.mocked(invalidateContext).mock.invocationCallOrder;
+    expect(invalidated1 < turn1).toBe(true);
+  });
+
+  it('fails only the case when a hook throws a value that cannot become a string', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: ({ caseRow }) => {
+        if (caseRow.position === 1) throw Object.create(null);
+        return null;
+      },
+    });
+    mockedRunAgent.mockResolvedValue(drainOk());
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1), makeCase(2)]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result.failed).toBe(0);
+    const [first, second] = createResult.mock.calls.map((c) => c[0].data);
+    expect(first).toMatchObject({
+      errorCode: 'case_setup_failed',
+      errorMessage: 'a value that cannot be converted to a string',
+    });
+    // A setup answering null means no context, as undefined does.
+    expect(second.errorCode).toBeNull();
+    expect(mockedRunAgent.mock.calls[0][0]).not.toHaveProperty('context.contextType');
+  });
+
+  it('gives hooks a copy of the case, so one that edits it changes nothing run or graded', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: ({ caseRow }) => {
+        caseRow.input = 'rewritten by setup';
+        caseRow.metadata = { tampered: true };
+        return undefined;
+      },
+    });
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1, { metadata: { startFrom: 'empty-score' } })]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedRunAgent.mock.calls[0][0].message).toBe('Question 1?');
+    const [graded] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(graded).toMatchObject({
+      userInput: 'Question 1?',
+      caseMetadata: { startFrom: 'empty-score' },
+    });
+  });
+
+  it('refuses every agent case when the fork’s hooks failed to load', async () => {
+    vi.mocked(initAppEvalCaseHooks).mockImplementation(() => {
+      throw new Error('typo in the fork');
+    });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1), makeCase(2)]);
+
+    const result = await processPendingEvaluationRuns();
+
+    // Each case fails on its own row; none reached the agent or a grader.
+    expect(result.failed).toBe(0);
+    for (const call of createResult.mock.calls) {
+      expect(call[0].data).toMatchObject({
+        errorCode: 'case_setup_failed',
+        errorMessage: "the fork's eval case hooks failed to load: typo in the fork",
+      });
+    }
+    expect(createResult).toHaveBeenCalledTimes(2);
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+  });
+
+  it('runs hooks written as a class, with this bound', async () => {
+    class ScoreHooks {
+      readonly contextId = 'doc-from-class';
+      setup() {
+        return { contextType: 'score', contextId: this.contextId };
+      }
+      observe() {
+        return { from: this.contextId };
+      }
+    }
+    registerEvalCaseHooks('score-assistant', new ScoreHooks());
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedRunAgent.mock.calls[0][0].context).toEqual({
+      contextType: 'score',
+      contextId: 'doc-from-class',
+    });
+    const [graded] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(graded.observed).toEqual({ from: 'doc-from-class' });
+  });
+
+  it('observes after the turn, and hands graders the observed state and the case metadata', async () => {
+    const observe = vi.fn((_args: unknown) => ({ bars: ['C', 'G'], ghostNotes: 0 }));
+    registerEvalCaseHooks('score-assistant', { observe });
+    mockedRunAgent.mockResolvedValueOnce(
+      drainOk({ toolCalls: [trace], conversationId: 'conv-1', assistantText: 'Done.' })
+    );
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1, { metadata: { startFrom: 'empty-score' } })]);
+
+    await processPendingEvaluationRuns();
+
+    expect(observe.mock.calls[0][0]).toMatchObject({
+      caseRow: { id: 'case-1' },
+      turn: {
+        conversationId: 'conv-1',
+        assistantText: 'Done.',
+        toolCalls: [
+          {
+            slug: 'write_bars',
+            args: { bars: [1, 2] },
+            success: true,
+            resultPreview: '{"written":2}',
+          },
+        ],
+      },
+    });
+    const [graded] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(graded).toMatchObject({
+      caseMetadata: { startFrom: 'empty-score' },
+      observed: { bars: ['C', 'G'], ghostNotes: 0 },
+    });
+    // Passed to graders, never stored.
+    expect(JSON.stringify(createResult.mock.calls[0][0].data)).not.toContain('ghostNotes');
+  });
+
+  it('fails only the case whose setup throws, and runs the rest', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: ({ caseRow }) => {
+        if (caseRow.position === 1) throw new Error('no such score');
+        return undefined;
+      },
+    });
+    mockedRunAgent.mockResolvedValue(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1), makeCase(2)]);
+
+    await processPendingEvaluationRuns();
+
+    const [first, second] = createResult.mock.calls.map((c) => c[0].data);
+    expect(first).toMatchObject({ errorCode: 'case_setup_failed', errorMessage: 'no such score' });
+    expect(first.metricScores.exact_match).toMatchObject({ score: null });
+    expect(second.errorCode).toBeNull();
+    // The failed case never reached the agent; the next one did.
+    expect(mockedRunAgent).toHaveBeenCalledTimes(1);
+    expect(grader.grade).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the case when setup answers with something that is not a context', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: () => ({ conversationId: 'c-1' }) as never,
+    });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(createResult.mock.calls[0][0].data.errorCode).toBe('case_setup_failed');
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+  });
+
+  it('fails the case when observe throws, and skips its graders', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      observe: () => {
+        throw new Error('score unreadable');
+      },
+    });
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(createResult.mock.calls[0][0].data).toMatchObject({
+      errorCode: 'case_observe_failed',
+      errorMessage: 'score unreadable',
+    });
+    expect(grader.grade).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a turn that failed', async () => {
+    const observe = vi.fn();
+    registerEvalCaseHooks('score-assistant', { observe });
+    mockedRunAgent.mockResolvedValueOnce(drainOk({ errorCode: 'provider_error' }));
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(observe).not.toHaveBeenCalled();
+    expect(createResult.mock.calls[0][0].data.errorCode).toBe('provider_error');
+  });
+
+  it('runs an agent with no hooks exactly as before', async () => {
+    // Hooks for another agent: this one's run must not see them.
+    registerEvalCaseHooks('other-agent', { setup: () => ({ contextType: 'x' }), observe: () => 1 });
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1)]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedRunAgent.mock.calls[0][0]).toEqual({
+      agentSlug: 'score-assistant',
+      userId: 'user-1',
+      message: 'Question 1?',
+      evaluationRunId: 'run-1',
+    });
+    const [input] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(input).not.toHaveProperty('observed');
+    // A case with no metadata adds nothing either.
+    expect(input).not.toHaveProperty('caseMetadata');
   });
 });

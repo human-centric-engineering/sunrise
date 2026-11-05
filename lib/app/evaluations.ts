@@ -45,3 +45,38 @@
 export function initAppGraders(): void {
   // No app graders by default.
 }
+
+/**
+ * App eval case hooks: set up each case of a dataset eval before the agent's
+ * turn, and read back what its tools changed after it, so a grader can check
+ * the outcome and not only the reply (#879).
+ *
+ * Auto-wired like `initAppGraders()`: the hook registry runs this once, lazily,
+ * before the batch worker's first lookup.
+ *
+ * @example
+ * ```ts
+ * import { registerEvalCaseHooks } from '@/lib/orchestration/evaluations/case-hooks';
+ *
+ * export function initAppEvalCaseHooks(): void {
+ *   registerEvalCaseHooks('score-assistant', {
+ *     // Fresh before every case: reset this user's workspace, seed the
+ *     // starting document the case names, and point the turn at it.
+ *     setup: async ({ userId, caseRow }) => {
+ *       const doc = await seedScore(userId, caseRow.metadata);
+ *       return { contextType: 'score', contextId: doc.id };
+ *     },
+ *     // After the turn: what graders receive as `observed`.
+ *     observe: ({ userId }) => readScore(userId),
+ *   });
+ * }
+ * ```
+ *
+ * A hook that throws fails that case only; a throw from this function itself
+ * rolls back every registration it made, as `initAppGraders()` does.
+ *
+ * Full guide: .context/orchestration/evaluations.md
+ */
+export function initAppEvalCaseHooks(): void {
+  // No app eval case hooks by default.
+}
