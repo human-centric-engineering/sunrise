@@ -48,7 +48,7 @@ import {
   isFirstHumanBootstrap,
 } from '@/lib/auth/signup-mode';
 import { parseEmailChangeToken, getVerificationTokenFromRequest } from '@/lib/auth/change-email';
-import { revokeUserSessions, findMostRecentSessionToken } from '@/lib/auth/sessions';
+import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
@@ -773,16 +773,14 @@ export async function afterEmailVerificationHook(
     //    fact succeed. Log and continue instead.
     try {
       const current = await auth.api.getSession({ headers: request?.headers ?? new Headers() });
-      // If this request carries no visible session, better-auth may have just
-      // minted one (the new-address click from a cookie-less browser/device is
-      // the ordinary case, not an edge one) — see
-      // findMostRecentSessionToken's doc for why the newest row is safe to
-      // spare here without weakening the revocation.
-      const exceptSessionToken =
-        current?.session?.token ?? (await findMostRecentSessionToken(user.id));
+      // Spare only a session this request proves it holds. A new-address click
+      // from a cookie-less browser or device is the ordinary case: better-auth
+      // (since 1.7.16) mints no session for it, so there is nothing to keep, and
+      // the newest row could be a stolen one. Every session goes, and the user
+      // signs in again at the new address.
       await revokeUserSessions({
         userId: user.id,
-        exceptSessionToken,
+        exceptSessionToken: current?.session?.token ?? null,
         reason: 'email_changed',
       });
     } catch (error) {

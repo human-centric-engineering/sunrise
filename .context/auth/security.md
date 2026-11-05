@@ -205,22 +205,25 @@ session. A session expires; control of the account's address does not.
 - `sendChangeEmailConfirmation` only fires when the current address is already
   verified. An unverified account has no inbox worth asking, so it goes straight
   to verifying the new address, with no approval gate.
+- **Known limitation: an unverified account gets no revocation on an email
+  change.** Since better-auth 1.7.16, `afterEmailVerification` fires on this path
+  only when the account was already verified, and the new address stays
+  unverified. So nothing revokes sessions here. It is reachable only where
+  unverified accounts hold sessions, in practice `REQUIRE_EMAIL_VERIFICATION=false`.
 - Revocation identifies "the current session" via `auth.api.getSession` on the
   hook's request, which only sees a cookie the browser actually sent. Clicking
   the new-address verification link from a device or browser with no app
-  cookie — routine, since mail links often open elsewhere — is a case
-  better-auth handles by minting a session server-side _before_ calling this
-  hook and setting its cookie _after_. `getSession` can't see that session, and
-  revoking "everything" when it returns null would delete the very session the
-  response is about to hand back. `findMostRecentSessionToken` covers this: the
-  newest session row is that just-minted one, since a stolen session (which
-  predates the change) can never be newer.
+  cookie is routine, since mail links often open elsewhere. Since better-auth
+  1.7.16 that click mints no session, so `getSession` returns null and every
+  session is revoked: the user signs in again at the new address. Do not fall
+  back to "the newest session row". With nothing minted, that row is a session
+  from before the change, and it may be the stolen one.
 - **Known limitation: no collision guard on the target address across the token
   lifetime.** `email` has `@@unique` (`prisma/schema/auth.prisma`), but nothing
   re-checks it between the approval click and the final verification — a window
   that's now the full 24-hour token life, not one request. If two users start a
   change to the same address and both complete verification inside that window,
-  the second one hits `internalAdapter.updateUserByEmail` inside better-auth's
+  the second one hits `internalAdapter.updateUser` inside better-auth's
   own route with no surrounding `try/catch`
   (`node_modules/better-auth/dist/api/routes/email-verification.mjs`), so the
   unique-constraint violation surfaces as an unhandled error rather than a clean

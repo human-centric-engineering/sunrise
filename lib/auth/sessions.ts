@@ -62,36 +62,3 @@ export async function revokeUserSessions({
 
   return count;
 }
-
-/**
- * The token of a user's most recently created session, or `null` if they have
- * none.
- *
- * Exists for exactly one caller: `afterEmailVerificationHook`'s revocation
- * after an email change. better-auth identifies "the current session" by
- * reading the incoming request's session cookie — but when a user completes
- * the new-address verification click from a browser or device that does not
- * carry the app's cookie (ordinary: mail links routinely open in a different
- * browser or device than the one signed in), better-auth mints a brand-new
- * session server-side and calls our hook BEFORE it writes that session's
- * cookie onto the response. `getSession` on that same request therefore sees
- * nothing, and naively revoking "everything, since no current session was
- * found" would delete the session that request is about to hand back —
- * locking the user out of the very verification click that was supposed to
- * complete their change.
- *
- * The newest session row for the user is, in that situation, exactly the one
- * better-auth just created — there is no concurrent session creation to
- * confuse it with in the same request. Falling back to it sidesteps the
- * lockout without weakening the revocation: a stolen session predates the
- * change flow and is never the newest row, so it is still revoked either way.
- */
-export async function findMostRecentSessionToken(userId: string): Promise<string | null> {
-  const session = await prisma.session.findFirst({
-    where: { userId },
-    orderBy: { createdAt: 'desc' },
-    select: { token: true },
-  });
-
-  return session?.token ?? null;
-}

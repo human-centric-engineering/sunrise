@@ -13,18 +13,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const deleteMany = vi.fn();
-const findFirst = vi.fn();
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     session: {
       deleteMany: (...args: unknown[]) => deleteMany(...args) as unknown,
-      findFirst: (...args: unknown[]) => findFirst(...args) as unknown,
     },
   },
 }));
 
-import { revokeUserSessions, findMostRecentSessionToken } from '@/lib/auth/sessions';
+import { revokeUserSessions } from '@/lib/auth/sessions';
 
 describe('revokeUserSessions', () => {
   beforeEach(() => {
@@ -99,33 +97,5 @@ describe('revokeUserSessions', () => {
     await revokeUserSessions({ userId: 'user-1', reason: 'email_changed' });
     const where = deleteMany.mock.calls[0]?.[0] as { where: Record<string, unknown> };
     expect(where.where).not.toHaveProperty('activeOrgId');
-  });
-});
-
-describe('findMostRecentSessionToken', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('returns the newest session for the user', async () => {
-    // This is what afterEmailVerificationHook falls back to when getSession
-    // can't see a session on the request — the newest row is, in that
-    // situation, the one better-auth just minted for this exact flow.
-    findFirst.mockResolvedValue({ token: 'newest-token' });
-
-    const token = await findMostRecentSessionToken('user-1');
-
-    expect(token).toBe('newest-token');
-    expect(findFirst).toHaveBeenCalledWith({
-      where: { userId: 'user-1' },
-      orderBy: { createdAt: 'desc' },
-      select: { token: true },
-    });
-  });
-
-  it('returns null when the user has no sessions at all', async () => {
-    findFirst.mockResolvedValue(null);
-
-    expect(await findMostRecentSessionToken('user-1')).toBeNull();
   });
 });

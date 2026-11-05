@@ -75,7 +75,6 @@ vi.mock('@/lib/auth/change-email', () => ({
 
 vi.mock('@/lib/auth/sessions', () => ({
   revokeUserSessions: vi.fn().mockResolvedValue(0),
-  findMostRecentSessionToken: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/emails/welcome', () => ({
