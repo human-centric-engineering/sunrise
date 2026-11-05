@@ -1219,7 +1219,7 @@ describe('withOwnerChecks — a fork read rule (t-985)', () => {
     // A bare _count reaching a ruled model by a to-one has no list to narrow:
     // refused, as before, rather than trusted to count nothing.
     await expect(
-      asMember(() => ruled.aiMessageEmbedding.findMany({ include: { _count: true } }))
+      asMember(() => ruled.aiWorkflowExecution.findMany({ include: { _count: true } }))
     ).rejects.toMatchObject({ reason: 'unconfined-relation' });
     expect(statements).toHaveLength(0);
   });
