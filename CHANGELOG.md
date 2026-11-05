@@ -16,6 +16,128 @@ release process.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-11-05
+
+> **Alpha release.** Twenty-third tagged Sunrise release. **MINOR bump**. It
+> adds a pre-launch waitlist a fork switches on (§125): join, confirm, leave,
+> an admin page, invites, and the Art. 15 / 17 wiring. Every form now shows a
+> failed save the same way, beside Save (§124). Evals can judge an agent that
+> works through its tools: graders see each tool call's outcome, and a fork
+> can set up and inspect every case. Forks get new seams for security headers
+> (third-party origins, and framable pages), tenancy classification and read
+> rules in the owner layer. A crashed workflow run now resumes where it had
+> got to, and Vercel Blob reads files back and holds private ones. Measured
+> against `v0.16.0`: 27 PRs merged, no direct commits, 20 issues closed; the
+> suite is 1,528 files and 31,782 tests.
+>
+> ## What a fork has to do
+>
+> **Six migrations, no seed.** Three only add the waitlist's three new tables
+> and their columns. On an install whose tenancy switch is already on, they
+> also enable and force RLS on those tables, so there is nothing to re-run. The
+> other three change existing tables, adding nullable columns or columns with a
+> constant default, so none rewrites a table:
+> `20261031130000_execution_walk_state` (`ai_workflow_execution`),
+> `20261031170000_running_step_attempt` (`ai_workflow_running_step`) and
+> `20261104120000_waitlist_erasure_receipt` (`data_erasure_receipt`). That last
+> one also makes `subjectUserId` nullable and adds a CHECK, which reads the
+> table once.
+>
+> **Set `CRON_SECRET` if a cron calls the maintenance tick.** Use a random
+> value of at least 32 characters, not an `sk_` key, and revoke the old cron
+> key, so an idle tick stops querying the database. A fork that already sets
+> `CRON_SECRET` for its own cron routes now also lets that value run the tick.
+>
+> **Re-check hooks that trust `viaInvitation`.** A hook that granted anything
+> on it should be checked against accounts created before this release (see
+> Security).
+>
+> **Move what you carry into the new seams, then take core's files:**
+>
+> - Models you added to `SYSTEM_MODELS` or `GLOBAL_CONFIG_MODELS` go in
+>   `lib/app/tenancy-classification.ts`.
+> - A carried `frame-ancestors` seam goes in `lib/app/frame-ancestors.ts` and
+>   `lib/app/frameable-paths.json`. A copy of `nginx.conf`'s
+>   `X-Frame-Options: SAMEORIGIN` should go too.
+> - Script, service and audio origins go in `lib/app/csp.ts`; keep
+>   `appFrameSrc` last in the file.
+> - A core edit passing tool outcomes to graders is now core's, so drop it.
+> - A login-page line pointing at your own waitlist can go, if you move to
+>   `waitlistConfig`.
+>
+> Edits you keep to Sunrise's files now have one convention, a divergence
+> ledger: see `CUSTOMIZATION.md`.
+>
+> **Your `validate` will flag:** after this merge `check:save-errors` scans your
+> components too. A hand-drawn save-error box fails until it moves onto
+> `<SaveError>`, and every `<form>` fails until it has `noValidate`. Before
+> adding `noValidate`, check the form's schema holds every limit its inputs
+> declare. The opt-out comments are under Added, and the recipes are in
+> `.context/ui/form-errors.md`.
+>
+> **Your type-check will flag:** a hand-built `UserCreatedContext` (add
+> `invitation: null`), and code reading `DataErasureReceipt.subjectUserId`,
+> which is now `string | null`.
+>
+> **Your tests will flag:**
+>
+> - **`tests/unit/lib/app/defaults.test.ts`**, for a seam you fill. Pin your
+>   value; don't delete the row.
+> - **The tenancy coverage guard**, for a registration that names a core model
+>   or a fork `system` model carrying `orgId`.
+> - **A test asserting `StaleSaveNotice`'s amber classes**: it is now red.
+>
+> **Changes a build will not catch:**
+>
+> - **Email-change links minted before you deploy stop working.** better-auth
+>   1.7.16 rejects a change token with no `userId`, so the link reads as
+>   expired, and the resend form on that page can't restart a change. Anyone
+>   part-way through starts again from their profile.
+> - **The new-address click no longer signs anyone in.** A click from a browser
+>   with no session revokes every session on the account, the one that started
+>   the change included, and the user signs in again at the new address. A
+>   same-browser click keeps its session. The page now says "Email address
+>   changed", through a new `emailChanged=1` on the link.
+> - **An unverified account gets no session revocation on an email change**,
+>   and its new address stays unverified: better-auth 1.7.16 no longer calls
+>   `afterEmailVerification` for it. This is a known limitation, and it matters
+>   most under `REQUIRE_EMAIL_VERIFICATION=false`. See
+>   `.context/auth/security.md`.
+> - **The image and PDF input switches on Settings** never saved, so one you
+>   turned off is still on. Turn it off again.
+> - **A resumed workflow step re-runs.** A crash-resume now re-runs the steps
+>   that were in flight and no longer skips them, and it continues their retry
+>   count. A step with side effects can repeat them on a resume, so key
+>   per-attempt state on `stepAttemptId`.
+> - **`db:tenancy:role`** now errors on an unknown argument. On Neon, pass
+>   `--plaintext-password`.
+> - **better-auth's admin plugin**, if you use it with custom access control:
+>   add `set-phone`, which `/admin/update-user` now needs to change a phone
+>   number.
+>
+> **Dependencies.** Early November's minor and patch bumps, including
+> better-auth 1.7.18 and Next.js 16.4.5 (see Security). Held back in
+> `.github/dependabot.yml`, as in 0.16.0: undici 8, `@anthropic-ai/sdk` 1.x,
+> OpenTelemetry 3.x, and `@opentelemetry/api` 1.10.
+>
+> **Dependency alerts accepted for this release:**
+>
+> - `zod` < 4.6.6 (high, memory exhaustion on oversized input), under
+>   `@vercel/blob` → `@vercel/oidc` → `@vercel/cli-config`, which pins zod
+>   4.1.11 exactly. The fix is in `@vercel/oidc` 4, and `@vercel/blob` 2.8.2,
+>   the latest, accepts only 3.x. That copy only validates the Vercel CLI's own
+>   config files on disk, not untrusted input. Sunrise's own zod is 4.6.7.
+> - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`, which
+>   pins 6.0.10 exactly, as in 0.16.0. It parses only the app's own CSS, at
+>   build time.
+> - `glob` (moderate) and `minimatch` (moderate), under `react-email`, whose
+>   latest needs glob 13. They run in the `email` command-line tool on the
+>   app's own template files, not at runtime. `minimatch` is also under
+>   `typescript-eslint`, dev-only.
+> - `deepmerge` (low, prototype poisoning), under `@react-email/components` →
+>   `@react-email/render` 2.0.6 → `html-to-text` 9. No fixed version exists.
+>   It merges the renderer's own options, not user input.
+
 ### Added
 
 - **Eval graders see how each tool call went (#1044)**: `GraderInput.toolCalls`
@@ -287,6 +409,14 @@ release process.
   new look and focus behaviour with no change; a test asserting its amber
   classes needs updating (§124).
 
+- **The new-address click of an email change no longer signs anyone in.** With
+  better-auth 1.7.16 it mints no session, so a click from a browser with no
+  session now revokes every session on the account, and the user signs in again
+  at the new address. A same-browser click keeps the session it carries. The
+  verification link marks a change with `emailChanged=1`, and
+  `/verify-email/callback` then says the address changed rather than "Email
+  Verified!" (t-994).
+
 ### Fixed
 
 - **A second avatar upload failed on Vercel Blob.** The SDK refuses to
@@ -376,6 +506,12 @@ release process.
   **Forks:** a hook that granted anything on `viaInvitation` should be
   re-checked against accounts created that way before this release (#1136,
   t-973).
+- **better-auth 1.7.18 and Next.js 16.4.5.** better-auth 1.7.16 fixes, among
+  others, revoked sessions staying usable through the cookie cache, email
+  verification links working for another account, and a string
+  `email_verified: "false"` being read as verified. Next.js 16.4.5 carries
+  seven moderate advisories, including cross-user `use cache` disclosure, an
+  SVG optimizer bypass and `HttpOnly` cookie exposure on Edge routes (t-994).
 
 ## [0.16.0] — 2026-10-27
 
@@ -10507,7 +10643,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.13.0...v0.14.0
