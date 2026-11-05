@@ -18,6 +18,9 @@ import { classifySurface } from '@/lib/app/surface';
 import { ADMIN_PATHNAME_HEADER } from '@/lib/auth/admin-tier';
 import { appProtectedRoutes } from '@/lib/app/protected-routes';
 import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
+import { resolveAppFrameAncestors } from '@/lib/app/frame-ancestors';
+import appFrameablePaths from '@/lib/app/frameable-paths.json';
+import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
@@ -26,6 +29,12 @@ import { isInviteOnly } from '@/lib/auth/signup-mode';
 // `registerAppRateLimits` shape. Ships empty; a throw here aborts the proxy
 // bundle, which is the right outcome for a scaffold that cannot register.
 registerAppTenantResolver();
+
+// The path prefixes a fork lets other sites frame (lib/app/frameable-paths.json,
+// empty in vanilla Sunrise), validated by the same helper next.config.js uses to
+// leave them out of its static DENY. Only these paths consult the fork's
+// frame-ancestors resolver, so the two files cannot disagree about a page.
+const FRAMEABLE_PREFIXES = frameablePrefixes(appFrameablePaths);
 
 /**
  * Next.js Proxy
@@ -365,6 +374,21 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
     requestHeaders.delete(TENANT_HEADER_NAME);
   }
 
+  // The sites allowed to frame this response, from the fork's
+  // lib/app/frame-ancestors.ts (#887), asked only for a path under a listed
+  // frameable prefix. Anywhere else, and whenever it answers [] or throws, the
+  // response keeps `frame-ancestors 'none'` and DENY.
+  let frameAncestors: string[] = [];
+  try {
+    if (FRAMEABLE_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+      frameAncestors = await resolveAppFrameAncestors(request);
+    }
+  } catch (error) {
+    logger.error('Frame-ancestors resolver threw; refusing framing for this request', error, {
+      hint: 'lib/app/frame-ancestors.ts threw on this request. The page is sent with DENY and cannot be framed until it answers.',
+    });
+  }
+
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
@@ -379,7 +403,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // Set all security headers (CSP, X-Frame-Options, etc.)
   // Nonce is included in script-src so Next.js hydration scripts are allowed.
   // NOTE: X-XSS-Protection is intentionally NOT set (deprecated, can cause issues)
-  setSecurityHeaders(response, nonce);
+  setSecurityHeaders(response, nonce, { frameAncestors });
 
   return setVisitorCookie(response);
 }

@@ -639,7 +639,6 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
 ### Security Headers
 
 ```nginx
-add_header X-Frame-Options "SAMEORIGIN" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-XSS-Protection "1; mode=block" always;
 add_header Referrer-Policy "no-referrer-when-downgrade" always;
@@ -648,11 +647,15 @@ add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" alway
 
 | Header                    | Value                      | Purpose                                |
 | ------------------------- | -------------------------- | -------------------------------------- |
-| X-Frame-Options           | SAMEORIGIN                 | Prevents clickjacking                  |
 | X-Content-Type-Options    | nosniff                    | Prevents MIME-type sniffing            |
 | X-XSS-Protection          | 1; mode=block              | Legacy XSS filter (for older browsers) |
 | Referrer-Policy           | no-referrer-when-downgrade | Controls referrer information          |
 | Strict-Transport-Security | max-age=31536000 (1 year)  | Enforces HTTPS for all requests        |
+
+nginx sets no `X-Frame-Options`. The app sends `DENY` on every response and
+leaves it off a page a fork lets named sites frame (`lib/app/frame-ancestors.ts`,
+see [Security overview](../../security/overview.md)), so a value added here would
+contradict the app's on every page and block that one. Don't add it back.
 
 ### Let's Encrypt Support
 

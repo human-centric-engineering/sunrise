@@ -51,6 +51,14 @@ vi.mock('@/lib/app/protected-routes', () => ({
   appProtectedRoutes: ['/projects', '/reports/', ''],
 }));
 
+// Fork-owned frame-ancestors resolver (#887). Ships answering [] for every
+// request; the "Frame-ancestors seam" block below drives it per test.
+vi.mock('@/lib/app/frame-ancestors', () => ({
+  resolveAppFrameAncestors: vi.fn(async () => []),
+}));
+// …and lists `/embed/` as framable, so only paths under it consult the resolver.
+vi.mock('@/lib/app/frameable-paths.json', () => ({ default: ['/embed/'] }));
+
 // Signup mode (#463). Default `open` so every other test in this file sees the
 // template's default behaviour; the invite_only block below drives it true.
 vi.mock('@/lib/auth/signup-mode', () => ({
@@ -60,6 +68,7 @@ vi.mock('@/lib/auth/signup-mode', () => ({
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
+import { resolveAppFrameAncestors } from '@/lib/app/frame-ancestors';
 import { logger } from '@/lib/logging';
 import { signVisitorId, verifyVisitorId, VISITOR_COOKIE_NAME } from '@/lib/logging/visitor-id';
 import * as visitorIdModule from '@/lib/logging/visitor-id';
@@ -682,7 +691,9 @@ describe('proxy (project root)', () => {
 
       const response = await proxy(request);
 
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String), {
+        frameAncestors: [],
+      });
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -693,7 +704,9 @@ describe('proxy (project root)', () => {
 
       const response = await proxy(request);
 
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String), {
+        frameAncestors: [],
+      });
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -704,7 +717,9 @@ describe('proxy (project root)', () => {
 
       const response = await proxy(request);
 
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String), {
+        frameAncestors: [],
+      });
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -737,6 +752,67 @@ describe('proxy (project root)', () => {
       // environment, the header will be null — which is still a clean assertion.
       const forwardedNonce = response.headers.get('x-middleware-request-x-nonce');
       expect(forwardedNonce).toBe(nonceArg as string);
+    });
+  });
+
+  describe('Frame-ancestors seam (#887)', () => {
+    it('passes the fork’s answer for this request to setSecurityHeaders', async () => {
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+      vi.mocked(resolveAppFrameAncestors).mockResolvedValueOnce(['https://www.client.com']);
+      const request = createMockRequest('/embed/widget-1', { cookies: {} });
+
+      const response = await proxy(request);
+
+      expect(resolveAppFrameAncestors).toHaveBeenCalledWith(request);
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String), {
+        frameAncestors: ['https://www.client.com'],
+      });
+    });
+
+    it('fails closed when the resolver throws: no sites, and the error is logged', async () => {
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      vi.mocked(resolveAppFrameAncestors).mockRejectedValueOnce(new Error('db down'));
+
+      const response = await proxy(createMockRequest('/embed/widget-1', { cookies: {} }));
+
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String), {
+        frameAncestors: [],
+      });
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Frame-ancestors resolver threw; refusing framing for this request',
+        expect.any(Error),
+        expect.objectContaining({ hint: expect.stringContaining('lib/app/frame-ancestors.ts') })
+      );
+      errorSpy.mockRestore();
+    });
+
+    it('does not ask the resolver for a path outside the listed prefixes', async () => {
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+      // Even a resolver that would name a site: an unlisted path is never framable.
+      vi.mocked(resolveAppFrameAncestors).mockResolvedValue(['https://www.client.com']);
+
+      for (const path of ['/', '/embedded/x', '/admin/embed/x', '/api/v1/embed/x']) {
+        vi.mocked(setSecurityHeaders).mockClear();
+        const response = await proxy(createMockRequest(path, { cookies: {} }));
+        expect(setSecurityHeaders, path).toHaveBeenCalledWith(response, expect.any(String), {
+          frameAncestors: [],
+        });
+      }
+      expect(resolveAppFrameAncestors).not.toHaveBeenCalled();
+      vi.mocked(resolveAppFrameAncestors).mockResolvedValue([]);
+    });
+
+    it('does not ask the resolver for a request the proxy answers early', async () => {
+      // A rate-limited request returns before the security headers are set,
+      // so the resolver (which may do I/O) is never consulted for it.
+      vi.mocked(applyRateLimit).mockResolvedValueOnce(
+        NextResponse.json({ success: false }, { status: 429 })
+      );
+
+      await proxy(createMockRequest('/embed/widget-1', { cookies: {} }));
+
+      expect(resolveAppFrameAncestors).not.toHaveBeenCalled();
     });
   });
 

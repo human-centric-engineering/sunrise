@@ -21,14 +21,14 @@ setSecurityHeaders(response, nonce);
 
 ### Headers Applied
 
-| Header                      | Value                                      | Purpose                         |
-| --------------------------- | ------------------------------------------ | ------------------------------- |
-| `Content-Security-Policy`   | Environment-specific (see below)           | XSS and injection protection    |
-| `X-Frame-Options`           | `DENY`                                     | Prevent clickjacking            |
-| `X-Content-Type-Options`    | `nosniff`                                  | Prevent MIME sniffing           |
-| `Referrer-Policy`           | `strict-origin-when-cross-origin`          | Control referrer leakage        |
-| `Permissions-Policy`        | `geolocation=(), microphone=(), camera=()` | Disable unused browser features |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains`      | Force HTTPS (production only)   |
+| Header                      | Value                                           | Purpose                         |
+| --------------------------- | ----------------------------------------------- | ------------------------------- |
+| `Content-Security-Policy`   | Environment-specific (see below)                | XSS and injection protection    |
+| `X-Frame-Options`           | `DENY`, unless a fork lets sites frame the page | Prevent clickjacking            |
+| `X-Content-Type-Options`    | `nosniff`                                       | Prevent MIME sniffing           |
+| `Referrer-Policy`           | `strict-origin-when-cross-origin`               | Control referrer leakage        |
+| `Permissions-Policy`        | `geolocation=(), microphone=(self), camera=()`  | Disable unused browser features |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains`           | Force HTTPS (production only)   |
 
 **Note:** `X-XSS-Protection` is intentionally NOT set. It's deprecated and can introduce XSS vulnerabilities in older browsers. CSP provides better protection.
 

@@ -474,7 +474,9 @@ small and conflict-free.)
 | `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent                                     | `resolveAgentDocumentAccess()` (server route-handler)                                                                 |
 | `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards                               | the chat handler's `collectGuardFloors()` (server route-handler)                                                      |
 | `lib/app/guard-event-contributors.ts`      | observe an inline chat guard firing                                   | the chat handler's `emitGuardEvent()` (server route-handler)                                                          |
-| `lib/app/csp.ts`                           | extra CSP `frame-src` origins                                         | `lib/security/headers.ts` → `proxy.ts` (middleware runtime)                                                           |
+| `lib/app/csp.ts`                           | extra CSP frame, script, connect and media origins                    | `lib/security/headers.ts` → `proxy.ts` (middleware runtime)                                                           |
+| `lib/app/frame-ancestors.ts`               | sites allowed to frame a page, per request                            | `proxy.ts` → `setSecurityHeaders()` (middleware runtime)                                                              |
+| `lib/app/frameable-paths.json`             | path prefixes left out of the static `DENY`                           | `next.config.js` `headers()` (build/config)                                                                           |
 | `lib/app/agent-fields.ts`                  | extra `AiAgent` config fields                                         | the agent field registry (server + agent form)                                                                        |
 | `lib/app/surface.ts`                       | which URLs count as `admin` vs `consumer`                             | `proxy.ts` classification + `<SurfaceSync>` (proxy + client)                                                          |
 | `lib/app/data-export.ts`                   | subject-access export: tables + declarations                          | `exportUserData()` + the coverage guard (server + test)                                                               |
@@ -1021,16 +1023,33 @@ The admin create form's type dropdown still lists core types only — an app typ
 goes in through a seed or the API. See
 [`.context/orchestration/mcp.md`](./.context/orchestration/mcp.md).
 
-**Third-party iframes — `lib/app/csp.ts`.** `frame-src` is `'self'` in both the
-dev and prod CSP. If your app embeds a third-party iframe (an onboarding or
-marketing video is the usual case), list the hosts in `appFrameSrc` rather than
-editing `lib/security/headers.ts`; the platform folds them into the global CSP.
-Only exact `https://` origins are accepted (a left-most wildcard and a port are
-fine) — anything else is dropped and logged at warn, because these values are
-spliced into a response header. Keep the list exactly as broad as the feature:
-build iframe `src`s only on these hosts from a **validated id**, never from an
-admin's raw input, so a hostile stored value yields no iframe at all. See
-[`.context/security/overview.md`](./.context/security/overview.md#third-party-iframes--the-frame-src-seam).
+**Third-party hosts — `lib/app/csp.ts`.** `frame-src`, `script-src`,
+`connect-src` and `media-src` are fixed in the platform CSP. If your app embeds a
+third-party iframe (an onboarding video), loads a vendor's script (a bot check),
+calls a service from the browser, or plays externally hosted audio or video, list
+the hosts in `appFrameSrc`, `appScriptSrc`, `appConnectSrc` or `appMediaSrc`
+rather than editing `lib/security/headers.ts`; the platform folds them into the
+global CSP and into `getCSPConfig()`. Only exact `https://` origins are accepted
+(a left-most wildcard and a port are fine) — anything else is dropped and logged
+at warn, because these values are spliced into a response header, and
+`appScriptSrc` takes no wildcard. Keep each list exactly as broad as the feature: build iframe `src`s only on listed hosts from a
+**validated id**, never from an admin's raw input, and name a vendor's exact
+script host, since a listed script host runs code with your app's privileges.
+See
+[`.context/security/overview.md`](./.context/security/overview.md#third-party-hosts--the-libappcspts-seam).
+
+**Pages other sites may frame — `lib/app/frameable-paths.json` and
+`lib/app/frame-ancestors.ts`.** Every response refuses framing. To let a
+customer's own site embed one family of your pages (an embeddable form, a
+booking widget), list those pages' path prefixes (`"/embed/"`) in
+`frameable-paths.json`, and return the sites allowed to frame each request from
+`resolveAppFrameAncestors(request)`. The proxy asks the resolver only for paths
+under a listed prefix, and `next.config.js` leaves those prefixes out of its
+static `DENY`; a listed prefix frames nothing until the resolver names a site.
+Return exact `https://` origins (no wildcard, no path) and cache any lookup — it
+runs on every request under a listed prefix. A framed page on another site gets
+no session cookie, so frame pages that work signed out. See
+[`.context/security/overview.md`](./.context/security/overview.md#letting-named-sites-frame-a-page--the-frame-ancestors-seam).
 
 **Database drift probes — `lib/app/db-drift.ts`.** Register the Prisma-_unmodelled_
 DB objects your app adds — hand-written FK constraints, custom indexes (GIN/HNSW),

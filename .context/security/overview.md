@@ -52,7 +52,7 @@ setSecurityHeaders(response, nonce);
 | Header                      | Value                                                   | Purpose                       |
 | --------------------------- | ------------------------------------------------------- | ----------------------------- |
 | `Content-Security-Policy`   | Environment-specific                                    | XSS prevention                |
-| `X-Frame-Options`           | `DENY`                                                  | Clickjacking prevention       |
+| `X-Frame-Options`           | `DENY` (omitted on a page a fork lets sites frame)      | Clickjacking prevention       |
 | `X-Content-Type-Options`    | `nosniff`                                               | MIME type sniffing prevention |
 | `Referrer-Policy`           | `strict-origin-when-cross-origin`                       | Referrer leakage control      |
 | `Permissions-Policy`        | `geolocation=(), microphone=(self), camera=()`          | Feature restriction           |
@@ -140,36 +140,138 @@ const csp = buildCSP(customConfig);
 
 > **Note**: `extendCSP()` is available for routes needing additional CSP permissions (e.g., embedding YouTube videos). Base CSP is applied automatically via `setSecurityHeaders()`.
 
-### Third-party iframes — the `frame-src` seam
+### Third-party hosts — the `lib/app/csp.ts` seam
 
-`frame-src` is `'self'` in both policies. A fork that legitimately embeds a
-third-party iframe (a marketing or onboarding video is the common case) declares
-the hosts in **`lib/app/csp.ts`** instead of editing this security-sensitive
-platform file:
+`frame-src`, `script-src`, `connect-src` and `media-src` are fixed by the
+platform tables above. A fork that legitimately needs a third-party host — an
+embedded video, a vendor's bot check, externally hosted audio — declares it in
+**`lib/app/csp.ts`** instead of editing this security-sensitive platform file:
 
 ```typescript
-// lib/app/csp.ts — fork-owned scaffold, empty in vanilla Sunrise
+// lib/app/csp.ts — fork-owned scaffold, every list empty in vanilla Sunrise
+export const appScriptSrc: string[] = ['https://challenges.cloudflare.com'];
+export const appConnectSrc: string[] = [];
+export const appMediaSrc: string[] = ['https://media.example.com'];
 export const appFrameSrc: string[] = [
   'https://www.youtube-nocookie.com',
   'https://player.vimeo.com',
+  'https://challenges.cloudflare.com',
 ];
 ```
 
-`getCSPConfig()` folds these into `frame-src` for both the dev and prod policy,
-so the global CSP `setSecurityHeaders()` sets already carries them — no
-per-route `extendCSP()` needed.
+| List            | Directive     | Lets the browser…                              |
+| --------------- | ------------- | ---------------------------------------------- |
+| `appFrameSrc`   | `frame-src`   | show pages from these hosts in an iframe       |
+| `appScriptSrc`  | `script-src`  | run scripts served from these hosts            |
+| `appConnectSrc` | `connect-src` | send fetch, XHR and WebSocket requests to them |
+| `appMediaSrc`   | `media-src`   | play `<audio>` and `<video>` from these hosts  |
 
-**Only exact `https://` origins are accepted** — optionally a left-most wildcard
-(`https://*.example.com`) and a port. A bare `*`, a `data:` scheme, a path, a
-CSP keyword, or anything containing whitespace or `;` is **dropped and logged at
-warn** at module load, because these values are spliced into a response header.
+`getCSPConfig()` folds each list into its directive for both the dev and prod
+policy, after the platform's own values, so the global CSP `setSecurityHeaders()`
+sets already carries them — no per-route `extendCSP()` needed. Because the
+additions land in `getCSPConfig()` and not only in the header string, code that
+asks the policy whether a host is allowed (a widget that stays off until the CSP
+lets it load) gets the same answer the browser does.
 
-Keep the list exactly as broad as the feature. The safety argument that makes an
-allowlist acceptable is that the fork's resolver only ever builds iframe `src`s
-on these hosts, from a **validated id** — never from an admin's raw input — so a
-hostile stored value resolves to `null` (no iframe) upstream of the CSP ever
-mattering. Prefer the privacy-preserving host where one exists
-(`youtube-nocookie.com` over `youtube.com`).
+**Only exact `https://` origins are accepted** — optionally a port in 1–65535,
+and, in every list but `appScriptSrc`, a left-most wildcard
+(`https://*.example.com`). A bare `*`, a `data:` scheme, a path, a CSP keyword,
+or anything containing whitespace or `;` is **dropped and logged at warn** at
+module load, because these values are spliced into a response header. A
+repeated origin is listed once, including one an analytics provider also adds.
+
+Keep each list exactly as broad as the feature:
+
+- **`appFrameSrc`.** The safety argument that makes an allowlist acceptable is
+  that the fork's resolver only ever builds iframe `src`s on these hosts, from a
+  **validated id** — never from an admin's raw input — so a hostile stored value
+  resolves to `null` (no iframe) upstream of the CSP ever mattering. Prefer the
+  privacy-preserving host where one exists (`youtube-nocookie.com` over
+  `youtube.com`).
+- **`appScriptSrc` is the strongest grant.** A script from a listed host runs
+  with the app's full privileges, so name the vendor's exact script host. A
+  wildcard is refused in this list: `*.` over a domain where others can publish
+  (`*.github.io`, `*.vercel.app`) would let anyone who can publish there run
+  code in your pages.
+- **`appConnectSrc`.** Production keeps `connect-src` at `'self'` so client code
+  cannot send data off-site; outbound calls go through server routes, which need
+  no entry here. Add only the endpoints a third-party script must reach from the
+  browser.
+
+A widget often needs more than one list. Cloudflare Turnstile loads a script and
+renders its challenge in an iframe, so it needs its host in both `appScriptSrc`
+and `appFrameSrc`.
+
+### Letting named sites frame a page — the `frame-ancestors` seam
+
+Every response refuses framing: `frame-ancestors 'none'` in the CSP and
+`X-Frame-Options: DENY`, from both `setSecurityHeaders()` and a blanket rule in
+`next.config.js`. A fork that needs one family of pages to run inside a frame on
+a customer's own site (an embeddable form, a booking widget, a questionnaire)
+fills two fork-owned files, and nothing changes for an install that fills
+neither:
+
+```json
+// lib/app/frameable-paths.json — ships []
+["/embed/"]
+```
+
+```typescript
+// lib/app/frame-ancestors.ts — ships answering [] for every request
+export async function resolveAppFrameAncestors(request: Request): Promise<string[]> {
+  const widgetId = new URL(request.url).pathname.split('/')[2];
+  return getAllowedEmbedOrigins(widgetId); // your lookup, cached
+}
+```
+
+- **The path list says which pages can be framed at all.** Only plain
+  `/segment/` prefixes are accepted; anything else is ignored. Both
+  `next.config.js` and `proxy.ts` read it through one helper
+  (`lib/security/frame-deny-source.cjs`), so they agree. `next.config.js` leaves
+  the listed prefixes out of its static `X-Frame-Options: DENY`, a header the
+  proxy could not remove per request. (A `has`/`missing` condition on a header
+  the proxy sets does not work instead: `next.config` headers match the
+  browser's original request, not the proxy's, and a client can send that
+  header itself.) Listing a prefix frames nothing by itself — the proxy still
+  sends `DENY` there unless the resolver answers.
+- **The resolver decides per request, under a listed prefix only.** `proxy.ts`
+  awaits it for a request whose path starts with a listed prefix (exact case),
+  and never calls it for any other path, then calls
+  `setSecurityHeaders(response, nonce, { frameAncestors })`. A non-empty answer
+  replaces `frame-ancestors 'none'` with those origins and removes
+  `X-Frame-Options` for that response, because that header cannot name a site
+  (`ALLOW-FROM` is obsolete). `[]`, or a resolver that throws (logged at error),
+  leaves the response refused.
+- **Origins are held to the narrowest shape**: exact `https://host[:port]`
+  (port 1–65535), no wildcard and no path, because the answer is often stored
+  data (the sites a customer named). Outside production `http://localhost[:port]`
+  is accepted too, so an embed can be tried locally. Anything else — including
+  an answer that is not an array, or a non-string entry — is dropped, and each
+  bad value is logged at warn once per process, not on every request.
+- **Keep the resolver cheap.** It runs on every request under a listed prefix,
+  and a slow answer holds that page up, so cache whatever needs I/O.
+
+Three consequences to design for:
+
+- **A framed page usually gets no session cookie.** The session cookie is
+  `SameSite=Lax`, which the browser does not send inside a frame on another
+  site. Frame pages that work signed out. A parent on the app's own registrable
+  domain (`https://customer.app.com` framing `app.com`) is same-site and does
+  get the cookie.
+- **Image-like paths on a listed prefix get no framing header.** The proxy's
+  matcher skips `_next/static`, `_next/image`, `favicon.ico` and paths ending in an image extension,
+  and the listed prefix is out of `next.config.js`'s rule. Harmless for images;
+  keep page routes under a framable prefix from ending in one of those
+  extensions.
+- **The proxy's early replies carry no framing header on a listed prefix.** The
+  403 from the origin check, the 429 from the rate limiter and the auth
+  redirects return before `setSecurityHeaders()` runs, and the listed prefix is
+  out of `next.config.js`'s rule. They are JSON bodies and redirects, with
+  nothing to click, so this is accepted rather than patched; revisit it if a
+  listed path ever returns an interactive early response.
+
+nginx (`nginx.conf`) sets no `X-Frame-Options` of its own: the app's is the only
+one, so a framable page is not refused by a proxy in front of it.
 
 ### Analytics CSP Auto-Configuration
 
@@ -506,7 +608,7 @@ red meaning something, and a standing red trains people to stop looking.
 - [x] Content-Security-Policy with environment-specific policies
 - [x] Security headers set in proxy (`lib/security/headers.ts`)
 - [x] HTTPS enforced in production (HSTS header)
-- [x] X-Frame-Options set to DENY
+- [x] X-Frame-Options set to DENY (except a page a fork's `lib/app/frame-ancestors.ts` names sites for)
 - [x] Permissions-Policy restricts browser features
 
 ### API Protection
@@ -607,14 +709,19 @@ If `RATE_LIMIT_STORE=redis` but `REDIS_URL` is unset, falls back to memory with 
 
 ### X-Frame-Options: DENY
 
-**Decision**: Use `DENY` for maximum clickjacking protection
+**Decision**: Use `DENY` for maximum clickjacking protection, except on a page a
+fork has chosen to let named sites frame
 **Rationale**:
 
 - Prevents all framing, including same-origin
 - Matches CSP `frame-ancestors: 'none'` for consistent policy
-- No legitimate use case for embedding the app in iframes
+- Sunrise itself frames none of its pages. A fork that embeds one family of its
+  pages on customers' sites names the sites per request
+  (`lib/app/frame-ancestors.ts`); that response carries `frame-ancestors` with
+  those origins and no `X-Frame-Options`, since the header cannot name a site
 
-**Trade-offs**: Cannot embed app pages in same-origin iframes (not needed for this application)
+**Trade-offs**: Cannot embed app pages in same-origin iframes unless a fork's
+resolver names the app's own origin for them
 
 ## TypeScript Types
 

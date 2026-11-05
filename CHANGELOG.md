@@ -18,6 +18,28 @@ release process.
 
 ### Added
 
+- **Letting named sites frame a page (#887)**: two new fork-owned seams.
+  `lib/app/frame-ancestors.ts` → `resolveAppFrameAncestors(request)` (ships
+  answering `[]`) names, per request, the exact `https://` origins allowed to
+  frame that page; `proxy.ts` awaits it for paths under a listed prefix (and
+  only those) and passes the answer to
+  `setSecurityHeaders()`'s new third argument, `{ frameAncestors }` (type
+  `SecurityHeaderOptions`, exported from `@/lib/security`). A non-empty answer
+  replaces `frame-ancestors 'none'` and drops `X-Frame-Options` for that
+  response; a throw, a malformed answer or an invalid origin frames nothing. `lib/app/frameable-paths.json`
+  (ships `[]`) lists the framable path prefixes, which `next.config.js` also
+  leaves out of its static `X-Frame-Options: DENY`. With both empty every response the app sends carries
+  exactly the headers it did before. `nginx.conf` no longer adds its own
+  `X-Frame-Options: SAMEORIGIN`, which contradicted the app's `DENY`; a fork
+  that copied that line into its own proxy config should drop it too.
+- **Third-party scripts, services and audio in the CSP (#841)**: `lib/app/csp.ts`
+  gains `appScriptSrc`, `appConnectSrc` and `appMediaSrc` beside `appFrameSrc`,
+  all shipping empty. Each is held to the same exact-`https://`-origin check as
+  `appFrameSrc` (invalid entries dropped with a warning), except that
+  `appScriptSrc` takes no wildcard, and folded into
+  `getCSPConfig()` and the header for dev and prod. A fork that has filled
+  `appFrameSrc` takes the new exports without a merge conflict; keep
+  `appFrameSrc` last in the file.
 - **Waitlist (§125, in progress — joining and the admin page)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes

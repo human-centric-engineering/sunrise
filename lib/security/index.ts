@@ -39,7 +39,7 @@ export {
   setSecurityHeaders,
   extendCSP,
 } from '@/lib/security/headers';
-export type { CSPConfig } from '@/lib/security/headers';
+export type { CSPConfig, SecurityHeaderOptions } from '@/lib/security/headers';
 
 // Input sanitization
 export {

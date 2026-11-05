@@ -71,8 +71,8 @@ const NOT_SOURCE = new Set(['node_modules', '.next', '.git', 'coverage', 'tests'
  */
 const RESOLVABLE_EXEMPT: ReadonlyArray<{ test: (spec: string) => boolean; why: string }> = [
   {
-    test: (s) => /\.(css|json|svg|png|jpe?g|webp)$/.test(s),
-    why: 'not a TypeScript module, so it is not in the walk by construction',
+    test: (s) => /\.(css|json|svg|png|jpe?g|webp|cjs)$/.test(s),
+    why: 'not a TypeScript module, so it is not in the walk by construction; a `.cjs` file is loaded by Node, which cannot resolve `@/`; the walk does not follow its relative `require`s, so a `.cjs` that requires TypeScript needs reviewing by hand (lib/security/frame-deny-source.cjs requires nothing)',
   },
   {
     test: (s) =>

@@ -18,10 +18,14 @@
  * const response = NextResponse.next();
  * setSecurityHeaders(response);
  * ```
+ *
+ * Tenancy posture: shared-by-decision — `warnedOrigins` can hold an invalid
+ * origin from an org's stored data, only ever to skip a repeat warning
+ * (lib/tenancy/process-state.ts).
  */
 
 import { NextResponse } from 'next/server';
-import { appFrameSrc } from '@/lib/app/csp';
+import { appConnectSrc, appFrameSrc, appMediaSrc, appScriptSrc } from '@/lib/app/csp';
 import { logger } from '@/lib/logging';
 
 /**
@@ -146,37 +150,158 @@ export function buildCSP(config: CSPConfig): string {
 }
 
 /**
- * An exact `https://` origin, optionally wildcarded at the left-most label and
- * optionally with a port: `https://player.vimeo.com`, `https://*.example.com`.
+ * Exact `https://` origins, optionally with a port: `https://player.vimeo.com`,
+ * `https://media.example.com:8443`. The wildcard form also allows `*.` as the
+ * left-most label (`https://*.example.com`).
  *
  * Deliberately narrow. These values are spliced straight into a header, so a
  * `;`, a space, a bare `*`, or a `data:` scheme would either widen the policy
  * or break the directives that follow it.
  */
-const FRAME_SRC_ORIGIN = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const HTTPS_ORIGIN = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const HTTPS_ORIGIN_WITH_WILDCARD = /^https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d{1,5})?$/i;
+const LOCALHOST_ORIGIN = /^http:\/\/localhost(:\d{1,5})?$/i;
+
+/** True unless the origin names a port outside 1–65535, which a browser would ignore. */
+function portInRange(origin: string): boolean {
+  const port = /:(\d+)$/.exec(origin)?.[1];
+  if (port === undefined) return true;
+  const value = Number(port);
+  return value >= 1 && value <= 65535;
+}
+
+/** How one list of fork-supplied origins is checked, and what a warning names. */
+interface OriginRule {
+  /** The directive the list feeds, e.g. `frame-src`. */
+  directive: string;
+  /** The fork file the list came from. */
+  source: string;
+  /** Whether one entry has an acceptable shape. */
+  accepts: (origin: string) => boolean;
+  /** An example of an acceptable entry, for the warning. */
+  example: string;
+}
 
 /**
- * Validate the fork's `frame-src` additions once, at module load — not per
- * request. An invalid entry is dropped and logged rather than silently trusted.
+ * Invalid origins already warned about, so a bad value in stored data warns
+ * once per process rather than on every request that reads it. Capped, since
+ * the values can come from data.
  */
-function resolveAppFrameSrc(): string[] {
-  const accepted: string[] = [];
+const warnedOrigins = new Set<string>();
+const MAX_WARNED_ORIGINS = 1000;
+/** Sentinel entry recording that the cap notice has been logged. */
+const WARNED_ORIGINS_FULL = '\u0000full';
 
-  for (const origin of appFrameSrc) {
-    if (FRAME_SRC_ORIGIN.test(origin)) {
-      accepted.push(origin);
+/**
+ * Keep the entries of a fork-supplied origin list that pass `rule`, once each,
+ * logging the rest. An invalid entry is dropped rather than trusted: it would
+ * be spliced into a header. Takes `unknown` because a per-request answer can
+ * come from stored data whatever its declared type: anything but an array
+ * yields no origins, and a non-string entry is dropped like any other.
+ */
+function acceptOrigins(origins: unknown, rule: OriginRule): string[] {
+  const accepted: string[] = [];
+  if (!Array.isArray(origins)) {
+    if (origins !== undefined && origins !== null) warnOnce(rule, origins);
+    return accepted;
+  }
+
+  for (const origin of origins as unknown[]) {
+    if (typeof origin === 'string' && rule.accepts(origin) && portInRange(origin)) {
+      if (!accepted.includes(origin)) accepted.push(origin);
       continue;
     }
-    logger.warn('Ignoring invalid frame-src origin from lib/app/csp.ts', {
-      origin,
-      expected: 'an exact https:// origin, e.g. https://player.vimeo.com',
-    });
+    warnOnce(rule, origin);
   }
 
   return accepted;
 }
 
-const APP_FRAME_SRC = resolveAppFrameSrc();
+/** Longest rejected value kept in a warning or its dedupe key. */
+const MAX_LOGGED_ORIGIN_LENGTH = 200;
+
+/**
+ * Log a rejected entry once per process. A non-string is named by its type and
+ * never serialised (a BigInt or a circular object would throw, and this runs
+ * outside the proxy's try/catch), and a long string is cut, so neither the log
+ * line nor the dedupe key grows with the input. Once the set is full, one
+ * notice says so and later new values are not logged: the alternative, logging
+ * each on every request, is the flood the set exists to stop.
+ */
+function warnOnce(rule: OriginRule, origin: unknown): void {
+  const shown =
+    typeof origin === 'string' ? origin.slice(0, MAX_LOGGED_ORIGIN_LENGTH) : `<${typeof origin}>`;
+  const key = `${rule.directive}\u0000${shown}`;
+  if (warnedOrigins.has(key)) return;
+  if (warnedOrigins.size >= MAX_WARNED_ORIGINS) {
+    if (!warnedOrigins.has(WARNED_ORIGINS_FULL)) {
+      warnedOrigins.add(WARNED_ORIGINS_FULL);
+      logger.warn('Too many distinct invalid CSP origins; not logging further ones', {
+        limit: MAX_WARNED_ORIGINS,
+      });
+    }
+    return;
+  }
+  warnedOrigins.add(key);
+  logger.warn(`Ignoring invalid ${rule.directive} origin from ${rule.source}`, {
+    origin: shown,
+    expected: `an exact https:// origin, e.g. ${rule.example}`,
+  });
+}
+
+/** The directives a fork may add origins to through `lib/app/csp.ts`. */
+type AppCspDirective = 'script-src' | 'media-src' | 'connect-src' | 'frame-src';
+
+/** Validate one `lib/app/csp.ts` list, paired with the directive it feeds. */
+function appCspAddition(
+  directive: AppCspDirective,
+  origins: readonly string[],
+  example: string,
+  { wildcard }: { wildcard: boolean }
+): readonly [AppCspDirective, string[]] {
+  const shape = wildcard ? HTTPS_ORIGIN_WITH_WILDCARD : HTTPS_ORIGIN;
+  const rule: OriginRule = {
+    directive,
+    source: 'lib/app/csp.ts',
+    accepts: (origin) => shape.test(origin),
+    example,
+  };
+  return [directive, acceptOrigins(origins, rule)];
+}
+
+/**
+ * The fork's additions from `lib/app/csp.ts`, validated once at module load —
+ * not per request, since the lists are constants. Empty in vanilla Sunrise.
+ *
+ * `script-src` takes no wildcard: a script host runs code with the app's full
+ * privileges, and `*.` over a domain where others can publish (`*.github.io`,
+ * `*.vercel.app`) would let anyone there do so.
+ */
+const APP_CSP_ADDITIONS = [
+  appCspAddition('script-src', appScriptSrc, 'https://challenges.cloudflare.com', {
+    wildcard: false,
+  }),
+  appCspAddition('connect-src', appConnectSrc, 'https://api.example.com', { wildcard: true }),
+  appCspAddition('media-src', appMediaSrc, 'https://media.example.com', { wildcard: true }),
+  appCspAddition('frame-src', appFrameSrc, 'https://player.vimeo.com', { wildcard: true }),
+];
+
+/**
+ * The rule for `lib/app/frame-ancestors.ts` answers, checked per request: an
+ * exact `https://host[:port]`, no wildcard and no path. Unlike the
+ * `lib/app/csp.ts` lists, this one comes from a per-request answer (often
+ * stored data, such as the sites a customer named), so it is held to the
+ * narrowest shape. Outside production `http://localhost[:port]` is also
+ * accepted, so an embedding page can be tried locally.
+ */
+const FRAME_ANCESTORS_RULE: OriginRule = {
+  directive: 'frame-ancestors',
+  source: 'lib/app/frame-ancestors.ts',
+  accepts: (origin) =>
+    HTTPS_ORIGIN.test(origin) ||
+    (process.env.NODE_ENV !== 'production' && LOCALHOST_ORIGIN.test(origin)),
+  example: 'https://www.example.com',
+};
 
 /**
  * Get analytics provider domains for CSP allowlisting
@@ -233,8 +358,10 @@ function getAnalyticsCSPDomains(): { scriptSrc: string[]; connectSrc: string[] }
 /**
  * Get CSP configuration for current environment
  *
- * Automatically includes analytics provider domains when configured, and any
- * `frame-src` origins the fork declared in `lib/app/csp.ts`.
+ * Automatically includes analytics provider domains when configured, and the
+ * `script-src`, `connect-src`, `media-src` and `frame-src` origins the fork
+ * declared in `lib/app/csp.ts`. Code that asks whether the policy allows a host
+ * reads it here, so the additions must land here and not only in the header.
  *
  * @param nonce - Optional per-request nonce for inline script allowlisting
  * @returns CSP configuration object
@@ -248,18 +375,20 @@ export function getCSPConfig(nonce?: string): CSPConfig {
     base['script-src'] = [...base['script-src'], `'nonce-${nonce}'`];
   }
 
-  // Add the fork's own iframe hosts (lib/app/csp.ts — empty in vanilla Sunrise)
-  if (APP_FRAME_SRC.length > 0) {
-    base['frame-src'] = [...new Set([...base['frame-src'], ...APP_FRAME_SRC])];
+  // Add the fork's own hosts (lib/app/csp.ts — every list empty in vanilla Sunrise)
+  for (const [directive, origins] of APP_CSP_ADDITIONS) {
+    if (origins.length > 0) {
+      base[directive] = [...new Set([...base[directive], ...origins])];
+    }
   }
 
   // Add analytics provider domains
   const analytics = getAnalyticsCSPDomains();
   if (analytics.scriptSrc.length > 0) {
-    base['script-src'] = [...base['script-src'], ...analytics.scriptSrc];
+    base['script-src'] = [...new Set([...base['script-src'], ...analytics.scriptSrc])];
   }
   if (analytics.connectSrc.length > 0) {
-    base['connect-src'] = [...base['connect-src'], ...analytics.connectSrc];
+    base['connect-src'] = [...new Set([...base['connect-src'], ...analytics.connectSrc])];
   }
 
   return base;
@@ -281,12 +410,22 @@ export function getCSP(nonce?: string): string {
   return buildCSP(getCSPConfig(nonce));
 }
 
+/** Per-request options for {@link setSecurityHeaders}. */
+export interface SecurityHeaderOptions {
+  /**
+   * Exact origins allowed to frame this response, from the fork's
+   * `lib/app/frame-ancestors.ts`. Empty or absent = `frame-ancestors 'none'`
+   * and `X-Frame-Options: DENY`. Invalid entries are dropped with a warning.
+   */
+  frameAncestors?: readonly string[];
+}
+
 /**
  * Set all security headers on a NextResponse
  *
  * Headers set:
  * - Content-Security-Policy (environment-specific, nonce-based in production)
- * - X-Frame-Options: SAMEORIGIN
+ * - X-Frame-Options: DENY (omitted when `options.frameAncestors` names a site)
  * - X-Content-Type-Options: nosniff
  * - Referrer-Policy: strict-origin-when-cross-origin
  * - Permissions-Policy (disables geolocation, microphone, camera)
@@ -298,6 +437,7 @@ export function getCSP(nonce?: string): string {
  *
  * @param response - NextResponse to add headers to
  * @param nonce - Per-request nonce to include in script-src
+ * @param options - Per-request additions: the sites allowed to frame this response
  *
  * @example
  * ```typescript
@@ -308,13 +448,33 @@ export function getCSP(nonce?: string): string {
  * return response;
  * ```
  */
-export function setSecurityHeaders(response: NextResponse, nonce?: string): void {
-  // Content Security Policy - environment-specific, nonce-based in production
-  response.headers.set('Content-Security-Policy', getCSP(nonce));
+export function setSecurityHeaders(
+  response: NextResponse,
+  nonce?: string,
+  options: SecurityHeaderOptions = {}
+): void {
+  // The sites this response may be framed by, from the fork's
+  // lib/app/frame-ancestors.ts. Empty (the default, and always in vanilla
+  // Sunrise) keeps `frame-ancestors 'none'` and DENY below.
+  const frameAncestors = acceptOrigins(options.frameAncestors, FRAME_ANCESTORS_RULE);
 
-  // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
-  // Note: CSP frame-ancestors supersedes this in modern browsers
-  response.headers.set('X-Frame-Options', 'DENY');
+  // Content Security Policy - environment-specific, nonce-based in production
+  const csp = getCSPConfig(nonce);
+  if (frameAncestors.length > 0) csp['frame-ancestors'] = frameAncestors;
+  response.headers.set('Content-Security-Policy', buildCSP(csp));
+
+  if (frameAncestors.length > 0) {
+    // X-Frame-Options cannot name a site (ALLOW-FROM is obsolete), so a
+    // framable response must not carry it: browsers that honour
+    // `frame-ancestors` ignore it anyway, and the rest would refuse the named
+    // site. Deleted rather than left unset, so an earlier writer cannot leave
+    // DENY behind.
+    response.headers.delete('X-Frame-Options');
+  } else {
+    // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
+    // Note: CSP frame-ancestors supersedes this in modern browsers
+    response.headers.set('X-Frame-Options', 'DENY');
+  }
 
   // Prevent MIME type sniffing
   response.headers.set('X-Content-Type-Options', 'nosniff');

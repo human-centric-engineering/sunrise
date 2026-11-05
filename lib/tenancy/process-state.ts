@@ -764,6 +764,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'A monotonic counter for correlating Redis calls in the logs.',
   },
   {
+    file: 'lib/security/headers.ts',
+    holders: ['warnedOrigins'],
+    posture: 'shared-by-decision',
+    keyedBy: 'directive plus the rejected origin string',
+    why: "Invalid origins already logged, so a bad value in a fork's stored frame-ancestors data warns once per process instead of on every request. One org's value can be in it, but it is never returned to any caller: sharing it only means two orgs storing the same invalid origin get one warning between them. Revisit if anything starts reading it for more than that.",
+  },
+  {
     file: 'lib/security/safe-dispatcher.ts',
     holders: ['defaultDispatcher'],
     posture: 'no-tenant-data',
