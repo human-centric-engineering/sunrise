@@ -153,6 +153,64 @@ describe('setSecurityHeaders frameAncestors', () => {
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
+  it('drops an entry that cannot be serialised, without throwing', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const response = NextResponse.next();
+
+    expect(() =>
+      setSecurityHeaders(response, 'nonce', {
+        frameAncestors: [
+          BigInt(1),
+          circular,
+          'https://www.client.com',
+        ] as unknown as readonly string[],
+      })
+    ).not.toThrow();
+    expect(frameAncestorsOf(response)).toBe('frame-ancestors https://www.client.com');
+    expect(warn).toHaveBeenCalledWith(
+      'Ignoring invalid frame-ancestors origin from lib/app/frame-ancestors.ts',
+      expect.objectContaining({ origin: '<bigint>' })
+    );
+  });
+
+  it('cuts a long rejected value in the warning', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const long = `https://${'a'.repeat(500)}/`;
+
+    setSecurityHeaders(NextResponse.next(), 'nonce', { frameAncestors: [long] });
+
+    expect(warn).toHaveBeenCalledWith(
+      'Ignoring invalid frame-ancestors origin from lib/app/frame-ancestors.ts',
+      expect.objectContaining({ origin: long.slice(0, 200) })
+    );
+  });
+
+  it('stops warning, after one notice, once it has seen too many distinct bad values', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.resetModules();
+    const fresh = await import('@/lib/security/headers');
+    warn.mockClear();
+
+    for (let i = 0; i < 1000; i++) {
+      fresh.setSecurityHeaders(NextResponse.next(), 'nonce', { frameAncestors: [`bad-${i}`] });
+    }
+    expect(warn).toHaveBeenCalledTimes(1000);
+
+    // Past the cap: one notice, then silence — even on repeat requests.
+    for (let round = 0; round < 3; round++) {
+      fresh.setSecurityHeaders(NextResponse.next(), 'nonce', {
+        frameAncestors: ['bad-new-1', 'bad-new-2'],
+      });
+    }
+    expect(warn).toHaveBeenCalledTimes(1001);
+    expect(warn).toHaveBeenLastCalledWith(
+      'Too many distinct invalid CSP origins; not logging further ones',
+      { limit: 1000 }
+    );
+  });
+
   it('drops non-string entries and keeps the valid ones', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const response = NextResponse.next();

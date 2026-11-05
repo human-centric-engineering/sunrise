@@ -189,6 +189,8 @@ interface OriginRule {
  */
 const warnedOrigins = new Set<string>();
 const MAX_WARNED_ORIGINS = 1000;
+/** Sentinel entry recording that the cap notice has been logged. */
+const WARNED_ORIGINS_FULL = '\u0000full';
 
 /**
  * Keep the entries of a fork-supplied origin list that pass `rule`, once each,
@@ -215,12 +217,34 @@ function acceptOrigins(origins: unknown, rule: OriginRule): string[] {
   return accepted;
 }
 
+/** Longest rejected value kept in a warning or its dedupe key. */
+const MAX_LOGGED_ORIGIN_LENGTH = 200;
+
+/**
+ * Log a rejected entry once per process. A non-string is named by its type and
+ * never serialised (a BigInt or a circular object would throw, and this runs
+ * outside the proxy's try/catch), and a long string is cut, so neither the log
+ * line nor the dedupe key grows with the input. Once the set is full, one
+ * notice says so and later new values are not logged: the alternative, logging
+ * each on every request, is the flood the set exists to stop.
+ */
 function warnOnce(rule: OriginRule, origin: unknown): void {
-  const key = `${rule.directive}\u0000${typeof origin === 'string' ? origin : JSON.stringify(origin)}`;
+  const shown =
+    typeof origin === 'string' ? origin.slice(0, MAX_LOGGED_ORIGIN_LENGTH) : `<${typeof origin}>`;
+  const key = `${rule.directive}\u0000${shown}`;
   if (warnedOrigins.has(key)) return;
-  if (warnedOrigins.size < MAX_WARNED_ORIGINS) warnedOrigins.add(key);
+  if (warnedOrigins.size >= MAX_WARNED_ORIGINS) {
+    if (!warnedOrigins.has(WARNED_ORIGINS_FULL)) {
+      warnedOrigins.add(WARNED_ORIGINS_FULL);
+      logger.warn('Too many distinct invalid CSP origins; not logging further ones', {
+        limit: MAX_WARNED_ORIGINS,
+      });
+    }
+    return;
+  }
+  warnedOrigins.add(key);
   logger.warn(`Ignoring invalid ${rule.directive} origin from ${rule.source}`, {
-    origin,
+    origin: shown,
     expected: `an exact https:// origin, e.g. ${rule.example}`,
   });
 }

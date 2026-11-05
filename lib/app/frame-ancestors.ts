@@ -42,7 +42,7 @@
  * domain, e.g. `https://customer.app.com` framing `app.com`, is same-site, and
  * does get the cookie.)
  *
- * **The proxy does not run on image-like paths.** Its matcher skips `_next/*`,
+ * **The proxy does not run on image-like paths.** Its matcher skips `_next/static`, `_next/image`,
  * `favicon.ico` and any path ending `.svg|.png|.jpg|.jpeg|.gif|.webp`, so on a
  * listed prefix such a path gets no framing header at all. Keep page routes
  * under a framable prefix from ending in one of those extensions.

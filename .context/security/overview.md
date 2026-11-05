@@ -259,7 +259,7 @@ Three consequences to design for:
   domain (`https://customer.app.com` framing `app.com`) is same-site and does
   get the cookie.
 - **Image-like paths on a listed prefix get no framing header.** The proxy's
-  matcher skips `_next/*`, `favicon.ico` and paths ending in an image extension,
+  matcher skips `_next/static`, `_next/image`, `favicon.ico` and paths ending in an image extension,
   and the listed prefix is out of `next.config.js`'s rule. Harmless for images;
   keep page routes under a framable prefix from ending in one of those
   extensions.

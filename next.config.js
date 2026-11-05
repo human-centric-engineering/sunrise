@@ -1,3 +1,6 @@
+// Relative paths, not the `@/` alias the rest of the repo uses: Node loads this
+// file directly, before any bundler, and cannot resolve `@/`. Moving either
+// required file means updating these two paths (the second is in headers()).
 const { frameDenySource } = require('./lib/security/frame-deny-source.cjs');
 
 /**
