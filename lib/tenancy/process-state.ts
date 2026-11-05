@@ -597,9 +597,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/evaluations/case-hooks.ts',
-    holders: ['hooksByAgent', 'appInit'],
+    holders: ['hooksByAgent', 'initFailure', 'appInit'],
     posture: 'no-tenant-data',
-    why: "Eval case hooks by agent slug, all registered from the fork's code; a hook's own state lives in its tables, not here.",
+    why: "Eval case hooks by agent slug, all registered from the fork's code, and the fork init's failure message once it has thrown; a hook's own state lives in its tables, not here.",
   },
   {
     file: 'lib/orchestration/evaluations/graders/registry.ts',
