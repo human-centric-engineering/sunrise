@@ -192,6 +192,30 @@ describe('tenancy classification — fork tiers', () => {
       );
     });
 
+    it.each([
+      ['the chokepoint’s schema (readTenancySchema)', 'chokepoint'],
+      ['the scripts’ roster (tenantOwnedModels)', 'roster'],
+    ])('is warned about when %s is built from a client', async (_label, builder) => {
+      registerAppTenancyClassification({ tier: 'app', system: ['AppTeamJoin'] });
+      const client = {
+        _runtimeDataModel: rdm({ AppTeamJoin: { orgId: true }, AppNote: { orgId: true } }),
+        _engineConfig: { inlineSchema: 'model AppTeamJoin {\n}\nmodel AppNote {\n}\n' },
+      };
+
+      if (builder === 'chokepoint') {
+        const { readTenancySchema } = await import('@/lib/db/tenancy-extension');
+        expect([...readTenancySchema(client).tenantOwned]).toEqual(['AppNote']);
+      } else {
+        const { tenantOwnedModels } = await import('@/lib/tenancy/classification');
+        expect([...tenantOwnedModels(client).keys()]).toEqual(['AppNote']);
+      }
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'tenancy-classification: fork system models carry orgId and are not row-isolated',
+        expect.objectContaining({ models: ['AppTeamJoin'] })
+      );
+    });
+
     it('warns about nothing when only core’s exemptions are present', () => {
       warnAboutAppIsolationExemptions(classifyModels(rdm({ OrgMembership: { orgId: true } })));
       expect(warnSpy).not.toHaveBeenCalled();
