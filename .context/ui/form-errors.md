@@ -465,4 +465,4 @@ switches. Each is declared in `BOX_EXEMPTIONS` with its reason.
 
 ## Testing a failed save
 
-`<SaveError>` takes focus during the commit that shows it, so a test can assert focus straight after `findByRole('alert')`, with no `waitFor`. The exception is a field on a hidden tab, which takes focus on a later frame.
+`<SaveError>` takes focus during the commit that shows it, so a test can usually assert focus straight after `findByRole('alert')`, with no `waitFor`. Three cases settle later, so wait for them: a field on a hidden tab, a failure shown as a dialog closes, and a failure from a menu item, where Radix returns focus to the trigger on a timer. A passive effect in `<SaveError>` has the last word in those cases, so keep it passive: a layout effect alone loses focus to a closing dialog's trap.

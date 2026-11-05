@@ -151,11 +151,21 @@ export function SaveError<TField extends string>({
 }: SaveErrorProps<TField>) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // A layout effect, so focus has moved by the time the alert can be seen: a
-  // passive effect runs after the commit, which left `findByRole('alert')`
-  // resolving with focus still on <body>, failing CI now and then. Form tests,
-  // a fork's included, assert focus straight after finding the alert (t-995).
+  // Focus early, inside the commit, so it has moved by the time the alert can
+  // be seen. Form tests, a fork's included, assert focus straight after finding
+  // the alert, and with only the effect below that failed CI now and then, with
+  // focus still on <body> (t-995). This is a head start, not the decision: a
+  // closing dialog's focus trap still holds during the commit and bounces this
+  // away, so the effect below must stay passive and have the last word.
   useLayoutEffect(() => {
+    const box = ref.current;
+    if (!failure || !box) return;
+    const names = failure.fields.map((f) => f.field);
+    const target = names.length === 0 ? box : firstField(box.closest('form') ?? document, names);
+    target?.focus({ preventScroll: true });
+  }, [failure]);
+
+  useEffect(() => {
     const box = ref.current;
     if (!failure || !box) return;
     const focusBox = () => {
