@@ -106,17 +106,42 @@ describe('POST /api/v1/admin/waitlist/invite', () => {
     expect(mockWave).not.toHaveBeenCalled();
   });
 
-  it('limits waves per admin, and answers 429 before reading the body or choosing anyone', async () => {
+  it('limits waves per admin, and answers 429 before inviting anyone', async () => {
     mockLimiter.check.mockReturnValue({ success: false, remaining: 0, reset: 4_102_444_800 });
 
-    // An invalid body: were the body read first this would be a 400.
-    const response = await POST(post({ mode: 'nonsense' }));
+    const response = await POST(post({ mode: 'next', count: 5 }));
 
     expect(response.status).toBe(429);
     expect(mockLimiter.check).toHaveBeenCalledWith(`waitlist-wave:user:${ADMIN_ID}`);
-    expect(mockSelect).not.toHaveBeenCalled();
     expect(mockWave).not.toHaveBeenCalled();
     expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('spends a wave only after choosing someone, and before inviting them', async () => {
+    await POST(post({ mode: 'next', count: 5 }));
+
+    expect(mockLimiter.check).toHaveBeenCalledTimes(1);
+    expect(mockSelect.mock.invocationCallOrder[0]).toBeLessThan(
+      mockLimiter.check.mock.invocationCallOrder[0]
+    );
+    expect(mockLimiter.check.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWave.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not spend a wave on one that chose nobody', async () => {
+    mockSelect.mockResolvedValue([]);
+    mockWave.mockResolvedValue({
+      selected: 0,
+      invited: 0,
+      refused: 0,
+      failed: 0,
+      emailNotSent: 0,
+      rows: [],
+    });
+
+    expect((await POST(post({ mode: 'next', count: 5 }))).status).toBe(200);
+    expect(mockLimiter.check).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -127,13 +152,14 @@ describe('POST /api/v1/admin/waitlist/invite', () => {
     ['an unknown mode', { mode: 'everyone', count: 5 }],
     ['an extra key', { mode: 'next', count: 5, role: 'ADMIN' }],
     ['no mode', { count: 5 }],
-  ])('refuses %s with a 400 before choosing anyone', async (_label, body) => {
+  ])('refuses %s with a 400 before choosing anyone, spending no wave', async (_label, body) => {
     const response = await POST(post(body));
 
     expect(response.status).toBe(400);
     expect((await json(response)).error?.code).toBe('VALIDATION_ERROR');
     expect(mockSelect).not.toHaveBeenCalled();
     expect(mockWave).not.toHaveBeenCalled();
+    expect(mockLimiter.check).not.toHaveBeenCalled();
   });
 
   it('selects with the config and the parsed body, then invites the ids it chose as the admin', async () => {

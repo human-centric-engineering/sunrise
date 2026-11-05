@@ -27,6 +27,7 @@ const { mockPrisma } = vi.hoisted(() => ({
       findUnique: vi.fn(),
     },
     waitlistListState: { findMany: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() },
+    verification: { findMany: vi.fn(), deleteMany: vi.fn() },
   },
 }));
 
@@ -60,6 +61,7 @@ beforeEach(() => {
   mockPrisma.waitlistEntry.count.mockResolvedValue(0);
   mockPrisma.waitlistEntry.groupBy.mockResolvedValue([]);
   mockPrisma.waitlistListState.findMany.mockResolvedValue([]);
+  mockPrisma.verification.findMany.mockResolvedValue([]);
 });
 
 describe('waitlistEntryWhere', () => {
@@ -250,7 +252,74 @@ describe('setWaitlistEntryRemoved', () => {
       where: { id: 'e1', removedAt: null },
       data: { removedAt: NOW },
     });
-    expect(result).toEqual({ entry: { id: 'e1', removedAt: NOW }, changed: true });
+    expect(result).toEqual({
+      entry: { id: 'e1', removedAt: NOW },
+      changed: true,
+      invitationsRevoked: 0,
+    });
+  });
+
+  it('revokes the invitations this entry was sent, and only those, after marking it removed', async () => {
+    const meta = (waitlistEntryId?: string) => ({
+      name: 'Ada',
+      role: 'USER',
+      invitedBy: 'admin-1',
+      invitedAt: '2026-11-01T00:00:00.000Z',
+      ...(waitlistEntryId ? { waitlistEntryId } : {}),
+    });
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue({
+      id: 'e1',
+      email: 'ada@example.com',
+      removedAt: NOW,
+    });
+    mockPrisma.verification.findMany.mockResolvedValue([
+      { id: 'inv-own', metadata: meta('e1') },
+      { id: 'inv-users', metadata: meta() },
+      { id: 'inv-other-list', metadata: meta('e2') },
+    ]);
+    mockPrisma.verification.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await setWaitlistEntryRemoved('e1', true, NOW);
+
+    expect(mockPrisma.verification.findMany).toHaveBeenCalledWith({
+      where: { identifier: 'invitation:ada@example.com' },
+      select: { id: true, metadata: true },
+    });
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['inv-own'] } },
+    });
+    expect(mockPrisma.waitlistEntry.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.verification.deleteMany.mock.invocationCallOrder[0]
+    );
+    expect(result?.invitationsRevoked).toBe(1);
+  });
+
+  it('revokes on a repeat removal too, so a revoke that failed once is retried', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue({
+      id: 'e1',
+      email: 'ada@example.com',
+      removedAt: NOW,
+    });
+
+    await setWaitlistEntryRemoved('e1', true, NOW);
+
+    expect(mockPrisma.verification.findMany).toHaveBeenCalled();
+  });
+
+  it('revokes nothing on a restore', async () => {
+    mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue({
+      id: 'e1',
+      email: 'ada@example.com',
+      removedAt: null,
+    });
+
+    const result = await setWaitlistEntryRemoved('e1', false, NOW);
+
+    expect(mockPrisma.verification.findMany).not.toHaveBeenCalled();
+    expect(result?.invitationsRevoked).toBe(0);
   });
 
   it('says nothing changed when the entry was already in that state', async () => {
@@ -260,6 +329,7 @@ describe('setWaitlistEntryRemoved', () => {
     await expect(setWaitlistEntryRemoved('e1', true, NOW)).resolves.toEqual({
       entry: { id: 'e1', removedAt: NOW },
       changed: false,
+      invitationsRevoked: 0,
     });
   });
 

@@ -221,7 +221,11 @@ account is linked to the entry. `lib/waitlist/invite.ts`.
 - **One live invitation per address.** Invitations are install-wide and keyed
   by address. The entry's own pending invitation is re-sent (a new link, a new
   `invitedAt`). Anyone else's (Admin → Users → Invite, another org's list) is
-  left alone, and the invite is refused as `invitation_pending`.
+  left alone, and the invite is refused as `invitation_pending`. The check
+  fails closed: an invitation whose metadata cannot be read counts as someone
+  else's, and a failed lookup fails the invite. A re-send deletes only the
+  entry's own invitations by id (`lib/waitlist/invitations.ts`), so an
+  invitation someone else issues for the address meanwhile survives it.
 - **`invitedAt` is stamped under the row lock**, before the invitation is
   written: a conditional update that re-checks every refusal and that
   `invitedAt` is still what was read. A removal, an erasure or a second
@@ -230,6 +234,12 @@ account is linked to the entry. `lib/waitlist/invite.ts`.
   twice. If the invitation cannot be written, `invitedAt` is put back. A
   failed email does not undo the invite: the response says
   `emailStatus: 'failed'`, and Resend sends another.
+- **Removing an entry revokes its invitation.** `PATCH { removed: true }`
+  deletes every invitation the entry was sent, so a person taken off the list
+  cannot sign up with a link sent earlier; restoring sends nothing. A removal
+  that lands while an invitation is being written is caught by the invite,
+  which reads the entry again once the invitation exists and revokes it. A
+  removed entry is never linked to an account.
 - **No link in the response.** Like an org's own invitations
   (`POST /api/v1/orgs/:id/invitations`), the link reaches the person by email
   only.
@@ -245,8 +255,11 @@ account is linked to the entry. `lib/waitlist/invite.ts`.
   `WAITLIST_INVITE_WAVE_MAX` (50) a wave, and its own limiter,
   `waitlistInviteWaveLimiter` (5 waves an hour per admin): `inviteLimiter`
   counts single invitations by IP and would stop a wave a tenth of the way.
-- **Logged and audited by entry id**, never the address
-  (`waitlist_entry.invite`, `waitlist_entry.reinvite`, `waitlist.invite_wave`).
+- **Logged and audited by entry id**, never the address, by the waitlist's
+  own code (`waitlist_entry.invite`, `waitlist_entry.reinvite`,
+  `waitlist.invite_wave`). The platform's invitation delivery, shared by every
+  invite route, logs the address it issues to and emails, as it does for an
+  invite from Admin → Users.
   The platform's invitation helpers log the address themselves, as they do
   for every invite route.
 
@@ -306,7 +319,7 @@ orgs until `db:tenancy:enable` ran again.
   [Waitlist-only receipts](../privacy/data-erasure.md#waitlist-only-receipts).
 - **Removing is not erasing.** Remove (`PATCH { removed: true }`) keeps the
   row — `removedAt`, never a delete — so a re-join stays removed and Art. 15
-  still discloses it. Erase deletes it.
+  still discloses it, and revokes any invitation it was sent. Erase deletes it.
 - **`userId` cascades** with the account: an entry is personal data.
 - **Org export** includes both tables.
 - **Your privacy notice** must cover what the form collects, that an

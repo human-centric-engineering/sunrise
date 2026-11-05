@@ -14,9 +14,12 @@
  * Refuses 404 for an entry not in this org; 409 `{ reason }` for a removed,
  * joined, unconfirmed or flagged entry, an address with an account, someone
  * else's pending invitation, or an entry that changed meanwhile; 429 from
- * `inviteLimiter` on the admin's IP, the bound every invite route shares.
+ * `inviteLimiter` on the admin's IP, the bound every single-invitation route
+ * shares (a wave has its own, `waitlistInviteWaveLimiter`).
  *
- * The entry id and the outcome are logged and audited, never the address.
+ * This route logs and audits the entry id and the outcome, never the address.
+ * The platform's invitation delivery, which every invite route shares, logs
+ * the address it issues to and emails.
  *
  * Authentication: org admin (org-tier). 404 while the app has no waitlist.
  */
@@ -41,7 +44,7 @@ export const POST = withAdminAuth<Params>(
     const log = await getRouteLogger(request);
 
     // First, before any read: the email-bombing bound the platform's invite
-    // route applies, and the one refusal that costs no database round trip.
+    // routes apply, and the one refusal that costs no database round trip.
     const clientIp = getClientIP(request);
     const limit = inviteLimiter.check(clientIp);
     if (!limit.success) {

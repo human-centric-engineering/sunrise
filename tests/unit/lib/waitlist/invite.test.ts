@@ -17,24 +17,21 @@ import {
   type ResolvedWaitlistConfig,
 } from '@/lib/waitlist/config';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import type { InvitationRecord } from '@/lib/utils/invitation-token';
 
-const { mockPrisma, mockDeliver, mockGetValidInvitation, mockRequireOrgId, mockLogger } =
-  vi.hoisted(() => ({
-    mockPrisma: {
-      waitlistEntry: { findUnique: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
-      user: { findUnique: vi.fn() },
-    },
-    mockDeliver: vi.fn(),
-    mockGetValidInvitation: vi.fn(),
-    mockRequireOrgId: vi.fn(),
-    mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-  }));
+const { mockPrisma, mockDeliver, mockRequireOrgId, mockLogger } = vi.hoisted(() => ({
+  mockPrisma: {
+    waitlistEntry: { findUnique: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+    user: { findUnique: vi.fn() },
+    verification: { findMany: vi.fn(), deleteMany: vi.fn() },
+  },
+  mockDeliver: vi.fn(),
+  mockRequireOrgId: vi.fn(),
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 vi.mock('@/lib/auth/invitation-delivery', () => ({ deliverInvitation: mockDeliver }));
-vi.mock('@/lib/utils/invitation-token', () => ({ getValidInvitation: mockGetValidInvitation }));
 vi.mock('@/lib/tenancy/context', () => ({ requireOrgId: mockRequireOrgId }));
 
 import { inviteWaitlistEntry, inviteWaitlistWave, selectWaveEntries } from '@/lib/waitlist/invite';
@@ -62,9 +59,10 @@ function row(over: Record<string, unknown> = {}) {
   };
 }
 
-function pendingInvitation(waitlistEntryId?: string): InvitationRecord {
+/** A stored invitation row, as `prisma.verification` holds it. */
+function invitationRow(id: string, waitlistEntryId?: string) {
   return {
-    email: 'ada@example.com',
+    id,
     metadata: {
       name: 'Ada',
       role: 'USER',
@@ -72,8 +70,6 @@ function pendingInvitation(waitlistEntryId?: string): InvitationRecord {
       invitedAt: '2026-11-02T00:00:00.000Z',
       ...(waitlistEntryId ? { waitlistEntryId } : {}),
     },
-    expiresAt: EXPIRES,
-    createdAt: new Date(),
   };
 }
 
@@ -87,7 +83,8 @@ beforeEach(() => {
   mockPrisma.waitlistEntry.findUnique.mockResolvedValue(row());
   mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.user.findUnique.mockResolvedValue(null);
-  mockGetValidInvitation.mockResolvedValue(null);
+  mockPrisma.verification.findMany.mockResolvedValue([]);
+  mockPrisma.verification.deleteMany.mockResolvedValue({ count: 0 });
   mockDeliver.mockResolvedValue({
     link: 'http://localhost/accept-invite?token=t',
     expiresAt: EXPIRES,
@@ -140,8 +137,17 @@ describe('inviteWaitlistEntry — refusals', () => {
     expect(mockDeliver).not.toHaveBeenCalled();
   });
 
+  it('looks up the unexpired invitations for the address', async () => {
+    await invite();
+
+    expect(mockPrisma.verification.findMany).toHaveBeenCalledWith({
+      where: { identifier: 'invitation:ada@example.com', expiresAt: { gt: NOW } },
+      select: { id: true, metadata: true },
+    });
+  });
+
   it('refuses invitation_pending when the pending invitation names another entry', async () => {
-    mockGetValidInvitation.mockResolvedValue(pendingInvitation('some-other-entry'));
+    mockPrisma.verification.findMany.mockResolvedValue([invitationRow('inv-x', 'other-entry')]);
 
     expect(await invite()).toEqual({ outcome: 'refused', reason: 'invitation_pending' });
     expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
@@ -149,9 +155,36 @@ describe('inviteWaitlistEntry — refusals', () => {
   });
 
   it('refuses invitation_pending when the pending invitation names no entry (Admin → Users)', async () => {
-    mockGetValidInvitation.mockResolvedValue(pendingInvitation());
+    mockPrisma.verification.findMany.mockResolvedValue([invitationRow('inv-x')]);
 
     expect(await invite()).toEqual({ outcome: 'refused', reason: 'invitation_pending' });
+    expect(mockDeliver).not.toHaveBeenCalled();
+  });
+
+  it('refuses invitation_pending when a pending invitation cannot be read, rather than issuing beside it', async () => {
+    mockPrisma.verification.findMany.mockResolvedValue([{ id: 'inv-x', metadata: { junk: 1 } }]);
+
+    expect(await invite()).toEqual({ outcome: 'refused', reason: 'invitation_pending' });
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockDeliver).not.toHaveBeenCalled();
+  });
+
+  it("refuses invitation_pending when someone else's invitation sits beside this entry's own", async () => {
+    mockPrisma.verification.findMany.mockResolvedValue([
+      invitationRow('inv-own', 'entry-1'),
+      invitationRow('inv-x'),
+    ]);
+
+    expect(await invite()).toEqual({ outcome: 'refused', reason: 'invitation_pending' });
+    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('fails, without stamping or sending, when the invitation lookup fails', async () => {
+    const failure = new Error('db down');
+    mockPrisma.verification.findMany.mockRejectedValue(failure);
+
+    await expect(invite()).rejects.toBe(failure);
+    expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
     expect(mockDeliver).not.toHaveBeenCalled();
   });
 
@@ -273,13 +306,36 @@ describe('inviteWaitlistEntry — the invitation', () => {
   });
 
   it('re-sends, with a fresh invitedAt, when the pending invitation carries this entry', async () => {
-    mockGetValidInvitation.mockResolvedValue(pendingInvitation('entry-1'));
+    mockPrisma.verification.findMany.mockResolvedValue([invitationRow('inv-own', 'entry-1')]);
 
     const result = await invite();
 
-    expect((mockDeliver.mock.calls[0][0] as { isResend: boolean }).isResend).toBe(true);
     expect(result).toMatchObject({ outcome: 'resent' });
     if (result.outcome === 'resent') expect(result.entry.invitedAt).toEqual(NOW);
+  });
+
+  it('re-sends by deleting only its own invitations by id, never every one for the address', async () => {
+    mockPrisma.verification.findMany.mockResolvedValue([
+      invitationRow('inv-own-1', 'entry-1'),
+      invitationRow('inv-own-2', 'entry-1'),
+    ]);
+
+    await invite();
+
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['inv-own-1', 'inv-own-2'] } },
+    });
+    // Not deliverInvitation's re-send, which deletes every invitation for the address.
+    expect((mockDeliver.mock.calls[0][0] as { isResend: boolean }).isResend).toBe(false);
+    expect(mockPrisma.verification.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeliver.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('deletes nothing on a first invite', async () => {
+    await invite();
+
+    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 
   it('returns the admin view of the entry with invitedAt now, and without userId', async () => {
@@ -304,6 +360,53 @@ describe('inviteWaitlistEntry — the invitation', () => {
     expect(result).toMatchObject({ outcome: 'invited', emailStatus: 'failed' });
     // The invitation exists, so the stamp is kept.
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('inviteWaitlistEntry — removed while inviting', () => {
+  it('revokes the new invitation and refuses changed when the entry was removed after the stamp', async () => {
+    mockPrisma.waitlistEntry.findUnique
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce({ removedAt: NOW });
+    mockPrisma.verification.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([invitationRow('inv-new', 'entry-1'), invitationRow('inv-x')]);
+    mockPrisma.verification.deleteMany.mockResolvedValue({ count: 1 });
+
+    expect(await invite()).toEqual({ outcome: 'refused', reason: 'changed' });
+    expect(mockDeliver).toHaveBeenCalledTimes(1);
+    // Read again only after the invitation exists.
+    expect(mockPrisma.waitlistEntry.findUnique.mock.invocationCallOrder[1]).toBeGreaterThan(
+      mockDeliver.mock.invocationCallOrder[0]
+    );
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['inv-new'] } },
+    });
+  });
+
+  it('revokes and refuses changed when the entry was erased after the stamp', async () => {
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValueOnce(row()).mockResolvedValueOnce(null);
+    mockPrisma.verification.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([invitationRow('inv-new', 'entry-1')]);
+
+    expect(await invite()).toEqual({ outcome: 'refused', reason: 'changed' });
+    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['inv-new'] } },
+    });
+  });
+
+  it('reports the invite, and logs, when the re-read fails', async () => {
+    const failure = new Error('db blip');
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValueOnce(row()).mockRejectedValueOnce(failure);
+
+    expect(await invite()).toMatchObject({ outcome: 'invited' });
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Waitlist invite: could not re-check the entry after inviting',
+      failure,
+      { entryId: 'entry-1' }
+    );
+    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -494,8 +597,11 @@ describe('inviteWaitlistWave', () => {
     mockPrisma.waitlistEntry.findUnique.mockImplementation(
       async ({ where }: { where: { id: string } }) => rows[where.id]
     );
-    mockGetValidInvitation.mockImplementation(async (email: string) =>
-      email === 'resend@example.com' ? pendingInvitation('resend') : null
+    mockPrisma.verification.findMany.mockImplementation(
+      async ({ where }: { where: { identifier: string } }) =>
+        where.identifier === 'invitation:resend@example.com'
+          ? [invitationRow('inv-r', 'resend')]
+          : []
     );
     mockDeliver.mockImplementation(async ({ email }: { email: string }) => ({
       link: 'l',

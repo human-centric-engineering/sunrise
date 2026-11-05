@@ -78,6 +78,7 @@ import {
   WAITLIST_INVITE_WAVE_MAX,
   type WaitlistFieldShape,
 } from '@/lib/validations/waitlist';
+import { entryStateRefusal } from '@/lib/waitlist/invite-refusals';
 
 /** One entry as the list endpoint returns it (dates as strings). */
 export interface WaitlistEntryRow {
@@ -161,14 +162,13 @@ function answers(entry: WaitlistEntryRow, fields: readonly WaitlistFieldShape[])
   });
 }
 
-/** Whether the server would invite this entry: confirmed, on the list, unflagged, not signed up. */
+/**
+ * Whether the server would invite this entry, by its own state — the server's
+ * rule (`entryStateRefusal()`), not a copy. What only the server can see (an
+ * account or someone else's invitation for the address) is its refusal.
+ */
 export function canInvite(entry: WaitlistEntryRow): boolean {
-  return (
-    entry.confirmedAt !== null &&
-    entry.removedAt === null &&
-    entry.joinedAt === null &&
-    entry.flaggedReason === null
-  );
+  return entryStateRefusal(entry) === null;
 }
 
 /** What a single invite did, for the line above the table. */

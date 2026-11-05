@@ -20,7 +20,11 @@
  * **A pending invitation.** Invitations are install-wide and keyed by address,
  * one live per address. One this entry was sent is re-sent (a new link, a new
  * `invitedAt`); any other — from Admin → Users, or another org's list — is
- * someone else's and is left alone: the invite is refused.
+ * someone else's and is left alone: the invite is refused. The check fails
+ * closed (`liveInvitationsFor()`): an invitation that cannot be read counts
+ * as someone else's, and a failed lookup fails the invite. A re-send deletes
+ * only this entry's own invitations by id, never every invitation for the
+ * address, so one issued by someone else meanwhile survives it.
  *
  * **`invitedAt` is stamped under the row lock**, before the invitation is
  * written: a conditional update that re-checks every refusal and that
@@ -29,6 +33,11 @@
  * between the read and the write makes it match nothing, and this invite is
  * refused rather than sent beside "Removed" or sent twice. A failure to issue
  * the invitation puts the previous `invitedAt` back.
+ *
+ * **A removal that lands while the invitation is being written** finds no
+ * invitation to revoke, so the entry is read again once the invitation
+ * exists, and a removed or erased entry's invitation is revoked then. Between
+ * that and the removal's own revoke, one of the two always sees the other.
  *
  * Everything here runs in the admin's org (`runAsOrg`, entered by the guard).
  *
@@ -44,23 +53,15 @@ import { deliverInvitation, type DeliveredInvitation } from '@/lib/auth/invitati
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { requireOrgId } from '@/lib/tenancy/context';
-import { getValidInvitation, type InvitationMetadata } from '@/lib/utils/invitation-token';
+import type { InvitationMetadata } from '@/lib/utils/invitation-token';
 import type { ResolvedWaitlistConfig } from '@/lib/waitlist/config';
 import { WAITLIST_ENTRY_SELECT, type AdminWaitlistEntry } from '@/lib/waitlist/admin';
+import { liveInvitationsFor, revokeEntryInvitations } from '@/lib/waitlist/invitations';
+import { entryStateRefusal, type WaitlistInviteRefusal } from '@/lib/waitlist/invite-refusals';
 import { firstNameOf } from '@/lib/waitlist/mail';
 import type { WaitlistInviteWaveInput } from '@/lib/validations/waitlist';
 
-/** Why an entry was not invited. Each is a 409 on the single route, a row outcome on a wave. */
-export type WaitlistInviteRefusal =
-  | 'not_found'
-  | 'removed'
-  | 'joined'
-  | 'unconfirmed'
-  | 'flagged'
-  | 'account_exists'
-  | 'invitation_pending'
-  /** The entry changed between the read and the stamp — removed, erased, or invited by someone else. */
-  | 'changed';
+export type { WaitlistInviteRefusal };
 
 export type WaitlistInviteResult =
   | {
@@ -76,7 +77,7 @@ export interface WaitlistInviter {
   name: string | null;
 }
 
-/** The entries an invite may be sent to, as a `where`: the refusals that are the entry's own state. */
+/** The entries an invite may be sent to, as a `where`: `entryStateRefusal()` as a query. */
 const INVITABLE: Prisma.WaitlistEntryWhereInput = {
   removedAt: null,
   joinedAt: null,
@@ -84,21 +85,6 @@ const INVITABLE: Prisma.WaitlistEntryWhereInput = {
   confirmedAt: { not: null },
   flaggedReason: null,
 };
-
-/** The refusal an entry's own state calls for, or null when it may be invited. */
-function stateRefusal(entry: {
-  removedAt: Date | null;
-  joinedAt: Date | null;
-  userId: string | null;
-  confirmedAt: Date | null;
-  flaggedReason: string | null;
-}): WaitlistInviteRefusal | null {
-  if (entry.removedAt) return 'removed';
-  if (entry.joinedAt || entry.userId) return 'joined';
-  if (!entry.confirmedAt) return 'unconfirmed';
-  if (entry.flaggedReason) return 'flagged';
-  return null;
-}
 
 /**
  * The name the account is created with: the name they gave, else the part of
@@ -130,7 +116,7 @@ export async function inviteWaitlistEntry(input: {
     select: { ...WAITLIST_ENTRY_SELECT, userId: true },
   });
   if (!row) return { outcome: 'refused', reason: 'not_found' };
-  const refusal = stateRefusal(row);
+  const refusal = entryStateRefusal(row);
   if (refusal) return { outcome: 'refused', reason: refusal };
 
   // Someone let in another way — Admin → Users → Invite, or a public sign-up
@@ -141,11 +127,9 @@ export async function inviteWaitlistEntry(input: {
   });
   if (account) return { outcome: 'refused', reason: 'account_exists' };
 
-  const pending = await getValidInvitation(row.email);
-  if (pending && pending.metadata.waitlistEntryId !== row.id) {
-    return { outcome: 'refused', reason: 'invitation_pending' };
-  }
-  const isResend = pending !== null;
+  const live = await liveInvitationsFor(row.email, row.id, now);
+  if (live.others > 0) return { outcome: 'refused', reason: 'invitation_pending' };
+  const isResend = live.ours.length > 0;
 
   // The stamp is the lock: every refusal again, and `invitedAt` as read, so
   // only one of two concurrent invites of this entry gets past here.
@@ -168,6 +152,12 @@ export async function inviteWaitlistEntry(input: {
 
   let delivered: DeliveredInvitation;
   try {
+    // A re-send replaces this entry's own invitations, by id. Not
+    // `deliverInvitation({ isResend: true })`, which deletes every invitation
+    // for the address — including one someone else issued since the check.
+    if (isResend) {
+      await prisma.verification.deleteMany({ where: { id: { in: live.ours } } });
+    }
     delivered = await deliverInvitation({
       email: row.email,
       // The email greets them only by something that looks like a first name
@@ -175,7 +165,7 @@ export async function inviteWaitlistEntry(input: {
       // arrive as a link from the real sender.
       name: firstNameOf(row.name) ?? 'there',
       metadata,
-      isResend,
+      isResend: false,
       inviterName: inviter.name || 'The team',
       log,
     });
@@ -193,12 +183,42 @@ export async function inviteWaitlistEntry(input: {
     throw error;
   }
 
+  if (await removedSinceStamp(row.id, row.email, log)) {
+    return { outcome: 'refused', reason: 'changed' };
+  }
+
   return {
     outcome: isResend ? 'resent' : 'invited',
     entry: { ...pick(row), invitedAt: now },
     emailStatus: delivered.emailStatus,
     expiresAt: delivered.expiresAt,
   };
+}
+
+/**
+ * Whether the entry was removed or erased while its invitation was being
+ * written; if so the invitation is revoked, so its link never works. A failed
+ * read is logged and treated as not removed: the invitation went out to an
+ * entry that was invitable when it was stamped, and a removal after this
+ * point revokes it itself.
+ */
+async function removedSinceStamp(entryId: string, email: string, log: Logger): Promise<boolean> {
+  try {
+    const current = await prisma.waitlistEntry.findUnique({
+      where: { id: entryId },
+      select: { removedAt: true },
+    });
+    if (current && !current.removedAt) return false;
+    const revoked = await revokeEntryInvitations(email, entryId);
+    log.info('Waitlist invite: entry removed while inviting; invitation revoked', {
+      entryId,
+      revoked,
+    });
+    return true;
+  } catch (error) {
+    log.error('Waitlist invite: could not re-check the entry after inviting', error, { entryId });
+    return false;
+  }
 }
 
 /** The admin's view of the row, without the `userId` read for the refusal. */

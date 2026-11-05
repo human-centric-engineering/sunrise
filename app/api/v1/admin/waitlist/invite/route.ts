@@ -16,9 +16,13 @@
  *
  * Its own cap: `waitlistInviteWaveLimiter`, 5 waves an hour per admin. Not
  * `inviteLimiter`, which counts single invitations per IP and would stop a
- * wave a tenth of the way through.
+ * wave a tenth of the way through. A wave is counted only once its body is
+ * valid and it chose someone: a malformed request or a filter that matches
+ * nobody does not use one up.
  *
- * Counts and ids are logged and audited, never an address.
+ * This route logs and audits counts and ids, never an address. The platform's
+ * invitation delivery, which every invite route shares, logs the address it
+ * issues to and emails.
  *
  * Authentication: org admin (org-tier). 404 while the app has no waitlist.
  */
@@ -39,14 +43,18 @@ export const POST = withAdminAuth(
     const config = requireWaitlistConfig();
     const log = await getRouteLogger(request);
 
-    const limit = waitlistInviteWaveLimiter.check(`waitlist-wave:user:${session.user.id}`);
-    if (!limit.success) {
-      log.warn('Waitlist invite wave rate limit exceeded', { adminId: session.user.id });
-      return createRateLimitResponse(limit);
-    }
-
     const body = await validateRequestBody(request, waitlistInviteWaveSchema);
     const ids = await selectWaveEntries(config, body);
+
+    // Spent only on a wave that will send something.
+    if (ids.length > 0) {
+      const limit = waitlistInviteWaveLimiter.check(`waitlist-wave:user:${session.user.id}`);
+      if (!limit.success) {
+        log.warn('Waitlist invite wave rate limit exceeded', { adminId: session.user.id });
+        return createRateLimitResponse(limit);
+      }
+    }
+
     const result = await inviteWaitlistWave({
       ids,
       inviter: { id: session.user.id, name: session.user.name },

@@ -51,11 +51,11 @@ describe('linkWaitlistEntryToAccount', () => {
     expect(mockPrisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
   });
 
-  it('matches only an unlinked entry with this id and this (normalised) address, and sets userId and joinedAt', async () => {
+  it('matches only an unlinked, unremoved entry with this id and this (normalised) address, and sets userId and joinedAt', async () => {
     await linkWaitlistEntryToAccount(INPUT);
 
     expect(mockPrisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
-      where: { id: 'entry-1', email: 'ada@example.com', userId: null },
+      where: { id: 'entry-1', email: 'ada@example.com', userId: null, removedAt: null },
       data: { userId: 'user-1', joinedAt: NOW },
     });
   });

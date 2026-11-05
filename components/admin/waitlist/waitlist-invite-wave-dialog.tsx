@@ -36,19 +36,14 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
-import { WAITLIST_INVITE_REFUSAL_MESSAGES } from '@/lib/waitlist/invite-refusals';
+import {
+  WAITLIST_INVITE_REFUSAL_MESSAGES,
+  WAITLIST_INVITE_REFUSALS,
+} from '@/lib/waitlist/invite-refusals';
 import { WAITLIST_INVITE_WAVE_MAX, type WaitlistFieldShape } from '@/lib/validations/waitlist';
 
-const refusalSchema = z.enum([
-  'not_found',
-  'removed',
-  'joined',
-  'unconfirmed',
-  'flagged',
-  'account_exists',
-  'invitation_pending',
-  'changed',
-]);
+/** The server's own list, so a reason added there is read here without an edit. */
+const refusalSchema = z.enum(WAITLIST_INVITE_REFUSALS);
 
 /** The wave route's answer, checked rather than assumed. */
 export const waveResultSchema = z.object({
