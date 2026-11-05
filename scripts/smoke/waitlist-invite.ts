@@ -27,6 +27,7 @@
  */
 
 import { auth } from '@/lib/auth/config';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { runInvitedSignup } from '@/lib/auth/signup-mode';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -169,7 +170,7 @@ async function main(): Promise<void> {
     const metadata = parseInvitationMetadata(rows[0]?.metadata);
     check(metadata?.waitlistEntryId === invitedId, 'the invitation carries the entry id');
     check(
-      metadata?.role === 'USER' && metadata.orgId === undefined,
+      metadata?.role === DEFAULT_USER_ROLE && metadata.orgId === undefined,
       'as USER, into the install org'
     );
     const stamped = await inOrg(() =>

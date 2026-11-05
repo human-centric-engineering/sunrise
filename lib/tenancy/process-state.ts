@@ -315,6 +315,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'passwordResetLimiter',
       'contactLimiter',
       'waitlistLimiter',
+      'waitlistInviteWaveLimiter',
       'verificationEmailLimiter',
       'adminLimiter',
       'orchestrationAdminLimiter',
