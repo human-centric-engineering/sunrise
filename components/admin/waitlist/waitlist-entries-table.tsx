@@ -382,7 +382,7 @@ export function WaitlistEntriesTable({
       onChanged?.();
       await load();
     } catch (err) {
-      rowSave.report(err);
+      rowSave.report(err, 'Could not send the invitations');
     } finally {
       setInvitingSelected(false);
     }
