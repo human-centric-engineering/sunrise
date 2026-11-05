@@ -72,7 +72,7 @@ release process.
   `getCSPConfig()` and the header for dev and prod. A fork that has filled
   `appFrameSrc` takes the new exports without a merge conflict; keep
   `appFrameSrc` last in the file.
-- **Waitlist (§125, in progress — joining and the admin page)**: a new seam,
+- **Waitlist (§125)**: a new seam,
   `lib/app/waitlist-config.ts` → `waitlistConfig` (type `WaitlistConfig` in
   `lib/waitlist/config.ts`), ships `null`: no waitlist, and the new routes
   answer 404. Filled in, it declares the form's extra fields, named lists, the
@@ -95,7 +95,7 @@ release process.
   (remove or restore; erase) and `PATCH /api/v1/admin/waitlist/lists/:key`
   (open or close); a per-org maintenance job, `waitlistRetention`, appended to
   the tick's `backgroundTasks`; and `eraseWaitlistEntry()` now also deletes
-  the org's pending invitation for the address. Invites follow. Guide:
+  the org's pending invitation for the address. Guide:
   `.context/waitlist/overview.md`.
 
 - **Waitlist confirmation and leaving (§125 t-977)**: a join now emails the
@@ -120,6 +120,25 @@ release process.
   `'waitlist-link'`. Leave works with no waitlist config, so dropping the
   config never strands the links in people's inboxes, and `waitlistRetention`
   still prunes the rows a dropped config left, on the default windows.
+
+- **Waitlist invites, and linking the new account (§125 t-978)**: two new
+  org-tier admin routes. `POST /api/v1/admin/waitlist/:id/invite` invites one
+  entry (re-sends when its own invitation is pending; `inviteLimiter`).
+  `POST /api/v1/admin/waitlist/invite` invites a wave — the ticked ids, the
+  next N by join date, or N at random, narrowed to a list and/or one answer —
+  at most `WAITLIST_INVITE_WAVE_MAX` (50), reporting every row, under a new
+  per-flow sub-cap `waitlistInviteWaveLimiter` (`RATE_LIMIT_WAITLIST_INVITE_WAVE`,
+  5/hour per admin). Both invite as `USER` into the entry's org through
+  `deliverInvitation()`, and refuse removed, joined, unconfirmed and flagged
+  entries, an address with an account, and another invitation pending for the
+  address. `InvitationMetadata` gains an optional `waitlistEntryId`, and
+  `RedeemedInvitation` (the user-created seam's `ctx.invitation`) an optional
+  `waitlistEntryId`: a sign-up that redeems a waitlist invitation, by password
+  or OAuth, sets the entry's `userId` and `joinedAt` before the fork's hooks
+  run. `WaitlistConfig.joinPath` (optional, a path on this site, default `/`):
+  under `SIGNUP_MODE=invite_only` with a waitlist config, the login page
+  points there ("Join the waitlist") where it would otherwise say nothing — a
+  fork carrying its own line in `app/(auth)/login/page.tsx` can drop it.
 
 - **Private files and downloads on Vercel Blob** (#1012, #1155): the Vercel
   Blob provider can now read objects back (`download()`, through the SDK's

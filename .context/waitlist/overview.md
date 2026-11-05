@@ -1,12 +1,7 @@
 # Waitlist
 
-> **In progress (§125).** Joining (t-974), the erasure receipt (t-975), the
-> admin page (t-976), confirming the address and the leave link (t-977) are
-> built. Invites and linking the new account (t-978) are not yet, so there is
-> no way to invite anyone from the list.
-
 A pre-launch waitlist a fork switches on: Sunrise owns the table, the routes,
-the privacy wiring, the admin page and (soon) invites; the fork owns its
+the privacy wiring, the admin page and invites; the fork owns its
 fields, copy and look. The binding design is the
 [Sunrise Waitlist spec](https://claude.ai/artifact/NVEu3CqpBAXskCoBQnBExN).
 
@@ -52,6 +47,7 @@ export const waitlistConfig: WaitlistConfig | null = {
       ? { action: 'flag', reason: 'disposable-domain' }
       : { action: 'accept' },
   retention: { unconfirmedDays: 30 }, // the default; your privacy notice says the same
+  joinPath: '/#waitlist', // where the form is; the login page points here (default '/')
 };
 ```
 
@@ -91,14 +87,16 @@ Half a waitlist is worse than none.
 Admin routes — org-tier (`withAdminAuth({ tier: 'org' })`, listed in
 `ORG_TIER_ADMIN_ROUTES`), so an org's OWNER or ADMIN works their own org's list:
 
-| Route                                     | What                                                                                                       |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `GET /api/v1/admin/waitlist`              | One page: `page`, `limit` (≤100), `sortBy` (`createdAt` / `email` / `confirmedAt`), `sortOrder`, filters ↓ |
-| `GET /api/v1/admin/waitlist/counts`       | Per list: open or closed, counts by state, confirmed by source; and the declared fields                    |
-| `GET /api/v1/admin/waitlist/export`       | CSV with the same filters. `exportLimiter` keyed `export:waitlist:user:<id>`; BOM; `no-store`; 10,000 rows |
-| `PATCH /api/v1/admin/waitlist/:id`        | `{ removed: boolean }` — the state to reach                                                                |
-| `DELETE /api/v1/admin/waitlist/:id`       | Erase: the row, a waitlist receipt, and this org's pending invitation for the address                      |
-| `PATCH /api/v1/admin/waitlist/lists/:key` | `{ open: boolean }` for a declared list — records who and when                                             |
+| Route                                     | What                                                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/admin/waitlist`              | One page: `page`, `limit` (≤100), `sortBy` (`createdAt` / `email` / `confirmedAt`), `sortOrder`, filters ↓  |
+| `GET /api/v1/admin/waitlist/counts`       | Per list: open or closed, counts by state, confirmed by source; and the declared fields                     |
+| `GET /api/v1/admin/waitlist/export`       | CSV with the same filters. `exportLimiter` keyed `export:waitlist:user:<id>`; BOM; `no-store`; 10,000 rows  |
+| `PATCH /api/v1/admin/waitlist/:id`        | `{ removed: boolean }` — the state to reach                                                                 |
+| `DELETE /api/v1/admin/waitlist/:id`       | Erase: the row, a waitlist receipt, and this org's pending invitation for the address                       |
+| `PATCH /api/v1/admin/waitlist/lists/:key` | `{ open: boolean }` for a declared list — records who and when                                              |
+| `POST /api/v1/admin/waitlist/:id/invite`  | Invite one entry, or re-send its own pending invitation. `inviteLimiter`. See [Invites](#invites)           |
+| `POST /api/v1/admin/waitlist/invite`      | Invite a wave: ticked `ids`, the `next` N, or a random `sample` of N. Up to 50; `waitlistInviteWaveLimiter` |
 
 The filters: `list`, `q` (the address as typed, the name, or any declared
 answer — a JSON-path text match), `includeUnconfirmed`, `includeRemoved`,
@@ -205,6 +203,79 @@ Both links name an entry, not a person, so their routes read the entry's org
 under `runAsCredentialLookup` and enter it as `waitlist-link`
 (`lib/waitlist/entry-org.ts`), as the approval-token routes do.
 
+## Invites
+
+An invitation from the list is an ordinary Sunrise invitation, issued and
+emailed by `deliverInvitation()` (`lib/auth/invitation-delivery.ts`) and
+redeemed by accept-invite or Google sign-in like any other. It also carries
+the entry's id (`InvitationMetadata.waitlistEntryId`), which is how the
+account is linked to the entry. `lib/waitlist/invite.ts`.
+
+- **Who can be invited**: a confirmed entry, still on the list, not flagged,
+  not signed up, whose address has no account. Anything else is refused with
+  its reason (`409 { reason }` for one entry, a refused row in a wave):
+  `removed` (restore first), `joined`, `unconfirmed`, `flagged`,
+  `account_exists`, `invitation_pending`, or `changed`.
+- **Always `USER`, always into the entry's org.** Nobody is made an admin, or
+  put in another org, from a waitlist.
+- **One live invitation per address.** Invitations are install-wide and keyed
+  by address. The entry's own pending invitation is re-sent (a new link, a new
+  `invitedAt`). Anyone else's (Admin → Users → Invite, another org's list) is
+  left alone, and the invite is refused as `invitation_pending`.
+- **`invitedAt` is stamped under the row lock**, before the invitation is
+  written: a conditional update that re-checks every refusal and that
+  `invitedAt` is still what was read. A removal, an erasure or a second
+  admin's invite landing in between makes it match nothing, and this invite
+  is refused as `changed` instead of being sent beside "Removed" or sent
+  twice. If the invitation cannot be written, `invitedAt` is put back. A
+  failed email does not undo the invite: the response says
+  `emailStatus: 'failed'`, and Resend sends another.
+- **No link in the response.** Like an org's own invitations
+  (`POST /api/v1/orgs/:id/invitations`), the link reaches the person by email
+  only.
+- **The email greets them by a first name only if it looks like one**
+  (`firstNameOf()`), else "Hi there". The account is created with the name
+  they gave, or the part of the address before the `@`.
+- **Waves** (decision 7): the rows the admin ticked (`mode: 'ids'`), the next
+  N by join date (`'next'`), or N at random (`'sample'`), the last two drawn
+  from entries that can be invited and have not been, narrowed to one list
+  and/or one exact answer (`answer: { field, value }`). Each entry is invited
+  as the single route would, in turn, and the answer reports every row:
+  `{ selected, invited, refused, failed, emailNotSent, rows }`. At most
+  `WAITLIST_INVITE_WAVE_MAX` (50) a wave, and its own limiter,
+  `waitlistInviteWaveLimiter` (5 waves an hour per admin): `inviteLimiter`
+  counts single invitations by IP and would stop a wave a tenth of the way.
+- **Logged and audited by entry id**, never the address
+  (`waitlist_entry.invite`, `waitlist_entry.reinvite`, `waitlist.invite_wave`).
+  The platform's invitation helpers log the address themselves, as they do
+  for every invite route.
+
+### Linking the account
+
+The sign-up that redeems a waitlist invitation links the entry: `userId` and
+`joinedAt` (`linkWaitlistEntryToAccount()`, `lib/waitlist/link.ts`). It runs
+in Sunrise's own after-hook (`userCreateAfterHook`, `lib/auth/config.ts`),
+before the fork's user-created hooks, on the password and the OAuth path. It
+is keyed by the id the redeemed invitation carried (`RedeemedInvitation`,
+which also hands `waitlistEntryId` to a fork's hook), never by matching the
+address, and runs in the entry's org. The address is a guard, not the key: an
+entry whose address differs, or that is already linked, erased since, or in a
+suspended org is left, and a warning is logged. **A sign-up with no waitlist
+invitation touches no entry**, including one for an address that is on the
+list: that person signed up some other way, and the entry stays as it was.
+
+A linked entry counts as signed up, is never invited again, and is not pruned
+by retention; it goes with the account (`userId` cascades).
+
+### The login page
+
+Under `SIGNUP_MODE=invite_only` the login page hides its sign-up link and
+`/signup` redirects there. With a waitlist config it also says "Accounts are
+by invitation for now. Join the waitlist to hear when we open", linking to
+`joinPath` (a path on this site; default `/`). Without a config, or when
+sign-up is open, it shows nothing new.
+`components/waitlist/waitlist-login-notice.tsx`.
+
 ## Tenancy
 
 Both tables are tenant-owned. Public joins land in the **install org**, entered
@@ -248,7 +319,9 @@ orgs until `db:tenancy:enable` ran again.
 `/admin/waitlist` (org-tier, in Management). Per list: open/closed with the
 button that changes it, counts by state (confirmed, unconfirmed, flagged,
 invited, signed up, removed) and confirmed by source. Below it, the people:
-search, filters, sortable columns, Remove / Restore (Restore asks first, and
+search, filters, sortable columns, Invite / Resend on every row that can be
+invited, tick boxes to invite several at once, **Invite a wave…** (earliest
+first or at random, with a count, a list and an answer), Remove / Restore (Restore asks first, and
 says how many times a removed address tried to re-join) and Erase (asks
 first). The export button states its row cap. The table drops a stale
 response, never shows "empty" after a failed load, and the server breaks
@@ -306,3 +379,8 @@ test that needs a waitlist `vi.doMock`s `@/lib/app/waitlist-config`, calls
 `__resetWaitlistConfigForTests()`, and restores the pin with another
 `vi.doMock` — never `vi.doUnmock`. See
 `tests/unit/app/api/v1/waitlist/route.test.ts`.
+
+`npm run smoke:waitlist-invite` walks join → confirm → invite → sign up →
+entry linked against the dev database, with the real sign-up and email off,
+and checks two concurrent invites send one and a sign-up with no waitlist
+invitation links nothing.
