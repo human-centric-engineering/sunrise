@@ -169,8 +169,10 @@ person's own.
   a name would otherwise arrive as a link from your real sender. Overrides get
   the filtered `firstName`, never the raw text.
 - **The confirm link** is `/waitlist/confirm?entry=…&token=…`: 32 random bytes,
-  only their hash stored in `Verification` under `waitlist-confirm:<entryId>`
-  (no address), seven days, single use. **A re-send adds a link and never
+  only their hash stored, in `WaitlistConfirmToken` (no address), seven days,
+  single use. The table is tenant-owned and cascades with its entry, so
+  whatever deletes an entry, including a fork's own cleanup, deletes its
+  links. **A re-send adds a link and never
   kills one**: every link sent works until it expires or the address is
   confirmed, so a failed send, or a stranger resubmitting the address, cannot
   break the link already in the inbox. Confirming uses up all of them. A send
@@ -281,7 +283,7 @@ while a link to confirm it still works, and a restored entry is not deleted on
 the next run. An entry from before confirmation existed starts its window at
 the migration that added the column, not at its join: it was never sent a
 link. A removed unconfirmed entry waits out the removed window instead. Every deleted entry's
-confirmation tokens go with it, in the same transaction.
+confirmation tokens cascade with it.
 These deletions are retention, not erasure requests, and write no receipt.
 **The windows hold with no config.** A fork that drops its waitlist config
 keeps the rows it collected, and its notice still promised their limits, so

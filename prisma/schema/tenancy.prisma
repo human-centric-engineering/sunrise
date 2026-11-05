@@ -86,6 +86,7 @@ model Org {
   aiWorkflowExecutionLeaseEvents    AiWorkflowExecutionLeaseEvent[]
   waitlistEntries                   WaitlistEntry[]
   waitlistListStates                WaitlistListState[]
+  waitlistConfirmTokens             WaitlistConfirmToken[]
 
   @@map("org")
 }

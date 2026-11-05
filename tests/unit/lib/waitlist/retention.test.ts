@@ -1,10 +1,10 @@
 /**
  * Unit tests: waitlist retention (§125 t-976, t-977)
  *
- * The cut-offs, the population each prune asks for, the batch cap, and that
- * a deleted entry's confirmation token goes with it. That
- * the deletes leave entries inside their windows alone, against a populated
- * table, is `smoke:waitlist-admin`'s.
+ * The cut-offs, the population each prune asks for, the batch cap and the
+ * time budget. That the deletes leave entries inside their windows alone, and
+ * that a deleted entry's confirmation tokens cascade with it, against a
+ * populated table, is `smoke:waitlist-admin`'s.
  *
  * @see lib/waitlist/retention.ts
  */
@@ -19,8 +19,6 @@ const { mockPrisma, mockConfig } = vi.hoisted(() => {
     mockPrisma: {
       waitlistEntry: { findMany: vi.fn(), findFirst: vi.fn(), deleteMany: vi.fn() },
       waitlistListState: { findMany: vi.fn() },
-      verification: { deleteMany: vi.fn() },
-      $transaction: vi.fn(),
     },
   };
 });
@@ -52,9 +50,8 @@ const NOW = new Date('2026-11-04T12:00:00Z');
 type Where = Record<string, unknown>;
 
 /**
- * What the entry reads return. A read whose where is only `{ id: { in } }` is
- * the in-transaction check of which batch rows survived the delete; every
- * other read is a prune's, answered from `queue` and then `fallback`.
+ * What the prunes' reads return: from `queue`, then `fallback`. `survivors`
+ * are rows the delete's re-check keeps (changed state since the read).
  */
 const db: {
   queue: Array<Array<{ id: string }>>;
@@ -63,22 +60,9 @@ const db: {
   onPruneRead: (() => void) | null;
 } = { queue: [], fallback: [], survivors: [], onPruneRead: null };
 
-function isSurvivorCheck(where: Where): boolean {
-  return Object.keys(where).length === 1 && 'id' in where;
-}
-
 /** The `where` each prune's read asked with, in call order. */
 function wheres(): Where[] {
-  return mockPrisma.waitlistEntry.findMany.mock.calls
-    .map((c) => (c[0] as { where: Where }).where)
-    .filter((w) => !isSurvivorCheck(w));
-}
-
-/** The identifiers each token delete named, in call order. */
-function tokenDeletes(): string[][] {
-  return mockPrisma.verification.deleteMany.mock.calls.map(
-    (c) => (c[0] as { where: { identifier: { in: string[] } } }).where.identifier.in
-  );
+  return mockPrisma.waitlistEntry.findMany.mock.calls.map((c) => (c[0] as { where: Where }).where);
 }
 
 const full = () => Array.from({ length: WAITLIST_RETENTION_BATCH }, (_, i) => ({ id: `r${i}` }));
@@ -90,11 +74,7 @@ beforeEach(() => {
   db.fallback = [];
   db.survivors = [];
   db.onPruneRead = null;
-  mockPrisma.waitlistEntry.findMany.mockImplementation(async (args: { where: Where }) => {
-    if (isSurvivorCheck(args.where)) {
-      const ids = (args.where.id as { in: string[] }).in;
-      return ids.filter((id) => db.survivors.includes(id)).map((id) => ({ id }));
-    }
+  mockPrisma.waitlistEntry.findMany.mockImplementation(async () => {
     db.onPruneRead?.();
     return db.queue.shift() ?? db.fallback;
   });
@@ -105,10 +85,6 @@ beforeEach(() => {
     })
   );
   mockPrisma.waitlistListState.findMany.mockResolvedValue([]);
-  mockPrisma.verification.deleteMany.mockResolvedValue({ count: 0 });
-  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) =>
-    fn(mockPrisma)
-  );
 });
 
 const IDLE = { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
@@ -137,44 +113,13 @@ describe('pruneWaitlistEntries', () => {
     expect(result).toEqual({ ...IDLE, unconfirmedDeleted: 2 });
   });
 
-  it('deletes a deleted entry’s confirmation token with it, in the same transaction', async () => {
-    db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
-
-    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
-
-    expect(tokenDeletes()).toEqual([['waitlist-confirm:u1', 'waitlist-confirm:u2']]);
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
-  });
-
-  it('reads no survivors when the whole batch was deleted', async () => {
-    db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
-
-    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
-
-    const survivorChecks = mockPrisma.waitlistEntry.findMany.mock.calls.filter((c) =>
-      isSurvivorCheck((c[0] as { where: Where }).where)
-    );
-    expect(survivorChecks).toHaveLength(0);
-    expect(tokenDeletes()).toEqual([['waitlist-confirm:u1', 'waitlist-confirm:u2']]);
-  });
-
-  it('keeps the token of an entry the delete’s re-check kept (confirmed since the read)', async () => {
+  it('keeps a row the delete’s re-check finds changed since the read', async () => {
     db.queue = [[{ id: 'u1' }, { id: 'u2' }]];
     db.survivors = ['u2'];
 
     const result = await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
 
     expect(result.unconfirmedDeleted).toBe(1);
-    expect(tokenDeletes()).toEqual([['waitlist-confirm:u1']]);
-  });
-
-  it('deletes no tokens when the batch deleted nothing', async () => {
-    db.queue = [[{ id: 'u1' }]];
-    db.survivors = ['u1'];
-
-    await pruneWaitlistEntries(DEFAULT_WAITLIST_RETENTION, NOW);
-
-    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 
   it('deletes removed entries 90 days after removal by default, never a joined one', async () => {
@@ -192,7 +137,6 @@ describe('pruneWaitlistEntries', () => {
     expect(mockPrisma.waitlistEntry.deleteMany).toHaveBeenCalledWith({
       where: { AND: [removedWhere, { id: { in: ['a', 'b'] } }] },
     });
-    expect(tokenDeletes()).toEqual([['waitlist-confirm:a', 'waitlist-confirm:b']]);
     expect(result).toEqual({ ...IDLE, removedDeleted: 2 });
   });
 

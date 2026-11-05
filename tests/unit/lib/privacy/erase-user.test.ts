@@ -25,8 +25,6 @@ const {
   mockContactDeleteMany,
   mockContactCount,
   mockWaitlistDeleteMany,
-  mockWaitlistFindMany,
-  mockVerificationDeleteMany,
   mockWaitlistCount,
   mockReceiptCreate,
   mockExecuteRaw,
@@ -48,8 +46,6 @@ const {
   const contactDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
   const contactCount = vi.fn().mockResolvedValue(0);
   const waitlistDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
-  const waitlistFindMany = vi.fn().mockResolvedValue([]);
-  const verificationDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
   const waitlistCount = vi.fn().mockResolvedValue(0);
   const receiptCreate = vi.fn().mockResolvedValue({
     id: 'receipt-1',
@@ -83,13 +79,7 @@ const {
     $queryRaw: queryRaw,
     aiAdminAuditLog: { updateMany, createMany: auditCreateMany },
     contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
-    waitlistEntry: {
-      findMany: waitlistFindMany,
-      deleteMany: waitlistDeleteMany,
-      count: waitlistCount,
-    },
-    // The waitlist entries' confirmation tokens (t-977).
-    verification: { deleteMany: verificationDeleteMany },
+    waitlistEntry: { deleteMany: waitlistDeleteMany, count: waitlistCount },
     dataErasureReceipt: { create: receiptCreate },
     aiWebhookSubscription: { findMany: subFindMany, updateMany: subUpdateMany },
     aiWebhookDelivery: {
@@ -126,8 +116,6 @@ const {
     mockContactDeleteMany: contactDeleteMany,
     mockContactCount: contactCount,
     mockWaitlistDeleteMany: waitlistDeleteMany,
-    mockWaitlistFindMany: waitlistFindMany,
-    mockVerificationDeleteMany: verificationDeleteMany,
     mockWaitlistCount: waitlistCount,
     mockReceiptCreate: receiptCreate,
     mockExecuteRaw: executeRaw,
@@ -253,8 +241,6 @@ describe('eraseUser', () => {
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockContactCount.mockResolvedValue(0);
     mockWaitlistDeleteMany.mockResolvedValue({ count: 0 });
-    mockWaitlistFindMany.mockResolvedValue([]);
-    mockVerificationDeleteMany.mockResolvedValue({ count: 0 });
     mockWaitlistCount.mockResolvedValue(0);
     mockDeliveryUpdateMany.mockResolvedValue({ count: 0 });
     mockDeliveryFindMany.mockResolvedValue([]);
@@ -758,23 +744,6 @@ describe('eraseUser', () => {
       );
     });
 
-    it('deletes the deleted entries’ confirmation tokens, by the ids the same matcher read (t-977)', async () => {
-      // Arrange
-      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
-      mockWaitlistFindMany.mockResolvedValue([{ id: 'w1' }, { id: 'w2' }]);
-
-      // Act
-      await eraseUser(BASE_PARAMS);
-
-      // Assert — the read asks what the delete deletes, and the tokens follow
-      const where = { OR: [{ userId: BASE_PARAMS.userId }, { email: 'foo@bar.com' }] };
-      expect(mockWaitlistFindMany).toHaveBeenCalledWith({ where, select: { id: true } });
-      expect(mockWaitlistDeleteMany).toHaveBeenCalledWith({ where });
-      expect(mockVerificationDeleteMany).toHaveBeenCalledWith({
-        where: { identifier: { in: ['waitlist-confirm:w1', 'waitlist-confirm:w2'] } },
-      });
-    });
-
     it('an unverified account deletes only its linked entries, and counts and flags the rest', async () => {
       // Arrange — anyone can type any address into the join form
       mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
@@ -800,11 +769,7 @@ describe('eraseUser', () => {
       const txWaitlistDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
       const tx = {
         ...mockPrisma,
-        waitlistEntry: {
-          findMany: mockWaitlistFindMany,
-          deleteMany: txWaitlistDeleteMany,
-          count: mockWaitlistCount,
-        },
+        waitlistEntry: { deleteMany: txWaitlistDeleteMany, count: mockWaitlistCount },
       };
       mockPrisma.$transaction.mockImplementation(
         (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)

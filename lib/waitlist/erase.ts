@@ -44,7 +44,6 @@ import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
 import { parseInvitationMetadata } from '@/lib/validations/admin';
-import { deleteConfirmTokens } from '@/lib/waitlist/tokens';
 
 export interface EraseWaitlistEntryInput {
   entryId: string;
@@ -79,11 +78,6 @@ export async function eraseWaitlistEntry(
     // nothing to delete rather than throwing, and writes no second receipt.
     const deleted = await tx.waitlistEntry.deleteMany({ where: { id: entry.id } });
     if (deleted.count === 0) return null;
-
-    // An outstanding confirmation link for the entry dies with it (t-977).
-    // The token row holds no address, but it is the entry's, and a link that
-    // still resolved to something would be one more thing to explain.
-    await deleteConfirmTokens(tx, [entry.id]);
 
     const receipt = await tx.dataErasureReceipt.create({
       data: {

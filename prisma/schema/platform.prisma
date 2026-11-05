@@ -156,6 +156,9 @@ model WaitlistEntry {
   orgId String?
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  /// Its outstanding confirmation links, deleted with it by the cascade.
+  confirmTokens WaitlistConfirmToken[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -165,6 +168,29 @@ model WaitlistEntry {
   @@index([email])
   @@index([userId])
   @@map("waitlist_entry")
+}
+
+/// One confirmation link sent to a waitlist entry (§125 t-977): the SHA-256 of
+/// the token in the email, never the token. Single use, seven days; every link
+/// sent stays good until it expires or the entry is confirmed. Its own table,
+/// not `Verification`, so the cascade deletes it with its entry on every path
+/// — leave, admin erase, retention, account and org erasure — with no code
+/// having to remember to. Tenant-owned like its entry.
+model WaitlistConfirmToken {
+  id        String        @id @default(cuid())
+  entryId   String
+  entry     WaitlistEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+
+  orgId String?
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([entryId, expiresAt])
+  @@index([orgId])
+  @@map("waitlist_confirm_token")
 }
 
 /// Whether one org's list is taking joins (§125). A list with no row is in the

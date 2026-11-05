@@ -42,8 +42,7 @@
  * short, drains over the following hourly runs.
  * Runs in one org (the maintenance job enters each in turn). These deletions
  * are retention, not erasure requests, so they write no receipt. A deleted
- * entry's outstanding confirmation tokens go with it, in the same
- * transaction.
+ * entry's outstanding confirmation tokens go with it, by the cascade.
  *
  * **The windows hold with no config too.** A fork that drops its waitlist
  * config still has the rows it collected, and its privacy notice still
@@ -59,7 +58,6 @@ import {
   getWaitlistConfig,
   type ResolvedWaitlistConfig,
 } from '@/lib/waitlist/config';
-import { deleteConfirmTokens } from '@/lib/waitlist/tokens';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,28 +92,10 @@ async function deleteInBatches(
     if (rows.length === 0) break;
     // The same where again: a row that changed between the read and the
     // delete (restored, joined, re-invited) is not deleted for the state it left.
-    const ids = rows.map((r) => r.id);
-    const deleted = await prisma.$transaction(async (tx) => {
-      const result = await tx.waitlistEntry.deleteMany({
-        where: { AND: [where, { id: { in: ids } }] },
-      });
-      // Only the entries actually gone lose their confirmation tokens: one
-      // that changed state since the read is kept, and keeps its links. When
-      // every row went, there is nothing to tell apart.
-      if (result.count === ids.length) {
-        await deleteConfirmTokens(tx, ids);
-      } else if (result.count > 0) {
-        const kept = await tx.waitlistEntry.findMany({
-          where: { id: { in: ids } },
-          select: { id: true },
-        });
-        const keptIds = new Set(kept.map((k) => k.id));
-        await deleteConfirmTokens(
-          tx,
-          ids.filter((id) => !keptIds.has(id))
-        );
-      }
-      return result;
+    // Each deleted entry's confirmation tokens cascade with it; one kept by
+    // the re-check keeps its links.
+    const deleted = await prisma.waitlistEntry.deleteMany({
+      where: { AND: [where, { id: { in: rows.map((r) => r.id) } }] },
     });
     total += deleted.count;
     // A short batch was the last; a batch that deleted nothing would read

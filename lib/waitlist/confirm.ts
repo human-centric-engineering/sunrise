@@ -10,30 +10,31 @@
 import { prisma } from '@/lib/db/client';
 import { eraseWaitlistEntry } from '@/lib/waitlist/erase';
 import { runAsWaitlistEntryOrg } from '@/lib/waitlist/entry-org';
-import { deleteConfirmTokens, findConfirmToken, verifyLeaveToken } from '@/lib/waitlist/tokens';
+import { findConfirmToken, verifyLeaveToken } from '@/lib/waitlist/tokens';
 
 /**
  * Confirm the entry if `token` is one of its current confirmation tokens, and
- * use up every token it has. `'invalid'` for a wrong, expired or used token, an unknown entry,
- * and an org that cannot be entered alike: the route gives them one answer.
+ * use up every token it has. `'invalid'` for a wrong, expired or used token, an
+ * unknown entry, and an org that cannot be entered alike: the route gives them
+ * one answer.
+ *
+ * The tokens are tenant-owned, like the entry, so the entry's org is entered
+ * first (`runAsWaitlistEntryOrg()` reads only its org) and the token is
+ * checked inside it. Nothing of the entry itself is read or written until the
+ * token matches.
  */
 export async function confirmWaitlistEntry(
   entryId: string,
   token: string,
   now: Date = new Date()
 ): Promise<'confirmed' | 'invalid'> {
-  // Verification is a system model: no org is needed to check the token, and
-  // checking it first keeps a wrong token from reading the entry at all.
-  const stored = await findConfirmToken(entryId, token, now);
-  if (!stored) return 'invalid';
-
-  const result = await runAsWaitlistEntryOrg(entryId, () =>
-    prisma.$transaction(async (tx) => {
-      // Single use: conditional on the row being as read, so two clicks of
-      // the same link confirm once and the second is told the link is used.
-      const used = await tx.verification.deleteMany({
-        where: { id: stored.id, value: stored.value },
-      });
+  const result = await runAsWaitlistEntryOrg(entryId, async () => {
+    const tokenId = await findConfirmToken(entryId, token, now);
+    if (!tokenId) return 'invalid' as const;
+    return prisma.$transaction(async (tx) => {
+      // Single use: two clicks of the same link confirm once, and the second
+      // is told the link is used.
+      const used = await tx.waitlistConfirmToken.deleteMany({ where: { id: tokenId } });
       if (used.count === 0) return 'invalid' as const;
       // Never moves an earlier confirmation; confirming a removed entry
       // records that the address is the person's and leaves it removed.
@@ -42,10 +43,10 @@ export async function confirmWaitlistEntry(
         data: { confirmedAt: now },
       });
       // The entry's other links (earlier sends) have nothing left to do.
-      await deleteConfirmTokens(tx, [entryId]);
+      await tx.waitlistConfirmToken.deleteMany({ where: { entryId } });
       return 'confirmed' as const;
-    })
-  );
+    });
+  });
   return result.found ? result.value : 'invalid';
 }
 

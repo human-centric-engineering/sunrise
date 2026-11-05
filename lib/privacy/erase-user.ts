@@ -55,7 +55,6 @@ import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { waitlistEntriesOf, waitlistEntriesUnder } from '@/lib/waitlist/subject';
-import { deleteConfirmTokens } from '@/lib/waitlist/tokens';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 import {
   eraseSubjectFromDeliveries,
@@ -549,18 +548,13 @@ async function eraseInTransaction(
   // unverified account's address matches nothing — counted, never deleted,
   // for an operator to look at. Tenant-owned and possibly in several orgs: at
   // `multi` this runs in the system scope `eraseUser()` entered.
-  const waitlistWhere = waitlistEntriesOf({
-    userId,
-    email: account.email,
-    emailVerified: account.emailVerified,
+  const waitlist = await tx.waitlistEntry.deleteMany({
+    where: waitlistEntriesOf({
+      userId,
+      email: account.email,
+      emailVerified: account.emailVerified,
+    }),
   });
-  // Their outstanding confirmation links go with them (t-977): the tokens
-  // live in `Verification`, keyed by entry id, so the ids are read first.
-  const waitlistIds = (
-    await tx.waitlistEntry.findMany({ where: waitlistWhere, select: { id: true } })
-  ).map((e) => e.id);
-  const waitlist = await tx.waitlistEntry.deleteMany({ where: waitlistWhere });
-  await deleteConfirmTokens(tx, waitlistIds);
   const waitlistLeft = account.emailVerified
     ? 0
     : await tx.waitlistEntry.count({ where: waitlistEntriesUnder(account.email) });

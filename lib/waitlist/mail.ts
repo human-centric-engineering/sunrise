@@ -157,7 +157,7 @@ async function releaseMailSlot(
           }
         : { lastEmailedAt: slot.previous },
     });
-    if (tokenId) await prisma.verification.deleteMany({ where: { id: tokenId } });
+    if (tokenId) await prisma.waitlistConfirmToken.deleteMany({ where: { id: tokenId } });
   } catch (error) {
     logger.error('Waitlist email slot not released', error, { entryId });
   }

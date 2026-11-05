@@ -37,7 +37,7 @@ import {
   pruneWaitlistEntries,
   waitlistRetentionCutoffs,
 } from '@/lib/waitlist/retention';
-import { confirmIdentifier } from '@/lib/waitlist/tokens';
+import { issueConfirmToken } from '@/lib/waitlist/tokens';
 
 const PREFIX = 'smoke-waitlist-admin';
 const stamp = Date.now();
@@ -168,18 +168,14 @@ async function main(): Promise<void> {
     });
     // On the long-closed list, invited yesterday: its link may be live.
     const longClosedInvited = await make('closed-invited', CLOSED_LONG, { invitedAt: ago(1) });
-    // Nobody confirmed it in 31 days (t-977); its link goes with it.
+    // Nobody confirmed it in 31 days (t-977); its link cascades with it,
+    // while a kept entry's link stays.
     const expiredUnconfirmed = await make('unconfirmed-old', OPEN, {
       confirmedAt: null,
       createdAt: ago(31),
     });
-    await prisma.verification.create({
-      data: {
-        identifier: confirmIdentifier(expiredUnconfirmed),
-        value: 'smoke',
-        expiresAt: ago(24),
-      },
-    });
+    await issueConfirmToken(expiredUnconfirmed, ago(24));
+    await issueConfirmToken(longClosedUnconfirmed);
 
     // Close one list 13 months ago and one last month, through the real write.
     await setWaitlistListOpen(CLOSED_LONG, false, actor.id, ago(400));
@@ -239,10 +235,13 @@ async function main(): Promise<void> {
     );
     check((await present(doomed)) === 0, 'every expired entry is gone');
     check(
-      (await prisma.verification.count({
-        where: { identifier: confirmIdentifier(expiredUnconfirmed) },
-      })) === 0,
-      'the expired entry’s confirmation token went with it'
+      (await prisma.waitlistConfirmToken.count({ where: { entryId: expiredUnconfirmed } })) === 0,
+      'the expired entry’s confirmation token cascaded with it'
+    );
+    check(
+      (await prisma.waitlistConfirmToken.count({ where: { entryId: longClosedUnconfirmed } })) ===
+        1,
+      'a kept entry keeps its confirmation token'
     );
     check((await present(kept)) === kept.length, 'every in-window entry is still there');
 
@@ -250,9 +249,6 @@ async function main(): Promise<void> {
   } finally {
     await prisma.waitlistEntry
       .deleteMany({ where: { id: { in: entryIds } } })
-      .catch(() => undefined);
-    await prisma.verification
-      .deleteMany({ where: { identifier: { in: entryIds.map(confirmIdentifier) } } })
       .catch(() => undefined);
     await prisma.waitlistListState
       .deleteMany({ where: { list: { in: lists } } })

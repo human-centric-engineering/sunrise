@@ -90,11 +90,9 @@ beforeEach(() => {
   mockTx.waitlistEntry.deleteMany.mockResolvedValue({ count: 1 });
   mockTx.dataErasureReceipt.create.mockResolvedValue({ id: 'r-1', erasedAt: ERASED_AT });
   mockTx.verification.findMany.mockResolvedValue([]);
-  // Two deletes: the entry's confirmation token (by identifier), and the
-  // org's invitations (by id).
   mockTx.verification.deleteMany.mockImplementation(
-    async (args: { where: { id?: { in: string[] }; identifier?: unknown } }) => ({
-      count: args.where.id ? args.where.id.in.length : 0,
+    async (args: { where: { id: { in: string[] } } }) => ({
+      count: args.where.id.in.length,
     })
   );
 });
@@ -110,10 +108,6 @@ describe('eraseWaitlistEntry', () => {
     expect(result).toEqual({ receiptId: 'r-1', erasedAt: ERASED_AT, invitationsDeleted: 0 });
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     expect(mockTx.waitlistEntry.deleteMany).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
-    // Its outstanding confirmation link dies with it (t-977).
-    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
-    });
     expect(writtenReceipt()).toEqual({
       subjectKind: 'waitlist',
       subjectUserId: null,
@@ -188,7 +182,6 @@ describe('eraseWaitlistEntry', () => {
 
     expect(result).toBeNull();
     expect(mockTx.dataErasureReceipt.create).not.toHaveBeenCalled();
-    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -244,11 +237,7 @@ describe('a pending invitation for the address (spec, Rules carried over)', () =
       reason: 'admin_action',
     });
 
-    // Only the entry's own confirmation token goes; no invitation is deleted.
-    expect(mockTx.verification.deleteMany).toHaveBeenCalledOnce();
-    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
-    });
+    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
     expect(result?.invitationsDeleted).toBe(0);
     expect(logger.warn).toHaveBeenCalledWith(
       'Waitlist erasure left an invitation it could not read',

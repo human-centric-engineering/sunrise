@@ -59,10 +59,10 @@ release process.
   confirmation links per entry (`WAITLIST_CONFIRM_MAX_LINKS`), and none to an
   entry `screen()` flagged. Every link sent stays good until it
   expires or the address is confirmed; a re-send adds one rather than
-  replacing it. Every path that deletes an entry (leave, admin erase,
-  retention, account and org erasure) deletes its confirmation tokens. New
-  columns `WaitlistEntry.lastEmailedAt`, `confirmWindowFrom` and
-  `confirmLinksSent`, and a `TenantContextSource` value,
+  replacing it. A new tenant-owned model, `WaitlistConfirmToken`, holds the
+  links' hashes and cascades with its entry, so whatever deletes an entry
+  deletes its links. New columns `WaitlistEntry.lastEmailedAt`,
+  `confirmWindowFrom` and `confirmLinksSent`, and a `TenantContextSource` value,
   `'waitlist-link'`. Leave works with no waitlist config, so dropping the
   config never strands the links in people's inboxes, and `waitlistRetention`
   still prunes the rows a dropped config left, on the default windows.

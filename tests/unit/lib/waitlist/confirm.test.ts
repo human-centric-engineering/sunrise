@@ -16,13 +16,13 @@ import { getTenantContext } from '@/lib/tenancy/context';
 
 const { mockTx, mockPrisma, mockErase, seen } = vi.hoisted(() => {
   const mockTx = {
-    verification: { deleteMany: vi.fn() },
+    waitlistConfirmToken: { deleteMany: vi.fn() },
     waitlistEntry: { updateMany: vi.fn() },
   };
   return {
     mockTx,
     mockPrisma: {
-      verification: { findMany: vi.fn() },
+      waitlistConfirmToken: { findMany: vi.fn() },
       waitlistEntry: { findUnique: vi.fn() },
       $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
     },
@@ -44,12 +44,15 @@ const HASH = createHash('sha256').update(TOKEN).digest('hex');
 beforeEach(() => {
   vi.clearAllMocks();
   seen.sources = [];
-  mockPrisma.verification.findMany.mockResolvedValue([{ id: 'v1', value: HASH }]);
+  mockPrisma.waitlistConfirmToken.findMany.mockImplementation(async () => {
+    seen.sources.push(getTenantContext()?.source);
+    return [{ id: 'v1', tokenHash: HASH }];
+  });
   mockPrisma.waitlistEntry.findUnique.mockImplementation(async () => {
     seen.sources.push(getTenantContext()?.source);
     return { orgId: INSTALL_ORG_ID, org: { status: 'ACTIVE' } };
   });
-  mockTx.verification.deleteMany.mockResolvedValue({ count: 1 });
+  mockTx.waitlistConfirmToken.deleteMany.mockResolvedValue({ count: 1 });
   mockTx.waitlistEntry.updateMany.mockImplementation(async () => {
     seen.sources.push(getTenantContext()?.source);
     return { count: 1 };
@@ -67,31 +70,35 @@ describe('confirmWaitlistEntry', () => {
 
     // Assert
     expect(result).toBe('confirmed');
-    expect(mockTx.verification.deleteMany).toHaveBeenCalledWith({
-      where: { id: 'v1', value: HASH },
-    });
+    expect(mockTx.waitlistConfirmToken.deleteMany).toHaveBeenCalledWith({ where: { id: 'v1' } });
     expect(mockTx.waitlistEntry.updateMany).toHaveBeenCalledWith({
       where: { id: 'entry-1', confirmedAt: null },
       data: { confirmedAt: NOW },
     });
     // The entry's other links (earlier sends) are used up with it
-    expect(mockTx.verification.deleteMany).toHaveBeenLastCalledWith({
-      where: { identifier: { in: ['waitlist-confirm:entry-1'] } },
+    expect(mockTx.waitlistConfirmToken.deleteMany).toHaveBeenLastCalledWith({
+      where: { entryId: 'entry-1' },
     });
-    // Looked up under the credential-lookup (system) scope, written in the org
-    expect(seen.sources).toEqual(['system', 'waitlist-link']);
+    // The org looked up under the credential-lookup (system) scope; the
+    // token, tenant-owned like the entry, checked in the org; written there
+    expect(seen.sources).toEqual(['system', 'waitlist-link', 'waitlist-link']);
   });
 
-  it('a wrong, expired or used token is invalid, and the entry is never read', async () => {
-    mockPrisma.verification.findMany.mockResolvedValue([]);
+  it('a wrong, expired or used token is invalid, and nothing of the entry is touched', async () => {
+    mockPrisma.waitlistConfirmToken.findMany.mockResolvedValue([]);
 
     expect(await confirmWaitlistEntry('entry-1', TOKEN, NOW)).toBe('invalid');
-    expect(mockPrisma.waitlistEntry.findUnique).not.toHaveBeenCalled();
+    // Only the entry's org was read, to enter it
+    expect(mockPrisma.waitlistEntry.findUnique).toHaveBeenCalledWith({
+      where: { id: 'entry-1' },
+      select: { orgId: true, org: { select: { status: true } } },
+    });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockTx.waitlistEntry.updateMany).not.toHaveBeenCalled();
   });
 
   it('a second click racing the first is invalid: the token is used once', async () => {
-    mockTx.verification.deleteMany.mockResolvedValue({ count: 0 });
+    mockTx.waitlistConfirmToken.deleteMany.mockResolvedValue({ count: 0 });
 
     expect(await confirmWaitlistEntry('entry-1', TOKEN, NOW)).toBe('invalid');
     expect(mockTx.waitlistEntry.updateMany).not.toHaveBeenCalled();
@@ -101,7 +108,7 @@ describe('confirmWaitlistEntry', () => {
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue(null);
 
     expect(await confirmWaitlistEntry('entry-1', TOKEN, NOW)).toBe('invalid');
-    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.waitlistConfirmToken.findMany).not.toHaveBeenCalled();
   });
 
   it('a suspended org’s link is invalid and confirms nothing', async () => {
@@ -111,7 +118,7 @@ describe('confirmWaitlistEntry', () => {
     });
 
     expect(await confirmWaitlistEntry('entry-1', TOKEN, NOW)).toBe('invalid');
-    expect(mockTx.verification.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.waitlistConfirmToken.findMany).not.toHaveBeenCalled();
     expect(mockTx.waitlistEntry.updateMany).not.toHaveBeenCalled();
   });
 });

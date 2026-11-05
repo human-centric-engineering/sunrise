@@ -86,8 +86,6 @@ vi.mock('@/lib/db/client', () => ({
     },
     // eraseUser's waitlist step (§125).
     waitlistEntry: {
-      // The ids read for their confirmation tokens (t-977).
-      findMany: vi.fn(),
       deleteMany: vi.fn(),
       count: vi.fn(),
     },
@@ -234,7 +232,6 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
-    vi.mocked(prisma.waitlistEntry.findMany).mockResolvedValue([]);
     vi.mocked(prisma.waitlistEntry.deleteMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.waitlistEntry.count).mockResolvedValue(0);
     vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });

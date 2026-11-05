@@ -16,10 +16,10 @@ import type { ReactElement } from 'react';
 const { mockPrisma, mockSendEmail, mockLogger } = vi.hoisted(() => ({
   mockPrisma: {
     waitlistEntry: { updateMany: vi.fn(), findUnique: vi.fn() },
-    verification: { deleteMany: vi.fn() },
+    waitlistConfirmToken: { deleteMany: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
-        verification: {
+        waitlistConfirmToken: {
           deleteMany: vi.fn(),
           create: vi.fn().mockResolvedValue({ id: 'v-new' }),
         },
@@ -72,7 +72,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow());
-  mockPrisma.verification.deleteMany.mockResolvedValue({ count: 1 });
+  mockPrisma.waitlistConfirmToken.deleteMany.mockResolvedValue({ count: 1 });
   mockSendEmail.mockResolvedValue({ success: true, status: 'sent' });
 });
 
@@ -243,7 +243,9 @@ describe('sendWaitlistJoinMail', () => {
       },
     });
     // …and only the new, undelivered token goes: the earlier link still works
-    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
+    expect(mockPrisma.waitlistConfirmToken.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'v-new' },
+    });
   });
 
   it('gives the slot back on a send that throws too', async () => {
@@ -254,7 +256,9 @@ describe('sendWaitlistJoinMail', () => {
       where: { id: 'entry-1', lastEmailedAt: NOW },
       data: { lastEmailedAt: null, confirmWindowFrom: JOINED, confirmLinksSent: { decrement: 1 } },
     });
-    expect(mockPrisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: 'v-new' } });
+    expect(mockPrisma.waitlistConfirmToken.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'v-new' },
+    });
   });
 
   it('gives the slot back, with no token to withdraw, when the note fails', async () => {
@@ -265,7 +269,7 @@ describe('sendWaitlistJoinMail', () => {
       where: { id: 'entry-1', lastEmailedAt: NOW },
       data: { lastEmailedAt: null },
     });
-    expect(mockPrisma.verification.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.waitlistConfirmToken.deleteMany).not.toHaveBeenCalled();
   });
 
   it('sends a confirmed repeat the note, under the same cap, with no confirm link', async () => {
