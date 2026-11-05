@@ -131,7 +131,10 @@ release process.
   5/hour per admin). Both invite as `USER` into the entry's org through
   `deliverInvitation()`, and refuse removed, joined, unconfirmed and flagged
   entries, an address with an account, and another invitation pending for the
-  address. `InvitationMetadata` gains an optional `waitlistEntryId`, and
+  address. Removing an entry (`PATCH /api/v1/admin/waitlist/:id`,
+  `{ removed: true }`) now also revokes every invitation it was sent; other
+  invitations for the address are left. `InvitationMetadata` gains an
+  optional `waitlistEntryId`, and
   `RedeemedInvitation` (the user-created seam's `ctx.invitation`) an optional
   `waitlistEntryId`: a sign-up that redeems a waitlist invitation, by password
   or OAuth, sets the entry's `userId` and `joinedAt` before the fork's hooks
