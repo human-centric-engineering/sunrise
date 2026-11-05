@@ -30,10 +30,17 @@
  */
 
 import { z } from 'zod';
+import { chatStreamRequestSchema } from '@/lib/validations/orchestration';
 import { initAppEvalCaseHooks } from '@/lib/app/evaluations';
-import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { createAppInitGate, describeThrown, restoreMap } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 import type { GraderToolCall } from '@/lib/orchestration/evaluations/graders/types';
+
+/**
+ * The context type that routes streamChat to mirror a turn into a manual
+ * evaluation session's log, which a batch case must never write to.
+ */
+export const EVALUATION_CONTEXT_TYPE = 'evaluation';
 
 /** The dataset case a hook is run for. */
 export interface EvalCaseRow {
@@ -84,18 +91,26 @@ export interface EvalCaseHooks {
  */
 const evalCaseContextSchema = z
   .object({
-    // 'evaluation' routes streamChat to mirror the turn into a manual
-    // evaluation session's log, which a batch case must never write to.
-    contextType: z
-      .string()
-      .min(1)
-      .refine((t) => t !== 'evaluation', "contextType 'evaluation' is reserved for manual sessions")
-      .optional(),
-    contextId: z.string().min(1).optional(),
-    entityContext: z.record(z.string(), z.unknown()).optional(),
+    // The chat API's own limits, so an eval turn can carry nothing a real
+    // chat request could not.
+    contextType: chatStreamRequestSchema.shape.contextType.refine(
+      (t) => t !== '' && t !== EVALUATION_CONTEXT_TYPE,
+      "contextType must be non-empty, and 'evaluation' is reserved for manual sessions"
+    ),
+    contextId: chatStreamRequestSchema.shape.contextId.refine(
+      (id) => id !== '',
+      'contextId must be non-empty'
+    ),
+    entityContext: chatStreamRequestSchema.shape.entityContext,
     scope: z.record(z.string(), z.string()).optional(),
   })
-  .strict();
+  .strict()
+  // The context builder reads a context only from both: one without the
+  // other would run the turn with no context and no error.
+  .refine(
+    (c) => (c.contextType === undefined) === (c.contextId === undefined),
+    'contextType and contextId go together: give both or neither'
+  );
 
 /** Parse `setup`'s answer; `undefined` or `null` (no context) is `{}`. Throws on anything else. */
 export function parseEvalCaseContext(value: unknown): EvalCaseContext {
@@ -113,12 +128,22 @@ export function parseEvalCaseContext(value: unknown): EvalCaseContext {
 
 const hooksByAgent = new Map<string, EvalCaseHooks>();
 
+/**
+ * Why the fork's init failed, once it has. Remembered rather than degraded:
+ * a case whose `setup` never ran starts from whatever the last case left and
+ * would still be scored, so every agent case is refused instead.
+ */
+let initFailure: string | null = null;
+
 const appInit = createAppInitGate({
   label: 'eval-case-hooks: initAppEvalCaseHooks',
   subject: 'app eval case hooks',
   init: initAppEvalCaseHooks,
   snapshot: () => new Map(hooksByAgent),
   restore: (before) => restoreMap(hooksByAgent, before),
+  onFailure: (err) => {
+    initFailure = describeThrown(err);
+  },
 });
 
 /**
@@ -157,9 +182,16 @@ export function registerEvalCaseHooks(agentSlug: string, hooks: EvalCaseHooks): 
   hooksByAgent.set(slug, stored);
 }
 
-/** The hooks registered for this agent, or `null`. */
+/**
+ * The hooks registered for this agent, or `null`. Throws when the fork's
+ * `initAppEvalCaseHooks()` threw: which agents it meant to hook is unknown,
+ * and a case run without its `setup` would be scored against stale state.
+ */
 export function evalCaseHooksFor(agentSlug: string): EvalCaseHooks | null {
   appInit.ensure();
+  if (initFailure !== null) {
+    throw new Error(`the fork's eval case hooks failed to load: ${initFailure}`);
+  }
   return hooksByAgent.get(agentSlug) ?? null;
 }
 
@@ -172,5 +204,6 @@ export function registeredEvalCaseHookAgents(): string[] {
 /** Test-only: clear the registry and re-arm the one-shot init. */
 export function __resetEvalCaseHooksForTests(): void {
   hooksByAgent.clear();
+  initFailure = null;
   appInit.reset();
 }

@@ -60,7 +60,7 @@ Three properties come with it:
 | `data-export.ts`                   | `initAppSubjectSources`              | `lib/privacy/subject-source-registry.ts`                    | roll back, log, **remembered** |
 | `erasure.ts`                       | `initAppErasureHooks`                | `lib/privacy/erasure-hooks.ts`                              | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppGraders`                     | `lib/orchestration/evaluations/graders/registry.ts`         | roll back, log, degrade        |
-| `evaluations.ts`                   | `initAppEvalCaseHooks`               | `lib/orchestration/evaluations/case-hooks.ts`               | roll back, log, degrade        |
+| `evaluations.ts`                   | `initAppEvalCaseHooks`               | `lib/orchestration/evaluations/case-hooks.ts`               | roll back, log, **refuse**     |
 | `guard-event-contributors.ts`      | `initAppGuardEventContributors`      | `lib/orchestration/chat/guard-events.ts`                    | roll back, log, degrade        |
 | `guard-floor-contributors.ts`      | `initAppGuardFloorContributors`      | `lib/orchestration/chat/guard-floor.ts`                     | roll back, log, degrade        |
 | `jobs.ts`                          | `initAppJobs`                        | `lib/orchestration/maintenance/app-jobs.ts`                 | roll back, log, degrade        |
@@ -139,6 +139,13 @@ org export: `exportOrgData()` refuses every org while the fork's
 `initAppOrgSources()` is known to have thrown, or to have registered a row the
 registry rejected that no other declaration covers, because a bundle without the fork's tables would read as
 complete.
+
+**`eval-case-hooks` refuses.** A case whose `setup` never ran starts from
+whatever the previous case left, and its graders would still score it, so a run
+would read as a regression (or a pass) that measured nothing. Which agents the
+throwing init meant to hook is unknown, so `evalCaseHooksFor()` throws for every
+agent while it is known to have thrown, and the worker fails each agent case as
+`case_setup_failed`, naming the error.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

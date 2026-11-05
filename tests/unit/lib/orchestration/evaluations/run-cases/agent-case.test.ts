@@ -171,3 +171,17 @@ describe('runAgentCase — a setup hook’s context (#879)', () => {
     expect(mockedDrain.mock.calls[1][0]).toEqual(expected);
   });
 });
+
+describe('runAgentCase — the manual-session context type', () => {
+  it("refuses contextType 'evaluation' before any turn runs", async () => {
+    await expect(
+      runAgentCase({
+        agentSlug: 'a',
+        userId: 'u',
+        message: 'm',
+        context: { contextType: 'evaluation', contextId: 'session-1' },
+      })
+    ).rejects.toThrow(/reserved for manual evaluation sessions/);
+    expect(mockedDrain).not.toHaveBeenCalled();
+  });
+});

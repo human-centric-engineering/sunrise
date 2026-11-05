@@ -214,8 +214,11 @@ export function initAppEvalCaseHooks(): void {
   the state the case starts from and returns the chat context the turn
   carries: `contextType`, `contextId`, `entityContext` and `scope`, the
   fields a real chat turn carries, and nothing else (an unknown key fails
-  the case rather than being dropped). `undefined` or `null` means no
-  context. `contextType: 'evaluation'` is refused: it would mirror the
+  the case rather than being dropped), within the chat API's own limits.
+  `contextType` and `contextId` go together, since the context builder
+  reads a context only from both. `undefined` or `null` means no
+  context. `contextType: 'evaluation'` is refused (by `runAgentCase`
+  too): it would mirror the
   case into a manual evaluation session's log. The context builder's
   cached copy of what the context names is dropped after `setup`, so a
   `setup` that re-seeds the same `contextId` every case is read fresh.
@@ -227,13 +230,20 @@ export function initAppEvalCaseHooks(): void {
   returns whatever graders should see, as `observed`. It is passed to
   graders and never stored: what is kept is the grader's score and
   reasoning.
-- Both are given `agentSlug`, `userId`, `runId` and the case row. They
+- Both are given `agentSlug`, `userId`, `runId` and a copy of the case
+  row, so a hook that edits it changes neither the message sent nor what
+  the graders read. They
   run inside the run's org context, since the worker is a per-org job, so
   a hook reads its org with `requireOrgId()`.
 - **A hook that throws fails that case only**: `case_setup_failed` (the
   turn is not run) or `case_observe_failed`. The error message is stored
   on the case, capped at 500 characters. Its graders are skipped, as on a
   subject error, and the run goes on to the next case.
+- **If `initAppEvalCaseHooks()` itself throws**, every agent case is
+  refused as `case_setup_failed`, naming the error. Which agents it meant
+  to hook is unknown, and a case run without its `setup` would be scored
+  against whatever the previous case left. This is unlike the grader
+  seam, which degrades.
 - Hooks are keyed by agent slug, in every org. Register them for an agent
   your fork defines (a platform agent's slug is shared by its instance in
   every org), not for a slug an org could also choose for its own agent.

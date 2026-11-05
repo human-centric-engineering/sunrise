@@ -90,6 +90,7 @@ const { processPendingEvaluationRuns } = await import('@/lib/orchestration/evalu
 const { registerEvalCaseHooks, __resetEvalCaseHooksForTests } =
   await import('@/lib/orchestration/evaluations/case-hooks');
 const { invalidateContext } = await import('@/lib/orchestration/chat/context-builder');
+const { initAppEvalCaseHooks } = await import('@/lib/app/evaluations');
 
 const mockedClaim = claimNextRun as unknown as ReturnType<typeof vi.fn>;
 const mockedMarkTerminal = markTerminal as unknown as ReturnType<typeof vi.fn>;
@@ -1250,6 +1251,50 @@ describe('case hooks', () => {
     // A setup answering null means no context, as undefined does.
     expect(second.errorCode).toBeNull();
     expect(mockedRunAgent.mock.calls[0][0]).not.toHaveProperty('context.contextType');
+  });
+
+  it('gives hooks a copy of the case, so one that edits it changes nothing run or graded', async () => {
+    registerEvalCaseHooks('score-assistant', {
+      setup: ({ caseRow }) => {
+        caseRow.input = 'rewritten by setup';
+        caseRow.metadata = { tampered: true };
+        return undefined;
+      },
+    });
+    mockedRunAgent.mockResolvedValueOnce(drainOk());
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runCases([makeCase(1, { metadata: { startFrom: 'empty-score' } })]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedRunAgent.mock.calls[0][0].message).toBe('Question 1?');
+    const [graded] = grader.grade.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(graded).toMatchObject({
+      userInput: 'Question 1?',
+      caseMetadata: { startFrom: 'empty-score' },
+    });
+  });
+
+  it('refuses every agent case when the fork’s hooks failed to load', async () => {
+    vi.mocked(initAppEvalCaseHooks).mockImplementation(() => {
+      throw new Error('typo in the fork');
+    });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runCases([makeCase(1), makeCase(2)]);
+
+    const result = await processPendingEvaluationRuns();
+
+    // Each case fails on its own row; none reached the agent or a grader.
+    expect(result.failed).toBe(0);
+    for (const call of createResult.mock.calls) {
+      expect(call[0].data).toMatchObject({
+        errorCode: 'case_setup_failed',
+        errorMessage: "the fork's eval case hooks failed to load: typo in the fork",
+      });
+    }
+    expect(createResult).toHaveBeenCalledTimes(2);
+    expect(mockedRunAgent).not.toHaveBeenCalled();
   });
 
   it('runs hooks written as a class, with this bound', async () => {

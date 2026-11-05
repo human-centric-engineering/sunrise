@@ -47,13 +47,19 @@ describe('the hook registry', () => {
     expect(seam.init).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls every registration back when the seam throws part-way', () => {
+  it('rolls every registration back when the seam throws, and refuses lookups after', () => {
     seam.init.mockImplementation(() => {
       registerEvalCaseHooks('first', { observe: () => 1 });
       throw new Error('fork bug');
     });
 
-    expect(evalCaseHooksFor('first')).toBeNull();
+    // Which agents it meant to hook is unknown, so no agent's case runs as if
+    // it had none: a case scored without its setup would read stale state.
+    expect(() => evalCaseHooksFor('first')).toThrow(
+      "the fork's eval case hooks failed to load: fork bug"
+    );
+    expect(() => evalCaseHooksFor('any-agent')).toThrow(/failed to load/);
+    expect(registeredEvalCaseHookAgents()).toEqual([]);
     expect(logger.error).toHaveBeenCalled();
   });
 
@@ -101,6 +107,14 @@ describe('parseEvalCaseContext', () => {
     expect(() => parseEvalCaseContext({ conversationId: 'c1' })).toThrow(/invalid context/);
     expect(() => parseEvalCaseContext({ contextId: 7 })).toThrow(/contextId/);
     expect(() => parseEvalCaseContext({ scope: { module: 1 } })).toThrow(/scope/);
+    // One without the other: the turn would run with no context and no error.
+    expect(() => parseEvalCaseContext({ contextId: 'doc-1' })).toThrow(/go together/);
+    expect(() => parseEvalCaseContext({ contextType: 'score' })).toThrow(/go together/);
+    // The chat API's own limits.
+    expect(() =>
+      parseEvalCaseContext({ contextType: 'score', contextId: 'x'.repeat(101) })
+    ).toThrow(/contextId/);
+    expect(() => parseEvalCaseContext({ contextType: '', contextId: 'd' })).toThrow(/contextType/);
     // The manual-session flag: a batch case must never write that session's log.
     expect(() => parseEvalCaseContext({ contextType: 'evaluation', contextId: 's1' })).toThrow(
       /reserved for manual sessions/

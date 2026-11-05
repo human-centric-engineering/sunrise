@@ -16,7 +16,10 @@ import {
   drainStreamChat,
   type DrainResult,
 } from '@/lib/orchestration/evaluations/drain-stream-chat';
-import type { EvalCaseContext } from '@/lib/orchestration/evaluations/case-hooks';
+import {
+  EVALUATION_CONTEXT_TYPE,
+  type EvalCaseContext,
+} from '@/lib/orchestration/evaluations/case-hooks';
 
 export interface AgentCaseInput {
   agentSlug: string;
@@ -42,6 +45,13 @@ export interface AgentCaseInput {
 export type AgentCaseResult = DrainResult;
 
 export async function runAgentCase(input: AgentCaseInput): Promise<AgentCaseResult> {
+  // Held here, where the request is built, not only where a hook's answer is
+  // parsed: any caller handing this a context is held to it.
+  if (input.context?.contextType === EVALUATION_CONTEXT_TYPE) {
+    throw new Error(
+      "runAgentCase: contextType 'evaluation' is reserved for manual evaluation sessions"
+    );
+  }
   return drainStreamChat({
     agentSlug: input.agentSlug,
     userId: input.userId,

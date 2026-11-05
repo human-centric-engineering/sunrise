@@ -51,9 +51,14 @@ import {
   parseEvalCaseContext,
   type EvalCaseContext,
   type EvalCaseHookArgs,
+  type EvalCaseHooks,
 } from '@/lib/orchestration/evaluations/case-hooks';
 import { runWorkflowCase } from '@/lib/orchestration/evaluations/run-cases/workflow-case';
-import { getGrader, type GraderInput } from '@/lib/orchestration/evaluations/graders';
+import {
+  getGrader,
+  type GraderInput,
+  type GraderToolCall,
+} from '@/lib/orchestration/evaluations/graders';
 // Side-effect import: registers every built-in grader at module load.
 import '@/lib/orchestration/evaluations/graders';
 
@@ -389,23 +394,35 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
   let subjectCostUsd = 0;
   let subjectLatency = 0;
   let citations: GraderInput['citations'] = [];
-  let toolCalls: GraderInput['toolCalls'] = [];
+  let toolCalls: GraderToolCall[] = [];
   let subjectErrorCode: string | undefined;
   let subjectErrorMessage: string | undefined;
   /** What the agent's `observe` hook read back; absent without one (#879). */
   let observed: { value: unknown } | undefined;
 
   if (run.subjectKind === 'agent') {
-    const hooks = agentSlug ? evalCaseHooksFor(agentSlug) : null;
-    const hookArgs: EvalCaseHookArgs | null = agentSlug
-      ? { agentSlug, userId: run.userId, runId: run.id, caseRow }
-      : null;
+    let hooks: EvalCaseHooks | null = null;
+    if (agentSlug) {
+      try {
+        hooks = evalCaseHooksFor(agentSlug);
+      } catch (err) {
+        subjectErrorCode = 'case_setup_failed';
+        subjectErrorMessage = hookErrorMessage(err);
+      }
+    }
+    // A copy per hook call: a hook that tidies the case in place must not
+    // change the message sent or what the graders read.
+    const hookArgs = (): EvalCaseHookArgs | null =>
+      agentSlug
+        ? { agentSlug, userId: run.userId, runId: run.id, caseRow: structuredClone(caseRow) }
+        : null;
     // Setup, fresh before every case: seeds the state the case starts from
     // and names the context the turn runs in. A failure is this case's alone.
     let context: EvalCaseContext | undefined;
-    if (hooks?.setup && hookArgs) {
+    const setupArgs = hookArgs();
+    if (!subjectErrorCode && hooks?.setup && setupArgs) {
       try {
-        context = parseEvalCaseContext(await hooks.setup(hookArgs));
+        context = parseEvalCaseContext(await hooks.setup(setupArgs));
         // setup may have rewritten what the context names: drop any cached
         // copy, or this turn could be given the previous case's document.
         if (context.contextType !== undefined && context.contextId !== undefined) {
@@ -449,17 +466,18 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
       }
       // Observe, after a turn that completed: what its tools left behind, for
       // the graders. Skipped when the turn failed, as the graders are.
-      if (!subjectErrorCode && hooks?.observe && hookArgs) {
+      const observeArgs = hookArgs();
+      if (!subjectErrorCode && hooks?.observe && observeArgs) {
         try {
           observed = {
             value: await hooks.observe({
-              ...hookArgs,
+              ...observeArgs,
               turn: {
                 ...(result.conversationId !== undefined
                   ? { conversationId: result.conversationId }
                   : {}),
                 assistantText: result.assistantText,
-                toolCalls: toolCalls ?? [],
+                toolCalls,
               },
             }),
           };
@@ -563,7 +581,7 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
     subjectOutput,
     subjectMetadata: {
       citations,
-      toolCalls: (toolCalls ?? []).map(({ slug, args }) => ({ slug, args })),
+      toolCalls: toolCalls.map(({ slug, args }) => ({ slug, args })),
       subjectCostUsd,
       subjectLatencyMs: subjectLatency,
     },
