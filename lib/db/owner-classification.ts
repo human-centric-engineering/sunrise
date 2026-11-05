@@ -14,7 +14,8 @@
  *
  *   • **personal** — a row is its owner's. Reached either by a column on the
  *     row (`userId` → User) or `through` a relation to a personal parent (an
- *     `AiMessage` is its conversation's). A model is personal here **because
+ *     `AiMessage` is its conversation's) — or, for a fork's model only, decided
+ *     by a read rule the fork registers (`owner: { reader }`, t-985). A model is personal here **because
  *     the platform already scopes its reads to the owner**: the route layer's
  *     access helpers and ownership declarations are the evidence, and the parity
  *     test (t-801) holds the two together. Classifying something personal that

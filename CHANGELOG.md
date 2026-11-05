@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **A fork's own read rule in the owner layer (#1145)**: `OwnerPath`
+  (`lib/db/owner-classification.ts`) gains a third shape, `{ reader }`: a pure
+  function from the `OwnerReader` to a Prisma `where`, registered through
+  `registerAppOwnerClassification()` on fork models only, with no `ownerless`
+  or `alsoVisible` beside it. On an enforced ruled model, and on a `through`
+  child of one, the layer narrows a narrowed caller's reads by the rule rather
+  than refusing them. Lists, counts, aggregates, group-bys and to-many
+  relations get it ANDed into their `where`. A read by key, a returning write
+  or an upsert of a row outside the rule is refused. A to-one reaching the
+  model is refused. A rule that throws, or answers no `where`, refuses with the
+  new `OwnerRefusalReason` `'read-rule-failed'`. Narrowing is silent: a read
+  meant to see every row must run inside `runAcrossOwners(reason, fn)`.
+  `readablePredicate()` takes an optional `operation`, and `narrowsByRule()`
+  is exported. **Fork sync:** a space- or team-scoped model classified
+  `not-personal` for want of an owner can now be `personal` with a rule.
 - **A fork classifies its own models for tenancy (#964), and a user-owned
   class (#1041)**: new seam `lib/app/tenancy-classification.ts` →
   `initAppTenancyClassification()` (ships empty), registering through

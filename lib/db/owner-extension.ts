@@ -71,6 +71,14 @@
  *     A to-one reaching a `through` owner or an `alsoVisible` model has no
  *     column to decide by, and is refused.
  *
+ * **A fork's read rule** (`owner: { reader }`, t-985) is never proven from a
+ * filter, so the reads above are narrowed by it instead of refused: a list,
+ * count, aggregate or group-by and a to-many relation get the rule ANDed into
+ * their `where`; a returning write is narrowed, and its miss on a row that
+ * exists is refused; an upsert of such a row is refused before it runs. A
+ * to-one reaching a ruled model is refused, and a `through` child inherits the
+ * rule. A rule that throws or answers no `where` refuses the read.
+ *
  * A refusal throws {@link OwnerReadRefusedError} in every environment. There
  * is no log-only mode: that records a leak rather than stopping it.
  * `handleAPIError` answers it as a 404, so a refusal does not confirm the row
