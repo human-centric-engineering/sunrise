@@ -394,7 +394,8 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
   ownership?: RouteOwnership;
   /**
    * This route creates, changes or deletes a shared setting — a row of one of
-   * the `GLOBAL_CONFIG_MODELS`, which every org reads (§107 t-751). At
+   * the `GLOBAL_CONFIG_MODELS` or of a model a fork registered as shared
+   * settings, which every org reads (§107 t-751). At
    * `multi`, a session entered into any org but the install org is refused
    * with a 403 telling the admin to switch to the install org; an unbound
    * admin API key, which enters no org, is allowed. At `single` it changes

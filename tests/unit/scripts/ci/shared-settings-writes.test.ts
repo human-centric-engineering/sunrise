@@ -26,6 +26,7 @@ import {
   analyzeRoute,
   findUndeclaredSharedSettingsWrites,
   GLOBAL_CONFIG_ACCESSORS,
+  MAP_ATTRIBUTE,
   libWriters,
   NON_CHANGING_WRITERS,
   staleNonChangingWriters,
@@ -140,6 +141,14 @@ describe('what counts as a write', () => {
       route(`export const POST = withAdminAuth(async () => {\n${body}\n});`),
       new Set()
     )[0].writes;
+
+  it.each([
+    ['the positional form', '  @@map("lineage_nodes")'],
+    ['the named form', '  @@map(name: "lineage_nodes")'],
+    ['spaced', '  @@map( name:  "lineage_nodes" )'],
+  ])('reads a model’s table from @@map in %s', (_label, line) => {
+    expect(MAP_ATTRIBUTE.exec(line)?.[1]).toBe('lineage_nodes');
+  });
 
   it('derives the model accessors from GLOBAL_CONFIG_MODELS', () => {
     expect(GLOBAL_CONFIG_ACCESSORS).toContain('aiProviderModel');

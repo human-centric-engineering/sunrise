@@ -83,6 +83,9 @@ export const GLOBAL_CONFIG_ACCESSORS: ReadonlySet<string> = new Set(
   SHARED_SETTINGS_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
 );
 
+/** A model's `@@map`, in either form: `@@map("t")` or `@@map(name: "t")`. */
+export const MAP_ATTRIBUTE = /^\s*@@map\(\s*(?:name:\s*)?"(\w+)"/;
+
 /**
  * Each shared-settings model's table, read from `prisma/schema/*.prisma`: its
  * `@@map`, or the model name when it has none (a fork's table usually has
@@ -104,7 +107,7 @@ function tableNamesOf(models: readonly string[]): string[] {
       const open = /^model\s+(\w+)\s*\{/.exec(line);
       if (open) current = open[1];
       else if (line.startsWith('}')) current = null;
-      const map = current ? /^\s*@@map\("(\w+)"\)/.exec(line) : null;
+      const map = current ? MAP_ATTRIBUTE.exec(line) : null;
       if (map && current) mapped.set(current, map[1]);
     }
   }

@@ -41,13 +41,13 @@
  * }
  * ```
  *
- * **A `system` model that carries `orgId` is left out of row isolation**: its
- * rows are readable across orgs at `TENANCY_MODE=multi`, and the client logs it
- * at warn when it is built. That is for a join that decides the tenant, as
- * `OrgMembership` is in core — not a way to opt a tenant's data out.
+ * Classify only your own models, and never one that carries `orgId` as
+ * system. The coverage guard fails on either: the first would move a core
+ * model, the second would leave a tenant's rows readable across orgs.
  *
- * Classify only your own models. The coverage guard fails on a registration
- * naming one of core's.
+ * Call `registerAppTenancyClassification` only inside this function, never at
+ * module scope: this file is loaded while `lib/tenancy/classification.ts` is
+ * still loading, and a module-scope call crashes it.
  *
  * A framework tier registers with `tier: 'framework'`, from a function the
  * leaf's `initAppTenancyClassification()` calls — not from `initFramework()` at

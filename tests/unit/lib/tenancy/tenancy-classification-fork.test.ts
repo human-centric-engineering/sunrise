@@ -173,15 +173,34 @@ describe('tenancy classification — fork tiers', () => {
 
   it.each([
     ['empty', ''],
-    ['blank', '  '],
     ['missing', undefined],
+    ['a made-up label', 'leaf'],
+    ['wrongly cased', 'App'],
   ])('drops a contribution whose tier is %s', (_label, tier) => {
-    registerAppTenancyClassification({ tier: tier as unknown as string, userOwned: ['AppKit'] });
+    registerAppTenancyClassification({
+      tier: tier as unknown as 'app',
+      userOwned: ['AppKit'],
+    });
 
     expect(appTenancyClassifications().size).toBe(0);
     expect(errorSpy).toHaveBeenCalledWith(
       'tenancy-classification: app classification rejected',
-      expect.objectContaining({ reason: '`tier` is required' })
+      expect.objectContaining({ reason: "`tier` must be 'app' or 'framework'" })
+    );
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+  ])('drops a %s contribution with a log rather than throwing', (_label, contribution) => {
+    expect(() =>
+      registerAppTenancyClassification(
+        contribution as unknown as Parameters<typeof registerAppTenancyClassification>[0]
+      )
+    ).not.toThrow();
+    expect(errorSpy).toHaveBeenCalledWith(
+      'tenancy-classification: app classification rejected',
+      expect.objectContaining({ reason: 'the contribution must be an object' })
     );
   });
 

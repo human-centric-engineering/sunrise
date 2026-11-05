@@ -71,6 +71,14 @@ function forkRegisteredCoreModels(
   return [...registered].filter((model) => core.has(model));
 }
 
+/** Fork-registered system models that carry `orgId` — tenant data taken out of row isolation. */
+function forkSystemWithOrgId(
+  systemWithOrgId: readonly string[],
+  registrations: ReadonlyMap<string, { cls: string }>
+): string[] {
+  return systemWithOrgId.filter((model) => registrations.get(model)?.cls === 'system');
+}
+
 /** Every model declared in a framework tier's schema files (`framework-*.prisma`). */
 function frameworkModels(): Set<string> {
   const names = new Set<string>();
@@ -210,6 +218,14 @@ describe('model classification', () => {
     ).toEqual([]);
   });
 
+  it('has no fork system model carrying orgId (it would leave row isolation)', () => {
+    expect(
+      forkSystemWithOrgId(fromSchema.systemWithOrgId, appTenancyClassifications()),
+      'A fork model with orgId is tenant-owned. Registered as system, its rows are readable across ' +
+        'orgs at TENANCY_MODE=multi. Remove it from system in lib/app/tenancy-classification.ts.'
+    ).toEqual([]);
+  });
+
   it('has no leaf registration naming a framework tier’s model', () => {
     expect(
       leafRegisteredFrameworkModels(appTenancyClassifications(), frameworkModels()),
@@ -277,7 +293,7 @@ describe('model classification', () => {
       const { registerAppTenancyClassification, __resetAppTenancyClassificationForTests } =
         await import('@/lib/tenancy/classification');
       try {
-        registerAppTenancyClassification({ tier: 'test', userOwned: ['AppKit'] });
+        registerAppTenancyClassification({ tier: 'app', userOwned: ['AppKit'] });
         const fixture = toRuntimeDataModel(
           new Map([...schema, ['AppKit', { name: 'AppKit', hasOrgId: true, table: 'app_kit' }]])
         );
@@ -294,6 +310,28 @@ describe('model classification', () => {
       expect(forkRegisteredCoreModels(['AiConversation', 'AppKit'], coreSchema())).toEqual([
         'AiConversation',
       ]);
+    });
+
+    it('names a fork system model that carries orgId, not core’s OrgMembership', async () => {
+      const { registerAppTenancyClassification, __resetAppTenancyClassificationForTests } =
+        await import('@/lib/tenancy/classification');
+      try {
+        registerAppTenancyClassification({ tier: 'app', system: ['AppTeamJoin', 'AppHold'] });
+        const result = classifyModels(
+          toRuntimeDataModel(
+            new Map([
+              ...schema,
+              ['AppTeamJoin', { name: 'AppTeamJoin', hasOrgId: true, table: 'app_team_join' }],
+              ['AppHold', { name: 'AppHold', hasOrgId: false, table: 'app_hold' }],
+            ])
+          )
+        );
+        expect(forkSystemWithOrgId(result.systemWithOrgId, appTenancyClassifications())).toEqual([
+          'AppTeamJoin',
+        ]);
+      } finally {
+        __resetAppTenancyClassificationForTests();
+      }
     });
 
     it('names a leaf registration of a framework model, not the framework’s own', () => {

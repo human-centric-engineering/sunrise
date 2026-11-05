@@ -254,7 +254,7 @@ export function classifyModels(rdm: RuntimeDataModel): ModelClassification {
   return out;
 }
 
-const rosters = new WeakMap<object, ReadonlyMap<string, string>>();
+let rosters = new WeakMap<object, ReadonlyMap<string, string>>();
 
 /**
  * Model name → table name for every tenant-owned model, derived once per
@@ -287,12 +287,12 @@ export type AppTenancyClass = 'system' | 'globalConfig' | 'userOwned';
 /** One tier's classification of its own models. */
 export interface AppTenancyClassificationContribution {
   /**
-   * `'app'` for a leaf fork, `'framework'` for a framework tier. Not only a
-   * label: a model another tier already classified keeps that tier's class,
-   * and the coverage guard holds an `'app'` registration to the leaf's own
-   * models. Required, non-empty.
+   * `'app'` for a leaf fork, `'framework'` for a framework tier — nothing else
+   * is accepted. Not only a label: a model another tier already classified
+   * keeps that tier's class, and the coverage guard holds an `'app'`
+   * registration to the leaf's own models.
    */
-  tier: string;
+  tier: AppTenancyTier;
   /** Models that decide or record tenancy. One carrying `orgId` leaves row isolation, and is logged. */
   system?: readonly string[];
   /** Platform configuration every org shares. Routes writing one must declare it (`writesSharedSettings`). */
@@ -301,10 +301,14 @@ export interface AppTenancyClassificationContribution {
   userOwned?: readonly string[];
 }
 
+/** The tiers that may register. */
+export type AppTenancyTier = 'app' | 'framework';
+const APP_TENANCY_TIERS: ReadonlySet<string> = new Set<AppTenancyTier>(['app', 'framework']);
+
 /** One fork registration: the class, and the tier that registered it. */
 export interface AppTenancyRegistration {
   cls: AppTenancyClass;
-  tier: string;
+  tier: AppTenancyTier;
 }
 
 /** Fork registrations, keyed by model. */
@@ -341,7 +345,8 @@ function rejectApp(tier: string, model: string, why: string): void {
  *
  * A row is dropped with a log, never thrown, when it names a model on one of
  * core's lists, a model another tier has classified (the first stands), or an
- * empty name; a contribution with no `tier` is dropped whole. A model this tier
+ * empty name; a contribution that is not an object, or whose `tier` is not
+ * `'app'` or `'framework'`, is dropped whole. A model this tier
  * lists in two classes loses every entry, now and later, so it stays
  * unclassified and the coverage guard names it.
  *
@@ -351,6 +356,11 @@ function rejectApp(tier: string, model: string, why: string): void {
  * of a model from a core schema file, or an `'app'` registration of a framework
  * tier's model. Registering one as system would take it out of row isolation.
  *
+ * **Never register a model that carries `orgId` as system.** Core does it once
+ * (`OrgMembership`, the join that decides the tenant); a fork's would leave
+ * the table's rows readable across orgs, and the coverage guard fails on it.
+ * The client also logs it at warn, in case a build skipped the guard.
+ *
  * Name only what this file decides. Whether a model carries `orgId`, and so
  * whether the class is a contradiction, is the coverage guard's to judge
  * against the schema.
@@ -358,11 +368,16 @@ function rejectApp(tier: string, model: string, why: string): void {
 export function registerAppTenancyClassification(
   contribution: AppTenancyClassificationContribution
 ): void {
-  const tier = typeof contribution.tier === 'string' ? contribution.tier.trim() : '';
-  if (tier === '') {
-    rejectApp(String(contribution.tier), '<all>', '`tier` is required');
+  if (typeof contribution !== 'object' || contribution === null) {
+    rejectApp('<none>', '<all>', 'the contribution must be an object');
     return;
   }
+  const rawTier: unknown = contribution.tier;
+  if (typeof rawTier !== 'string' || !APP_TENANCY_TIERS.has(rawTier)) {
+    rejectApp(String(rawTier), '<all>', "`tier` must be 'app' or 'framework'");
+    return;
+  }
+  const tier = rawTier as AppTenancyTier;
   const lists: ReadonlyArray<readonly [AppTenancyClass, unknown]> = [
     ['system', contribution.system],
     ['globalConfig', contribution.globalConfig],
@@ -469,8 +484,9 @@ export function warnAboutAppIsolationExemptions(classification: ModelClassificat
   });
 }
 
-/** Test-only: clear the fork registry, re-arm the one-shot init and the warning. */
+/** Test-only: clear the fork registry and the cached rosters, re-arm the one-shot init and the warning. */
 export function __resetAppTenancyClassificationForTests(): void {
+  rosters = new WeakMap();
   appRegistrations.clear();
   clashedModels.clear();
   appInit.reset();

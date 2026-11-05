@@ -139,7 +139,8 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
     path: 'tests/unit/lib/tenancy/model-classification.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails naming any model that neither ' +
-      'carries `orgId` nor sits on a tenancy allowlist. Adding a model is exactly ' +
+      "carries `orgId` nor is classified system, shared settings or user-owned (core's " +
+      "lists, or a fork's seam). Adding a model is exactly " +
       'the change no import chain connects to this test.',
   },
   {
@@ -204,7 +205,7 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
     reason:
       'parses every route and module under app/ and lib/ and fails naming any route ' +
       'handler or capability class that changes a shared setting (a GLOBAL_CONFIG_MODELS ' +
-      'row) without declaring `writesSharedSettings`. A new route or capability writing ' +
+      'row, or a fork-registered shared-settings row) without declaring `writesSharedSettings`. A new route or capability writing ' +
       'one is exactly the change no import chain connects to this test (§107 t-751).',
   },
   {

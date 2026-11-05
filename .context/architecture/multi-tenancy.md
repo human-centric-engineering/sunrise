@@ -338,11 +338,11 @@ of yours goes in one of three classes, registered from
 `lib/app/tenancy-classification.ts` (t-983) — never by editing core's lists,
 which conflicts at every upgrade:
 
-| Class               | For                                                                                   | Checked                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `userOwned` (t-984) | Rows a person owns outside any org: a drummer's kits, a practice run, a profile       | No `orgId`, and a link to a user (a `User` relation or a `…UserId` column)   |
-| `globalConfig`      | Install-wide data every org shares: a catalogue, a lookup table                       | No `orgId`; a route or capability writing it declares `writesSharedSettings` |
-| `system`            | Rows that decide or record tenancy: identity bookkeeping, an audit log, a tenant join | May carry `orgId` — and is then **out of row isolation** (below)             |
+| Class               | For                                                                             | Checked                                                                      |
+| ------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `userOwned` (t-984) | Rows a person owns outside any org: a drummer's kits, a practice run, a profile | No `orgId`, and a link to a user (a `User` relation or a `…UserId` column)   |
+| `globalConfig`      | Install-wide data every org shares: a catalogue, a lookup table                 | No `orgId`; a route or capability writing it declares `writesSharedSettings` |
+| `system`            | Rows that decide or record tenancy: identity bookkeeping, an audit log          | No `orgId` (below)                                                           |
 
 ```ts
 // lib/app/tenancy-classification.ts
@@ -362,10 +362,13 @@ export function initAppTenancyClassification(): void {
   change only from the install org at `multi`, so every route writing one must
   declare it, and an ordinary member's route cannot. A person's own row is not
   a shared setting.
-- **A `system` model with `orgId` is not row-isolated.** Core does this once,
-  for `OrgMembership`, the join that decides which org a request acts for. The
-  client logs every fork model in this position at warn when it is built, by
-  name. Do not use it to opt a tenant's data out.
+- **A fork's `system` model may not carry `orgId`.** A system model with
+  `orgId` is left out of row isolation — core does this once, for
+  `OrgMembership`, the join that decides which org a request acts for. A
+  fork's would leave a tenant's rows readable across orgs, so the coverage
+  guard fails on it, and the client logs it at warn when built in case a build
+  skipped the guard. If you genuinely need a tenant join outside isolation,
+  raise it upstream.
 - **You cannot move a core model.** A registration naming one on core's lists,
   a model another tier registered, or one model in two classes is dropped with
   a log, and the coverage guard names whatever is left unclassified. Core's

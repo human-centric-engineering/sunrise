@@ -27,9 +27,10 @@ release process.
   (`USER_OWNED_MODELS`, empty in core), holds rows a person owns outside any
   org: no `orgId`, a link to a user, and not under the shared-settings rule.
   `classifyModels()` returns `userOwned` and `systemWithOrgId`; new readers
-  `allSystemModels()`, `allGlobalConfigModels()`, `allUserOwnedModels()`. A
-  fork model registered as system that carries `orgId` is left out of row
-  isolation and logged at warn when the client is built. **Fork sync:** move
+  `allSystemModels()`, `allGlobalConfigModels()`, `allUserOwnedModels()`. The
+  coverage guard fails on a fork registration that names a core model, an
+  `'app'` registration of a framework tier's model, or a fork `system` model
+  carrying `orgId` (which would leave row isolation; the client also warns). **Fork sync:** move
   any models you added to core's lists into the new seam, then take core's
   lists as they are.
 - **Letting named sites frame a page (#887)**: two new fork-owned seams.
