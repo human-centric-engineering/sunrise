@@ -12,7 +12,7 @@
  * The reliable discriminator is the token. better-auth mints it as an HS256 JWT
  * and the payload shape differs by flow:
  *
- *   signup / resend  →  { email }
+ *   signup / resend  →  { email, userId }
  *   email change     →  { email: <OLD>, updateTo: <NEW>, requestType: 'change-email-…', userId }
  *
  * So `updateTo` both identifies the flow and hands back the previous address —

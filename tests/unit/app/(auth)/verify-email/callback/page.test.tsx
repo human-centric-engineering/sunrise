@@ -165,11 +165,6 @@ describe('VerifyCallbackClientContent', () => {
     });
   });
 
-  /**
-   * Error State Tests (With Error Parameter)
-   *
-   * Tests the error flow where verification failed (expired/invalid token).
-   */
   describe('Email change (emailChanged=1)', () => {
     beforeEach(async () => {
       const { useRouter, useSearchParams } = await import('next/navigation');
@@ -212,6 +207,11 @@ describe('VerifyCallbackClientContent', () => {
     });
   });
 
+  /**
+   * Error State Tests (With Error Parameter)
+   *
+   * Tests the error flow where verification failed (expired/invalid token).
+   */
   describe('Error state (error=invalid_token)', () => {
     beforeEach(async () => {
       // Mock useSearchParams to return error=invalid_token

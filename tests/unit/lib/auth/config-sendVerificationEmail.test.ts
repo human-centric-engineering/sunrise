@@ -216,6 +216,17 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
       );
     });
 
+    it("should leave a caller's own callback path alone", async () => {
+      const user = createMockUser({ id: 'user-31', email: 'own@example.com', name: 'Own' });
+      const url = 'https://example.com/verify?token=xyz&callbackURL=%2Fsettings';
+
+      await sendVerificationEmailHook({ user, url, token: 'xyz' });
+
+      expect(VerifyEmailEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ verificationUrl: url })
+      );
+    });
+
     it('should pass URL through unchanged when callbackURL pattern is not present', async () => {
       // Arrange: URL without the expected callbackURL=%2F pattern
       const user = createMockUser({

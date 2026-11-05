@@ -20,6 +20,7 @@ import { isRecord } from '@/lib/utils';
  * Handles the redirect from better-auth's email verification endpoint.
  * Better-auth redirects here after processing the verification token:
  * - On success: no error param, redirect to dashboard
+ * - On an email change (?emailChanged=1): say so and link on, with no redirect
  * - On failure: ?error=invalid_token, show error with resend option
  *
  * This provides a better UX than redirecting to login with no explanation

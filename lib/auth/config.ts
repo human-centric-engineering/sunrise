@@ -764,7 +764,9 @@ export async function afterEmailVerificationHook(
     // 1. Revoke sessions. This is the point the change actually commits,
     //    and the whole reason #489 is a security issue: without this, a session
     //    stolen before the change survives it. Anything holding a cookie from
-    //    before this moment loses it.
+    //    before this moment loses it, except the session this click itself
+    //    carries. An unverified account never reaches this hook; see
+    //    .context/auth/security.md.
     //
     //    Best-effort by design. better-auth does NOT wrap this callback in its
     //    error handling (unlike the send-email callbacks), so a throw here
@@ -898,7 +900,8 @@ export async function sendVerificationEmailHook({
   const callbackPath = emailChange
     ? '%2Fverify-email%2Fcallback%3FemailChanged%3D1'
     : '%2Fverify-email%2Fcallback';
-  const verificationUrl = url.replace('callbackURL=%2F', `callbackURL=${callbackPath}`);
+  // Only the default: a caller's own callback is left alone, not prefixed.
+  const verificationUrl = url.replace(/callbackURL=%2F(?=&|$)/, `callbackURL=${callbackPath}`);
 
   await sendEmail({
     to: user.email,

@@ -178,7 +178,7 @@ edit, and it is treated as one (#489). Three controls apply:
 2. **Re-authentication.** `PATCH /api/v1/users/me` requires `currentPassword`
    alongside `email`. OAuth-only accounts (no credential row) are exempt, since
    they have no password to confirm.
-3. **Session revocation.** When the change finally lands,
+3. **Session revocation.** When the change finally lands on a verified account,
    `afterEmailVerificationHook` revokes the user's sessions, sparing only one
    the verification click itself carries — subject to
    the up-to-5-minute cookie-cache staleness window every revocation in this

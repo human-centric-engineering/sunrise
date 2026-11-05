@@ -105,7 +105,7 @@ the email path for key-authenticated callers with **403 FORBIDDEN**, via
 `isApiKeySession()` from `lib/auth/api-keys.ts`. Changing your address requires a
 browser session.
 
-When the change finally completes, the user's sessions are revoked, sparing only one the verification click itself carries, so the session that started the change is usually signed out too. Full
+When the change finally completes on a verified account, the user's sessions are revoked, sparing only one the verification click itself carries, so the session that started the change is usually signed out too. Full
 flow and its sharp edges: [`.context/auth/security.md`](../auth/security.md).
 
 **Response** (200 OK):
