@@ -1,11 +1,9 @@
 # Waitlist
 
-> **In progress (§125).** Joining (t-974), the erasure receipt (t-975) and the
-> admin page (t-976) are built. Confirming the address and the leave link
-> (t-977), invites and linking the new account (t-978) are not yet. Until
-> t-977 lands, every entry stays unconfirmed — so the admin page shows no one
-> until you tick "Show unconfirmed" — and nothing sends the joiner an email.
-> Don't switch the waitlist on in production before then.
+> **In progress (§125).** Joining (t-974), the erasure receipt (t-975), the
+> admin page (t-976), confirming the address and the leave link (t-977) are
+> built. Invites and linking the new account (t-978) are not yet, so there is
+> no way to invite anyone from the list.
 
 A pre-launch waitlist a fork switches on: Sunrise owns the table, the routes,
 the privacy wiring, the admin page and (soon) invites; the fork owns its
@@ -53,6 +51,7 @@ export const waitlistConfig: WaitlistConfig | null = {
     email.endsWith('@mailinator.com')
       ? { action: 'flag', reason: 'disposable-domain' }
       : { action: 'accept' },
+  retention: { unconfirmedDays: 30 }, // the default; your privacy notice says the same
 };
 ```
 
@@ -82,10 +81,12 @@ Half a waitlist is worse than none.
 
 ## Routes
 
-| Route                   | Who    | What                                                                   |
-| ----------------------- | ------ | ---------------------------------------------------------------------- |
-| `GET /api/v1/waitlist`  | Anyone | `{ lists: [{ key, open }], fields }` — the form's fields, serialisable |
-| `POST /api/v1/waitlist` | Anyone | Join. 5 an hour per IP (`waitlistLimiter`, `RATE_LIMIT_WAITLIST`)      |
+| Route                           | Who                  | What                                                                   |
+| ------------------------------- | -------------------- | ---------------------------------------------------------------------- |
+| `GET /api/v1/waitlist`          | Anyone               | `{ lists: [{ key, open }], fields }` — the form's fields, serialisable |
+| `POST /api/v1/waitlist`         | Anyone               | Join. 5 an hour per IP (`waitlistLimiter`, `RATE_LIMIT_WAITLIST`)      |
+| `POST /api/v1/waitlist/confirm` | Anyone with the link | `{ entry, token }`: confirm the address. Single use, 7 days            |
+| `POST /api/v1/waitlist/leave`   | Anyone with the link | `{ token }`: erase the entry, with a receipt                           |
 
 Admin routes — org-tier (`withAdminAuth({ tier: 'org' })`, listed in
 `ORG_TIER_ADMIN_ROUTES`), so an org's OWNER or ADMIN works their own org's list:
@@ -106,7 +107,9 @@ the list** are listed and exported: anyone can type any address into the
 form, so an unconfirmed entry is asked for, never assumed. Every route
 answers 404 without a config, and the page and its nav item are hidden.
 
-The public routes answer 404 without a config too. The join body:
+The join routes and confirm answer 404 without a config too. **Leave never
+does**: no switch may stop someone leaving, so a fork that drops its config
+still lets the links in people's inboxes take them off. The join body:
 `{ email, name?, list?, details?: { <field key>: string }, utm_source?, utm_medium?, utm_campaign?, referrer? }`.
 `list` may be left out when there is one list. Unknown `details` keys are a 400.
 
@@ -136,6 +139,72 @@ Each was found in Lelanea's waitlist, in review or in use, and each has a test.
 Attribution is reduced before it is stored: the first `Accept-Language` tag,
 the referrer's host only, UTM values capped at 100 characters.
 
+## Confirming the address, and leaving
+
+Anyone can type anyone's address into the form, so every entry starts
+unconfirmed, and the join sends a link that proves the address is the
+person's own.
+
+- **The join sends one email, after the response** (`after()`, through
+  `keepRunningAfterResponse`, handed a function so that nothing of the mail,
+  not even the read deciding whether to send, starts before the response has
+  gone). The answer and its timing are the same for a member and a stranger.
+  A new or still-unconfirmed entry gets the confirmation link; a confirmed
+  address submitted again gets the "already on the list" note, with no link. A
+  removed address, an entry `screen()` flagged, a honeypot hit and a closed
+  list get nothing: an entry held back as suspected abuse does not get to use
+  your sender either.
+- **At most one email an hour per entry**, both kinds together, claimed with
+  a conditional write on `lastEmailedAt`. The form cannot be used to flood an
+  inbox from your sender. The "already on the list" note waits longer: 30 days
+  since the entry's last email (`WAITLIST_NOTE_INTERVAL_MS`), so anyone who
+  types a confirmed address cannot mail its owner every hour for good.
+- **Only a real send counts.** A send that fails, or that `sendEmail` reports
+  as `disabled` (email not configured, in development and test), gives the
+  slot back and withdraws the link it minted.
+- **At most three confirmation links per entry, ever**
+  (`WAITLIST_CONFIRM_MAX_LINKS`, counted in `confirmLinksSent`). Each link
+  restarts the entry's retention window, so without a cap a stranger
+  resubmitting an address nobody confirms could mail it every hour and keep
+  it on the list for good. Past the cap the entry gets nothing more and is
+  deleted when its window runs out; its owner can join afresh after that.
+- **A name is put in an email only if it looks like a first name**
+  (`firstNameOf()`, `lib/waitlist/mail.ts`): a letter, then letters,
+  apostrophes or hyphens, up to 40. Anything else gets "Hello,". A URL typed as
+  a name would otherwise arrive as a link from your real sender. Overrides get
+  the filtered `firstName`, never the raw text.
+- **The confirm link** is `/waitlist/confirm?entry=…&token=…`: 32 random bytes,
+  only their hash stored, in `WaitlistConfirmToken` (no address), seven days,
+  single use. The table is tenant-owned and cascades with its entry, so
+  whatever deletes an entry, including a fork's own cleanup, deletes its
+  links. **A re-send adds a link and never
+  kills one**: every link sent works until it expires or the address is
+  confirmed, so a failed send, or a stranger resubmitting the address, cannot
+  break the link already in the inbox. Confirming uses up all of them. A send
+  that fails gives back the hour's slot and withdraws its unsent link. The
+  token is lowercase hex; an uppercased copy still works. The page shows
+  a button; **opening the link alone confirms nothing**, because mail scanners
+  open links before people do. An expired, used, unknown or malformed link
+  gets one answer: `400 INVALID_TOKEN`.
+- **The leave link** is `/waitlist/leave?token=…`, HMAC-signed rather than
+  stored, with no expiry: it works for as long as the entry exists. The press
+  erases the entry and writes a waitlist-only receipt (`self_service`). A
+  second press answers "you're off the list" again. An entry whose org is
+  suspended answers `503`, because it is still there.
+- **Closing a list stops joins only.** Confirming and leaving still work.
+- **Unconfirmed entries are deleted after `retention.unconfirmedDays`**
+  (default 30) by the `waitlistRetention` maintenance job, once per org,
+  counted from `confirmWindowFrom` (see [Retention](#retention)). An entry
+  linked to an account is left for the account's erasure.
+
+The two emails are registry kinds, `waitlistConfirm` and
+`waitlistAlreadyOnList` (`lib/email/registry.ts`). Override them in
+`lib/app/emails.ts` like any other; keep the leave link in both.
+
+Both links name an entry, not a person, so their routes read the entry's org
+under `runAsCredentialLookup` and enter it as `waitlist-link`
+(`lib/waitlist/entry-org.ts`), as the approval-token routes do.
+
 ## Tenancy
 
 Both tables are tenant-owned. Public joins land in the **install org**, entered
@@ -156,20 +225,23 @@ orgs until `db:tenancy:enable` ran again.
   [data-export](../privacy/data-export.md#tables-with-no-user-fk) and
   [data-erasure](../privacy/data-erasure.md).
 - **Erasing a waitlist-only person** (no account) goes through
-  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`): it deletes the entry,
-  writes a `waitlist` erasure receipt, and deletes the pending invitation for
-  the address that this org issued — otherwise a working sign-up link survives
-  the erasure. Another org's invitation is left (invitations are install-wide,
-  one per address); one whose metadata cannot be read is left and logged. The
-  admin page's Erase calls it; the leave link (t-977) will. See
+  `eraseWaitlistEntry()` (`lib/waitlist/erase.ts`): it deletes the entry and
+  its outstanding confirmation token, writes a `waitlist` erasure receipt, and
+  deletes the pending invitation for the address that this org issued —
+  otherwise a working sign-up link survives the erasure. Another org's
+  invitation is left (invitations are install-wide, one per address); one
+  whose metadata cannot be read is left and logged. The admin page's Erase and
+  the leave link both call it. See
   [Waitlist-only receipts](../privacy/data-erasure.md#waitlist-only-receipts).
 - **Removing is not erasing.** Remove (`PATCH { removed: true }`) keeps the
   row — `removedAt`, never a delete — so a re-join stays removed and Art. 15
   still discloses it. Erase deletes it.
 - **`userId` cascades** with the account: an entry is personal data.
 - **Org export** includes both tables.
-- **Your privacy notice** must cover what the form collects, that answers are
-  kept while the list is open, and the version you put in `consentVersion`.
+- **Your privacy notice** must cover what the form collects, that an
+  unconfirmed entry is deleted after `retention.unconfirmedDays`, that answers
+  are kept while the list is open, and the version you put in
+  `consentVersion`.
 
 ## The admin page
 
@@ -189,12 +261,12 @@ Every state has a limit, each a config setting (`retention`, defaults in
 `DEFAULT_WAITLIST_RETENTION`), enforced by the per-org maintenance job
 `waitlistRetention` (hourly, `lib/waitlist/retention.ts`):
 
-| State                         | Deleted                             | Setting            |
-| ----------------------------- | ----------------------------------- | ------------------ |
-| Removed                       | 90 days after removal               | `removedDays`      |
-| Confirmed, on a closed list   | 12 months after the list closed     | `closedListMonths` |
-| Unconfirmed                   | 30 days (t-977)                     | —                  |
-| Joined (linked to an account) | with the account, never by this job | —                  |
+| State                         | Deleted                                       | Setting            |
+| ----------------------------- | --------------------------------------------- | ------------------ |
+| Removed                       | 90 days after removal                         | `removedDays`      |
+| Confirmed, on a closed list   | 12 months after the list closed               | `closedListMonths` |
+| Unconfirmed, not removed      | 30 days after its window started (at least 7) | `unconfirmedDays`  |
+| Joined (linked to an account) | with the account, never by this job           | —                  |
 
 A list "closed" is its `WaitlistListState` row with `open: false`; its
 `changedAt` dates the window, and closing a closed list again does not move
@@ -204,9 +276,22 @@ page) has no close date: its card says so and offers **Mark closed**, which
 records today, and the window runs from then. A joined entry is never pruned,
 even once removed. Each prune deletes in batches of 1,000, up to 20 a run and
 within 15 seconds an org, so a backlog of up to 20,000 goes in the run that
-finds it and a bigger one over the following hourly runs. Deleting a removed entry ends its "stays removed" protection, which is
-safe because a new entry for the address must be confirmed by its owner.
+finds it and a bigger one over the following hourly runs. The 15 seconds are
+shared fairly: each prune gets an equal part of what is left when it starts,
+so a backlog in one window cannot hold up the others. Deleting a removed
+entry ends its "stays removed" protection, which is safe because a new entry
+for the address must be confirmed by its owner.
+An unconfirmed entry's window starts at `confirmWindowFrom`: its join, its
+latest confirmation link, or an admin's Restore, whichever came last. It is
+never shorter than the link's seven days, so retention never deletes an entry
+while a link to confirm it still works, and a restored entry is not deleted on
+the next run. A removed unconfirmed entry waits out the removed window instead. Every deleted entry's
+confirmation tokens cascade with it.
 These deletions are retention, not erasure requests, and write no receipt.
+**The windows hold with no config.** A fork that drops its waitlist config
+keeps the rows it collected, and its notice still promised their limits, so
+the job prunes them on the default windows; an org with no entries costs it
+one read.
 Rows on a list the config no longer declares are not shown on the admin page.
 This job still deletes them on its usual windows — a removed one 90 days on, a
 confirmed one 12 months after its list closed — but a confirmed entry on a

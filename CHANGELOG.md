@@ -41,9 +41,31 @@ release process.
   (remove or restore; erase) and `PATCH /api/v1/admin/waitlist/lists/:key`
   (open or close); a per-org maintenance job, `waitlistRetention`, appended to
   the tick's `backgroundTasks`; and `eraseWaitlistEntry()` now also deletes
-  the org's pending invitation for the address. Confirmation and invites
-  follow; don't switch it on in production until confirmation lands. Guide:
+  the org's pending invitation for the address. Invites follow. Guide:
   `.context/waitlist/overview.md`.
+
+- **Waitlist confirmation and leaving (§125 t-977)**: a join now emails the
+  joiner, after the response — a confirmation link to a new or unconfirmed
+  entry, an "already on the list" note to a confirmed one — at most once an
+  hour per entry, and the note at most once in 30 days. New public routes `POST /api/v1/waitlist/confirm` and
+  `POST /api/v1/waitlist/leave`, and the pages their links open
+  (`/waitlist/confirm`, `/waitlist/leave`). Two new email kinds in
+  `EmailPropsMap`, `waitlistConfirm` and `waitlistAlreadyOnList`, overridable
+  in `lib/app/emails.ts`. `WaitlistConfig.retention.unconfirmedDays` (default
+  30, at least 7, the link's lifetime): an unconfirmed entry is deleted by the
+  `waitlistRetention` maintenance task that many days after its window
+  started: its join, its latest confirmation link, or an admin restore (an
+  entry from before this change starts at the migration). At most three
+  confirmation links per entry (`WAITLIST_CONFIRM_MAX_LINKS`), and none to an
+  entry `screen()` flagged. Every link sent stays good until it
+  expires or the address is confirmed; a re-send adds one rather than
+  replacing it. A new tenant-owned model, `WaitlistConfirmToken`, holds the
+  links' hashes and cascades with its entry, so whatever deletes an entry
+  deletes its links. New columns `WaitlistEntry.lastEmailedAt`,
+  `confirmWindowFrom` and `confirmLinksSent`, and a `TenantContextSource` value,
+  `'waitlist-link'`. Leave works with no waitlist config, so dropping the
+  config never strands the links in people's inboxes, and `waitlistRetention`
+  still prunes the rows a dropped config left, on the default windows.
 
 - **Private files and downloads on Vercel Blob** (#1012, #1155): the Vercel
   Blob provider can now read objects back (`download()`, through the SDK's

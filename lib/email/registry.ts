@@ -19,6 +19,8 @@ import VerifyEmail from '@/emails/verify-email';
 import ResetPasswordEmail from '@/emails/reset-password';
 import InvitationEmail from '@/emails/invitation';
 import ChangeEmailApprovalEmail from '@/emails/change-email-approval';
+import WaitlistConfirmEmail from '@/emails/waitlist-confirm';
+import WaitlistAlreadyOnListEmail from '@/emails/waitlist-already-on-list';
 import { emailOverrides } from '@/lib/app/emails';
 
 /**
@@ -80,9 +82,30 @@ export interface EmailPropsMap {
     approvalUrl: string;
     expiresAt: Date;
   };
+  /**
+   * The waitlist confirmation (§125 t-977), sent to an address nobody has
+   * proved. `firstName` is a first name or null, never the form's raw text —
+   * the platform filters it, because a URL typed as a name would otherwise
+   * arrive as a link from the app's real sender. An override must keep both
+   * links: the leave link is how someone who never joined gets off the list.
+   */
+  waitlistConfirm: {
+    firstName: string | null;
+    confirmUrl: string;
+    leaveUrl: string;
+    expiresAt: Date;
+  };
+  /**
+   * Sent instead of a confirmation when an already-confirmed address is
+   * submitted again (§125 t-977). No confirm link; keep the leave link.
+   */
+  waitlistAlreadyOnList: {
+    firstName: string | null;
+    leaveUrl: string;
+  };
 }
 
-/** The set of overridable auth emails. */
+/** The set of overridable platform emails (auth, and the waitlist's two). */
 export type EmailKind = keyof EmailPropsMap;
 
 /** A template for a given kind: takes that kind's props, returns an element. */
@@ -110,6 +133,8 @@ const defaultTemplates: { [K in EmailKind]?: EmailTemplate<K> } = {
   resetPassword: ResetPasswordEmail,
   invitation: InvitationEmail,
   changeEmailApproval: ChangeEmailApprovalEmail,
+  waitlistConfirm: WaitlistConfirmEmail,
+  waitlistAlreadyOnList: WaitlistAlreadyOnListEmail,
 };
 
 /**

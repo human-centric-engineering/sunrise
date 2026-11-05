@@ -33,7 +33,7 @@ describe('resolveWaitlistConfig', () => {
       fields: [],
       lists: [{ key: 'default' }],
       screen: null,
-      retention: { removedDays: 90, closedListMonths: 12 },
+      retention: { unconfirmedDays: 30, removedDays: 90, closedListMonths: 12 },
     });
   });
 
@@ -43,13 +43,19 @@ describe('resolveWaitlistConfig', () => {
     expect(
       resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: undefined } })
         ?.retention
-    ).toEqual({ removedDays: 90, closedListMonths: 12 });
+    ).toEqual({ unconfirmedDays: 30, removedDays: 90, closedListMonths: 12 });
   });
 
   it('takes a retention window the fork sets and keeps the default for the other', () => {
     expect(
       resolveWaitlistConfig({ consentVersion: 'v1', retention: { removedDays: 30 } })?.retention
-    ).toEqual({ removedDays: 30, closedListMonths: 12 });
+    ).toEqual({ unconfirmedDays: 30, removedDays: 30, closedListMonths: 12 });
+  });
+
+  it('keeps the unconfirmed window the fork sets', () => {
+    expect(
+      resolveWaitlistConfig({ consentVersion: 'v1', retention: { unconfirmedDays: 14 } })?.retention
+    ).toEqual({ unconfirmedDays: 14, removedDays: 90, closedListMonths: 12 });
   });
 
   it('keeps the fork’s own screen function', () => {
@@ -60,7 +66,6 @@ describe('resolveWaitlistConfig', () => {
   const invalid: Array<[string, unknown]> = [
     ['no consent version', { consentVersion: '  ' }],
     ['a zero retention window', { consentVersion: 'v1', retention: { removedDays: 0 } }],
-    ['an unknown retention key', { consentVersion: 'v1', retention: { unconfirmedDays: 30 } }],
     [
       'a select with no options',
       { consentVersion: 'v1', fields: [{ key: 'r', label: 'R', kind: 'select' }] },
@@ -101,6 +106,18 @@ describe('resolveWaitlistConfig', () => {
     ['duplicate list keys', { consentVersion: 'v1', lists: [{ key: 'a' }, { key: 'a' }] }],
     ['an empty list array', { consentVersion: 'v1', lists: [] }],
     ['a screen that is not a function', { consentVersion: 'v1', screen: 'reject-all' }],
+    ['a zero retention window', { consentVersion: 'v1', retention: { unconfirmedDays: 0 } }],
+    // Shorter than the confirmation link's seven days: retention would delete
+    // an entry while a link to confirm it still worked.
+    [
+      'an unconfirmed window shorter than the link',
+      { consentVersion: 'v1', retention: { unconfirmedDays: 6 } },
+    ],
+    [
+      'a fractional retention window',
+      { consentVersion: 'v1', retention: { unconfirmedDays: 7.5 } },
+    ],
+    ['an unknown retention key', { consentVersion: 'v1', retention: { unconfirmedDay: 30 } }],
   ];
 
   it.each(invalid)('%s switches the waitlist off and logs the problem', (_name, config) => {

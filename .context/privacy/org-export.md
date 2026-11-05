@@ -171,8 +171,10 @@ The subject manifest's two, read for an org:
   one meaning, ends it.
 
 - **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
-  message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
-  (engine lease bookkeeping; the execution is exported). The reason travels
+  message it derives from is exported), `AiWorkflowExecutionLeaseEvent`
+  (engine lease bookkeeping; the execution is exported) and
+  `WaitlistConfirmToken` (hashes of one-time confirm links; whether each entry
+  was confirmed is exported with it). The reason travels
   in the bundle's `meta` so the recipient can see what was left out and why.
 - **`attribution`** — the fact that the org holds a thing, not the thing:
   id + label + date. The four credential kinds (`AiApiKey`,

@@ -174,3 +174,23 @@ export const waitlistListPatchSchema = z.object({ open: z.boolean() }).strict();
 
 /** A list key in a route path. */
 export const waitlistListKeySchema = listKeySchema;
+
+/**
+ * `POST /api/v1/waitlist/confirm` (§125 t-977). Shape only: a token that is
+ * well-formed but wrong gets the same answer as an expired or used one.
+ */
+export const waitlistConfirmSchema = z.object({
+  entry: z.string().trim().min(1).max(100),
+  // Lowercased before the check: the stored hash is of the lowercase hex the
+  // email carries, so an uppercased copy of the link still works.
+  token: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[0-9a-f]{64}$/, 'Invalid token'),
+});
+
+/** `POST /api/v1/waitlist/leave` (§125 t-977). The signature is checked in the handler. */
+export const waitlistLeaveSchema = z.object({
+  token: z.string().trim().min(1).max(1000),
+});

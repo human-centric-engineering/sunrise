@@ -66,7 +66,9 @@ import type { OrgRole, SupportGrantLevel } from '@/lib/tenancy/roles';
  * admin's session admitted to an org they are not a member of, under that
  * org's open support grant. And `public-form` (§125): an anonymous public
  * write — a waitlist join — that names no row and no credential, entered into
- * the org the route decides (the install org).
+ * the org the route decides (the install org). And `waitlist-link` (§125
+ * t-977): a waitlist email's confirm or leave link, which names an entry —
+ * the org is the entry's, read the way `approval-token` reads an execution's.
  */
 export type TenantContextSource =
   | 'session'
@@ -78,6 +80,7 @@ export type TenantContextSource =
   | 'inbound-trigger'
   | 'approval-token'
   | 'public-form'
+  | 'waitlist-link'
   | 'system'
   | 'job'
   | 'implicit';

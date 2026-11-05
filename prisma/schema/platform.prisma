@@ -127,9 +127,19 @@ model WaitlistEntry {
   consentVersion String
 
   /// Set by the config's `screen()`: kept, but held back from bulk invites and counts.
-  flaggedReason String?
+  flaggedReason     String?
   /// Set when the joiner confirms through the emailed link (t-977).
-  confirmedAt   DateTime?
+  confirmedAt       DateTime?
+  /// When this entry was last sent a waitlist email (the confirmation link, or
+  /// the already-on-the-list note). Caps both at one an hour per entry, and the
+  /// note at one in 30 days, so the form cannot flood an inbox from our sender.
+  lastEmailedAt     DateTime?
+  /// Where an unconfirmed entry's retention window starts: its join, the latest
+  /// confirmation link sent, or an admin restore (t-977).
+  confirmWindowFrom DateTime  @default(now())
+  /// Confirmation links sent to this entry. Capped, so a stranger resubmitting
+  /// an address nobody confirms cannot mail it, or keep it, indefinitely.
+  confirmLinksSent  Int       @default(0)
 
   removedAt         DateTime?
   rejoinRequestedAt DateTime?
@@ -145,6 +155,9 @@ model WaitlistEntry {
   orgId String?
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  /// Its outstanding confirmation links, deleted with it by the cascade.
+  confirmTokens WaitlistConfirmToken[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -154,6 +167,29 @@ model WaitlistEntry {
   @@index([email])
   @@index([userId])
   @@map("waitlist_entry")
+}
+
+/// One confirmation link sent to a waitlist entry (§125 t-977): the SHA-256 of
+/// the token in the email, never the token. Single use, seven days; every link
+/// sent stays good until it expires or the entry is confirmed. Its own table,
+/// not `Verification`, so the cascade deletes it with its entry on every path
+/// — leave, admin erase, retention, account and org erasure — with no code
+/// having to remember to. Tenant-owned like its entry.
+model WaitlistConfirmToken {
+  id        String        @id @default(cuid())
+  entryId   String
+  entry     WaitlistEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+
+  orgId String?
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([entryId, expiresAt])
+  @@index([orgId])
+  @@map("waitlist_confirm_token")
 }
 
 /// Whether one org's list is taking joins (§125). A list with no row is in the

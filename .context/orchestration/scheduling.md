@@ -190,20 +190,20 @@ On Vercel, set `CRON_SECRET` and add the cron to `vercel.json` — see [Vercel: 
 
 **Per-task minimum intervals (#442) and tenant scope (§108).** The background tasks do **not** all run on every tick. Each declares the shortest gap at which running it can still find work, and whose rows it acts on, in `lib/orchestration/maintenance/platform-jobs.ts`:
 
-| Task                       | Interval   | Scope   | Why                                                                                  |
-| -------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------ |
-| `webhookRetries`           | every tick | per-org | backoff starts at 10s — a throttle would miss the first retry                        |
-| `hookRetries`              | every tick | per-org | same 10s / 60s / 300s backoff                                                        |
-| `orphanSweep`              | 2 min      | per-org | the lease is 3 min, so a faster sweep provably finds nothing                         |
-| `zombieReaper`             | 5 min      | per-org | its own stale threshold is 30 min                                                    |
-| `embeddingBackfill`        | 15 min     | per-org | best-effort re-embed of a failed write; the anti-join is unindexed                   |
-| `retention`                | 1 hour     | per-org | windows are measured in days                                                         |
-| `pendingExecutionRecovery` | 2 min      | per-org | its own stale-pending threshold is 2 min                                             |
-| `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput                  |
-| `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org                     |
-| `platformAgents`           | 15 min     | per-org | catches up an org behind the running code or missing a declared row                  |
-| `pendingErasures`          | every tick | system  | a throttled run reports no work, and the idle gate must not skip it                  |
-| `waitlistRetention`        | 1 hour     | per-org | removed and closed-list windows are days and months (§125); a no-op with no waitlist |
+| Task                       | Interval   | Scope   | Why                                                                     |
+| -------------------------- | ---------- | ------- | ----------------------------------------------------------------------- |
+| `webhookRetries`           | every tick | per-org | backoff starts at 10s — a throttle would miss the first retry           |
+| `hookRetries`              | every tick | per-org | same 10s / 60s / 300s backoff                                           |
+| `orphanSweep`              | 2 min      | per-org | the lease is 3 min, so a faster sweep provably finds nothing            |
+| `zombieReaper`             | 5 min      | per-org | its own stale threshold is 30 min                                       |
+| `embeddingBackfill`        | 15 min     | per-org | best-effort re-embed of a failed write; the anti-join is unindexed      |
+| `retention`                | 1 hour     | per-org | windows are measured in days                                            |
+| `pendingExecutionRecovery` | 2 min      | per-org | its own stale-pending threshold is 2 min                                |
+| `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput     |
+| `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org        |
+| `platformAgents`           | 15 min     | per-org | catches up an org behind the running code or missing a declared row     |
+| `pendingErasures`          | every tick | system  | a throttled run reports no work, and the idle gate must not skip it     |
+| `waitlistRetention`        | 1 hour     | per-org | windows are days and months (§125); one read for an org with no entries |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its

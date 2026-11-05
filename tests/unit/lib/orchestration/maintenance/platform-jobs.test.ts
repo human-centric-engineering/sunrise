@@ -144,7 +144,11 @@ function mockIdleTasks(): void {
   });
   vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0 });
   vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_IDLE);
-  vi.mocked(runWaitlistRetention).mockResolvedValue({ removedDeleted: 0, closedListDeleted: 0 });
+  vi.mocked(runWaitlistRetention).mockResolvedValue({
+    unconfirmedDeleted: 0,
+    removedDeleted: 0,
+    closedListDeleted: 0,
+  });
   vi.mocked(processPendingExecutions).mockResolvedValue({ recovered: 0, failed: 0, errors: [] });
   vi.mocked(processPendingEvaluationRuns).mockResolvedValue({
     claimed: 0,
@@ -400,6 +404,15 @@ describe('runDuePlatformJobs — foundWork', () => {
         vi
           .mocked(enforceRetentionPolicies)
           .mockResolvedValue({ ...RETENTION_IDLE, executionsDeleted: 3 }),
+    ],
+    [
+      'waitlistRetention',
+      () =>
+        vi.mocked(runWaitlistRetention).mockResolvedValue({
+          unconfirmedDeleted: 2,
+          removedDeleted: 0,
+          closedListDeleted: 0,
+        }),
     ],
     [
       'auditLogRetention',

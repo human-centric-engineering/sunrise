@@ -15,8 +15,9 @@
  * the config's `screen()`, or re-joined a removed entry. Anything else tells a
  * stranger whether an address is on a pre-launch list. Response *time* still
  * differs a little between a create, an update and no write, and this does
- * not pad it; the confirmation mail (t-977) is to be sent in `after()` so the
- * larger difference stays off the response. The answers that do
+ * not pad it; the email a join sends — the confirmation link, or the
+ * already-on-the-list note (t-977, `lib/waitlist/mail.ts`) — goes out in
+ * `after()`, so the larger difference stays off the response. The answers that do
  * differ say nothing about the address: a validation error (about the body),
  * a closed list (whether a list is open is public), and the rate limit (about
  * the caller).
@@ -41,6 +42,8 @@ import { isRecord } from '@/lib/utils';
 import { buildWaitlistJoinSchema, toWaitlistFieldShape } from '@/lib/validations/waitlist';
 import { getWaitlistConfig } from '@/lib/waitlist/config';
 import { joinWaitlist } from '@/lib/waitlist/join';
+import { sendWaitlistJoinMail } from '@/lib/waitlist/mail';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { getWaitlistListStatuses, isWaitlistListOpen } from '@/lib/waitlist/lists';
 import { localeFromAcceptLanguage, referrerHost } from '@/lib/waitlist/provenance';
 
@@ -133,11 +136,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
     const body = parsed.data;
 
-    const outcome = await runAsOrg(
+    const result = await runAsOrg(
       INSTALL_ORG_ID,
       async () => {
         if (!(await isWaitlistListOpen(config, body.list))) return 'closed' as const;
-        return joinWaitlist(config, {
+        const joined = await joinWaitlist(config, {
           email: body.email,
           name: body.name,
           list: body.list,
@@ -150,11 +153,20 @@ export async function POST(request: NextRequest): Promise<Response> {
           referrerHost: referrerHost(body.referrer),
           ip: clientIP,
         });
+        // A function, not a promise: nothing of the mail (not even the read
+        // deciding whether to send) starts until the response has gone.
+        // Registered inside the org scope, which `after()` carries into it.
+        keepRunningAfterResponse(
+          () => sendWaitlistJoinMail(joined.entryId, joined.outcome),
+          'Waitlist join email',
+          { entryId: joined.entryId }
+        );
+        return joined;
       },
       { source: 'public-form' }
     );
 
-    if (outcome === 'closed') {
+    if (result === 'closed') {
       return errorResponse('This waitlist is not taking new sign-ups right now.', {
         code: 'WAITLIST_CLOSED',
         status: 409,
@@ -163,7 +175,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     // The outcome and the list, never the address: this is a log of strangers.
-    log.info('Waitlist join handled', { list: body.list, outcome });
+    log.info('Waitlist join handled', { list: body.list, outcome: result.outcome });
     return joined();
   } catch (error) {
     return handleAPIError(error);

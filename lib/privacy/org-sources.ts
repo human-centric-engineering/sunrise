@@ -726,4 +726,9 @@ export const ORG_EXCLUDED_SOURCES: OrgExcludedSource[] = [
     reason:
       'Engine lease bookkeeping for stuck-execution recovery — lease tokens and heartbeat events, nothing the organisation authored; the executions themselves are exported.',
   },
+  {
+    model: 'WaitlistConfirmToken',
+    reason:
+      'Hashes of the one-time links that confirm a waitlist address: credential material, and nothing the organisation authored. Whether each entry was confirmed is exported with the entries.',
+  },
 ];

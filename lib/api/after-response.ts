@@ -18,6 +18,13 @@
  * too. What it cannot do is register once every task has settled. So hand the
  * outermost promise over synchronously in the handler, and let nested work
  * register before that promise resolves.
+ *
+ * **A promise has already started; a function has not.** Pass a function when
+ * the work must not begin until the response has gone (the waitlist join's
+ * email, whose reads and writes would otherwise run while the response is
+ * built and show in its timing). `after()` runs it in the async context it was
+ * registered from, so a tenant scope around the call holds inside it. Outside
+ * a request it starts at once, as a promise would have.
  */
 
 import { after } from 'next/server';
@@ -38,24 +45,39 @@ function isOutsideRequestScope(err: unknown, message: string): boolean {
 }
 
 /**
- * Run `task` to completion even after the response is sent. Never throws, and
- * the promise handed to `after()` never rejects: a rejection is logged as
- * "`label` failed" instead.
+ * Run `task` to completion even after the response is sent: a promise as it
+ * is, a function once the response has gone. Never throws, and what is handed
+ * to `after()` never rejects: a rejection (or a throw from the function) is
+ * logged as "`label` failed" instead.
  */
 export function keepRunningAfterResponse(
-  task: Promise<unknown>,
+  task: Promise<unknown> | (() => Promise<unknown>),
   label: string,
   meta: Record<string, unknown> = {}
 ): void {
-  const settled = task.then(
-    () => undefined,
-    (err: unknown) => {
-      logger.error(`${label} failed`, err, meta);
-    }
-  );
+  const settle = (work: Promise<unknown>): Promise<void> =>
+    work.then(
+      () => undefined,
+      (err: unknown) => {
+        logger.error(`${label} failed`, err, meta);
+      }
+    );
+  // `start` is set for a function, not yet started, and is what `after()` is
+  // handed; a promise has already started and is handed as it is.
+  let start: (() => Promise<void>) | null = null;
+  let handed: Promise<void> | (() => Promise<void>);
+  if (typeof task === 'function') {
+    start = () => settle(Promise.resolve().then(task));
+    handed = start;
+  } else {
+    handed = settle(task);
+  }
   try {
-    after(settled);
+    after(handed);
   } catch (err) {
+    // A function not yet started still has to run: the long-lived process
+    // runs it now, as it runs a promise.
+    if (start) void start();
     const message = err instanceof Error ? err.message : String(err);
     // No request scope: the long-lived process runs it, as `void` would.
     if (isOutsideRequestScope(err, message)) return;

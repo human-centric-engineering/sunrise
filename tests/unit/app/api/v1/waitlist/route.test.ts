@@ -11,11 +11,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma } from '@prisma/client';
 import type { WaitlistConfig } from '@/lib/waitlist/config';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
-const { mockPrisma, mockLimiterCheck, seen } = vi.hoisted(() => ({
+const { mockPrisma, mockLimiterCheck, mockSendMail, seen } = vi.hoisted(() => ({
+  mockSendMail: vi.fn(),
   mockPrisma: {
     waitlistEntry: {
       findFirst: vi.fn(),
@@ -37,6 +39,11 @@ const { mockPrisma, mockLimiterCheck, seen } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
+
+// The email a join sends is the mail module's (tested in
+// tests/unit/lib/waitlist/mail.test.ts); here, only when and with what it is
+// started, and that the answer never waits for it.
+vi.mock('@/lib/waitlist/mail', () => ({ sendWaitlistJoinMail: mockSendMail }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
   waitlistLimiter: { check: mockLimiterCheck },
@@ -106,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   seen.orgs = [];
   mockLimiterCheck.mockReturnValue({ success: true, limit: 5, remaining: 4, reset: 0 });
+  mockSendMail.mockResolvedValue('sent');
   const record = <T>(value: T) =>
     vi.fn(() => {
       seen.orgs.push(seen.context()?.orgId);
@@ -257,6 +265,90 @@ describe('POST /api/v1/waitlist', () => {
     for (const a of answers) expect(a.snap, a.name).toEqual(first.snap);
   });
 
+  it('starts the join email for the entry it wrote, and answers without waiting for it (t-977)', async () => {
+    // Arrange — a send that never finishes: if the answer waited for it, POST would hang
+    mockSendMail.mockReturnValue(new Promise(() => {}));
+    const { POST } = await loadRoute(BASE_CONFIG);
+
+    // Act
+    const res = await POST(post({ email: 'a@example.com' }));
+
+    // Assert
+    expect(res.status).toBe(200);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    expect(mockSendMail).toHaveBeenCalledWith('entry-new', 'created');
+  });
+
+  it('starts nothing of the email until the response has gone, then sends it in the install org (t-977)', async () => {
+    // Arrange — after() as Next runs it: the callback held until the response
+    // is done, in the async context it was registered from (Next binds it the
+    // same way, with AsyncLocalStorage.bind)
+    const held: Array<() => unknown> = [];
+    vi.doMock('next/server', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('next/server')>()),
+      after: (task: unknown) => {
+        if (typeof task === 'function') held.push(AsyncLocalStorage.bind(task as () => unknown));
+      },
+    }));
+    const mailOrgs: Array<string | null | undefined> = [];
+    mockSendMail.mockImplementation(async () => {
+      mailOrgs.push(seen.context()?.orgId);
+      return 'sent';
+    });
+    try {
+      const { POST } = await loadRoute(BASE_CONFIG);
+
+      // Act
+      const res = await POST(post({ email: 'a@example.com' }));
+
+      // Assert — answered with the mail not even begun: no read of it to time
+      expect(res.status).toBe(200);
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(held).toHaveLength(1);
+      await held[0]();
+      expect(mockSendMail).toHaveBeenCalledWith('entry-new', 'created');
+      expect(mailOrgs).toEqual([INSTALL_ORG_ID]);
+    } finally {
+      vi.doUnmock('next/server');
+    }
+  });
+
+  it('gives a member and a non-member the same answer while their emails are still pending (t-977)', async () => {
+    // Arrange — both sends pending; the confirmed member gets the note, the stranger the link
+    mockSendMail.mockReturnValue(new Promise(() => {}));
+    const snaps = [];
+
+    // Act
+    for (const existing of [null, { ...STORED, confirmedAt: new Date() }]) {
+      mockPrisma.waitlistEntry.findFirst.mockResolvedValueOnce(existing);
+      const { POST } = await loadRoute(BASE_CONFIG);
+      snaps.push(await snapshot(await POST(post({ email: 'a@example.com' }))));
+    }
+
+    // Assert — the mail module was told which email each needs; the answers do not differ
+    expect(mockSendMail.mock.calls).toEqual([
+      ['entry-new', 'created'],
+      ['entry-1', 'unchanged'],
+    ]);
+    expect(snaps[1]).toEqual(snaps[0]);
+  });
+
+  it('starts no email for a honeypot hit or a closed list (t-977)', async () => {
+    // Act
+    const closedRoute = await loadRoute({
+      ...BASE_CONFIG,
+      lists: [{ key: 'default', startsClosed: true }],
+    });
+    const closed = await closedRoute.POST(post({ email: 'a@example.com' }));
+    const openRoute = await loadRoute(BASE_CONFIG);
+    const honeypot = await openRoute.POST(post({ email: 'a@example.com', website: 'x' }));
+
+    // Assert
+    expect(closed.status).toBe(409);
+    expect(honeypot.status).toBe(200);
+    expect(mockSendMail).not.toHaveBeenCalled();
+  });
+
   it('decides the honeypot on its value: null and empty are a person, anything else a bot', async () => {
     const { POST } = await loadRoute(BASE_CONFIG);
 
@@ -302,6 +394,7 @@ describe('POST /api/v1/waitlist', () => {
     ({ POST } = await loadRoute(config));
     expect((await POST(post({ email: 'a@example.com' }))).status).toBe(200);
     expect(mockPrisma.waitlistEntry.create).toHaveBeenCalledWith({
+      select: { id: true },
       data: expect.objectContaining({ list: 'beta' }),
     });
   });

@@ -85,14 +85,22 @@ export interface WaitlistConfig {
    */
   screen?: (input: WaitlistScreenInput) => WaitlistScreenResult | Promise<WaitlistScreenResult>;
   /**
-   * How long each state is kept before the retention job deletes it. Your
-   * privacy notice should say the same. Every window has a default.
+   * How long each state is kept before the retention job deletes it, enforced
+   * by the maintenance tick, per org. Your privacy notice should say the same.
+   * Every window has a default.
    */
   retention?: WaitlistRetention;
 }
 
 /** Retention windows (§125). Each is optional; the defaults are the spec's. */
 export interface WaitlistRetention {
+  /**
+   * Days an entry nobody confirmed is kept after it joined or was last sent
+   * a confirmation link. Default 30, at least 7 (the link's lifetime). An
+   * unconfirmed entry is an address someone typed; nothing proves it is the
+   * person's own, so it is not kept for long.
+   */
+  unconfirmedDays?: number;
   /** Days a removed entry is kept after its removal. Default 90. */
   removedDays?: number;
   /** Months a closed list's entries are kept after it closed. Default 12. */
@@ -101,6 +109,7 @@ export interface WaitlistRetention {
 
 /** The spec's windows, used for any the config leaves out. */
 export const DEFAULT_WAITLIST_RETENTION: Required<WaitlistRetention> = {
+  unconfirmedDays: 30,
   removedDays: 90,
   closedListMonths: 12,
 };
@@ -167,6 +176,10 @@ const configSchema = z.object({
   screen: z.unknown().optional(),
   retention: z
     .object({
+      // At least the confirmation link's seven days, so retention never
+      // deletes an entry while a link to confirm it is still good. At most
+      // ten years, which no notice should need.
+      unconfirmedDays: z.number().int().min(7).max(3650).optional(),
       removedDays: z.number().int().min(1).max(3650).optional(),
       closedListMonths: z.number().int().min(1).max(120).optional(),
     })
@@ -206,6 +219,8 @@ export function resolveWaitlistConfig(
     // (`removedDays: env.X ? Number(env.X) : undefined`) keeps the default
     // rather than making every cut-off an Invalid Date.
     retention: {
+      unconfirmedDays:
+        parsed.data.retention?.unconfirmedDays ?? DEFAULT_WAITLIST_RETENTION.unconfirmedDays,
       removedDays: parsed.data.retention?.removedDays ?? DEFAULT_WAITLIST_RETENTION.removedDays,
       closedListMonths:
         parsed.data.retention?.closedListMonths ?? DEFAULT_WAITLIST_RETENTION.closedListMonths,

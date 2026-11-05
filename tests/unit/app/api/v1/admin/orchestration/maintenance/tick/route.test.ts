@@ -104,6 +104,13 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
 
 // The pending-erasure retrier (t-842): its own module, mocked idle by default.
 vi.mock('@/lib/privacy/erasure-requests', () => ({ processPendingErasures: vi.fn() }));
+vi.mock('@/lib/waitlist/retention', () => ({
+  runWaitlistRetention: vi.fn(async () => ({
+    unconfirmedDeleted: 0,
+    removedDeleted: 0,
+    closedListDeleted: 0,
+  })),
+}));
 
 // The fork seam (#469). Left unmocked, the real empty registry always resolves
 // `undefined`, so neither the "a fork registered jobs" nor the rejection arm of
@@ -577,6 +584,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('auditLogRetention');
     expect(body.data).not.toHaveProperty('platformAgents');
     expect(body.data).not.toHaveProperty('pendingErasures');
+    expect(body.data).not.toHaveProperty('waitlistRetention');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -678,7 +686,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // Background tasks still kick off even when schedules fail
     // (12 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
     // §108, platformAgents added in §116, pendingErasures in t-842,
-    // waitlistRetention in §125 t-976).
+    // waitlistRetention in §125 t-976/t-977).
     expect(body.data.backgroundTasks).toHaveLength(12);
   });
 

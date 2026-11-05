@@ -143,7 +143,7 @@ function job<T, R = undefined>(spec: {
  * | `auditLogRetention`       | 1 hour   | system  | the two audit tables have no org; once, not once per org            |
  * | `platformAgents`          | 15 min   | per-org | catches up an org behind the running code or what it can reach      |
  * | `pendingErasures`         | every    | system  | a throttled tick would report no work and let the idle gate skip it |
- * | `waitlistRetention`       | 1 hour   | per-org | removed and closed-list windows are days and months (§125)           |
+ * | `waitlistRetention`       | 1 hour   | per-org | windows are days and months; entries are tenant-owned (§125)        |
  *
  * `platformAgents` does real work only after a deploy changes the platform
  * agents' definitions, when an org's creation-time reconcile failed, or when
@@ -267,10 +267,11 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     name: 'waitlistRetention',
     scope: 'per-org',
     intervalMs: HOUR,
-    // A no-op while the app has no waitlist (`lib/app/waitlist-config.ts`
-    // empty): nothing is read.
+    // With no waitlist config it still prunes rows a dropped config left
+    // behind, on the default windows; an org with no entries costs one read.
     run: () => runWaitlistRetention(),
-    foundWork: (r) => r.removedDeleted > 0 || r.closedListDeleted > 0,
+    // Batch-capped: a deletion may mean more behind it.
+    foundWork: (r) => r.unconfirmedDeleted > 0 || r.removedDeleted > 0 || r.closedListDeleted > 0,
   }),
 ];
 

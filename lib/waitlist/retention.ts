@@ -17,25 +17,45 @@
  *     A list closed only by the config (`startsClosed`, no row) has no close
  *     date; the admin page offers "Mark closed", which records one, and the
  *     window runs from then.
- *   • **Unconfirmed** — 30 days; t-977 adds it here.
+ *   • **Unconfirmed** — deleted `unconfirmedDays` (30) after its
+ *     `confirmWindowFrom` (t-977): its join, the latest confirmation link
+ *     sent (a re-join sends a new link, and the entry must outlive it), or an
+ *     admin restore. The window is at least the link's seven days. Nothing
+ *     proves the address is the person's own, so it is not kept for long, and
+ *     the link cap (`WAITLIST_CONFIRM_MAX_LINKS`) stops resubmissions from
+ *     keeping it forever. A removed entry waits out the removed window instead, so its
+ *     "stays removed" protection is not cut short; an entry linked to an
+ *     account is never deleted here.
  *   • **Joined** — linked to its account and erased with it; never here, also
  *     when an admin has removed it.
  *
  * Each prune deletes in batches of {@link WAITLIST_RETENTION_BATCH}, up to
  * {@link WAITLIST_RETENTION_MAX_BATCHES} a run and within
- * {@link WAITLIST_RETENTION_BUDGET_MS} for the whole run: short statements
+ * {@link WAITLIST_RETENTION_BUDGET_MS} for the whole run, shared fairly: each
+ * prune gets an equal part of what is left when it starts, so a backlog in
+ * one window cannot hold up the others. Short statements
  * rather than one long delete inside the shared maintenance tick, and a
  * backlog of up to 20,000 rows still goes in the run that finds it rather
  * than over hours past its window. A bigger one, or one the time budget cuts
  * short, drains over the following hourly runs.
  * Runs in one org (the maintenance job enters each in turn). These deletions
- * are retention, not erasure requests, so they write no receipt.
+ * are retention, not erasure requests, so they write no receipt. A deleted
+ * entry's outstanding confirmation tokens go with it, by the cascade.
+ *
+ * **The windows hold with no config too.** A fork that drops its waitlist
+ * config still has the rows it collected, and its privacy notice still
+ * promised their limits, so the job prunes them on the default windows. An
+ * org with no entries costs one read.
  */
 
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getWaitlistConfig, type ResolvedWaitlistConfig } from '@/lib/waitlist/config';
+import {
+  DEFAULT_WAITLIST_RETENTION,
+  getWaitlistConfig,
+  type ResolvedWaitlistConfig,
+} from '@/lib/waitlist/config';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -44,7 +64,7 @@ export const WAITLIST_RETENTION_BATCH = 1000;
 /** Batches per prune per run. */
 export const WAITLIST_RETENTION_MAX_BATCHES = 20;
 /**
- * Time one org's run may spend, both prunes together. The tick runs every
+ * Time one org's run may spend, all three prunes together. The tick runs every
  * job for every org; this keeps a large backlog in one org from taking it.
  */
 export const WAITLIST_RETENTION_BUDGET_MS = 15_000;
@@ -70,6 +90,8 @@ async function deleteInBatches(
     if (rows.length === 0) break;
     // The same where again: a row that changed between the read and the
     // delete (restored, joined, re-invited) is not deleted for the state it left.
+    // Each deleted entry's confirmation tokens cascade with it; one kept by
+    // the re-check keeps its links.
     const deleted = await prisma.waitlistEntry.deleteMany({
       where: { AND: [where, { id: { in: rows.map((r) => r.id) } }] },
     });
@@ -82,6 +104,7 @@ async function deleteInBatches(
 }
 
 export interface WaitlistRetentionResult {
+  unconfirmedDeleted: number;
   removedDeleted: number;
   closedListDeleted: number;
 }
@@ -93,12 +116,13 @@ function monthsBefore(now: Date, months: number): Date {
   return cutoff;
 }
 
-/** The two cut-offs a run at `now` uses: removed before, and closed before. */
+/** The cut-offs a run at `now` uses: joined before, removed before, and closed before. */
 export function waitlistRetentionCutoffs(
   retention: ResolvedWaitlistConfig['retention'],
   now: Date
-): { removedBefore: Date; closedBefore: Date } {
+): { unconfirmedBefore: Date; removedBefore: Date; closedBefore: Date } {
   return {
+    unconfirmedBefore: new Date(now.getTime() - retention.unconfirmedDays * DAY_MS),
     removedBefore: new Date(now.getTime() - retention.removedDays * DAY_MS),
     closedBefore: monthsBefore(now, retention.closedListMonths),
   };
@@ -109,6 +133,20 @@ export function longClosedListWhere(closedBefore: Date): Prisma.WaitlistListStat
   return { open: false, changedAt: { lt: closedBefore } };
 }
 
+/** The entries the unconfirmed-entry prune deletes. */
+export function expiredUnconfirmedWhere(unconfirmedBefore: Date): Prisma.WaitlistEntryWhereInput {
+  return {
+    confirmedAt: null,
+    // A linked entry is the account's, erased with it.
+    userId: null,
+    // A removed one keeps its "stays removed" protection for the removed window.
+    removedAt: null,
+    // Moved by every link sent, so a link sent since the cut-off, which may
+    // still be live, keeps its entry.
+    confirmWindowFrom: { lt: unconfirmedBefore },
+  };
+}
+
 /** The entries the removed-entry prune deletes. */
 export function expiredRemovedWhere(removedBefore: Date): Prisma.WaitlistEntryWhereInput {
   // A joined entry is the account's, erased with it.
@@ -117,15 +155,24 @@ export function expiredRemovedWhere(removedBefore: Date): Prisma.WaitlistEntryWh
 
 /** Delete this org's waitlist entries that have outlived their window. */
 export async function pruneWaitlistEntries(
-  config: ResolvedWaitlistConfig,
+  retention: ResolvedWaitlistConfig['retention'],
   now: Date = new Date()
 ): Promise<WaitlistRetentionResult> {
-  const { removedBefore, closedBefore: closedCutoff } = waitlistRetentionCutoffs(
-    config.retention,
-    now
+  const {
+    unconfirmedBefore,
+    removedBefore,
+    closedBefore: closedCutoff,
+  } = waitlistRetentionCutoffs(retention, now);
+  const end = Date.now() + WAITLIST_RETENTION_BUDGET_MS;
+  // An equal part of what is left, for a prune with `prunesLeft` to go
+  // (itself included): time one does not use passes to the next.
+  const shareOf = (prunesLeft: number): number =>
+    Date.now() + Math.max(0, end - Date.now()) / prunesLeft;
+  const unconfirmedDeleted = await deleteInBatches(
+    expiredUnconfirmedWhere(unconfirmedBefore),
+    shareOf(3)
   );
-  const deadline = Date.now() + WAITLIST_RETENTION_BUDGET_MS;
-  const removedDeleted = await deleteInBatches(expiredRemovedWhere(removedBefore), deadline);
+  const removedDeleted = await deleteInBatches(expiredRemovedWhere(removedBefore), shareOf(2));
 
   const closedLists = await prisma.waitlistListState.findMany({
     where: longClosedListWhere(closedCutoff),
@@ -144,24 +191,28 @@ export async function pruneWaitlistEntries(
             // still be a live sign-up link.
             OR: [{ invitedAt: null }, { invitedAt: { lt: closedCutoff } }],
           },
-          deadline
+          shareOf(1)
         );
 
-  return { removedDeleted, closedListDeleted };
+  return { unconfirmedDeleted, removedDeleted, closedListDeleted };
 }
 
 /**
- * The maintenance job's entry point (`waitlistRetention`, per org): a no-op
- * while the app has no waitlist, so an install with the scaffold empty reads
- * nothing.
+ * The maintenance job's entry point (`waitlistRetention`, per org). With no
+ * config it prunes on the default windows (module comment), after one read
+ * that finds whether the org holds any entries at all — so an install that
+ * never had a waitlist reads one empty table and nothing else.
  */
 export async function runWaitlistRetention(
   now: Date = new Date()
 ): Promise<WaitlistRetentionResult> {
   const config = getWaitlistConfig();
-  if (!config) return { removedDeleted: 0, closedListDeleted: 0 };
-  const result = await pruneWaitlistEntries(config, now);
-  if (result.removedDeleted > 0 || result.closedListDeleted > 0) {
+  if (!config) {
+    const any = await prisma.waitlistEntry.findFirst({ select: { id: true } });
+    if (!any) return { unconfirmedDeleted: 0, removedDeleted: 0, closedListDeleted: 0 };
+  }
+  const result = await pruneWaitlistEntries(config?.retention ?? DEFAULT_WAITLIST_RETENTION, now);
+  if (result.unconfirmedDeleted > 0 || result.removedDeleted > 0 || result.closedListDeleted > 0) {
     logger.info('Waitlist retention deleted entries', { ...result });
   }
   return result;

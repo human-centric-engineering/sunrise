@@ -1,5 +1,5 @@
 /**
- * Smoke: the admin waitlist against a real database (§125 t-976).
+ * Smoke: the admin waitlist against a real database (§125 t-976, t-977).
  *
  *   npm run smoke:waitlist-admin
  *
@@ -9,8 +9,9 @@
  *     population — expired and in-window removed entries, a removed entry
  *     that signed up, a long-closed list's confirmed, joined, recently
  *     invited, removed-recently and unconfirmed entries, a recently closed
- *     list's and an open list's — shows each is non-empty, prunes, and checks
- *     exactly the expired rows went.
+ *     list's and an open list's, and an unconfirmed entry past its window with
+ *     its confirmation token — shows each is non-empty, prunes, and checks
+ *     exactly the expired rows went, and the expired entry's token with it.
  *   • The admin search's JSON-path match on a declared answer, the per-org
  *     list-state upsert (`orgId_list`), and the counts' groupings, as Postgres
  *     runs them.
@@ -31,10 +32,12 @@ import {
 } from '@/lib/waitlist/admin';
 import {
   expiredRemovedWhere,
+  expiredUnconfirmedWhere,
   longClosedListWhere,
   pruneWaitlistEntries,
   waitlistRetentionCutoffs,
 } from '@/lib/waitlist/retention';
+import { issueConfirmToken } from '@/lib/waitlist/tokens';
 
 const PREFIX = 'smoke-waitlist-admin';
 const stamp = Date.now();
@@ -80,13 +83,18 @@ async function main(): Promise<void> {
   try {
     // Anyone else's expired rows would be deleted by an org-wide prune: ask
     // the prune's own question, with its own cut-offs.
-    const { removedBefore, closedBefore } = waitlistRetentionCutoffs(CONFIG.retention, NOW);
+    const { unconfirmedBefore, removedBefore, closedBefore } = waitlistRetentionCutoffs(
+      CONFIG.retention,
+      NOW
+    );
     const foreignExpired = await prisma.waitlistEntry.count({
-      where: expiredRemovedWhere(removedBefore),
+      where: {
+        OR: [expiredRemovedWhere(removedBefore), expiredUnconfirmedWhere(unconfirmedBefore)],
+      },
     });
     if (foreignExpired > 0) {
       throw new Error(
-        `refusing to prune: ${foreignExpired} expired removed entr(ies) not created by this script`
+        `refusing to prune: ${foreignExpired} expired entr(ies) not created by this script`
       );
     }
     // …and so would a list someone else closed over the window ago.
@@ -116,6 +124,7 @@ async function main(): Promise<void> {
         removedAt?: Date | null;
         joinedAt?: Date | null;
         invitedAt?: Date | null;
+        createdAt?: Date;
       } = {},
       details: Record<string, string> = {}
     ) => {
@@ -130,6 +139,10 @@ async function main(): Promise<void> {
           removedAt: fields.removedAt ?? null,
           joinedAt: fields.joinedAt ?? null,
           invitedAt: fields.invitedAt ?? null,
+          // An old join is an old window too: no link has been sent since.
+          ...(fields.createdAt
+            ? { createdAt: fields.createdAt, confirmWindowFrom: fields.createdAt }
+            : {}),
         },
       });
       entryIds.push(row.id);
@@ -155,6 +168,14 @@ async function main(): Promise<void> {
     });
     // On the long-closed list, invited yesterday: its link may be live.
     const longClosedInvited = await make('closed-invited', CLOSED_LONG, { invitedAt: ago(1) });
+    // Nobody confirmed it in 31 days (t-977); its link cascades with it,
+    // while a kept entry's link stays.
+    const expiredUnconfirmed = await make('unconfirmed-old', OPEN, {
+      confirmedAt: null,
+      createdAt: ago(31),
+    });
+    await issueConfirmToken(expiredUnconfirmed, ago(24));
+    await issueConfirmToken(longClosedUnconfirmed);
 
     // Close one list 13 months ago and one last month, through the real write.
     await setWaitlistListOpen(CLOSED_LONG, false, actor.id, ago(400));
@@ -190,7 +211,7 @@ async function main(): Promise<void> {
     // The population, non-empty before the prune.
     const present = async (ids: string[]) =>
       prisma.waitlistEntry.count({ where: { id: { in: ids } } });
-    const doomed = [expiredRemoved, longClosedConfirmed];
+    const doomed = [expiredRemoved, longClosedConfirmed, expiredUnconfirmed];
     const kept = [
       recentRemoved,
       openConfirmed,
@@ -204,13 +225,24 @@ async function main(): Promise<void> {
     check((await present(doomed)) === doomed.length, `the ${doomed.length} expired entries exist`);
     check((await present(kept)) === kept.length, `the ${kept.length} in-window entries exist`);
 
-    const result = await pruneWaitlistEntries(CONFIG, NOW);
+    const result = await pruneWaitlistEntries(CONFIG.retention, NOW);
 
     check(
-      result.removedDeleted === 1 && result.closedListDeleted === 1,
-      'the prune reports one removed and one closed-list deletion'
+      result.unconfirmedDeleted === 1 &&
+        result.removedDeleted === 1 &&
+        result.closedListDeleted === 1,
+      'the prune reports one unconfirmed, one removed and one closed-list deletion'
     );
-    check((await present(doomed)) === 0, 'both expired entries are gone');
+    check((await present(doomed)) === 0, 'every expired entry is gone');
+    check(
+      (await prisma.waitlistConfirmToken.count({ where: { entryId: expiredUnconfirmed } })) === 0,
+      'the expired entry’s confirmation token cascaded with it'
+    );
+    check(
+      (await prisma.waitlistConfirmToken.count({ where: { entryId: longClosedUnconfirmed } })) ===
+        1,
+      'a kept entry keeps its confirmation token'
+    );
     check((await present(kept)) === kept.length, 'every in-window entry is still there');
 
     console.log('\n✓ smoke:waitlist-admin passed');
