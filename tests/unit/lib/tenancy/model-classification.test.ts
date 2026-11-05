@@ -2,7 +2,9 @@
  * Coverage guard: every Prisma model is classified (§107 t-705)
  *
  * Every model in `prisma/schema/*.prisma` must be exactly one of tenant-owned
- * (carries `orgId`), on `GLOBAL_CONFIG_MODELS`, or on `SYSTEM_MODELS`. A model
+ * (carries `orgId`), shared settings, system, or user-owned (core's lists in
+ * `lib/tenancy/classification.ts`, a fork's through
+ * `lib/app/tenancy-classification.ts`). A model
  * that is none of them — upstream's or a fork's — fails here by name, because
  * an unclassified model is one nobody decided about, and the row-isolation
  * policies, injection, probes and enable script all derive from that decision.
@@ -12,7 +14,10 @@
  *     + `@@index([orgId])` (the shape every tenant-owned model uses) and give
  *     it a disposition in `lib/privacy/org-sources.ts`;
  *   • it is platform configuration every org shares → `GLOBAL_CONFIG_MODELS`;
- *   • it decides or records tenancy → `SYSTEM_MODELS`.
+ *   • it decides or records tenancy → `SYSTEM_MODELS`;
+ *   • it is a person's own, across orgs → `USER_OWNED_MODELS` (no `orgId`, and
+ *     a link to a user).
+ * In a fork, use the same classes in `lib/app/tenancy-classification.ts`.
  * Never delete a model from an allowlist to go green — the header of
  * `lib/tenancy/classification.ts` says why.
  *
@@ -39,6 +44,8 @@ const realClient = (async () => {
 const {
   SYSTEM_MODELS,
   GLOBAL_CONFIG_MODELS,
+  USER_OWNED_MODELS,
+  appTenancyClassifications,
   classifyModels,
   foreignKeyRelations,
   readInlineSchema,
@@ -46,6 +53,69 @@ const {
   tenantOwnedModels,
 } = await import('@/lib/tenancy/classification');
 type RuntimeDataModel = import('@/lib/tenancy/classification').RuntimeDataModel;
+const { coreSchema, fullSchema, parseSchema, userColumnsOf } =
+  await import('@/tests/helpers/owner-classification-audit');
+type AuditSchemaModel = import('@/tests/helpers/owner-classification-audit').SchemaModel;
+
+/**
+ * Fork registrations that name a model from a core schema file. Registration
+ * refuses core's LISTED models, but core's tenant-owned models are defined by
+ * their `orgId` column and listed nowhere — so a fork registering one as system
+ * would take it out of row isolation. Only the schema can tell, so this guard
+ * does.
+ */
+function forkRegisteredCoreModels(
+  registered: Iterable<string>,
+  core: ReadonlyMap<string, unknown>
+): string[] {
+  return [...registered].filter((model) => core.has(model));
+}
+
+/** Fork-registered system models that carry `orgId` — tenant data taken out of row isolation. */
+function forkSystemWithOrgId(
+  systemWithOrgId: readonly string[],
+  registrations: ReadonlyMap<string, { cls: string }>
+): string[] {
+  return systemWithOrgId.filter((model) => registrations.get(model)?.cls === 'system');
+}
+
+/** Every model declared in a framework tier's schema files (`framework-*.prisma`). */
+function frameworkModels(): Set<string> {
+  const names = new Set<string>();
+  for (const file of readdirSync(SCHEMA_DIR).filter((f) => /^framework-.*\.prisma$/.test(f))) {
+    for (const line of readFileSync(path.join(SCHEMA_DIR, file), 'utf8').split('\n')) {
+      const open = MODEL_OPEN.exec(line);
+      if (open) names.add(open[1]);
+    }
+  }
+  return names;
+}
+
+/**
+ * `'app'`-tier registrations naming a framework tier's model. A leaf on a
+ * framework classifies its own models; the framework's keep the framework's
+ * class (or `orgId`), or a leaf could take a framework's tenant-owned model out
+ * of row isolation.
+ */
+function leafRegisteredFrameworkModels(
+  registrations: ReadonlyMap<string, { tier: string }>,
+  framework: ReadonlySet<string>
+): string[] {
+  return [...registrations]
+    .filter(([model, r]) => r.tier === 'app' && framework.has(model))
+    .map(([model]) => model);
+}
+
+/** User-owned models with no link to a user — a person's row that names no person. */
+function userOwnedWithoutUserLink(
+  userOwned: readonly string[],
+  schema: Map<string, AuditSchemaModel>
+): string[] {
+  return userOwned.filter((name) => {
+    const model = schema.get(name);
+    return model !== undefined && userColumnsOf(model).size === 0;
+  });
+}
 
 const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
 const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
@@ -113,30 +183,70 @@ describe('model classification', () => {
     expect(schema.size).toBeGreaterThan(60);
   });
 
-  it('classifies every model as exactly one of tenant-owned, global config or system', () => {
+  it('classifies every model as exactly one of tenant-owned, global config, system or user-owned', () => {
     expect(
       fromSchema.unclassified,
-      `These models carry no orgId and are on neither allowlist. Decide: add orgId (tenant-owned), ` +
-        `or add to GLOBAL_CONFIG_MODELS / SYSTEM_MODELS in lib/tenancy/classification.ts — never by deleting from an allowlist.`
+      `These models carry no orgId and are in no class. Decide: add orgId (tenant-owned), or classify ` +
+        `them as shared settings, system or user-owned — core's in lib/tenancy/classification.ts, a ` +
+        `fork's in lib/app/tenancy-classification.ts. Never by deleting from a list.`
     ).toEqual([]);
     const total =
-      fromSchema.tenantOwned.length + fromSchema.globalConfig.length + fromSchema.system.length;
+      fromSchema.tenantOwned.length +
+      fromSchema.globalConfig.length +
+      fromSchema.system.length +
+      fromSchema.userOwned.length;
     expect(total).toBe(schema.size);
   });
 
-  it('has no global-config model carrying orgId (a contradiction, not a classification)', () => {
+  it('has no global-config or user-owned model carrying orgId (a contradiction, not a classification)', () => {
     expect(fromSchema.contradictions).toEqual([]);
   });
 
-  it('allowlists name only models that exist, and do not overlap', () => {
+  it('has a link to a user on every user-owned model', () => {
+    expect(
+      userOwnedWithoutUserLink(fromSchema.userOwned, fullSchema()),
+      "A user-owned row is a person's, so it names one: a relation to User, a userId / …UserId " +
+        'column, or a field marked /// owner-classification: user-id.'
+    ).toEqual([]);
+  });
+
+  it('has no fork registration naming a core model', () => {
+    expect(
+      forkRegisteredCoreModels(appTenancyClassifications().keys(), coreSchema()),
+      "lib/app/tenancy-classification.ts may classify only your own models. A core model keeps core's " +
+        'class: one with orgId is tenant-owned, and registering it as system would take it out of row isolation.'
+    ).toEqual([]);
+  });
+
+  it('has no fork system model carrying orgId (it would leave row isolation)', () => {
+    expect(
+      forkSystemWithOrgId(fromSchema.systemWithOrgId, appTenancyClassifications()),
+      'A fork model with orgId is tenant-owned. Registered as system, its rows are readable across ' +
+        'orgs at TENANCY_MODE=multi. Remove it from system in lib/app/tenancy-classification.ts.'
+    ).toEqual([]);
+  });
+
+  it('has no leaf registration naming a framework tier’s model', () => {
+    expect(
+      leafRegisteredFrameworkModels(appTenancyClassifications(), frameworkModels()),
+      'An app-tier registration may classify only the leaf’s own models; a framework tier’s keep its class.'
+    ).toEqual([]);
+  });
+
+  it('lists name only models that exist, and do not overlap', () => {
     const names = new Set(schema.keys());
-    for (const m of [...SYSTEM_MODELS, ...GLOBAL_CONFIG_MODELS]) {
-      expect(names.has(m), `${m} is allowlisted but is not a model in the schema`).toBe(true);
+    const fork = [...appTenancyClassifications().keys()];
+    for (const m of [...SYSTEM_MODELS, ...GLOBAL_CONFIG_MODELS, ...USER_OWNED_MODELS, ...fork]) {
+      expect(names.has(m), `${m} is classified but is not a model in the schema`).toBe(true);
     }
-    const overlap = SYSTEM_MODELS.filter((m) =>
-      (GLOBAL_CONFIG_MODELS as readonly string[]).includes(m)
-    );
-    expect(overlap).toEqual([]);
+    const lists: readonly (readonly string[])[] = [
+      SYSTEM_MODELS,
+      GLOBAL_CONFIG_MODELS,
+      USER_OWNED_MODELS,
+    ];
+    const seen = new Map<string, number>();
+    for (const list of lists) for (const m of list) seen.set(m, (seen.get(m) ?? 0) + 1);
+    expect([...seen].filter(([, n]) => n > 1).map(([m]) => m)).toEqual([]);
   });
 
   it('classifies the credential models and the org rows the way §106/§107 decided', () => {
@@ -177,6 +287,86 @@ describe('model classification', () => {
       const result = classifyModels(fixture);
       expect(result.unclassified).toEqual([]);
       expect(result.tenantOwned).toContainEqual({ model: 'AppWidget', table: 'app_widget' });
+    });
+
+    it('names a user-owned model that carries an orgId', async () => {
+      const { registerAppTenancyClassification, __resetAppTenancyClassificationForTests } =
+        await import('@/lib/tenancy/classification');
+      try {
+        registerAppTenancyClassification({ tier: 'app', userOwned: ['AppKit'] });
+        const fixture = toRuntimeDataModel(
+          new Map([...schema, ['AppKit', { name: 'AppKit', hasOrgId: true, table: 'app_kit' }]])
+        );
+        const result = classifyModels(fixture);
+        expect(result.userOwned).toContain('AppKit');
+        expect(result.contradictions).toEqual(['AppKit']);
+        expect(result.tenantOwned.map((m) => m.model)).not.toContain('AppKit');
+      } finally {
+        __resetAppTenancyClassificationForTests();
+      }
+    });
+
+    it('names a fork registration of a core tenant-owned model', () => {
+      expect(forkRegisteredCoreModels(['AiConversation', 'AppKit'], coreSchema())).toEqual([
+        'AiConversation',
+      ]);
+    });
+
+    it('names a fork system model that carries orgId, not core’s OrgMembership', async () => {
+      const { registerAppTenancyClassification, __resetAppTenancyClassificationForTests } =
+        await import('@/lib/tenancy/classification');
+      try {
+        registerAppTenancyClassification({ tier: 'app', system: ['AppTeamJoin', 'AppHold'] });
+        const result = classifyModels(
+          toRuntimeDataModel(
+            new Map([
+              ...schema,
+              ['AppTeamJoin', { name: 'AppTeamJoin', hasOrgId: true, table: 'app_team_join' }],
+              ['AppHold', { name: 'AppHold', hasOrgId: false, table: 'app_hold' }],
+            ])
+          )
+        );
+        expect(forkSystemWithOrgId(result.systemWithOrgId, appTenancyClassifications())).toEqual([
+          'AppTeamJoin',
+        ]);
+      } finally {
+        __resetAppTenancyClassificationForTests();
+      }
+    });
+
+    it('names a leaf registration of a framework model, not the framework’s own', () => {
+      const registrations = new Map([
+        ['FrameworkInvoice', { tier: 'app' }],
+        ['FrameworkLedger', { tier: 'framework' }],
+        ['AppKit', { tier: 'app' }],
+      ]);
+      expect(
+        leafRegisteredFrameworkModels(
+          registrations,
+          new Set(['FrameworkInvoice', 'FrameworkLedger'])
+        )
+      ).toEqual(['FrameworkInvoice']);
+    });
+
+    it('names a user-owned model with no link to a user, and passes one with a link', () => {
+      const fork = parseSchema([
+        `model AppKit {
+  id     String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+}
+model AppCatalogue {
+  id    String @id
+  label String
+}
+model AppSpeedRecord {
+  id            String @id
+  drummerUserId String
+}`,
+      ]);
+      expect(userOwnedWithoutUserLink(['AppKit', 'AppCatalogue', 'AppSpeedRecord'], fork)).toEqual([
+        'AppCatalogue',
+      ]);
     });
 
     it('names a global-config model that grew an orgId', () => {

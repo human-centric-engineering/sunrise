@@ -79,8 +79,8 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
 
   /**
    * Declarative flag: does this capability create, change or delete a shared
-   * setting — a row of one of the `GLOBAL_CONFIG_MODELS`, which every org
-   * reads (§107 t-751)? When `true`, the dispatcher refuses it at `multi`
+   * setting — a row of one of the `GLOBAL_CONFIG_MODELS`, or of a model a fork
+   * registered as shared settings, which every org reads (§107 t-751)? When `true`, the dispatcher refuses it at `multi`
    * outside the install org, before approval or execution, because any org's
    * workflow can reach a capability through a `tool_call` step.
    * `tests/unit/scripts/ci/shared-settings-writes.test.ts` fails naming a

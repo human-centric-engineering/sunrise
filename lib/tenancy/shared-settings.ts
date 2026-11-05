@@ -3,7 +3,8 @@
  *
  * Shared settings are the {@link GLOBAL_CONFIG_MODELS} — providers, provider
  * models, capabilities, agent profiles, knowledge tags, feature flags, MCP
- * exposure and server config, orchestration settings. One row serves every
+ * exposure and server config, orchestration settings — plus any model a fork
+ * registers as shared settings (`lib/app/tenancy-classification.ts`). One row serves every
  * org, so a change made from inside a customer's org lands in every other
  * org too. The owner's ruling (2026-10-02): at `multi` they change only from
  * the install org. A platform admin switched into a customer's org keeps

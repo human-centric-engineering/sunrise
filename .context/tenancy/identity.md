@@ -592,9 +592,9 @@ merge-impact section promises forks.
   the org's; a retained record (a billing row — `AiCostLog` is the one core
   case) uses `onDelete: SetNull` instead, per the FK rule in `CLAUDE.md`.
   `tests/unit/lib/tenancy/model-classification.test.ts`
-  names every model that is neither tenant-owned nor on the two allowlists in
-  `lib/tenancy/classification.ts` (`SYSTEM_MODELS`, `GLOBAL_CONFIG_MODELS`)
-  until it is classified, and `tests/unit/lib/privacy/org-sources.test.ts`
+  names every model that is neither tenant-owned nor classified system, shared
+  settings or user-owned (core's lists in `lib/tenancy/classification.ts`, a
+  fork's through `lib/app/tenancy-classification.ts`) until it is classified, and `tests/unit/lib/privacy/org-sources.test.ts`
   names every `orgId` model until `lib/privacy/org-sources.ts` says what an
   org receives from it. Never delete from an allowlist to go green.
 

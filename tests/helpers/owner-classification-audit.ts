@@ -138,7 +138,13 @@ function isUserScalar(name: string, scalar: Scalar): boolean {
   );
 }
 
-function userColumnsOf(model: SchemaModel): Set<string> {
+/**
+ * The columns of `model` that hold a user's id: the keys of a relation to
+ * `User`, and the user-id scalars above. Also the tenancy guard's test of
+ * whether a user-owned model links to a user (t-984), so the two guards agree
+ * on what a user link is.
+ */
+export function userColumnsOf(model: SchemaModel): Set<string> {
   const cols = new Set<string>();
   // A key of a relation to some other model holds that model's id, whatever it is named.
   const otherKeys = new Set<string>();

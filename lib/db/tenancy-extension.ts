@@ -81,7 +81,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
-  classifyModels,
+  tenantOwnedModels,
   foreignKeyRelations,
   readInlineSchema,
   readRuntimeDataModel,
@@ -161,7 +161,9 @@ export function readTenancySchema(client: unknown): TenancySchema {
   const rdm = readRuntimeDataModel(client);
   return {
     rdm,
-    tenantOwned: new Set(classifyModels(rdm).tenantOwned.map((m) => m.model)),
+    // The same cached, warning roster the RLS scripts read (`tenantOwnedModels`),
+    // so the chokepoint and the policies cannot be derived two ways.
+    tenantOwned: new Set(tenantOwnedModels(client as object).keys()),
     fkRelations: foreignKeyRelations(readInlineSchema(client)),
   };
 }

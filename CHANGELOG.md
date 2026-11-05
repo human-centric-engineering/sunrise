@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **A fork classifies its own models for tenancy (#964), and a user-owned
+  class (#1041)**: new seam `lib/app/tenancy-classification.ts` →
+  `initAppTenancyClassification()` (ships empty), registering through
+  `registerAppTenancyClassification({ tier, system, globalConfig, userOwned })`
+  in `lib/tenancy/classification.ts`, so a fork no longer edits
+  `SYSTEM_MODELS` / `GLOBAL_CONFIG_MODELS`. A fourth class, **user-owned**
+  (`USER_OWNED_MODELS`, empty in core), holds rows a person owns outside any
+  org: no `orgId`, a link to a user, and not under the shared-settings rule.
+  `classifyModels()` returns `userOwned` and `systemWithOrgId`; new readers
+  `allSystemModels()`, `allGlobalConfigModels()`, `allUserOwnedModels()`. The
+  coverage guard fails on a fork registration that names a core model, an
+  `'app'` registration of a framework tier's model, or a fork `system` model
+  carrying `orgId` (which would leave row isolation; the client also warns). **Fork sync:** move
+  any models you added to core's lists into the new seam, then take core's
+  lists as they are.
 - **Letting named sites frame a page (#887)**: two new fork-owned seams.
   `lib/app/frame-ancestors.ts` → `resolveAppFrameAncestors(request)` (ships
   answering `[]`) names, per request, the exact `https://` origins allowed to

@@ -26,7 +26,8 @@
  *   and their `Many` forms) on a property or element access named for a
  *   global-config model, on any receiver: `prisma.featureFlag.create`,
  *   `tx.aiCapability.update`, `db['knowledgeTag'].upsert`. The model names are
- *   derived from `GLOBAL_CONFIG_MODELS`, so a model added there is covered.
+ *   derived from `GLOBAL_CONFIG_MODELS` and the fork tiers' shared-settings
+ *   registrations, so a model added to either is covered.
  * - SQL text — any string or template piece — that writes one of their tables
  *   (`UPDATE`, `INSERT INTO`, `DELETE FROM`).
  * - A call to a **writer**: a top-level function in any source file it is
@@ -53,8 +54,10 @@
  * data-layer alternative is Hub idea #21.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import ts from 'typescript';
-import { GLOBAL_CONFIG_MODELS } from '@/lib/tenancy/classification';
+import { allGlobalConfigModels } from '@/lib/tenancy/classification';
 
 /** Writes that only add a row; an `upsert` joins them when its `update` is `{}`. */
 const CREATE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn']);
@@ -69,15 +72,54 @@ const WRITE_METHODS = new Set([
   'deleteMany',
 ]);
 
+/**
+ * Core's shared-settings models and every fork tier's
+ * (`lib/app/tenancy-classification.ts`, t-983), read once.
+ */
+const SHARED_SETTINGS_MODELS = allGlobalConfigModels();
+
 /** `AiProviderModel` → `aiProviderModel`, the client accessor. */
 export const GLOBAL_CONFIG_ACCESSORS: ReadonlySet<string> = new Set(
-  GLOBAL_CONFIG_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
+  SHARED_SETTINGS_MODELS.map((model) => model[0].toLowerCase() + model.slice(1))
 );
 
-/** The mapped table names: `AiProviderModel` → `ai_provider_model`. */
-const GLOBAL_CONFIG_TABLES = GLOBAL_CONFIG_MODELS.map((model) =>
-  model.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
-);
+/** A model's `@@map`, in either form: `@@map("t")` or `@@map(name: "t")`. */
+export const MAP_ATTRIBUTE = /^\s*@@map\(\s*(?:name:\s*)?"(\w+)"/;
+
+/**
+ * Each shared-settings model's table, read from `prisma/schema/*.prisma`: its
+ * `@@map`, or the model name when it has none (a fork's table usually has
+ * none). Core's snake_case guess is kept beside it, so a schema this cannot
+ * read narrows nothing.
+ */
+function tableNamesOf(models: readonly string[]): string[] {
+  const mapped = new Map<string, string>();
+  const dir = path.join(process.cwd(), 'prisma', 'schema');
+  let files: string[] = [];
+  try {
+    files = readdirSync(dir).filter((file) => file.endsWith('.prisma'));
+  } catch {
+    // No schema directory (a test's synthetic cwd): the guesses below still apply.
+  }
+  for (const file of files) {
+    let current: string | null = null;
+    for (const line of readFileSync(path.join(dir, file), 'utf8').split('\n')) {
+      const open = /^model\s+(\w+)\s*\{/.exec(line);
+      if (open) current = open[1];
+      else if (line.startsWith('}')) current = null;
+      const map = current ? MAP_ATTRIBUTE.exec(line) : null;
+      if (map && current) mapped.set(current, map[1]);
+    }
+  }
+  const tables = new Set<string>();
+  for (const model of models) {
+    tables.add(mapped.get(model) ?? model);
+    tables.add(model.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase());
+  }
+  return [...tables];
+}
+
+const GLOBAL_CONFIG_TABLES = tableNamesOf(SHARED_SETTINGS_MODELS);
 const SQL_WRITE = new RegExp(
   String.raw`\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:"?public"?\.)?"?(?:${GLOBAL_CONFIG_TABLES.join('|')})\b`,
   'i'

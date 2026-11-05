@@ -325,11 +325,65 @@ those two factories are for RLS you hand-roll on a table outside that set. What 
 
 | The test that names your model                        | What it wants                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/unit/lib/tenancy/model-classification.test.ts` | Every model is tenant-owned (has `orgId`), on `SYSTEM_MODELS`, or on `GLOBAL_CONFIG_MODELS` (`lib/tenancy/classification.ts`). An unclassified model fails the build. **Never delete from an allowlist to go green** — move deliberately, column change in the same PR.                                                                                                                                                                   |
+| `tests/unit/lib/tenancy/model-classification.test.ts` | Every model is tenant-owned (has `orgId`), system, shared settings or user-owned — core's in `lib/tenancy/classification.ts`, yours in `lib/app/tenancy-classification.ts` ([below](#classifying-your-models)). An unclassified model fails the build. **Never delete from a list to go green** — move deliberately, column change in the same PR.                                                                                        |
 | `tests/unit/lib/tenancy/policy-coverage.test.ts`      | Every tenant-owned table has exactly one `org_isolation` policy. Append `orgIsolationPolicySql('<table>')` from `lib/tenancy/isolation.ts` to a **new** migration of yours; never edit one that shipped.                                                                                                                                                                                                                                  |
 | `tests/unit/lib/privacy/org-sources.test.ts`          | Every `orgId` model has a disposition in `lib/privacy/org-sources.ts` — what an org receives from it in `exportOrgData`, or why it is excluded. Never delete a row to pass. **This is a core file, and the one edit a fork cannot avoid today**: the org manifest has no fork seam yet (the subject manifest's `registerAppSubjectSources()` is the shape §109 gives it).                                                                 |
 | `tests/unit/lib/tenancy/org-scoped-slugs.test.ts`     | A tenant-owned model's human-meaningful slug is `@@unique([orgId, slug])`, not a global `@unique`. A routing key that must stay global is an explicit exception in the test, with its reason.                                                                                                                                                                                                                                             |
 | `tests/unit/db-raw-sql-allowlist.test.ts`             | Every `$queryRaw*` / `$executeRaw*` site under `lib/**` and `app/**` is listed (`scripts/**` and migrations are deliberately outside it — they run as the operator's own role, where RLS is not the control). A raw `INSERT` on a tenant-owned table must stamp `orgId` itself — read it off the parent row in the same statement, `(SELECT "orgId" FROM <parent> WHERE id = $1)`, the way the message embedder and the chunk writers do. |
+
+### Classifying your models
+
+A model with `orgId` is tenant-owned and needs nothing more. Every other model
+of yours goes in one of three classes, registered from
+`lib/app/tenancy-classification.ts` (t-983) — never by editing core's lists,
+which conflicts at every upgrade:
+
+| Class               | For                                                                             | Checked                                                                      |
+| ------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `userOwned` (t-984) | Rows a person owns outside any org: a drummer's kits, a practice run, a profile | No `orgId`, and a link to a user (a `User` relation or a `…UserId` column)   |
+| `globalConfig`      | Install-wide data every org shares: a catalogue, a lookup table                 | No `orgId`; a route or capability writing it declares `writesSharedSettings` |
+| `system`            | Rows that decide or record tenancy: identity bookkeeping, an audit log          | No `orgId` (below)                                                           |
+
+```ts
+// lib/app/tenancy-classification.ts
+import { registerAppTenancyClassification } from '@/lib/tenancy/classification';
+
+export function initAppTenancyClassification(): void {
+  registerAppTenancyClassification({
+    tier: 'app',
+    userOwned: ['Kit', 'PracticeRun'],
+    globalConfig: ['LineageNode'],
+    system: ['ReservedUsername'],
+  });
+}
+```
+
+- **Pick `userOwned` over `globalConfig` for a person's rows.** Shared settings
+  change only from the install org at `multi`, so every route writing one must
+  declare it, and an ordinary member's route cannot. A person's own row is not
+  a shared setting.
+- **A fork's `system` model may not carry `orgId`.** A system model with
+  `orgId` is left out of row isolation — core does this once, for
+  `OrgMembership`, the join that decides which org a request acts for. A
+  fork's would leave a tenant's rows readable across orgs, so the coverage
+  guard fails on it, and the client logs it at warn when built in case a build
+  skipped the guard. If you genuinely need a tenant join outside isolation,
+  raise it upstream.
+- **You cannot move a core model.** A registration naming one on core's lists,
+  a model another tier registered, or one model in two classes is dropped with
+  a log, and the coverage guard names whatever is left unclassified. Core's
+  tenant-owned models are listed nowhere (the `orgId` column defines them), so
+  the coverage guard fails on any registration naming a model from a core
+  schema file.
+- **Moving one of your own tenant-owned models to `system` leaves its old
+  policy.** `db:tenancy:enable` and `--disable` act on the current roster, so
+  the table keeps its `org_isolation` policy while the client stops stamping
+  `orgId`: writes then fail the policy (closed, not open). Drop the policy in
+  the same migration that changes the classification.
+- **A user-owned table is swept by a `system`-scope job.** A `per-org` job
+  runs once per active org, so over a table with no `orgId` it would do the
+  whole job once per org — at `single` too, if a second org exists
+  (see the job bullet below).
 
 Two more things the tests cannot ask for:
 
@@ -479,9 +533,11 @@ db:drift-check` is what tells you, and the order in
   that has been switched off), the orgs run **sequentially**, one scope at a
   time (per-org caps are meaningless if every org runs at once), and at
   `multi` its summary entry is the fold across orgs. Declare
-  `{ system: 'why' }` only for a table with **no** `orgId`: under that scope
+  `{ system: 'why' }` only for a table with **no** `orgId` — a user-owned or
+  shared-settings table — and always for one of those: under that scope
   nothing is stamped, so a tenant-owned create lands with no org and outside
-  every policy. `runAsSystem` is never the path of least resistance for a
+  every policy, while a `per-org` job over a user-owned table repeats its
+  whole sweep once per org. `runAsSystem` is never the path of least resistance for a
   job that "needs to see everything" — that job is per-org, and the policies
   do the seeing ([scheduling.md → App jobs](../orchestration/scheduling.md#app-jobs--the-fork-seam-on-the-tick)).
 - **A per-tenant request cap is built in; don't register an `'org'` key for
@@ -508,7 +564,9 @@ reasoning; the roster is what runs.
 
 > A surface belongs to whichever plane its **backing models** sit in, per
 > `lib/tenancy/classification.ts`. Tenant-owned models ⇒ the customer's
-> surface. `GLOBAL_CONFIG_MODELS` and `SYSTEM_MODELS` ⇒ platform-ops. Where a
+> surface. `GLOBAL_CONFIG_MODELS` and `SYSTEM_MODELS` ⇒ platform-ops.
+> User-owned models ⇒ the customer's surface, read by the person they belong
+> to. Core has none; they are a fork's. Where a
 > page reads both, it needs splitting, not assigning.
 
 The mapping is _almost_ 1:1 with the classification, and the "almost" is the

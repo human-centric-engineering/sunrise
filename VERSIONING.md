@@ -126,6 +126,7 @@ covered by the version contract.
   - `lib/app/knowledge-access-contributors.ts` → `initAppKnowledgeAccessContributors()` — knowledge document access
   - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam (primitive: `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - `lib/app/mcp-resources.ts` → `initAppMcpResources()` — MCP resource-type registry
+  - `lib/app/tenancy-classification.ts` → `initAppTenancyClassification()` — a fork's own models in the tenancy classification: system, shared settings or user-owned (primitive: `registerAppTenancyClassification()` in `lib/tenancy/classification.ts`)
   - `lib/app/owner-classification.ts` → `initAppOwnerClassification()` — a fork's own models in the owner classification: personal (and enforced by the owner layer) or not (primitive: `registerAppOwnerClassification()` in `lib/db/owner-classification.ts`)
   - `lib/app/org-export.ts` → `initAppOrgSources()` — a fork's own tables in the org export (primitive: `registerAppOrgSources()` in `lib/privacy/org-source-registry.ts`)
   - `lib/app/platform-agents.ts` → `initAppPlatformAgents()` — platform agents every org gets an instance of (primitive: `registerPlatformAgent()` in `lib/orchestration/agents/platform-agents.ts`)

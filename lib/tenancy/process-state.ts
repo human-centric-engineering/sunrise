@@ -789,6 +789,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'A WeakMap from a Prisma client object to the tenant-owned model roster derived from its runtime data model, so the derivation happens once per client.',
   },
   {
+    file: 'lib/tenancy/classification.ts',
+    holders: ['appRegistrations', 'clashedModels', 'appInit', 'exemptionsWarned'],
+    posture: 'no-tenant-data',
+    why: "A fork's tenancy classification of its own MODELS (t-983) — which class each is in, which tier said so, which clashed — registered from code and the same for every org, plus a warn-once latch; no row data.",
+  },
+  {
     file: 'lib/tenancy/resolver.ts',
     holders: ['resolver'],
     posture: 'no-tenant-data',
