@@ -53,9 +53,23 @@ const {
   tenantOwnedModels,
 } = await import('@/lib/tenancy/classification');
 type RuntimeDataModel = import('@/lib/tenancy/classification').RuntimeDataModel;
-const { fullSchema, parseSchema, userColumnsOf } =
+const { coreSchema, fullSchema, parseSchema, userColumnsOf } =
   await import('@/tests/helpers/owner-classification-audit');
 type AuditSchemaModel = import('@/tests/helpers/owner-classification-audit').SchemaModel;
+
+/**
+ * Fork registrations that name a model from a core schema file. Registration
+ * refuses core's LISTED models, but core's tenant-owned models are defined by
+ * their `orgId` column and listed nowhere — so a fork registering one as system
+ * would take it out of row isolation. Only the schema can tell, so this guard
+ * does.
+ */
+function forkRegisteredCoreModels(
+  registered: Iterable<string>,
+  core: ReadonlyMap<string, unknown>
+): string[] {
+  return [...registered].filter((model) => core.has(model));
+}
 
 /** User-owned models with no link to a user — a person's row that names no person. */
 function userOwnedWithoutUserLink(
@@ -161,6 +175,14 @@ describe('model classification', () => {
     ).toEqual([]);
   });
 
+  it('has no fork registration naming a core model', () => {
+    expect(
+      forkRegisteredCoreModels(appTenancyClassifications().keys(), coreSchema()),
+      "lib/app/tenancy-classification.ts may classify only your own models. A core model keeps core's " +
+        'class: one with orgId is tenant-owned, and registering it as system would take it out of row isolation.'
+    ).toEqual([]);
+  });
+
   it('lists name only models that exist, and do not overlap', () => {
     const names = new Set(schema.keys());
     const fork = [...appTenancyClassifications().keys()];
@@ -232,6 +254,12 @@ describe('model classification', () => {
       } finally {
         __resetAppTenancyClassificationForTests();
       }
+    });
+
+    it('names a fork registration of a core tenant-owned model', () => {
+      expect(forkRegisteredCoreModels(['AiConversation', 'AppKit'], coreSchema())).toEqual([
+        'AiConversation',
+      ]);
     });
 
     it('names a user-owned model with no link to a user, and passes one with a link', () => {

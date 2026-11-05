@@ -366,9 +366,17 @@ export function initAppTenancyClassification(): void {
   for `OrgMembership`, the join that decides which org a request acts for. The
   client logs every fork model in this position at warn when it is built, by
   name. Do not use it to opt a tenant's data out.
-- **You cannot move a core model.** A registration naming one, a model another
-  tier registered, or one model in two classes is dropped with a log; the
-  coverage guard then names whatever is left unclassified.
+- **You cannot move a core model.** A registration naming one on core's lists,
+  a model another tier registered, or one model in two classes is dropped with
+  a log, and the coverage guard names whatever is left unclassified. Core's
+  tenant-owned models are listed nowhere (the `orgId` column defines them), so
+  the coverage guard fails on any registration naming a model from a core
+  schema file.
+- **Moving one of your own tenant-owned models to `system` leaves its old
+  policy.** `db:tenancy:enable` and `--disable` act on the current roster, so
+  the table keeps its `org_isolation` policy while the client stops stamping
+  `orgId`: writes then fail the policy (closed, not open). Drop the policy in
+  the same migration that changes the classification.
 - **A user-owned table is swept by a `system`-scope job.** A `per-org` job
   runs once per active org, so over a table with no `orgId` it would do the
   whole job once per org — at `single` too, if a second org exists

@@ -46,6 +46,9 @@
  * at warn when it is built. That is for a join that decides the tenant, as
  * `OrgMembership` is in core — not a way to opt a tenant's data out.
  *
+ * Classify only your own models. The coverage guard fails on a registration
+ * naming one of core's.
+ *
  * A framework tier registers with `tier: 'framework'`, from a function the
  * leaf's `initAppTenancyClassification()` calls — not from `initFramework()` at
  * boot, which runs in a different runtime from the one that reads this.

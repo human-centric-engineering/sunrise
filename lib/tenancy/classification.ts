@@ -322,11 +322,17 @@ function rejectApp(tier: string, model: string, why: string): void {
  * `initAppTenancyClassification()`, or from a framework tier's function that it
  * calls. Idempotent by model and class.
  *
- * A row is dropped with a log, never thrown, when it names a model core
- * already classifies (a fork cannot move a core model), a model another tier
- * has classified (the first stands), an empty name, or a model this tier has
- * already put in a different class (both entries are dropped, so the model is
- * unclassified and the coverage guard names it).
+ * A row is dropped with a log, never thrown, when it names a model on one of
+ * core's lists, a model another tier has classified (the first stands), an
+ * empty name, or a model this tier has already put in a different class (both
+ * entries are dropped, so the model is unclassified and the coverage guard
+ * names it).
+ *
+ * **Register only your own models.** Core's tenant-owned models are defined by
+ * their `orgId` column and listed nowhere, so this cannot refuse one — but the
+ * coverage guard (`model-classification.test.ts`) fails naming any registration
+ * of a model from a core schema file. Registering one as system would take it
+ * out of row isolation.
  *
  * Name only what this file decides. Whether a model carries `orgId`, and so
  * whether the class is a contradiction, is the coverage guard's to judge
