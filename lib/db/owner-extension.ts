@@ -163,7 +163,9 @@ export type OwnerRefusalReason =
   /** A write that returns its row, whose filter does not confine it. */
   | 'unconfined-write'
   /** An `include` / `select` / `_count` of an enforced relation with no confining `where`. */
-  | 'unconfined-relation';
+  | 'unconfined-relation'
+  /** A fork's read rule (`owner: { reader }`) threw, or returned no usable `where`. */
+  | 'read-rule-failed';
 
 /**
  * A narrowed caller's read of rows it may not read. Thrown in every
@@ -373,6 +375,15 @@ function assertEnforceable(
     if (!scalar(c.owner.column)) {
       throw new Error(`Owner layer: ${model}.${c.owner.column} is not a scalar column of ${model}`);
     }
+  } else if ('reader' in c.owner) {
+    if (typeof c.owner.reader !== 'function') {
+      throw new Error(`Owner layer: ${model}'s owner.reader is not a function`);
+    }
+    // The rule is the whole answer: an ownerless or alsoVisible arm beside it
+    // would be a second rule the fork's own one never sees.
+    if (c.ownerless !== undefined || (c.alsoVisible ?? []).length > 0) {
+      throw new Error(`Owner layer: ${model} has a read rule and an ownerless or alsoVisible arm`);
+    }
   } else {
     const { field, parent } = c.owner.through;
     if (!fields.some((f) => f.kind === 'object' && f.name === field && f.type === parent)) {
@@ -461,7 +472,9 @@ export function whereConfines(
 ): boolean {
   if (!isRecord(where)) return false;
   const c = personal(schema, model);
-  if (!c) return false;
+  // A fork's read rule is never proven from a filter: the read is narrowed by
+  // it instead (`narrowsByRule`).
+  if (!c || 'reader' in c.owner) return false;
   const fields = schema.models.get(model)?.fields;
   const ownerRelation = schema.ownerRelation.get(model);
 
@@ -511,6 +524,7 @@ function ownerLeafConfines(
     if (key !== owner.column) return false;
     return pinsTo(value, reader.userId) || (pinsToNull(value) && readsOwnerless(reader, ownerless));
   }
+  if ('reader' in owner) return false;
   const { field, parent } = owner.through;
   if (key !== field) return false;
   // A child with no parent: its own ownerless arm.
@@ -581,14 +595,20 @@ function activeShareConfines(value: unknown): boolean {
 /**
  * The `where` selecting exactly the rows of `model` that `reader` may read:
  * its own, ownerless ones where the policy admits them, and each
- * `alsoVisible` arm — through the parent for a `through` owner. Used to narrow
- * a `findFirst` and to confirm a single-row read; {@link whereConfines} holds
- * for it by construction (pinned in the tests).
+ * `alsoVisible` arm — through the parent for a `through` owner. A fork's read
+ * rule (`owner: { reader }`) is the whole answer for its model, and a
+ * `through` child of one is the rule under the relation. Used to narrow a
+ * `findFirst`, to confirm a single-row read, and for a fork's read rule to
+ * narrow every read; {@link whereConfines} holds for it by construction except
+ * under a read rule, which no filter proves (pinned in the tests).
+ *
+ * `operation` names the read in the refusal a failing read rule raises.
  */
 export function readablePredicate(
   schema: OwnerSchema,
   model: string,
-  reader: OwnerReader
+  reader: OwnerReader,
+  operation = 'read'
 ): Record<string, unknown> {
   const c = personal(schema, model);
   if (!c) throw new Error(`Owner layer: ${model} is not personal`);
@@ -597,9 +617,11 @@ export function readablePredicate(
     const column = c.owner.column;
     arms.push({ [column]: reader.userId });
     if (readsOwnerless(reader, c.ownerless)) arms.push({ [column]: null });
+  } else if ('reader' in c.owner) {
+    arms.push(ruleWhere(model, c.owner.reader, reader, operation));
   } else {
     const { field, parent } = c.owner.through;
-    arms.push({ [field]: { is: readablePredicate(schema, parent, reader) } });
+    arms.push({ [field]: { is: readablePredicate(schema, parent, reader, operation) } });
     if (readsOwnerless(reader, c.ownerless)) arms.push({ [field]: null });
   }
   for (const arm of reader.readsShared ? (c.alsoVisible ?? []) : []) {
@@ -614,6 +636,54 @@ export function readablePredicate(
     });
   }
   return arms.length === 1 ? arms[0] : { OR: arms };
+}
+
+/**
+ * A fork's read rule, run for `reader`, failing closed. A rule that throws, or
+ * returns anything but a non-empty object, refuses the read: `{}` would admit
+ * every row, which is a model with no owner — classify that `not-personal`.
+ * The answer is a fresh copy, so a rule handing back a shared constant is not
+ * changed by what the layer adds to it.
+ */
+function ruleWhere(
+  model: string,
+  rule: (reader: OwnerReader) => object,
+  reader: OwnerReader,
+  operation: string
+): Record<string, unknown> {
+  let where: unknown;
+  try {
+    where = rule({ ...reader, unattributedReads: { ...reader.unattributedReads } });
+  } catch {
+    // The rule's own error is not surfaced: it could carry row content.
+    throw new OwnerReadRefusedError(model, operation, 'read-rule-failed', 'its read rule threw.');
+  }
+  if (!isRecord(where) || Object.keys(where).length === 0) {
+    throw new OwnerReadRefusedError(
+      model,
+      operation,
+      'read-rule-failed',
+      'its read rule returned no where to narrow by.'
+    );
+  }
+  return { ...where };
+}
+
+/**
+ * Is `model` read by a fork's rule — its own (`owner: { reader }`), or a
+ * parent's it is owned `through`? Such a read is narrowed by the rule rather
+ * than refused for want of a confining filter.
+ */
+export function narrowsByRule(schema: OwnerSchema, model: string): boolean {
+  let current = model;
+  // Bounded: a `through` chain is a few links; a cycle is a misclassification.
+  for (let depth = 0; depth < 16; depth++) {
+    const c = personal(schema, current);
+    if (!c || 'column' in c.owner) return false;
+    if ('reader' in c.owner) return true;
+    current = c.owner.through.parent;
+  }
+  return false;
 }
 
 /**
@@ -640,6 +710,16 @@ interface EnforcedNode {
   model: string;
   /** Absent for a to-one relation or a bare `_count`, which cannot carry one. */
   where: unknown;
+  /**
+   * The relation fields from the root to this relation — or, for a `_count`,
+   * to the node whose `_count` it is — so a read rule's `where` can be put
+   * there.
+   */
+  keys: readonly string[];
+  /** A to-one relation: it cannot carry a `where`, so a read rule cannot narrow it. */
+  toOne: boolean;
+  /** For a `_count` of this relation: the relation's name in the `_count`. */
+  counted?: string;
 }
 
 /**
@@ -695,9 +775,9 @@ export function scanSelection(
  */
 function inheritsAlong(schema: OwnerSchema, model: string, key: string, target: string): boolean {
   const here = personal(schema, model);
-  if (here && !('column' in here.owner) && here.owner.through.field === key) return true;
+  if (here && 'through' in here.owner && here.owner.through.field === key) return true;
   const there = personal(schema, target);
-  if (!there || 'column' in there.owner || there.owner.through.parent !== model) return false;
+  if (!there || !('through' in there.owner) || there.owner.through.parent !== model) return false;
   const name = schema.models.get(model)?.relationNames.get(key);
   return (
     name !== undefined &&
@@ -735,9 +815,11 @@ function scanNode(
     if (value === false || value === undefined) continue;
     if (key === '_count') {
       // `_count: true` counts every relation; `_count: { select }` the named ones.
+      // Prisma counts list relations only, so `true` names those.
+      const lists = schema.models.get(model)?.lists;
       const counted: [string, unknown][] =
         value === true
-          ? [...relations.keys()].map((rel) => [rel, true])
+          ? [...relations.keys()].filter((rel) => lists?.has(rel)).map((rel) => [rel, true])
           : isRecord(value) && isRecord(value.select)
             ? Object.entries(value.select)
             : [];
@@ -749,6 +831,9 @@ function scanNode(
           path: `${path}._count.${rel}`,
           model: target,
           where: isRecord(sel) ? sel.where : undefined,
+          keys,
+          toOne: false,
+          counted: rel,
         });
       }
       continue;
@@ -780,6 +865,8 @@ function scanNode(
             path: here,
             model: target,
             where: isRecord(value) ? value.where : undefined,
+            keys: hereKeys,
+            toOne,
           });
         }
       }
@@ -849,9 +936,108 @@ function firstUnconfined(
   reader: OwnerReader
 ): string | null {
   for (const node of scan.enforced) {
+    if (narrowsRelation(schema, node)) continue;
     if (!whereConfines(schema, node.model, node.where, reader)) return node.path;
   }
   return null;
+}
+
+/**
+ * Is this relation narrowed by a fork's read rule rather than held to its own
+ * `where`? A to-many one is: the rule is ANDed into its `where`. A to-one one
+ * cannot carry a `where`, and no column on its row decides, so it is refused.
+ */
+function narrowsRelation(schema: OwnerSchema, node: EnforcedNode): boolean {
+  return !node.toOne && narrowsByRule(schema, node.model);
+}
+
+/** `args` with `fn` applied to the value at the end of `keys`, through `include` / `select`. */
+function updateAt(
+  args: unknown,
+  keys: readonly string[],
+  fn: (value: unknown) => unknown
+): unknown {
+  if (keys.length === 0) return fn(args);
+  if (!isRecord(args)) return args;
+  const [key, ...rest] = keys;
+  let out = args;
+  for (const container of ['include', 'select'] as const) {
+    const node = out[container];
+    if (!isRecord(node) || !(key in node)) continue;
+    out = { ...out, [container]: { ...node, [key]: updateAt(node[key], rest, fn) } };
+  }
+  return out;
+}
+
+/** A relation's args (`true` or an object) with `rule` ANDed into its `where`. */
+function relationWith(value: unknown, rule: Record<string, unknown>): Record<string, unknown> {
+  const base = isRecord(value) ? value : {};
+  return { ...base, where: base.where === undefined ? rule : andWith(base.where, rule) };
+}
+
+/**
+ * `args` with each to-many relation a read rule governs narrowed by that rule:
+ * the rule ANDed into the relation's `where`, or into its entry in a `_count`.
+ * A `_count: true` is spelled out over the node's list relations first, so the
+ * one being narrowed can carry a `where`.
+ */
+function withRuleNarrowing(
+  schema: OwnerSchema,
+  rootModel: string,
+  args: unknown,
+  nodes: readonly EnforcedNode[],
+  reader: OwnerReader,
+  operation: string
+): unknown {
+  let out = args;
+  for (const node of nodes) {
+    const rule = readablePredicate(schema, node.model, reader, operation);
+    const counted = node.counted;
+    if (counted === undefined) {
+      out = updateAt(out, node.keys, (value) => relationWith(value, rule));
+      continue;
+    }
+    const owner = modelAt(schema, rootModel, node.keys);
+    out = updateAt(out, node.keys, (value) => {
+      if (!isRecord(value)) return value;
+      let next = value;
+      for (const container of ['include', 'select'] as const) {
+        const holder = next[container];
+        if (!isRecord(holder) || holder._count === undefined || holder._count === false) continue;
+        const count = holder._count;
+        const select: Record<string, unknown> =
+          count === true
+            ? Object.fromEntries(
+                [...(schema.models.get(owner)?.lists ?? [])]
+                  .filter((rel) => schema.models.get(owner)?.relations.has(rel))
+                  .map((rel) => [rel, true])
+              )
+            : isRecord(count) && isRecord(count.select)
+              ? count.select
+              : {};
+        const countArgs = isRecord(count) ? count : {};
+        next = {
+          ...next,
+          [container]: {
+            ...holder,
+            _count: {
+              ...countArgs,
+              select: { ...select, [counted]: relationWith(select[counted], rule) },
+            },
+          },
+        };
+      }
+      return next;
+    });
+  }
+  return out;
+}
+
+/** The model at the end of a relation path from `root`. */
+function modelAt(schema: OwnerSchema, root: string, keys: readonly string[]): string {
+  let model = root;
+  for (const key of keys) model = schema.models.get(model)?.relations.get(key) ?? model;
+  return model;
 }
 
 /**
@@ -994,11 +1180,17 @@ export function withOwnerChecks(
     // selected, and every query this operation sends is checked on its answer.
     // A write's read-back is checked after the write — inside a transaction the
     // refusal rolls it back; outside one the write stands.
+    // To-many relations a fork's read rule governs are narrowed by it.
+    const ruled = scan.enforced.filter((node) => narrowsRelation(schema, node));
+    const narrowedArgs =
+      ruled.length === 0
+        ? params.args
+        : withRuleNarrowing(schema, model, params.args, ruled, reader, operation);
     const rowChecks = scan.rowChecked;
     const prepared =
       rowChecks.length === 0
-        ? { args: params.args, strip: [] }
-        : withRowOwnerColumns(params.args, rowChecks);
+        ? { args: narrowedArgs, strip: [] }
+        : withRowOwnerColumns(narrowedArgs, rowChecks);
     const args = prepared.args;
     const send =
       rowChecks.length === 0
@@ -1029,6 +1221,51 @@ export function withOwnerChecks(
       if (isRead) options.onConfinedRead();
       return send(args);
     }
+
+    const foreignRow = () =>
+      new OwnerReadRefusedError(
+        model,
+        operation,
+        'foreign-row',
+        'the row it returned belongs to someone else.'
+      );
+
+    // A fork's read rule: no filter proves it, so the read is narrowed by it
+    // instead of refused (§115 ruling, 2026-11-05). A first match and a read by
+    // unique key take the narrowed paths below, as a `through` owner does.
+    if (
+      narrowsByRule(schema, model) &&
+      !NARROWED_OPS.has(operation) &&
+      !RESULT_CHECKED_OPS.has(operation)
+    ) {
+      const rule = readablePredicate(schema, model, reader, operation);
+      const narrowed = { ...(isRecord(args) ? args : {}), where: andWith(where, rule) };
+      if (FILTER_CHECKED_OPS.has(operation)) {
+        options.onConfinedRead();
+        return send(narrowed);
+      }
+      // A returning write: a row outside the rule is not found by it, so it is
+      // not written. By unique key, that miss is refused rather than reported
+      // absent when the row exists — and an upsert is refused before it runs,
+      // or it would create a second row beside one the caller cannot see.
+      if (operation === 'upsert') {
+        if (
+          (await existsOutside(client, model, where)) &&
+          !(await existsOutside(client, model, narrowed.where))
+        ) {
+          throw foreignRow();
+        }
+        return send(narrowed);
+      }
+      if (operation === 'updateManyAndReturn') return send(narrowed);
+      try {
+        return await send(narrowed);
+      } catch (err) {
+        if (isNotFound(err) && (await existsOutside(client, model, where))) throw foreignRow();
+        throw err;
+      }
+    }
+
     if (RETURNING_WRITE_OPS.has(operation)) {
       throw new OwnerReadRefusedError(
         model,
@@ -1053,21 +1290,13 @@ export function withOwnerChecks(
     // rows this caller may read, so the answer does not depend on which match
     // the database happens to return first.
     if (NARROWED_OPS.has(operation)) {
-      const own = readablePredicate(schema, model, reader);
+      const own = readablePredicate(schema, model, reader, operation);
       options.onConfinedRead();
       return send({
         ...(isRecord(args) ? args : {}),
         where: { AND: where === undefined ? [own] : [where, own] },
       });
     }
-
-    const foreignRow = () =>
-      new OwnerReadRefusedError(
-        model,
-        operation,
-        'foreign-row',
-        'the row it returned belongs to someone else.'
-      );
 
     // A read by unique key whose filter does not confine it, where the row's
     // own owner column decides: run it, then check the row that came back.
@@ -1093,7 +1322,7 @@ export function withOwnerChecks(
     try {
       row = await send({
         ...(isRecord(args) ? args : {}),
-        where: andWith(where, readablePredicate(schema, model, reader)),
+        where: andWith(where, readablePredicate(schema, model, reader, operation)),
       });
     } catch (err) {
       if (!(err instanceof Error) || !isNotFound(err)) throw err;

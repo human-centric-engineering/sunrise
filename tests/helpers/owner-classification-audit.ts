@@ -211,6 +211,24 @@ export function auditOwnerClassification(
         continue;
       }
       ownerOptional = model.scalars.get(column)?.optional ?? false;
+    } else if ('reader' in c.owner) {
+      // A fork's read rule (t-985). Core's rows are owned by a column or a
+      // parent; a rule there would be a decision no core route agrees with.
+      if (!forkModels.has(name)) {
+        problems.push(`${name} has a read rule, which is for fork models only`);
+        continue;
+      }
+      if (typeof c.owner.reader !== 'function') {
+        problems.push(`${name}'s owner.reader is not a function`);
+        continue;
+      }
+      // A miss by unique key asks whether the row exists by its id
+      // (readOwnerSchema refuses the model without one, failing every query).
+      if (c.enforced && !model.scalars.has('id')) {
+        problems.push(`${name} has a read rule and is enforced but has no id`);
+      }
+      // The rule decides ownerless rows itself.
+      ownerOptional = false;
     } else {
       const { field, parent } = c.owner.through;
       const rel = model.relations.get(field);

@@ -51,6 +51,7 @@
  * @see .context/auth/authorization.md — "Owner classification"
  */
 import type { UnattributedReadKind } from '@/lib/auth/orphan-reads';
+import type { OwnerReader } from '@/lib/db/owner-extension';
 import { initAppOwnerClassification } from '@/lib/app/owner-classification';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
@@ -71,7 +72,29 @@ export type OwnerPath =
    * a child with no parent at all. `lib/db/owner-extension.ts` analyses a
    * `through` predicate as the parent's predicate under the relation field.
    */
-  | { through: { field: string; parent: string } };
+  | { through: { field: string; parent: string } }
+  /**
+   * **Fork tiers only** (t-985). A rule that decides which rows a narrowed
+   * caller may read when no single column does — a row read by everyone in
+   * its space, its team, or holding a grant. Returns a Prisma `where` for
+   * this model, built from {@link OwnerReader} alone: pure, no I/O, the same
+   * answer for the same reader. Relation filters are how it reaches other
+   * tables (`space: { members: { some: { userId: reader.userId } } }`).
+   *
+   * **The data layer narrows by it, never refuses for want of proof**
+   * (§115 ruling, 2026-11-05). A list, count, aggregate or group-by gets the
+   * rule ANDed into its `where`; a to-many include gets it as its `where`; a
+   * read by unique key, or a returning write, of a row outside it is refused.
+   * So a query meant to read every row — a job, an admin total — silently
+   * gets only the caller's readable rows unless it runs inside
+   * `runAcrossOwners(reason, fn)`. A rule that throws, or returns anything but
+   * a non-empty object, refuses the read.
+   *
+   * Takes no `ownerless` or `alsoVisible`: the rule is the whole answer, so
+   * write an ownerless row's readability into it. A `through` child of a
+   * reader-owned model inherits the rule.
+   */
+  | { reader: (reader: OwnerReader) => object };
 
 export type OwnerClassification =
   | {
@@ -400,6 +423,9 @@ function shapeProblem(c: OwnerClassification): string | null {
       ? null
       : '`owner.column` is empty';
   }
+  if ('reader' in owner) {
+    return typeof owner.reader === 'function' ? null : '`owner.reader` must be a function';
+  }
   if ('through' in owner) {
     const through: unknown = owner.through;
     return typeof through === 'object' &&
@@ -413,7 +439,7 @@ function shapeProblem(c: OwnerClassification): string | null {
       ? null
       : '`owner.through` needs a `field` and a `parent`';
   }
-  return '`owner` must be `{ column }` or `{ through: { field, parent } }`';
+  return '`owner` must be `{ column }`, `{ through: { field, parent } }` or `{ reader }`';
 }
 
 /**

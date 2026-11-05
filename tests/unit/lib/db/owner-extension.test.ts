@@ -36,6 +36,8 @@ import {
 import {
   OWNER_CLASSIFICATION,
   enforcedModels,
+  ownerClassificationOf,
+  type OwnerClassification,
   registerAppOwnerClassification,
   __resetAppOwnerClassificationForTests,
 } from '@/lib/db/owner-classification';
@@ -1034,5 +1036,239 @@ describe('readOwnerSchema', () => {
       'AiUserMemory',
       'AiWorkflowExecution',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A fork's read rule (t-985): narrowed by it, never refused for want of proof
+// ---------------------------------------------------------------------------
+
+describe('withOwnerChecks — a fork read rule (t-985)', () => {
+  // The generated client has no fork models, so conversations stand in for one:
+  // readable by their owner or by whoever created their agent — a relation
+  // filter, as a fork's space or team rule is. Messages are owned through them.
+  const CONV = 'cmconv0000000000000000cv01';
+  const MSG = 'cmmsg00000000000000000ms01';
+  const ruleOf = (r: OwnerReader) => ({
+    OR: [{ userId: r.userId }, { agent: { createdBy: r.userId } }],
+  });
+  const rule = vi.fn(ruleOf);
+  const classify = (model: string): OwnerClassification | null =>
+    model === 'AiConversation'
+      ? { kind: 'personal', owner: { reader: (r) => rule(r) }, enforced: true }
+      : ownerClassificationOf(model);
+  const ruleSchema = readOwnerSchema(base, ['AiConversation', 'AiMessage'], classify);
+  const ruled = withOwnerChecks(tenancyOnly, {
+    schema: ruleSchema,
+    getSubjectReadScope,
+    onConfinedRead: confinedReads,
+    onUncheckedRead: uncheckedReads,
+  });
+  /** The rule's relation filter, as it reaches SQL: a join to the agent, for this caller. */
+  const carriesRule = (s: Statement | undefined) => {
+    expect(s?.sql).toMatch(/"ai_agent"/);
+    expect(s?.sql).toMatch(/"createdBy"/);
+    expect(s?.args).toContain(ME);
+  };
+  const reader: OwnerReader = {
+    userId: ME,
+    unattributedReads: NO_UNATTRIBUTED,
+    readsShared: false,
+  };
+
+  beforeEach(() => {
+    rule.mockReset();
+    rule.mockImplementation(ruleOf);
+  });
+
+  it('narrows a list, count, aggregate and group-by by the rule, whatever their where', async () => {
+    const reads: [string, () => Promise<unknown>][] = [
+      ['findMany', () => ruled.aiConversation.findMany()],
+      ['findMany', () => ruled.aiConversation.findMany({ where: { userId: OTHER } })],
+      ['count', () => ruled.aiConversation.count({ where: { agentId: AGENT } })],
+      [
+        'aggregate',
+        () => ruled.aiConversation.aggregate({ where: { agentId: AGENT }, _count: { _all: true } }),
+      ],
+      [
+        'groupBy',
+        () =>
+          // No aggregate: the recording adapter answers a COUNT with the count alone.
+          ruled.aiConversation.groupBy({ by: ['agentId'], where: { agentId: AGENT } }),
+      ],
+    ];
+    for (const [op, read] of reads) {
+      statements.length = 0;
+      await asMember(read);
+      expect(statements, op).toHaveLength(1);
+      carriesRule(statements[0]);
+    }
+    expect(confinedReads).toHaveBeenCalledTimes(reads.length);
+  });
+
+  it('keeps the query’s own where beside the rule', async () => {
+    await asMember(() => ruled.aiConversation.findMany({ where: { userId: OTHER } }));
+    expect(statements[0].args).toContain(OTHER);
+    carriesRule(statements[0]);
+  });
+
+  it('narrows a first match by the rule', async () => {
+    await asMember(() => ruled.aiConversation.findFirst({ where: { agentId: AGENT } }));
+    carriesRule(statements[0]);
+  });
+
+  it('reads a row by id in one query when the rule admits it, and refuses one outside it', async () => {
+    tableAnswers = { ai_conversation: [[{ id: CONV }]] };
+    await expect(
+      asMember(() => ruled.aiConversation.findUnique({ where: { id: CONV }, select: { id: true } }))
+    ).resolves.toEqual({ id: CONV });
+    expect(statements).toHaveLength(1);
+    carriesRule(statements[0]);
+
+    statements.length = 0;
+    // Narrowed: nothing. Existence, asked below this layer: the row is there.
+    tableAnswers = { ai_conversation: [[], [{ id: CONV }]] };
+    await expect(
+      asMember(() => ruled.aiConversation.findUnique({ where: { id: CONV } }))
+    ).rejects.toMatchObject({ reason: 'foreign-row' });
+    expect(statements).toHaveLength(2);
+    expect(statements[1].sql).not.toMatch(/"ai_agent"/);
+  });
+
+  it('refuses a returning write to a row outside the rule, which the narrowed write missed', async () => {
+    for (const write of [
+      () => ruled.aiConversation.update({ where: { id: CONV }, data: { title: 'x' } }),
+      () => ruled.aiConversation.delete({ where: { id: CONV } }),
+    ]) {
+      statements.length = 0;
+      // The narrowed write matches nothing; the existence ask finds the row.
+      tableAnswers = { ai_conversation: [[{ id: CONV }]] };
+      await expect(asMember(write)).rejects.toMatchObject({ reason: 'foreign-row' });
+      // The one statement that could change the row carried the rule, so it did not.
+      const writes = statements.filter((s) => /^(UPDATE|DELETE)/.test(s.sql));
+      expect(writes).toHaveLength(1);
+      carriesRule(writes[0]);
+    }
+  });
+
+  it('keeps not-found for a returning write to a row that does not exist', async () => {
+    tableAnswers = { ai_conversation: [[], []] };
+    await expect(
+      asMember(() => ruled.aiConversation.update({ where: { id: CONV }, data: { title: 'x' } }))
+    ).rejects.toMatchObject({ code: 'P2025' });
+  });
+
+  it('refuses an upsert of a row outside the rule before it writes anything', async () => {
+    // Exists; not under the rule.
+    tableAnswers = { ai_conversation: [[{ id: CONV }], []] };
+    await expect(
+      asMember(() =>
+        ruled.aiConversation.upsert({
+          where: { id: CONV },
+          create: { id: CONV, agentId: AGENT, userId: ME },
+          update: { title: 'x' },
+        })
+      )
+    ).rejects.toMatchObject({ reason: 'foreign-row' });
+    expect(statements.filter((s) => !/^SELECT/.test(s.sql))).toEqual([]);
+  });
+
+  it('narrows updateManyAndReturn by the rule', async () => {
+    await asMember(() =>
+      ruled.aiConversation.updateManyAndReturn({
+        where: { agentId: AGENT },
+        data: { title: 'x' },
+      })
+    );
+    carriesRule(statements.find((s) => /^UPDATE/.test(s.sql)));
+  });
+
+  it('narrows a to-many include and a _count by the rule, and refuses a to-one', async () => {
+    await asMember(() => ruled.aiAgent.findMany({ include: { conversations: true } }));
+    carriesRule(statements.find((s) => s.sql.includes('FROM "public"."ai_conversation"')));
+
+    statements.length = 0;
+    await asMember(() => ruled.aiAgent.findMany({ include: { _count: true } }));
+    carriesRule(statements[0]);
+
+    statements.length = 0;
+    await asMember(() =>
+      ruled.aiAgent.findMany({
+        select: { _count: { select: { conversations: { where: { title: 'x' } } } } },
+      })
+    );
+    carriesRule(statements[0]);
+    expect(statements[0].args).toContain('x');
+
+    statements.length = 0;
+    await expect(
+      asMember(() => ruled.aiMessageEmbedding.findMany({ include: { message: true } }))
+    ).rejects.toMatchObject({ reason: 'unconfined-relation' });
+    expect(statements).toHaveLength(0);
+  });
+
+  it('holds a child owned through a ruled parent to the rule', async () => {
+    await asMember(() => ruled.aiMessage.findMany({ where: { role: 'user' } }));
+    expect(statements[0].sql).toMatch(/"ai_conversation"/);
+    carriesRule(statements[0]);
+
+    statements.length = 0;
+    tableAnswers = { ai_message: [[], [{ id: MSG }]] };
+    await expect(
+      asMember(() => ruled.aiMessage.findUnique({ where: { id: MSG } }))
+    ).rejects.toMatchObject({ reason: 'foreign-row' });
+
+    expect(readablePredicate(ruleSchema, 'AiMessage', reader)).toEqual({
+      conversation: { is: ruleOf(reader) },
+    });
+  });
+
+  it('refuses a read when the rule throws or returns no where, before any SQL', async () => {
+    const answers: (() => unknown)[] = [
+      () => {
+        throw new Error('row content in here');
+      },
+      () => null,
+      () => ({}),
+      () => [{ userId: ME }],
+    ];
+    for (const answer of answers) {
+      rule.mockImplementation(answer as typeof ruleOf);
+      const refused = asMember(() => ruled.aiConversation.findMany());
+      await expect(refused).rejects.toMatchObject({ reason: 'read-rule-failed' });
+      await expect(refused).rejects.not.toThrow(/row content/);
+      await expect(asMember(() => ruled.aiMessage.count())).rejects.toMatchObject({
+        reason: 'read-rule-failed',
+      });
+    }
+    expect(statements).toHaveLength(0);
+  });
+
+  it('never proves the rule from a filter, even the rule itself', () => {
+    expect(whereConfines(ruleSchema, 'AiConversation', ruleOf(reader), reader)).toBe(false);
+    expect(whereConfines(ruleSchema, 'AiConversation', { userId: ME }, reader)).toBe(false);
+  });
+
+  it('leaves an unnarrowed caller untouched, and never asks the rule', async () => {
+    const workload = async (client: TenancyClient) => {
+      await client.aiConversation.findMany({ where: { agentId: AGENT } });
+      await client.aiConversation.count();
+      await client.aiAgent.findMany({ include: { conversations: true, _count: true } });
+      await client.aiMessage.findFirst({ where: { role: 'user' } });
+    };
+    for (const run of [
+      (c: TenancyClient) => asPlatformAdmin(() => workload(c)),
+      (c: TenancyClient) => workload(c),
+      (c: TenancyClient) =>
+        asMember(() => runAcrossOwners('test: every conversation', () => workload(c))),
+    ]) {
+      statements.length = 0;
+      await run(tenancyOnly);
+      const without = statements.map((s) => ({ ...s }));
+      statements.length = 0;
+      await run(ruled);
+      expect(statements).toEqual(without);
+    }
+    expect(rule).not.toHaveBeenCalled();
   });
 });
