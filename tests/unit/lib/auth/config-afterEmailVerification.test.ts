@@ -426,6 +426,22 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       expect(sendEmail).not.toHaveBeenCalled();
     });
 
+    it('revokes everything when the session lookup itself fails', async () => {
+      // A failed lookup must not skip revocation: the address has already
+      // moved, so a stolen session would survive the change.
+      getSessionMock.mockRejectedValue(new Error('database unreachable'));
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+      const user = createMockUser({ id: 'user-26', email: 'new@example.com', name: 'Mover' });
+
+      await afterEmailVerificationHook(user, changeRequest);
+
+      expect(revokeUserSessions).toHaveBeenCalledWith({
+        userId: 'user-26',
+        exceptSessionToken: null,
+        reason: 'email_changed',
+      });
+    });
+
     it('still completes when session revocation fails', async () => {
       // better-auth does NOT wrap this callback in its error handling, so a
       // throw here surfaces as a failed verification click for a change that

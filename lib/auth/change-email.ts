@@ -13,7 +13,7 @@
  * and the payload shape differs by flow:
  *
  *   signup / resend  →  { email }
- *   email change     →  { email: <OLD>, updateTo: <NEW>, requestType: 'change-email-…' }
+ *   email change     →  { email: <OLD>, updateTo: <NEW>, requestType: 'change-email-…', userId }
  *
  * So `updateTo` both identifies the flow and hands back the previous address —
  * which is exactly what the old-address notification and the session revocation

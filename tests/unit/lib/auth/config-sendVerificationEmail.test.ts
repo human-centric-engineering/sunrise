@@ -300,6 +300,25 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
       expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'new@example.com' }));
     });
 
+    it('marks the callback so the page can say the address changed', async () => {
+      // The click may leave the user signed out, and on an unverified account
+      // verifies nothing, so the page must not take its signup path.
+      const user = createMockUser({ id: 'user-30', email: 'new@example.com', name: 'Mover' });
+
+      await sendVerificationEmailHook({
+        user,
+        url: 'https://example.com/verify?token=abc&callbackURL=%2F',
+        token: 'change-token',
+      });
+
+      expect(VerifyEmailEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          verificationUrl:
+            'https://example.com/verify?token=abc&callbackURL=%2Fverify-email%2Fcallback%3FemailChanged%3D1',
+        })
+      );
+    });
+
     it('does not consult the invitation table at all for a change', async () => {
       const user = createMockUser({ id: 'mover-2', email: 'new@example.com', name: 'Mover' });
 

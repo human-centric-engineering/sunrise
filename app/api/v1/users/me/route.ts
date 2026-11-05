@@ -93,7 +93,7 @@ export const GET = withAuth(
  * address approves and the new one is then verified. So a successful response
  * still carries the old `email`, plus `emailChangeRequested: true` to say the
  * flow began. Changing it also requires `currentPassword` on accounts that have
- * one, and revokes the user's other sessions when it finally lands.
+ * one, and revokes the user's sessions when it finally lands.
  *
  * @param request - Request with JSON body { name?, email?, currentPassword?, bio?, phone?, timezone?, location? }
  * @returns Updated user profile, plus `emailChangeRequested`

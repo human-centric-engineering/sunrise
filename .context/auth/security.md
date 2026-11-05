@@ -179,7 +179,8 @@ edit, and it is treated as one (#489). Three controls apply:
    alongside `email`. OAuth-only accounts (no credential row) are exempt, since
    they have no password to confirm.
 3. **Session revocation.** When the change finally lands,
-   `afterEmailVerificationHook` revokes the user's other sessions — subject to
+   `afterEmailVerificationHook` revokes the user's sessions, sparing only one
+   the verification click itself carries — subject to
    the up-to-5-minute cookie-cache staleness window every revocation in this
    app has; see [Session Revocation](#session-revocation) above.
 
@@ -208,16 +209,21 @@ session. A session expires; control of the account's address does not.
 - **Known limitation: an unverified account gets no revocation on an email
   change.** Since better-auth 1.7.16, `afterEmailVerification` fires on this path
   only when the account was already verified, and the new address stays
-  unverified. So nothing revokes sessions here. It is reachable only where
-  unverified accounts hold sessions, in practice `REQUIRE_EMAIL_VERIFICATION=false`.
+  unverified. So nothing revokes sessions here. It applies wherever an
+  unverified account holds a session: `REQUIRE_EMAIL_VERIFICATION=false`, an
+  admin clearing `emailVerified` on a signed-in user, or an OAuth sign-in that
+  reports the address unverified.
 - Revocation identifies "the current session" via `auth.api.getSession` on the
   hook's request, which only sees a cookie the browser actually sent. Clicking
   the new-address verification link from a device or browser with no app
   cookie is routine, since mail links often open elsewhere. Since better-auth
   1.7.16 that click mints no session, so `getSession` returns null and every
-  session is revoked: the user signs in again at the new address. Do not fall
-  back to "the newest session row". With nothing minted, that row is a session
-  from before the change, and it may be the stolen one.
+  session is revoked: the user signs in again at the new address, and the
+  callback page says so (`emailChanged=1`, added by `sendVerificationEmailHook`).
+  Do not fall back to "the newest session row". With nothing minted, that row
+  is a session from before the change, and it may be the stolen one.
+  `tests/unit/lib/auth/better-auth-email-change.test.ts` pins both 1.7.16
+  behaviours against the real library.
 - **Known limitation: no collision guard on the target address across the token
   lifetime.** `email` has `@@unique` (`prisma/schema/auth.prisma`), but nothing
   re-checks it between the approval click and the final verification — a window

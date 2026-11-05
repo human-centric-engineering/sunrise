@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +30,7 @@ function VerifyEmailCallbackContent() {
   const router = useRouter();
 
   const error = searchParams.get('error');
+  const emailChanged = searchParams.get('emailChanged') === '1';
 
   const [email, setEmail] = useState('');
   const [resending, setResending] = useState(false);
@@ -39,10 +41,34 @@ function VerifyEmailCallbackContent() {
 
   // If no error, verification succeeded - redirect to dashboard
   useEffect(() => {
-    if (!error) {
+    if (!error && !emailChanged) {
       router.replace(AUTH_LANDING_ROUTE);
     }
-  }, [error, router]);
+  }, [error, emailChanged, router]);
+
+  // An email change: the click may have signed the user out everywhere, and on
+  // an unverified account it moves the address without verifying it. So no
+  // redirect, and no claim that anything was verified.
+  if (!error && emailChanged) {
+    return (
+      <Card className="mx-auto w-full max-w-md">
+        <CardHeader className="space-y-1 text-center">
+          <div className="mb-4 flex justify-center">
+            <div className="rounded-full bg-green-100 p-3 text-green-600 dark:bg-green-900/20 dark:text-green-400">
+              <CheckCircle2 className="h-6 w-6" />
+            </div>
+          </div>
+          <CardTitle className="text-2xl font-bold">Email address changed</CardTitle>
+          <CardDescription>If you&apos;re asked to sign in, use your new address.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild className="w-full">
+            <Link href={AUTH_LANDING_ROUTE}>Continue to {AUTH_LANDING_LABEL}</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // If no error, show loading while redirecting
   if (!error) {
