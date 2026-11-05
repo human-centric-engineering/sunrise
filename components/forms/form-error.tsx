@@ -161,8 +161,11 @@ export function SaveError<TField extends string>({
     const box = ref.current;
     if (!failure || !box) return;
     const names = failure.fields.map((f) => f.field);
-    const target = names.length === 0 ? box : firstField(box.closest('form') ?? document, names);
+    const field = names.length > 0 ? firstField(box.closest('form') ?? document, names) : null;
+    // A field to reveal is the effect's to find, on a later frame.
+    const target = field ?? (names.length > 0 && onRevealField ? null : box);
     target?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- as the effect below
   }, [failure]);
 
   useEffect(() => {
