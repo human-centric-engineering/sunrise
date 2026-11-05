@@ -18,6 +18,14 @@ release process.
 
 ### Added
 
+- **Eval graders see how each tool call went (#1044)**: `GraderInput.toolCalls`
+  items (new exported type `GraderToolCall`, from
+  `lib/orchestration/evaluations/graders/types.ts`) gain optional `success`,
+  `errorCode` and `resultPreview`, filled from the subject's trace for agent
+  subjects. `resultPreview` is the capability's redacted provenance preview.
+  The stored `subjectMetadata.toolCalls` is unchanged (`{ slug, args }`), and
+  the built-in graders score as before. **Fork sync:** a fork carrying this
+  as a core edit (Know Your Synth) takes core's version and drops its own.
 - **A fork's own read rule in the owner layer (#1145)**: `OwnerPath`
   (`lib/db/owner-classification.ts`) gains a third shape, `{ reader }`: a pure
   function from the `OwnerReader` to a Prisma `where`, registered through

@@ -161,6 +161,28 @@ A parity test asserts every slug in `KNOWN_GRADER_SLUGS` is registered
 after the barrel import — a grader file that forgets `registerGrader`
 fails CI rather than silently disappearing from the picker.
 
+### What a grader sees of the tool calls
+
+`GraderInput.toolCalls` lists the subject's tool calls in order, each a
+`GraderToolCall`: `slug` and `args`, and for an agent subject how the
+call went (#1044) — `success`, `errorCode` when it failed, and
+`resultPreview`. So a grader can check that a search found the right
+thing, or that an empty search should have made the agent say it was
+answering from memory, without re-running the search.
+
+`resultPreview` is the capability's `redactProvenance()` output: the
+redacted, capped preview (480 characters unless the capability shapes its
+own) that is already persisted on the subject conversation's message
+provenance. A capability whose result matters to graders can shape its
+preview for them, as a search tool returning `{ success, links }` does.
+It is a preview, not the full result: a grader that needs what a tool
+changed reads that state another way.
+
+The outcome fields reach graders only. The stored
+`subjectMetadata.toolCalls` keeps `{ slug, args }`, so nothing stored
+changes, and the built-in graders, which read only `slug`, score as
+before.
+
 ### Fork-owned graders (`lib/app/evaluations.ts`)
 
 `registerGrader` was always exported, but nothing outside this package's

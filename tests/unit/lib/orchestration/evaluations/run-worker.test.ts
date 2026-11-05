@@ -1066,3 +1066,89 @@ describe('aggregation', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// What a grader sees of the subject's tool calls (#1044, t-986)
+// ---------------------------------------------------------------------------
+
+describe('tool outcomes for graders', () => {
+  // The trace shape `drainStreamChat` collects from `capability_result` events.
+  const searchHit = {
+    slug: 'search_knowledge_base',
+    arguments: { query: 'filter envelope' },
+    latencyMs: 12,
+    success: true,
+    resultPreview: '{"success":true,"links":["/docs/filter-envelope"]}',
+  };
+  const searchFailed = {
+    slug: 'search_knowledge_base',
+    arguments: { query: 'nothing' },
+    latencyMs: 9,
+    success: false,
+    errorCode: 'embedding_unavailable',
+  };
+
+  function runOneCase(metricSlug: string, config: Record<string, unknown> = {}) {
+    mockedClaim.mockResolvedValueOnce(makeRun({ metricConfigs: [{ slug: metricSlug, config }] }));
+    findManyCases.mockResolvedValueOnce([makeCase(1)]);
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedRunAgent.mockResolvedValueOnce(drainOk({ toolCalls: [searchHit, searchFailed] }));
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  }
+
+  it('hands each grader whether every call worked and what it returned', async () => {
+    const grader = passingGrader();
+    mockedGetGrader.mockReturnValue(grader);
+    runOneCase('exact_match');
+
+    await processPendingEvaluationRuns();
+
+    expect(grader.grade).toHaveBeenCalledTimes(1);
+    const [input] = grader.grade.mock.calls[0] as unknown as [{ toolCalls: unknown }];
+    expect(input.toolCalls).toEqual([
+      {
+        slug: 'search_knowledge_base',
+        args: { query: 'filter envelope' },
+        success: true,
+        resultPreview: '{"success":true,"links":["/docs/filter-envelope"]}',
+      },
+      {
+        slug: 'search_knowledge_base',
+        args: { query: 'nothing' },
+        success: false,
+        errorCode: 'embedding_unavailable',
+      },
+    ]);
+  });
+
+  it('stores the calls as before: slug and args only', async () => {
+    mockedGetGrader.mockReturnValue(passingGrader());
+    runOneCase('exact_match');
+
+    await processPendingEvaluationRuns();
+
+    expect(createResult.mock.calls[0][0].data.subjectMetadata.toolCalls).toEqual([
+      { slug: 'search_knowledge_base', args: { query: 'filter envelope' } },
+      { slug: 'search_knowledge_base', args: { query: 'nothing' } },
+    ]);
+  });
+
+  it('leaves the built-in trajectory grader scoring exactly as it did', async () => {
+    const { toolWasCalledGrader } = await vi.importActual<
+      typeof import('@/lib/orchestration/evaluations/graders/heuristic/tool-was-called')
+    >('@/lib/orchestration/evaluations/graders/heuristic/tool-was-called');
+    const spy = vi.spyOn(toolWasCalledGrader, 'grade');
+    mockedGetGrader.mockReturnValue(toolWasCalledGrader);
+    runOneCase('tool_was_called', { slug: 'search_knowledge_base', min: 2 });
+
+    await processPendingEvaluationRuns();
+
+    // Two calls counted, failed one included, as before the outcome fields.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(createResult.mock.calls[0][0].data.metricScores.tool_was_called).toMatchObject({
+      score: 1,
+      passed: true,
+      reasoning: 'Tool "search_knowledge_base" called 2 time(s) (≥ 2).',
+    });
+  });
+});

@@ -396,6 +396,12 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
           t.arguments && typeof t.arguments === 'object' && !Array.isArray(t.arguments)
             ? (t.arguments as Record<string, unknown>)
             : undefined,
+        // How the call went, for graders only (#1044). Stored below as
+        // `{ slug, args }`: the preview already lives on the subject's
+        // conversation, and the case result keeps what it always kept.
+        success: t.success,
+        ...(t.errorCode !== undefined ? { errorCode: t.errorCode } : {}),
+        ...(t.resultPreview !== undefined ? { resultPreview: t.resultPreview } : {}),
       }));
       if (result.errorCode) {
         subjectErrorCode = result.errorCode;
@@ -492,7 +498,7 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
     subjectOutput,
     subjectMetadata: {
       citations,
-      toolCalls,
+      toolCalls: (toolCalls ?? []).map(({ slug, args }) => ({ slug, args })),
       subjectCostUsd,
       subjectLatencyMs: subjectLatency,
     },
