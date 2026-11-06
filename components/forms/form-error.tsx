@@ -150,21 +150,29 @@ export function SaveError<TField extends string>({
   onRevealField,
 }: SaveErrorProps<TField>) {
   const ref = useRef<HTMLDivElement>(null);
+  const focusedEarly = useRef<SaveFailure<TField> | null>(null);
 
   // Focus early, inside the commit, so it has moved by the time the alert can
   // be seen. Form tests, a fork's included, assert focus straight after finding
   // the alert, and with only the effect below that failed CI now and then, with
   // focus still on <body> (t-995). This is a head start, not the decision: a
   // closing dialog's focus trap still holds during the commit and bounces this
-  // away, so the effect below must stay passive and have the last word.
+  // away, so the effect below must stay passive, to run once the trap has gone.
   useLayoutEffect(() => {
     const box = ref.current;
-    if (!failure || !box) return;
+    // Layout effects re-run when a Suspense boundary reveals this again; only a
+    // new failure may move focus.
+    if (!failure || !box || focusedEarly.current === failure) return;
+    focusedEarly.current = failure;
     const names = failure.fields.map((f) => f.field);
     const field = names.length > 0 ? firstField(box.closest('form') ?? document, names) : null;
-    // A field to reveal is the effect's to find, on a later frame.
-    const target = field ?? (names.length > 0 && onRevealField ? null : box);
-    target?.focus({ preventScroll: true });
+    if (field) {
+      field.focus({ preventScroll: true });
+      if (document.activeElement === field) return;
+    } else if (names.length > 0 && onRevealField) {
+      return; // A field to reveal is the effect's to find, on a later frame.
+    }
+    box.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- as the effect below
   }, [failure]);
 

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { InvitationTable } from '@/components/admin/invitation-table';
@@ -70,8 +70,10 @@ describe('InvitationTable — failed saves', () => {
       'Couldn\'t resend the invitation to "alice@example.com": Email service is not configured'
     );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
-    // The closing menu returns focus to its trigger on a timer, so wait it out.
-    await waitFor(() => expect(alert).toHaveFocus());
+    // Radix returns focus to the menu's trigger on a timer, so let it run and
+    // assert where focus settles.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(alert).toHaveFocus();
   });
 
   it('keeps the delete dialog open with the failure inside it', async () => {

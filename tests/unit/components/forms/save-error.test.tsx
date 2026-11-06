@@ -11,9 +11,9 @@
  * @see components/forms/form-error.tsx
  */
 
-import { useLayoutEffect, useState } from 'react';
+import { Suspense, use, useLayoutEffect, useState, type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import { SaveError, type StaleSaveProps } from '@/components/forms/form-error';
 import type { SaveFailure } from '@/lib/errors/save-error';
@@ -145,6 +145,74 @@ describe('SaveError', () => {
       rerender(page(shown));
 
       expect(seen).toHaveBeenCalledExactlyOnceWith(screen.getByLabelText('Email'));
+    });
+
+    /** The focused element in the commit that shows a failure naming `email`. */
+    function focusInCommit(field: ReactNode, onRevealField?: () => void) {
+      const seen = vi.fn();
+      const shown = failure({ fields: [{ field: 'email', message: 'Taken.' }] });
+      const page = (current: SaveFailure | null) => (
+        <form>
+          {field}
+          <SaveError failure={current} onRevealField={onRevealField} />
+          <FocusInCommit shown={current} seen={seen} />
+        </form>
+      );
+      const { rerender } = render(page(null));
+      rerender(page(shown));
+      return seen.mock.calls[0]?.[0] as Element | null;
+    }
+
+    it('focuses the summary when the named field is not on the page', () => {
+      expect(focusInCommit(null)).toBe(screen.queryByRole('alert'));
+    });
+
+    it('focuses the summary when the named field cannot take focus', () => {
+      const focused = focusInCommit(<input name="email" aria-label="Email" disabled />);
+
+      expect(focused).toBe(screen.getByRole('alert'));
+    });
+
+    it('leaves focus alone when a field is about to be revealed', () => {
+      const focused = focusInCommit(null, () => {});
+
+      expect(focused).toBe(document.body);
+    });
+
+    it('does not pull focus back when a Suspense boundary reveals it again', async () => {
+      let release = () => {};
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      function Hangs({ on }: { on: boolean }) {
+        if (on) use(pending);
+        return null;
+      }
+      const shown = failure();
+      const page = (hang: boolean) => (
+        <>
+          <button type="button">Elsewhere</button>
+          <Suspense fallback={null}>
+            <SaveError failure={shown} />
+            <Hangs on={hang} />
+          </Suspense>
+        </>
+      );
+      const { rerender } = render(page(false));
+      const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+      expect(screen.getByRole('alert')).toHaveFocus();
+      elsewhere.focus();
+
+      await act(async () => {
+        rerender(page(true));
+      });
+      await act(async () => {
+        release();
+        await pending;
+      });
+
+      expect(screen.getByRole('alert')).toBeVisible();
+      expect(elsewhere).toHaveFocus();
     });
   });
 
