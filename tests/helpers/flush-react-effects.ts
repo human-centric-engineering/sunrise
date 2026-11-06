@@ -1,7 +1,11 @@
 import { flushSync } from 'react-dom';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
+// `/pure`: the main entry registers its cleanup hook on import, and from
+// tests/setup.ts that would run after spies are restored, not before.
+import { act } from '@testing-library/react/pure';
 
-let root: Root | null = null;
+// Made now, not on first use, so it can't land inside a test's `createElement` spy.
+const root = createRoot(document.createElement('div'));
 
 /** An object, so a test can spy on the call `tests/setup.ts` makes. */
 export const reactEffects = {
@@ -10,8 +14,8 @@ export const reactEffects = {
    * them first, and they are global to React, so a throwaway root is enough.
    */
   flush(): void {
-    root ??= createRoot(document.createElement('div'));
-    const scratch = root;
-    flushSync(() => scratch.render(null));
+    act(() => {
+      flushSync(() => root.render(null));
+    });
   },
 };
