@@ -466,6 +466,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-6"

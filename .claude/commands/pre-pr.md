@@ -346,6 +346,8 @@ Run by `npm run validate` (Step 1) and by CI, so this too is normally answered b
 
 A failed save is shown one way: `<SaveError>`, fed by `useSaveFailure()`, beside the button that was pressed (§124, `.context/ui/form-errors.md`). This flags a component that renders its own red or destructive box around a state a **mutation**'s failure set: a `catch` after `apiClient.post|patch|put|delete`, a `fetch` with a method, or an `authClient` call that isn't a read; a `.catch()` on such a chain; better-auth's `onError`; or either branch of an `if` on such a call's result. A load error (`apiClient.get`, a bare `fetch`) is not reported, and nor is anything drawn by `<SaveError>` or `<FormError>`. **Repo-wide**, for 4m's reason.
 
+The same run reports a `<form>` without `method="post"`: submitted before the page has loaded, its fields go in the URL (t-998).
+
 A class-name grep cannot do this: 92 components that submit use red classes for field messages, delete buttons and load panels. What it cannot tell apart is a run, test or export from a save, since both are a POST: those are declared in `BOX_EXEMPTIONS` in `scripts/ci/save-error-boxes.ts`, keyed `path#state` with the reason, and an exemption that no longer matches a box fails the run. The rules, and what it cannot see, live in that file and are held by `tests/unit/scripts/ci/save-error-boxes.test.ts`.
 
 ### Step 5: Check .context/ documentation

@@ -20,9 +20,12 @@ import {
   applyExemptions,
   formatBox,
   formatBrowserValidatedForm,
+  formatGetSubmittedForm,
   scanBrowserValidation,
+  scanFormMethod,
   scanSaveErrorBoxes,
   type BrowserValidatedForm,
+  type GetSubmittedForm,
   type SaveErrorBox,
 } from '@/scripts/ci/save-error-boxes';
 
@@ -57,6 +60,7 @@ export function main(root = process.cwd()): number {
 
   const found: SaveErrorBox[] = [];
   const forms: BrowserValidatedForm[] = [];
+  const getForms: GetSubmittedForm[] = [];
   const unreadable: string[] = [];
   for (const file of files) {
     let source: string;
@@ -70,6 +74,7 @@ export function main(root = process.cwd()): number {
     }
     found.push(...scanSaveErrorBoxes(source, file));
     forms.push(...scanBrowserValidation(source, file));
+    getForms.push(...scanFormMethod(source, file));
   }
 
   const { boxes, staleExemptions } = applyExemptions(found);
@@ -116,7 +121,25 @@ export function main(root = process.cwd()): number {
     );
   }
 
-  if (boxes.length > 0 || staleExemptions.length > 0 || unreadable.length > 0 || forms.length > 0) {
+  if (getForms.length > 0) {
+    console.error(`Forms that would put their fields in the URL (${getForms.length}):`);
+    for (const form of getForms) console.error(`  ${formatGetSubmittedForm(form)}`);
+    console.error('');
+    console.error(
+      'Add method="post" to the <form>. Submitted before the page has loaded, a form with no ' +
+        'method sends every named field in the query string. A form whose fields belong in ' +
+        'the URL, such as a search box: put {/* form-method-ignore: <why> */} on the line ' +
+        'above it. See .context/ui/form-errors.md.'
+    );
+  }
+
+  if (
+    boxes.length > 0 ||
+    staleExemptions.length > 0 ||
+    unreadable.length > 0 ||
+    forms.length > 0 ||
+    getForms.length > 0
+  ) {
     return 1;
   }
 

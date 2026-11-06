@@ -94,6 +94,7 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
         ))}
         {adding ? (
           <form
+            method="post"
             noValidate
             onSubmit={(e) => {
               e.preventDefault();

@@ -172,6 +172,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
           </DialogDescription>
         </DialogHeader>
         <form
+          method="post"
           noValidate
           onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
           className="space-y-4"

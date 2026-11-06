@@ -422,11 +422,40 @@ it can't read, counts as missing. A form that must keep the browser's checks
 puts `{/* browser-validation-ignore: <why> */}` on the line above the
 `<form>` (or `//` inside parentheses); the reason is required.
 
+**A `<form>` without `method="post"`** is reported as well (`scanFormMethod`),
+for the reason in [Before the page has loaded](#before-the-page-has-loaded).
+`method="get"`, or a value it can't read, counts as missing. A form whose
+fields belong in the URL, such as a search box, puts
+`{/* form-method-ignore: <why> */}` on the line above the `<form>` (or `//`
+inside parentheses); the reason is required.
+
 What it can't see is listed at the top of the file (a reducer's state, a
 setter passed to a helper, a client other than these three). It also matches
 state by name across a file, so two components in one file that each declare
 `[error, setError]` share it; the marker excuses a load panel caught that way. It raises the
 floor; review still matters.
+
+## Before the page has loaded
+
+A server-rendered form works as plain HTML until React attaches `onSubmit`, and
+`register()` has already named its inputs. With no `method`, a press in that
+window (slow load, blocked script, a chunk missing after a deploy, or no
+JavaScript at all) is a GET with every field in the query string, so a password
+lands in browser history and in the logs of whatever fronts the site (t-998).
+
+- **Every `<form>` sets `method="post"`.** The fields go in the body instead. A
+  POST to a page route renders the page again and nothing reads the body, so a
+  press this early does nothing. `onSubmit` still takes over once React has
+  loaded, and the attribute changes nothing after that.
+- **A form a signed-out visitor or a credential goes through renders
+  `<NoScriptNotice />` first**, so someone with no JavaScript is told before
+  typing. A form that only appears once data has loaded puts it in the loading
+  state instead, as `accept-invite-form` does, because the form itself never
+  reaches them.
+
+Someone with JavaScript who presses too early gets an empty form and no message:
+`<noscript>` doesn't show for them, and the server keeps nothing to say what
+happened. Nothing leaks, and the page loads properly on the way back.
 
 ## Out of scope
 

@@ -122,7 +122,7 @@ export function DatasetUploadForm(): React.ReactElement {
   }
 
   return (
-    <form noValidate onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
+    <form method="post" noValidate onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
       <Card className="border-primary/30 bg-primary/5">
         <CardHeader>
           <CardTitle className="text-base">Need a starting point?</CardTitle>

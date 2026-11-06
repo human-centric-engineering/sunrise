@@ -430,6 +430,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={(e) => {
         // A number the browser can't read would save as blank: block it first.

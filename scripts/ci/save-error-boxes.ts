@@ -564,6 +564,67 @@ export function formatBrowserValidatedForm(form: BrowserValidatedForm): string {
   return `${form.path}:${form.line}  <form> without noValidate: the browser blocks Save first`;
 }
 
+/**
+ * A `<form>` the browser would send as a GET (t-998). Until React attaches
+ * `onSubmit`, a server-rendered form is an ordinary HTML form: pressed early,
+ * or with no JavaScript at all, a form with no `method` puts every named field
+ * in the URL. A password there reaches browser history and the logs of whatever
+ * sits in front of the site. `method="post"` sends the fields in the body.
+ *
+ * Every `<form>` is held to it, not only one with a password in view: an input
+ * from another file brings its name with it, and a scan of one file cannot see
+ * that. On a form with no named fields `method="post"` changes nothing.
+ */
+export interface GetSubmittedForm {
+  path: string;
+  /** 1-based line of the `<form>`. */
+  line: number;
+}
+
+/**
+ * Excuses one `<form>`, with the reason, on the line above it: `{/*
+ * form-method-ignore: <why> *\/}`, or `//` inside parentheses. For a form whose
+ * fields belong in the URL, such as a search box.
+ */
+const FORM_METHOD_IGNORE = /form-method-ignore:[ \t]*[^\s*]/;
+
+/** Whether an element says `method="post"`, as a literal the scan can read. */
+function setsMethodPost(attributes: ts.JsxAttributes): boolean {
+  return attributes.properties.some(
+    (attr) =>
+      ts.isJsxAttribute(attr) &&
+      ts.isIdentifier(attr.name) &&
+      attr.name.text === 'method' &&
+      attr.initializer !== undefined &&
+      ts.isStringLiteral(attr.initializer) &&
+      attr.initializer.text.toLowerCase() === 'post'
+  );
+}
+
+export function scanFormMethod(source: string, path: string): GetSubmittedForm[] {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const lines = source.split('\n');
+  const found: GetSubmittedForm[] = [];
+  const visit = (n: ts.Node): void => {
+    if (
+      (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+      ts.isIdentifier(n.tagName) &&
+      n.tagName.text === 'form' &&
+      !setsMethodPost(n.attributes)
+    ) {
+      const line = file.getLineAndCharacterOfPosition(n.getStart(file)).line + 1;
+      if (!FORM_METHOD_IGNORE.test(lines[line - 2] ?? '')) found.push({ path, line });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  return found;
+}
+
+export function formatGetSubmittedForm(form: GetSubmittedForm): string {
+  return `${form.path}:${form.line}  <form> without method="post": early, its fields go in the URL`;
+}
+
 export interface BoxReport {
   /** Boxes no exemption covers. */
   boxes: SaveErrorBox[];

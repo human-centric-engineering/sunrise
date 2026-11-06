@@ -847,6 +847,7 @@ export function AgentForm({
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}
       className="space-y-6"

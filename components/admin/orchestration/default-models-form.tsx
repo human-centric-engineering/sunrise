@@ -527,7 +527,7 @@ export function DefaultModelsForm({
   };
 
   return (
-    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
+    <form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
       <Card data-testid="default-models-form">
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>

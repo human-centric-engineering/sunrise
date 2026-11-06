@@ -103,6 +103,7 @@ export function EvaluationForm({ agents }: EvaluationFormProps) {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="max-w-xl space-y-6"
