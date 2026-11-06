@@ -16,6 +16,53 @@ release process.
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-11-06
+
+> **Alpha release.** Twenty-fourth tagged Sunrise release. **PATCH bump**: one
+> test-harness fix and no production change. A test that asserted focus
+> straight after an awaited query could fail at random, and one did on `main`
+> at the 0.17.0 cut. Any fork test copied from that pattern carries the same
+> race, so a fork's CI can fail on code nobody touched. Measured against
+> `v0.17.0`: 1 PR merged, no direct commits, no issues closed; the suite is
+> 1,529 files and 31,789 tests.
+>
+> ## What a fork has to do
+>
+> **Merge it.** No migration, seed, dependency or public-surface change. The
+> merge edits `tests/setup.ts`, adds `tests/helpers/flush-react-effects.ts` and
+> its test, and adds a note to two docs. **A fork that edited `tests/setup.ts`
+> resolves that file by hand:** keep the new block, including its import from
+> `@testing-library/react/pure`. The main entry registers Testing Library's
+> cleanup on import, which from that file would restore spies before unmount
+> in every DOM test.
+>
+> **Dependency alerts accepted for this release:** the same five as 0.17.0,
+> for the reasons given there. This release takes no dependency change.
+>
+> - `zod` < 4.6.6 (high), under `@vercel/blob`, which still accepts only
+>   `@vercel/oidc` 3.x. That copy reads the Vercel CLI's own config files.
+> - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`. It
+>   parses only the app's own CSS, at build time.
+> - `glob` and `minimatch` (moderate), under `react-email`'s command-line tool,
+>   and `minimatch` under `typescript-eslint` too. Neither runs in the app.
+> - `deepmerge` (low), under `@react-email/components`. It merges the
+>   renderer's own options, not user input.
+
+### Fixed
+
+- **Tests that assert focus after an awaited query no longer fail at random
+  (t-995).** `findBy…` resolves on the commit that shows an element, and
+  `<SaveError>` moves focus in a passive effect after that commit, so
+  `expect(alert).toHaveFocus()` could run first and find focus on `<body>`.
+  `tests/setup.ts` now ends every `findBy…`, `waitFor` and user-event call by
+  running React's pending passive effects, so a fork's copied tests are covered
+  without being edited. With React's scheduler slowed by 30ms, 70 focus tests
+  failed before the fix and 1 after, a test built on exact frame timing. CPU
+  load alone never reproduced the failure, so the slowed scheduler stands in
+  for what CI hit. `<SaveError>` itself is unchanged: **don't move its focus to
+  a layout effect**, which loses focus to a closing dialog's trap
+  (`.context/ui/form-errors.md`).
+
 ## [0.17.0] — 2026-11-05
 
 > **Alpha release.** Twenty-third tagged Sunrise release. **MINOR bump**. It
@@ -10653,7 +10700,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.14.0...v0.15.0
