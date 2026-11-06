@@ -59,8 +59,11 @@ if (typeof document !== 'undefined') {
       const environment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
       const previous = environment.IS_REACT_ACT_ENVIRONMENT;
       environment.IS_REACT_ACT_ENVIRONMENT = false;
-      reactEffects.flush();
-      environment.IS_REACT_ACT_ENVIRONMENT = previous;
+      try {
+        reactEffects.flush();
+      } finally {
+        environment.IS_REACT_ACT_ENVIRONMENT = previous;
+      }
       return result;
     },
   });
