@@ -28,19 +28,22 @@ release process.
 >
 > ## What a fork has to do
 >
-> **Merge it.** No migration, seed, dependency or public-surface change. The
-> merge edits `tests/setup.ts`, adds `tests/helpers/flush-react-effects.ts` and
-> its test, and adds a note to two docs. **A fork that edited `tests/setup.ts`
-> resolves that file by hand:** keep the new block, including its import from
+> **Merge it.** No migration, seed, dependency or public-surface change. Beside
+> the version bump, the merge edits `tests/setup.ts`, adds
+> `tests/helpers/flush-react-effects.ts` and its test, and adds a note to two
+> docs. **Keep your own `version`** in `package.json` and the lockfile if you
+> set one. **A fork that edited `tests/setup.ts` resolves that file by hand:**
+> keep the new block, including its import from
 > `@testing-library/react/pure`. The main entry registers Testing Library's
 > cleanup on import, which from that file would restore spies before unmount
 > in every DOM test.
 >
-> **Dependency alerts accepted for this release:** the same five as 0.17.0,
-> for the reasons given there. This release takes no dependency change.
+> **Dependency alerts accepted for this release:** the same five as 0.17.0.
+> This release takes no dependency change.
 >
 > - `zod` < 4.6.6 (high), under `@vercel/blob`, which still accepts only
->   `@vercel/oidc` 3.x. That copy reads the Vercel CLI's own config files.
+>   `@vercel/oidc` 3.x. That copy reads the Vercel CLI's own config files on
+>   disk, not untrusted input.
 > - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`. It
 >   parses only the app's own CSS, at build time.
 > - `glob` and `minimatch` (moderate), under `react-email`'s command-line tool,
@@ -50,18 +53,21 @@ release process.
 
 ### Fixed
 
-- **Tests that assert focus after an awaited query no longer fail at random
-  (t-995).** `findBy…` resolves on the commit that shows an element, and
+- **A test can assert what a passive effect did straight after an awaited
+  query (t-995).** `findBy…` resolves on the commit that shows an element, and
   `<SaveError>` moves focus in a passive effect after that commit, so
   `expect(alert).toHaveFocus()` could run first and find focus on `<body>`.
   `tests/setup.ts` now ends every `findBy…`, `waitFor` and user-event call by
-  running React's pending passive effects, so a fork's copied tests are covered
-  without being edited. With React's scheduler slowed by 30ms, 70 focus tests
-  failed before the fix and 1 after, a test built on exact frame timing. CPU
-  load alone never reproduced the failure, so the slowed scheduler stands in
-  for what CI hit. `<SaveError>` itself is unchanged: **don't move its focus to
-  a layout effect**, which loses focus to a closing dialog's trap
-  (`.context/ui/form-errors.md`).
+  running React's pending passive effects, so a fork's copied tests of that
+  shape are covered without being edited. **Focus that lands on a timer or an
+  animation frame isn't covered**, such as a field on a hidden tab: a test of
+  that still needs `waitFor`. With React's scheduler slowed by 30ms, 70 focus
+  tests failed before the fix and 1 after, `follows a tab switch that lands
+  after its first look` in `tests/unit/components/forms/save-error.test.tsx`,
+  which is built on exact frame timing. CPU load alone never reproduced the
+  failure, so the slowed scheduler stands in for what CI hit. `<SaveError>`
+  itself is unchanged: **don't move its focus to a layout effect**, which loses
+  focus to a closing dialog's trap (`.context/ui/form-errors.md`).
 
 ## [0.17.0] — 2026-11-05
 
