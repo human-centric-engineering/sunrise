@@ -462,3 +462,7 @@ Not converted, by rule: load errors, test / run / preview / search actions
 the pairwise judge, LLM generation previews, knowledge search), the chat's
 messages (its approval card's approve and reject are converted), and org
 switches. Each is declared in `BOX_EXEMPTIONS` with its reason.
+
+## Testing a failed save
+
+`<SaveError>` moves focus in a passive effect, after the commit. Don't change it to a layout effect: a closing dialog's trap would bounce focus to `<body>`. A test can still assert focus straight after `findByRole('alert')`, because `tests/setup.ts` runs pending effects at the end of every async query. A field on a hidden tab takes focus on a later frame, so wait for that.
