@@ -465,8 +465,4 @@ switches. Each is declared in `BOX_EXEMPTIONS` with its reason.
 
 ## Testing a failed save
 
-`<SaveError>` takes focus during the commit that shows it, so a test can usually assert focus straight after `findByRole('alert')`, with no `waitFor`. Some cases settle later:
-
-- **A field on a hidden tab** takes focus on a later frame, so use `waitFor`.
-- **A failure shown as a dialog closes.** The closing dialog's focus trap bounces the early focus, and a passive effect in `<SaveError>` puts it back once the trap has gone, so keep that effect passive: a layout effect alone loses focus here.
-- **A failure shown as a menu or dialog closes.** Radix returns focus to the trigger on a timer, after both effects. Let the timer run, then assert, and see `onCloseAutoFocus` above for what a form must do.
+`<SaveError>` moves focus in a passive effect, after the commit, and keep it there: a layout effect loses focus to a closing dialog's trap, and focus would then land on `<body>`. A test can still assert focus straight after `findByRole('alert')`, because `tests/setup.ts` runs pending effects at the end of every async query. A field on a hidden tab takes focus on a later frame, so wait for that.

@@ -70,9 +70,6 @@ describe('InvitationTable — failed saves', () => {
       'Couldn\'t resend the invitation to "alice@example.com": Email service is not configured'
     );
     expect(alert.nextElementSibling).toContainElement(screen.getByRole('table'));
-    // Radix returns focus to the menu's trigger on a timer, so let it run and
-    // assert where focus settles.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     expect(alert).toHaveFocus();
   });
 

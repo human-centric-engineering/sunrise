@@ -222,6 +222,9 @@ The global test setup file (`tests/setup.ts`) runs before all tests and configur
    A fork's test of its own filled seam, `tests/unit/lib/app/<seam>.test.ts`, may read
    it too. `defaults.test.ts` fails any other test file that reads past a pin or unmocks one.
 5. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
+6. **Effects after async queries**: in a DOM test, every `findBy…`, `waitFor` and user-event
+   call ends with React's pending passive effects run, so an assertion on what they did
+   (`<SaveError>` moving focus, say) can't fail at random (`tests/helpers/flush-react-effects.ts`)
 
 **Key setup features**:
 

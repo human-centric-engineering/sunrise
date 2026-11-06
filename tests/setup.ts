@@ -43,6 +43,28 @@ process.env.RATE_LIMIT_BYPASS = 'true';
 // fails type-check (7,419 errors when this was bumped). `/vitest` extends
 // vitest's `expect` directly and augments `vitest`'s `Assertion`.
 import '@testing-library/jest-dom/vitest';
+
+// `findBy…` resolves on the commit that shows an element, and Testing Library's
+// short wait usually lets the passive effects from that commit run. When they
+// miss it, an assertion on what they did fails at random: `<SaveError>` moving
+// focus failed main's CI at the 0.17.0 cut (t-995). So every async query and
+// user-event call ends with those effects run.
+if (typeof document !== 'undefined') {
+  const { configure, getConfig } = await import('@testing-library/react');
+  const { reactEffects } = await import('@/tests/helpers/flush-react-effects');
+  const { asyncWrapper } = getConfig();
+  configure({
+    asyncWrapper: async (cb) => {
+      const result = await asyncWrapper(cb);
+      const environment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+      const previous = environment.IS_REACT_ACT_ENVIRONMENT;
+      environment.IS_REACT_ACT_ENVIRONMENT = false;
+      reactEffects.flush();
+      environment.IS_REACT_ACT_ENVIRONMENT = previous;
+      return result;
+    },
+  });
+}
 import { expect, vi, afterEach } from 'vitest';
 
 /**
