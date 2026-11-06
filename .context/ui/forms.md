@@ -257,7 +257,7 @@ export function SignupForm() {
   const password = watch('password');
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={handleSubmit(onSubmit)}>
       <div>
         <Input {...register('email')} placeholder="Email" />
         <FormError message={errors.email?.message} />

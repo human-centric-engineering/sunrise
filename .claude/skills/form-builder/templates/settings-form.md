@@ -121,7 +121,7 @@ export function SettingsForm({ initialValues }: SettingsFormProps) {
   };
 
   return (
-    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} className="space-y-8">
+    <form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} className="space-y-8">
       {/* Notification Settings Section */}
       <div className="space-y-4">
         <h3 className="text-lg font-medium">Notifications</h3>

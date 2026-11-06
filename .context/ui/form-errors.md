@@ -30,7 +30,7 @@ failure that comes back in the URL, shown by Sign In until the form's own
 sign-in fails).
 
 **A hand-drawn save-error box fails the build**, and so does a `<form>`
-without `noValidate`: `npm run check:save-errors` (in `npm run validate`, and
+without `noValidate` or `method="post"`: `npm run check:save-errors` (in `npm run validate`, and
 its own CI step). See [The check](#the-check).
 
 ## The rules
@@ -147,7 +147,7 @@ const onSubmit = async (values: FormData) => {
   }
 };
 
-<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
+<form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
 
 // beside Save:
 <div className="sticky bottom-4 space-y-2">
@@ -174,7 +174,7 @@ form goes there as well, with the fields, so their tab comes forward:
 ```tsx
 const onInvalid = (formErrors: FieldErrors<FormData>) =>
   save.show('2 fields need fixing.', namedFields(formErrors)); // only SERVER_FIELDS entries
-<form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}>
+<form method="post" onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}>
 ```
 
 A load error is not a save error. When a form shared one state between them,
