@@ -13,7 +13,10 @@ import { FormError } from '@/components/forms/form-error';
 export function NoScriptNotice() {
   return (
     <noscript>
-      <FormError message="This form needs JavaScript. Turn it on in your browser, then reload this page." />
+      {/* A `<noscript>` is inline, so a parent's `space-y-*` puts no gap below it. */}
+      <div className="mb-4">
+        <FormError message="This form needs JavaScript. Turn it on in your browser, then reload this page." />
+      </div>
     </noscript>
   );
 }

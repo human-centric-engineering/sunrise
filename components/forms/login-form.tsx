@@ -156,6 +156,9 @@ export function LoginForm() {
 
   return (
     <div className="space-y-4">
+      {/* Above the OAuth buttons, which need JavaScript too */}
+      <NoScriptNotice />
+
       {/* OAuth Buttons */}
       <OAuthButtons callbackUrl={callbackUrl} />
 
@@ -166,7 +169,6 @@ export function LoginForm() {
         onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
         className="space-y-4"
       >
-        <NoScriptNotice />
         {/* Email Field */}
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>

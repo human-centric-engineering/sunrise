@@ -119,6 +119,9 @@ export function SignupForm() {
 
   return (
     <div className="space-y-4">
+      {/* Above the OAuth buttons, which need JavaScript too */}
+      <NoScriptNotice />
+
       {/* OAuth Buttons */}
       <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} />
 
@@ -129,7 +132,6 @@ export function SignupForm() {
         onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
         className="space-y-4"
       >
-        <NoScriptNotice />
         {/* Name Field */}
         <div className="space-y-2">
           <Label htmlFor="name">Full Name</Label>

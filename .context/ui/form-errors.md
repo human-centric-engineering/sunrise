@@ -446,11 +446,13 @@ JavaScript at all) is a GET with every field in the query string, so a password
 lands in browser history and in the logs of whatever fronts the site (t-998).
 
 - **Every `<form>` sets `method="post"`.** The fields go in the body instead. A
-  POST to a page route renders the page again and nothing reads the body, so a
-  press this early does nothing. Where the proxy redirects that page (signed out,
-  or already signed in), the browser re-sends the POST to the redirect's
-  same-origin target, which doesn't read it either. `onSubmit` still takes over
-  once React has loaded, and the attribute changes nothing after that.
+  URL-encoded POST to a page route renders the page again and nothing reads the
+  body, so a press this early does nothing. Where the proxy redirects that page
+  (signed out, or already signed in), it answers with a 303, so the browser
+  follows with a GET and drops the body. `onSubmit` still takes over once React
+  has loaded, and the attribute changes nothing after that. An
+  `encType="multipart/form-data"` form differs: Next treats that POST as a Server
+  Action, so an early press shows a plain-text error, not the page.
 - **A form a signed-out visitor uses, or that changes a password, renders
   `<NoScriptNotice />` first**, so someone with no JavaScript is told before
   typing. A form that only appears once data has loaded puts it in the loading
