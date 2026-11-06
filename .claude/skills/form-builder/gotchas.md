@@ -15,7 +15,7 @@
 **Correct:**
 
 ```typescript
-<form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
+<form method="post" onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
 ```
 
 **Why:** The `void` operator is needed to satisfy React's event handler typing when handleSubmit returns a Promise.

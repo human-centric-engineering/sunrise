@@ -465,6 +465,13 @@ describe('scanFormMethod', () => {
     expect(scan(form(jsx('// form-method-ignore: a search box')))).toEqual([]);
   });
 
+  it('asks a <form action={fn}> for the marker: it cannot tell a function from a string', () => {
+    expect(scan(form('<form action={save} />'))).toHaveLength(1);
+    expect(
+      scan(form('<>\n{/* form-method-ignore: React posts it */}\n<form action={save} />\n</>'))
+    ).toEqual([]);
+  });
+
   it('does not excuse the marker with no reason', () => {
     expect(scan(form('<>\n{/* form-method-ignore: */}\n<form method="get" />\n</>'))).toHaveLength(
       1

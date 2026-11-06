@@ -140,7 +140,7 @@ export function ProfileForm({ user }) {
     }
   }
 
-  return <form onSubmit={handleSubmit(onSubmit)}>...</form>;
+  return <form method="post" onSubmit={handleSubmit(onSubmit)}>...</form>;
 }
 ```
 

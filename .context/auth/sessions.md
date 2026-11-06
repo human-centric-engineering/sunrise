@@ -147,7 +147,7 @@ export function ProfileForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form method="post" onSubmit={handleSubmit}>
       <input
         type="text"
         value={name}

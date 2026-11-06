@@ -147,7 +147,7 @@ export function LoginForm() {
       <OAuthButtons callbackUrl="/dashboard" />
 
       {/* Email/Password form below */}
-      <form>{/* ... */}</form>
+      <form method="post">{/* ... */}</form>
     </div>
   )
 }

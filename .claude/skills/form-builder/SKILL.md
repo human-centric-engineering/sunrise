@@ -352,7 +352,7 @@ if (success) {
 - [ ] Loading state disables all inputs and button
 - [ ] A failed save shown by `<SaveError>` from `useSaveFailure()`, directly beside the Save button (no hand-drawn red box: `npm run check:save-errors`)
 - [ ] `<form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>`: each press clears the last failure, and a save the schema blocks shows by Save
-- [ ] `method="post"` on the `<form>`, so a press before the page has loaded keeps its fields out of the URL; `<NoScriptNotice />` first inside a form a signed-out visitor or a credential goes through (`.context/ui/form-errors.md`)
+- [ ] `method="post"` on the `<form>`, so a press before the page has loaded keeps its fields out of the URL; `<NoScriptNotice />` first inside a form a signed-out visitor uses, or that changes a password (`.context/ui/form-errors.md`)
 - [ ] Every limit an input declares (`required`, `min`/`max`, `type="email"`, `pattern`, `minLength`, a `type="number"` with no `step` → `.int()`) is in the schema too: `noValidate` turns the browser's checks off, and `npm run check:save-errors` fails a `<form>` without it
 - [ ] Server field errors mapped in a `SERVER_FIELDS` table, for fields that render their message
 - [ ] Success handling (redirect or message)

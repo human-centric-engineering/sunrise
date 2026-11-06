@@ -171,7 +171,7 @@ export function LoginForm() {
   });
 
   // Interactive form with hooks
-  return <form onSubmit={form.handleSubmit(onSubmit)}>...</form>;
+  return <form method="post" onSubmit={form.handleSubmit(onSubmit)}>...</form>;
 }
 ```
 

@@ -22,6 +22,7 @@ import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { PasswordForm } from '@/components/forms/password-form';
 import { ResetPasswordForm } from '@/components/forms/reset-password-form';
 import { SignupForm } from '@/components/forms/signup-form';
+import { WaitlistForm } from '@/components/waitlist/waitlist-form';
 
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() })),
@@ -54,6 +55,7 @@ describe('forms submitted before the page has loaded', () => {
     ['reset completion', () => <ResetPasswordForm />, 'token=reset-token'],
     ['password change', () => <PasswordForm />],
     ['contact', () => <ContactForm />],
+    ['waitlist', () => <WaitlistForm fields={[]} list="launch" />],
   ])('the %s form', (_name, build, query) => {
     beforeEach(() => {
       if (!query) return;

@@ -540,24 +540,34 @@ function setsNoValidate(attributes: ts.JsxAttributes): boolean {
   });
 }
 
-export function scanBrowserValidation(source: string, path: string): BrowserValidatedForm[] {
+/** Every `<form>` that fails `passes` and has no `ignore` marker on the line above it. */
+function scanForms(
+  source: string,
+  path: string,
+  passes: (attributes: ts.JsxAttributes) => boolean,
+  ignore: RegExp
+): Array<{ path: string; line: number }> {
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const lines = source.split('\n');
-  const found: BrowserValidatedForm[] = [];
+  const found: Array<{ path: string; line: number }> = [];
   const visit = (n: ts.Node): void => {
     if (
       (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
       ts.isIdentifier(n.tagName) &&
       n.tagName.text === 'form' &&
-      !setsNoValidate(n.attributes)
+      !passes(n.attributes)
     ) {
       const line = file.getLineAndCharacterOfPosition(n.getStart(file)).line + 1;
-      if (!BROWSER_VALIDATION_IGNORE.test(lines[line - 2] ?? '')) found.push({ path, line });
+      if (!ignore.test(lines[line - 2] ?? '')) found.push({ path, line });
     }
     ts.forEachChild(n, visit);
   };
   visit(file);
   return found;
+}
+
+export function scanBrowserValidation(source: string, path: string): BrowserValidatedForm[] {
+  return scanForms(source, path, setsNoValidate, BROWSER_VALIDATION_IGNORE);
 }
 
 export function formatBrowserValidatedForm(form: BrowserValidatedForm): string {
@@ -584,7 +594,9 @@ export interface GetSubmittedForm {
 /**
  * Excuses one `<form>`, with the reason, on the line above it: `{/*
  * form-method-ignore: <why> *\/}`, or `//` inside parentheses. For a form whose
- * fields belong in the URL, such as a search box.
+ * fields belong in the URL, such as a search box, or a `<form action={fn}>`:
+ * React sends that by POST and refuses a `method` beside it. The scan can't tell
+ * a function from a string held in a variable, so it asks rather than assumes.
  */
 const FORM_METHOD_IGNORE = /form-method-ignore:[ \t]*[^\s*]/;
 
@@ -602,23 +614,7 @@ function setsMethodPost(attributes: ts.JsxAttributes): boolean {
 }
 
 export function scanFormMethod(source: string, path: string): GetSubmittedForm[] {
-  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const lines = source.split('\n');
-  const found: GetSubmittedForm[] = [];
-  const visit = (n: ts.Node): void => {
-    if (
-      (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
-      ts.isIdentifier(n.tagName) &&
-      n.tagName.text === 'form' &&
-      !setsMethodPost(n.attributes)
-    ) {
-      const line = file.getLineAndCharacterOfPosition(n.getStart(file)).line + 1;
-      if (!FORM_METHOD_IGNORE.test(lines[line - 2] ?? '')) found.push({ path, line });
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(file);
-  return found;
+  return scanForms(source, path, setsMethodPost, FORM_METHOD_IGNORE);
 }
 
 export function formatGetSubmittedForm(form: GetSubmittedForm): string {

@@ -1,5 +1,6 @@
 /**
- * Hand-drawn save-error boxes check, and forms the browser validates first: CLI.
+ * Hand-drawn save-error boxes check, forms the browser validates first, and forms
+ * that would put their fields in the URL: CLI.
  *
  * The rules, and why this is needed at all, live in
  * `scripts/ci/save-error-boxes.ts`. This file only walks `components/` and
@@ -128,8 +129,9 @@ export function main(root = process.cwd()): number {
     console.error(
       'Add method="post" to the <form>. Submitted before the page has loaded, a form with no ' +
         'method sends every named field in the query string. A form whose fields belong in ' +
-        'the URL, such as a search box: put {/* form-method-ignore: <why> */} on the line ' +
-        'above it. See .context/ui/form-errors.md.'
+        'the URL, such as a search box, or a <form action={fn}>, which React sends by POST ' +
+        'and refuses a method on: put {/* form-method-ignore: <why> */} on the line above ' +
+        'it. See .context/ui/form-errors.md.'
     );
   }
 
