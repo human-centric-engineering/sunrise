@@ -124,7 +124,7 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={form.handleSubmit(onSubmit)}>
       <Input
         {...form.register('name')}
         placeholder="Full Name"
@@ -208,7 +208,7 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={form.handleSubmit(onSubmit)}>
       <Input
         {...form.register('email')}
         type="email"

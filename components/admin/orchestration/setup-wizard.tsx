@@ -793,6 +793,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   // single source of "no API key" UX.
   return (
     <form
+      method="post"
       noValidate
       onSubmit={(e) => {
         void handleManualSubmit(e);

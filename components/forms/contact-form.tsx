@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { FormError, SaveError } from '@/components/forms/form-error';
+import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -110,10 +111,12 @@ export function ContactForm() {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-4"
     >
+      <NoScriptNotice />
       {/* Hidden honeypot field - invisible to real users, attracts bots */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
         <label htmlFor="website">Website (leave blank)</label>

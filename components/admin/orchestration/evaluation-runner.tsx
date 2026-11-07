@@ -957,7 +957,12 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
           {chatError && <div className="text-destructive px-3 py-1 text-sm">{chatError}</div>}
 
           {/* Input */}
-          <form noValidate onSubmit={handleChatSubmit} className="flex gap-2 border-t p-3">
+          <form
+            method="post"
+            noValidate
+            onSubmit={handleChatSubmit}
+            className="flex gap-2 border-t p-3"
+          >
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}

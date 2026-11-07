@@ -177,6 +177,7 @@ export function AgentProfileForm({ mode, profile }: Props) {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-6"

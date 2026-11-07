@@ -152,7 +152,7 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form method="post" onSubmit={handleSubmit}>
       {/* Form fields */}
     </form>
   )
@@ -383,7 +383,7 @@ export default function AcceptInvitePage({ searchParams }) {
       {/* OR */}
 
       {/* Password form (alternative) */}
-      <form onSubmit={handlePasswordAcceptance}>
+      <form method="post" onSubmit={handlePasswordAcceptance}>
         {/* ... password fields ... */}
       </form>
     </div>

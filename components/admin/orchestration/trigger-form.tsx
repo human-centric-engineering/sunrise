@@ -179,7 +179,7 @@ export function TriggerForm({ mode, initial, workflows, agents, enabledChannels,
   }
 
   return (
-    <form noValidate onSubmit={save.submit(handleSubmit)} className="space-y-6">
+    <form method="post" noValidate onSubmit={save.submit(handleSubmit)} className="space-y-6">
       {/* Channel */}
       <div className="space-y-2">
         <Label htmlFor="channel">

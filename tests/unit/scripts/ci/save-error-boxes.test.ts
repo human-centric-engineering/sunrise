@@ -16,7 +16,9 @@ import {
   BOX_EXEMPTIONS,
   formatBox,
   formatBrowserValidatedForm,
+  formatGetSubmittedForm,
   scanBrowserValidation,
+  scanFormMethod,
   scanSaveErrorBoxes,
 } from '@/scripts/ci/save-error-boxes';
 
@@ -418,6 +420,67 @@ describe('scanBrowserValidation', () => {
   it('formats a form with where it is and what it does', () => {
     expect(formatBrowserValidatedForm({ path: 'components/x.tsx', line: 9 })).toBe(
       'components/x.tsx:9  <form> without noValidate: the browser blocks Save first'
+    );
+  });
+});
+
+describe('scanFormMethod', () => {
+  /** A component returning `jsx`, with the form on line 3. */
+  const form = (jsx: string) =>
+    ['export function Form() {', '  return (', jsx, '  );', '}'].join('\n');
+  const scan = (source: string) => scanFormMethod(source, 'components/f.tsx');
+
+  it('reports a <form> with no method, with its line', () => {
+    expect(scan(form('<form noValidate onSubmit={save}><input name="password" /></form>'))).toEqual(
+      [{ path: 'components/f.tsx', line: 3 }]
+    );
+  });
+
+  it('reports one with no named input in view: it can come from a component in another file', () => {
+    expect(scan(form('<form onSubmit={save}><Section /></form>'))).toHaveLength(1);
+  });
+
+  it('passes method="post", in either case', () => {
+    expect(scan(form('<form method="post" onSubmit={save} />'))).toEqual([]);
+    expect(scan(form('<form method="POST" onSubmit={save} />'))).toEqual([]);
+  });
+
+  it('reports method="get", and a computed value it cannot read', () => {
+    expect(scan(form('<form method="get" />'))).toHaveLength(1);
+    expect(scan(form('<form method={verb} />'))).toHaveLength(1);
+  });
+
+  it('reports each form in a file, and a self-closing one', () => {
+    const source = form('<>\n<form method="post" />\n<form />\n<form></form>\n</>');
+    expect(scan(source).map((f) => f.line)).toEqual([5, 6]);
+  });
+
+  it('ignores a component named Form: it is not the element', () => {
+    expect(scan(form('<Form {...methods}><input name="password" /></Form>'))).toEqual([]);
+  });
+
+  it('excuses a form with the marker and a reason on the line above, in either comment form', () => {
+    const jsx = (marker: string) => `<>\n${marker}\n<form method="get" />\n</>`;
+    expect(scan(form(jsx('{/* form-method-ignore: a search box */}')))).toEqual([]);
+    expect(scan(form(jsx('// form-method-ignore: a search box')))).toEqual([]);
+  });
+
+  it('asks a <form action={fn}> for the marker: it cannot tell a function from a string', () => {
+    expect(scan(form('<form action={save} />'))).toHaveLength(1);
+    expect(
+      scan(form('<>\n{/* form-method-ignore: React posts it */}\n<form action={save} />\n</>'))
+    ).toEqual([]);
+  });
+
+  it('does not excuse the marker with no reason', () => {
+    expect(scan(form('<>\n{/* form-method-ignore: */}\n<form method="get" />\n</>'))).toHaveLength(
+      1
+    );
+  });
+
+  it('formats a form with where it is and what it does', () => {
+    expect(formatGetSubmittedForm({ path: 'components/x.tsx', line: 9 })).toBe(
+      'components/x.tsx:9  <form> without method="post": early, its fields go in the URL'
     );
   });
 });

@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { FormError, SaveError } from '@/components/forms/form-error';
+import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { fieldCount } from '@/lib/errors/save-error';
@@ -127,10 +128,12 @@ export function PasswordForm() {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-6"
     >
+      <NoScriptNotice />
       {/* Current Password */}
       <div className="space-y-2">
         <Label htmlFor="currentPassword">Current Password</Label>

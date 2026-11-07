@@ -216,7 +216,7 @@ function SignupForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={handleSubmit(onSubmit)}>
       <Input name="email" />
 
       {/* Show field-specific error */}
@@ -283,7 +283,7 @@ function SignupForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={handleSubmit(onSubmit)}>
       <Input name="email" />
       <Input name="password" type="password" />
 

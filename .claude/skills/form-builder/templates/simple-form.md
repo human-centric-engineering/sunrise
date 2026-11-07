@@ -125,7 +125,7 @@ export function SimpleForm({ onSuccess, redirectTo }: SimpleFormProps) {
   }
 
   return (
-    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} className="space-y-4">
+    <form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} className="space-y-4">
       {/* Name Field */}
       <div className="space-y-2">
         <Label htmlFor="name">Name</Label>

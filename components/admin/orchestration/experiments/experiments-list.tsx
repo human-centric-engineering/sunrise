@@ -185,7 +185,7 @@ function CreateExperimentForm({
         <CardTitle className="text-base">New Experiment</CardTitle>
       </CardHeader>
       <CardContent>
-        <form noValidate onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        <form method="post" noValidate onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           {/* Name */}
           <div className="space-y-1.5">
             <Label htmlFor="exp-name">

@@ -71,7 +71,7 @@ import { Input } from '@/components/ui/input';
 export function LoginForm() {
   const form = useForm();
   return (
-    <form>
+    <form method="post">
       <Input {...form.register('email')} />
       <Button type="submit">Login</Button>
     </form>
@@ -408,7 +408,7 @@ export function SignupForm() {
   };
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
+    <form method="post" onSubmit={form.handleSubmit(onSubmit)}>
       {/* Form fields */}
     </form>
   );

@@ -137,6 +137,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
       </CardHeader>
       <CardContent>
         <form
+          method="post"
           onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
           className="space-y-4"
           noValidate

@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { FormError, SaveError } from '@/components/forms/form-error';
+import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
@@ -118,11 +119,15 @@ export function SignupForm() {
 
   return (
     <div className="space-y-4">
+      {/* Above the OAuth buttons, which need JavaScript too */}
+      <NoScriptNotice />
+
       {/* OAuth Buttons */}
       <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} />
 
       {/* Email/Password Form */}
       <form
+        method="post"
         noValidate
         onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
         className="space-y-4"

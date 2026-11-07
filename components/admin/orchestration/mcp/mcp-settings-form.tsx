@@ -94,6 +94,7 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(async (e) => {
         await handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0], save.invalid)(e);

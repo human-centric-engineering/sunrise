@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { FormError, SaveError } from '@/components/forms/form-error';
+import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { Mail } from 'lucide-react';
 import Link from 'next/link';
@@ -166,10 +167,12 @@ function RequestResetForm() {
   // Form state - show email input
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-4"
     >
+      <NoScriptNotice />
       {/* Show contextual message for URL errors (expired/invalid links) */}
       {urlErrorMessage && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/10 dark:text-amber-400">
@@ -297,10 +300,12 @@ function CompleteResetForm({ token }: { token: string }) {
   // Form state - show password reset form
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-4"
     >
+      <NoScriptNotice />
       <input type="hidden" {...register('token')} />
 
       {/* Password Field */}

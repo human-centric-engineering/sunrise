@@ -173,6 +173,40 @@ describe('proxy (project root)', () => {
     });
   });
 
+  describe('a form pressed before the page loaded (t-998)', () => {
+    const SESSION = { 'better-auth.session_token': 'stale-or-valid' };
+
+    it('answers a POST to a protected page with 303, so the browser drops the body', async () => {
+      const response = await proxy(createMockRequest('/settings', { method: 'POST' }));
+
+      expect(response.status).toBe(303);
+      expect(response.headers.get('location')).toContain('/login');
+    });
+
+    it('answers a POST to an auth page with 303 when a session cookie is present', async () => {
+      const response = await proxy(
+        createMockRequest('/login', { method: 'POST', cookies: SESSION })
+      );
+
+      expect(response.status).toBe(303);
+    });
+
+    it('answers a POST to /signup with 303 on an invite-only deployment', async () => {
+      vi.mocked(isInviteOnly).mockReturnValueOnce(true);
+
+      const response = await proxy(createMockRequest('/signup', { method: 'POST' }));
+
+      expect(response.status).toBe(303);
+      expect(response.headers.get('location')).toContain('/login');
+    });
+
+    it('keeps 307 for a GET, whose redirect has no body to drop', async () => {
+      const response = await proxy(createMockRequest('/login', { cookies: SESSION }));
+
+      expect(response.status).toBe(307);
+    });
+  });
+
   describe('Protected routes — unauthenticated', () => {
     it('redirects to /login when accessing /dashboard without a session', async () => {
       const request = createMockRequest('/dashboard', { cookies: {} });

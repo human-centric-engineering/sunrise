@@ -15,7 +15,7 @@
 **Correct:**
 
 ```typescript
-<form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
+<form method="post" onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
 ```
 
 **Why:** The `void` operator is needed to satisfy React's event handler typing when handleSubmit returns a Promise.
@@ -190,7 +190,7 @@ const onSubmit = async (data) => {
   }
 };
 // …
-<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}> {/* every press clears the last one */}
+<form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}> {/* every press clears the last one */}
   …
   <SaveError failure={save.failure} />
   <Button type="submit">Save</Button>
@@ -325,7 +325,7 @@ export function LoginForm() {
   const oauthMessage = oauthError ? oauthErrorDescription || 'OAuth sign-in failed' : null;
 
   return (
-    <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
+    <form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
       {/* rest of form */}
       {/* A failed sign-in replaces the OAuth notice; both sit by Sign In */}
       <SaveError failure={save.failure} />

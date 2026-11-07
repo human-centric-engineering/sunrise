@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FormError, SaveError } from '@/components/forms/form-error';
+import { NoScriptNotice } from '@/components/forms/no-script-notice';
 
 /** Every sentence the form shows (the schema's own validation messages aside). */
 export interface WaitlistFormCopy {
@@ -204,10 +205,12 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
 
   return (
     <form
+      method="post"
       noValidate
       onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className={['space-y-4', className].filter(Boolean).join(' ')}
     >
+      <NoScriptNotice />
       {/* Honeypot — invisible to people, filled by bots. Decided on its value by the route. */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
         <label htmlFor="waitlist-website">Website (leave blank)</label>

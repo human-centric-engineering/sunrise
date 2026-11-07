@@ -294,18 +294,26 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // Check if the current route is an auth page
   const isAuthRoute = authRoutes.some((route) => matchesRoute(pathname, route));
 
+  // A POST that reaches a page is a form pressed before React attached (t-998).
+  // 303 turns it into a GET: a 307 would re-send the body, password included, to
+  // each hop, and end on /api/auth/clear-session, which answers GET only.
+  const pageRedirectStatus = request.method === 'POST' ? 303 : 307;
+
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !authenticated) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
-    const redirectResponse = NextResponse.redirect(loginUrl);
+    const redirectResponse = NextResponse.redirect(loginUrl, pageRedirectStatus);
     redirectResponse.headers.set('x-request-id', requestId);
     return setVisitorCookie(redirectResponse);
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
-    const redirectResponse = NextResponse.redirect(new URL(AUTH_LANDING_ROUTE, request.url));
+    const redirectResponse = NextResponse.redirect(
+      new URL(AUTH_LANDING_ROUTE, request.url),
+      pageRedirectStatus
+    );
     redirectResponse.headers.set('x-request-id', requestId);
     return setVisitorCookie(redirectResponse);
   }
@@ -316,7 +324,10 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // whatever the UI renders. Marketing CTAs that still point at /signup land on
   // /login rather than a form that cannot succeed.
   if (matchesRoute(pathname, '/signup') && isInviteOnly()) {
-    const redirectResponse = NextResponse.redirect(new URL('/login', request.url));
+    const redirectResponse = NextResponse.redirect(
+      new URL('/login', request.url),
+      pageRedirectStatus
+    );
     redirectResponse.headers.set('x-request-id', requestId);
     return setVisitorCookie(redirectResponse);
   }

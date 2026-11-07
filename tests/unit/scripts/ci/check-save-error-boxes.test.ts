@@ -176,12 +176,30 @@ describe('scripts/ci/check-save-error-boxes', () => {
     write({
       'components/forms/new-form.tsx': SHARED.replace(
         'return <SaveError failure={save.failure} />;',
-        'return <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} />;'
+        'return <form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} />;'
       ),
     });
 
     expect(main(root)).toBe(0);
     expect(errors).toEqual([]);
+  });
+
+  it('fails on a planted <form> with no method, and names it', () => {
+    writeExemptedBoxes();
+    write({
+      'components/forms/new-form.tsx': SHARED.replace(
+        'return <SaveError failure={save.failure} />;',
+        'return <form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))} />;'
+      ),
+    });
+
+    expect(main(root)).toBe(1);
+    const out = errors.join('\n');
+    expect(out).toContain('Forms that would put their fields in the URL (1):');
+    expect(out).toContain(
+      'components/forms/new-form.tsx:4  <form> without method="post": early, its fields go in the URL'
+    );
+    expect(out).not.toContain('Forms the browser validates');
   });
 
   it('fails on an exemption that no longer matches a box', () => {

@@ -57,7 +57,7 @@ export interface SaveFailureState<TField extends string> {
    * including a press that client validation blocks. A number field the
    * browser can't read blocks the press before the handler runs (see
    * `unreadableNumbers`):
-   * `<form onSubmit={submit(handleSubmit(onSubmit))}>`.
+   * `<form method="post" onSubmit={submit(handleSubmit(onSubmit))}>`.
    */
   submit: (
     handler: (e?: BaseSyntheticEvent) => Promise<void> | void

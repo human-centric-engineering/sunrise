@@ -30,7 +30,7 @@ failure that comes back in the URL, shown by Sign In until the form's own
 sign-in fails).
 
 **A hand-drawn save-error box fails the build**, and so does a `<form>`
-without `noValidate`: `npm run check:save-errors` (in `npm run validate`, and
+without `noValidate` or `method="post"`: `npm run check:save-errors` (in `npm run validate`, and
 its own CI step). See [The check](#the-check).
 
 ## The rules
@@ -147,7 +147,7 @@ const onSubmit = async (values: FormData) => {
   }
 };
 
-<form noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
+<form method="post" noValidate onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}>
 
 // beside Save:
 <div className="sticky bottom-4 space-y-2">
@@ -174,7 +174,7 @@ form goes there as well, with the fields, so their tab comes forward:
 ```tsx
 const onInvalid = (formErrors: FieldErrors<FormData>) =>
   save.show('2 fields need fixing.', namedFields(formErrors)); // only SERVER_FIELDS entries
-<form onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}>
+<form method="post" onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}>
 ```
 
 A load error is not a save error. When a form shared one state between them,
@@ -422,11 +422,49 @@ it can't read, counts as missing. A form that must keep the browser's checks
 puts `{/* browser-validation-ignore: <why> */}` on the line above the
 `<form>` (or `//` inside parentheses); the reason is required.
 
+**A `<form>` without `method="post"`** is reported as well (`scanFormMethod`),
+for the reason in [Before the page has loaded](#before-the-page-has-loaded).
+`method="get"`, or a value it can't read, counts as missing. A form whose
+fields belong in the URL, such as a search box, puts
+`{/* form-method-ignore: <why> */}` on the line above the `<form>` (or `//`
+inside parentheses); the reason is required. So does a `<form action={fn}>`:
+React sends it by POST and refuses a `method` beside it, and the scan can't tell
+a function from a string held in a variable.
+
 What it can't see is listed at the top of the file (a reducer's state, a
 setter passed to a helper, a client other than these three). It also matches
 state by name across a file, so two components in one file that each declare
 `[error, setError]` share it; the marker excuses a load panel caught that way. It raises the
 floor; review still matters.
+
+## Before the page has loaded
+
+A server-rendered form works as plain HTML until React attaches `onSubmit`, and
+`register()` has already named its inputs. With no `method`, a press in that
+window (slow load, blocked script, a chunk missing after a deploy, or no
+JavaScript at all) is a GET with every field in the query string, so a password
+lands in browser history and in the logs of whatever fronts the site (t-998).
+
+- **Every `<form>` sets `method="post"`.** The fields go in the body instead. A
+  URL-encoded POST to a page route renders the page again and nothing reads the
+  body, so a press this early does nothing. Where the proxy redirects that page
+  (signed out, or already signed in), it answers with a 303, so the browser
+  follows with a GET and drops the body. `onSubmit` still takes over once React
+  has loaded, and the attribute changes nothing after that. An
+  `encType="multipart/form-data"` form differs: Next treats that POST as a Server
+  Action, so an early press shows a plain-text error, not the page.
+- **A form a signed-out visitor uses, or that changes a password, renders
+  `<NoScriptNotice />` first**, so someone with no JavaScript is told before
+  typing. A form that only appears once data has loaded puts it in the loading
+  state instead, as `accept-invite-form` does, because the form itself never
+  reaches them. Admin forms don't need it: the admin console doesn't work
+  without JavaScript at all.
+
+**What `<noscript>` can't cover.** It shows only when scripting is off. Someone
+whose scripts are on but failing gets no message: pressing too early brings back
+an empty form, and a blocked script or a chunk missing after a deploy does so on
+every press, because the same bundle fails again. Nothing leaks in either case,
+but that person sees what looks like a failed sign-in.
 
 ## Out of scope
 

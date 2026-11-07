@@ -528,7 +528,7 @@ export function UserProfileForm({ user }: { user: PublicUser }) {
     }
   }
 
-  return <form onSubmit={form.handleSubmit(onSubmit)}>{/* form fields */}</form>;
+  return <form method="post" onSubmit={form.handleSubmit(onSubmit)}>{/* form fields */}</form>;
 }
 ```
 

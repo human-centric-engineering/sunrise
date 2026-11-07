@@ -16,6 +16,22 @@ release process.
 
 ## [Unreleased]
 
+### Security
+
+- **A form submitted before the page had loaded put its fields in the URL.** A
+  server-rendered `<form>` with an `onSubmit` and no `method` is a working HTML
+  form until React attaches, so a press on a slow load, with a script blocked,
+  or with JavaScript off was a GET carrying every named field, passwords and
+  reset tokens included. Those URLs reach browser history and the logs of any
+  host, CDN or proxy in front of the site. Every `<form>` now sets
+  `method="post"`, and the sign-in, sign-up, reset, invitation, password,
+  contact and waitlist forms tell someone with no JavaScript that they can't
+  work. **Forks:** `npm run check:save-errors`, part of `validate`, now fails a
+  `<form>` without `method="post"`, so add it to your own forms. A form whose
+  fields belong in the URL, such as a search box, takes
+  `{/* form-method-ignore: <why> */}` on the line above it. See
+  `.context/ui/form-errors.md`.
+
 ## [0.17.1] — 2026-11-06
 
 > **Alpha release.** Twenty-fourth tagged Sunrise release. **PATCH bump**: one
