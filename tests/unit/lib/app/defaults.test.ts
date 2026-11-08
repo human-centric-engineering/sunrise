@@ -122,6 +122,7 @@ import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
 import { orgAdminLanding } from '@/lib/auth/admin-landing';
 import {
   getAppOrgTierAdminPages,
+  namedAdminTiers,
   orgTierAdminPages,
   __resetAppOrgTierAdminPagesForTests,
   closedCoreOrgTierSections,
@@ -528,6 +529,9 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     risk: 'a stray pattern would open that admin page to every org OWNER/ADMIN on every install — the page only, since its API routes declare their own tier, but a page core meant for platform admins alone; a stray closeCoreOrgTierSection() would shut orchestration to every org admin on every install',
     assert: () => {
       __resetAppOrgTierAdminPagesForTests();
+      // No named tier (t-999): a stray one would open every fork route that
+      // declares its name to whoever its holds() admits, on every install.
+      expect(namedAdminTiers()).toEqual([]);
       // The read triggers the lazy init, so this exercises the REAL seam.
       expect(getAppOrgTierAdminPages()).toEqual([]);
       // …and the roster the layout reads and hands the gate is exactly core's.

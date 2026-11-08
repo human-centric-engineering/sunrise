@@ -149,6 +149,7 @@ import { getServerSession } from '@/lib/auth/utils';
 import {
   ADMIN_PATHNAME_HEADER,
   closeCoreOrgTierSection,
+  registerAdminTier,
   registerOrgTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
@@ -482,6 +483,100 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
 
     expect(screen.getByTestId('admin-header')).toHaveAttribute('data-org-name', '');
     expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-multi-tenant', 'false');
+  });
+
+  describe('a page the fork declares for a named tier (t-999)', () => {
+    const DESIGNS = '/admin/designs';
+    const DESIGN = '/admin/designs/[id]';
+    /** The fork's stand-in for its access rows: every MEMBER here holds the tier. */
+    const holds = vi.fn((viewer: { orgRole?: string | null }) => viewer.orgRole === 'MEMBER');
+
+    beforeEach(() => {
+      roster.pages = null; // the real roster: core's, then the fork's
+      __resetAppOrgTierAdminPagesForTests();
+      holds.mockClear();
+      fork.init = () => {
+        registerAdminTier('page_designs', { holds, landing: DESIGNS });
+        registerOrgTierAdminPage(DESIGNS, { tier: 'page_designs' });
+        registerOrgTierAdminPage(DESIGN, { tier: 'page_designs' });
+        // An org page beside the named [id] pattern, which names its URL too.
+        registerOrgTierAdminPage('/admin/designs/settings');
+      };
+    });
+
+    afterEach(() => {
+      fork.init = () => {};
+      __resetAppOrgTierAdminPagesForTests();
+    });
+
+    it('opens to a holder, who reaches their tier alone, under the real gate', async () => {
+      actingAs('MEMBER');
+      onPage('/admin/designs/d1');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">design</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      const sidebar = screen.getByTestId('admin-sidebar');
+      expect(sidebar).toHaveAttribute('data-viewer-tier', 'page_designs');
+      expect(sidebar).toHaveAttribute('data-landing', DESIGNS);
+      expect(sidebar.getAttribute('data-named-tier-pages')?.split(' ')).toEqual([
+        `${DESIGNS}=page_designs`,
+        `${DESIGN}=page_designs`,
+      ]);
+      // The page shows one org's rows, so the header names the org on it.
+      expect(
+        screen.getByTestId('admin-header').getAttribute('data-org-tier-pages')?.split(' ')
+      ).toContain(DESIGN);
+    });
+
+    it.each([
+      ['an org page beside its [id] pattern', '/admin/designs/settings'],
+      ['a core org-tier page', '/admin/orchestration/agents'],
+      ['Members', '/admin/members'],
+      ['a platform page', '/admin/users'],
+    ])('refuses a holder %s', async (_l, path) => {
+      actingAs('MEMBER');
+      onPage(path);
+
+      await expect(AdminLayout({ children: <div>page</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('lets a holder through /admin, which sends them to their landing', async () => {
+      actingAs('MEMBER');
+      onPage('/admin');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">index</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('opens the tier’s page to an org OWNER without asking holds(), as the owner ruled', async () => {
+      actingAs('OWNER');
+      onPage('/admin/designs/d1');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">design</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      expect(screen.getByTestId('admin-sidebar')).toHaveAttribute(
+        'data-viewer-tier',
+        'org page_designs'
+      );
+      expect(holds).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the ruling: an org admin is not a holder to ask about;
+    });
+
+    it('refuses a MEMBER the fork says holds nothing', async () => {
+      holds.mockReturnValue(false);
+      actingAs('MEMBER');
+      onPage('/admin/designs/d1');
+
+      await expect(AdminLayout({ children: <div>design</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+      expect(holds).toHaveBeenCalled();
+      holds.mockImplementation((viewer) => viewer.orgRole === 'MEMBER');
+    });
   });
 
   describe('a page the fork lists in lib/app/admin-tier.ts (t-817)', () => {

@@ -11,7 +11,7 @@ import type { AdminReach } from '@/lib/auth/admin-tier';
 
 /** An org OWNER/ADMIN, as `requestAdminReach()` answers for one. */
 const ORG: AdminReach = { tiers: ['org'], landing: null };
-const viewer = vi.hoisted(() => ({ reach: 'platform' }));
+const viewer = vi.hoisted((): { reach: AdminReach } => ({ reach: 'platform' }));
 vi.mock('@/lib/auth/admin-page-viewer', () => ({
   requestAdminReach: vi.fn(() => Promise.resolve(viewer.reach)),
 }));

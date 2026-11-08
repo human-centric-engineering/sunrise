@@ -516,7 +516,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
 
 describe('sectionsForViewer', () => {
   const Icon: ComponentType<{ className?: string }> = () => null;
-  const item = (href: string, tier?: 'org') => ({
+  const item = (href: string, tier?: string) => ({
     href,
     label: href,
     icon: Icon,
@@ -564,6 +564,47 @@ describe('sectionsForViewer', () => {
     expect(sectionsForViewer(sections, ORG_REACH, ['/admin/members'])).toEqual([
       { title: 'Management', items: [item('/admin/members', 'org')], subgroups: undefined },
     ]);
+  });
+
+  describe('with a fork’s named tier (t-999)', () => {
+    const PAGES = ['/admin/members', '/admin/designs', '/admin/designs/settings'];
+    const NAMED = [{ pattern: '/admin/designs', tier: 'page_designs' }];
+    const sections = [
+      {
+        title: 'Client',
+        items: [
+          item('/admin/members', 'org'),
+          item('/admin/designs', 'page_designs'),
+          item('/admin/designs/settings', 'org'),
+          // Marked for the tier over an org page: holders must not be shown it.
+          item('/admin/designs/settings?x=1', 'page_designs'),
+          item('/admin/users'),
+        ],
+      },
+    ];
+    const hrefs = (reach: AdminReach) =>
+      sectionsForViewer(sections, reach, PAGES, NAMED).flatMap((s) =>
+        (s.items ?? []).map((i) => i.href)
+      );
+
+    it('shows a holder the items of their tier over their tier’s pages, and nothing else', () => {
+      expect(hrefs({ tiers: ['page_designs'], landing: null })).toEqual(['/admin/designs']);
+    });
+
+    it('shows a holder of another tier nothing here', () => {
+      expect(hrefs({ tiers: ['media'], landing: null })).toEqual([]);
+    });
+
+    it('shows an org admin the org items and the named tier’s, and still no platform item', () => {
+      // The mis-marked item too: an org admin opens its page either way, and
+      // the roster test is what reports the mismatch (admin-tier-roster).
+      expect(hrefs({ tiers: ['org', 'page_designs'], landing: null })).toEqual([
+        '/admin/members',
+        '/admin/designs',
+        '/admin/designs/settings',
+        '/admin/designs/settings?x=1',
+      ]);
+    });
   });
 });
 

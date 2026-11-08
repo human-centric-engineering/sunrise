@@ -110,3 +110,47 @@ describe('AdminTierGate on a page the fork lists in lib/app/admin-tier.ts (t-817
     expect(fork.init).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the browser must build no list of its own;
   });
 });
+
+describe('AdminTierGate for a holder of a fork’s named tier (t-999)', () => {
+  const ORG_PAGES = ['/admin/designs', '/admin/designs/[id]', '/admin/designs/settings'];
+  const NAMED = [
+    { pattern: '/admin/designs', tier: 'page_designs' },
+    { pattern: '/admin/designs/[id]', tier: 'page_designs' },
+  ];
+  const HOLDER: AdminReach = { tiers: ['page_designs'], landing: '/admin/designs' };
+  const gate = (reach: AdminReach) =>
+    render(
+      <AdminTierGate reach={reach} orgTierPages={ORG_PAGES} namedTierPages={NAMED}>
+        {page}
+      </AdminTierGate>
+    );
+
+  it('renders their tier’s page', () => {
+    nav.pathname = '/admin/designs/d1';
+    gate(HOLDER);
+    expect(screen.getByTestId('page')).toBeInTheDocument();
+    expect(nav.replace).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+  });
+
+  it.each([
+    ['the org page beside their [id] pattern', '/admin/designs/settings'],
+    ['a platform page', '/admin/users'],
+  ])('sends them away from %s', (_l, path) => {
+    nav.pathname = path;
+    gate(HOLDER);
+    expect(screen.queryByTestId('page')).not.toBeInTheDocument();
+    expect(nav.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+  });
+
+  it('lets them through /admin only when their tier names a landing', () => {
+    nav.pathname = '/admin';
+    gate(HOLDER);
+    expect(screen.getByTestId('page')).toBeInTheDocument();
+  });
+
+  it('turns them away from /admin with no landing to be sent to', () => {
+    nav.pathname = '/admin';
+    gate({ tiers: ['page_designs'], landing: null });
+    expect(nav.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+  });
+});
