@@ -32,7 +32,11 @@ import {
   namedTierAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
-import type { DeclaredAdminTier, NamedTierAdminPage } from '@/lib/auth/admin-tier';
+import {
+  isPlainAdminPath,
+  type DeclaredAdminTier,
+  type NamedTierAdminPage,
+} from '@/lib/auth/admin-tier';
 
 /** Where a platform admin lands. */
 export const PLATFORM_ADMIN_LANDING = '/admin/overview';
@@ -47,25 +51,27 @@ export const DEFAULT_ORG_ADMIN_LANDING = '/admin/orchestration';
  */
 export const CLOSED_DEFAULT_ORG_ADMIN_LANDING = '/admin/members';
 
-/** One literal segment of a URL path: no query, fragment, or `[x]`. */
-const LITERAL_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+/**
+ * Why `route` is not a plain path under `/admin/` — the first rule every
+ * landing meets, org admin's or named tier's — or `null` when it is.
+ */
+function plainPathProblem(route: unknown): string | null {
+  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
+    return 'is not a path under /admin/.';
+  }
+  if (!isPlainAdminPath(route)) {
+    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
+  }
+  return null;
+}
 
 /**
  * Why an org admin could not land on this page, or `null` when they can.
  * Judges against the org-tier page patterns it is handed.
  */
 export function orgAdminLandingProblem(route: unknown, pages: readonly string[]): string | null {
-  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
-    return 'is not a path under /admin/.';
-  }
-  if (
-    !route
-      .split('/')
-      .slice(2)
-      .every((segment) => LITERAL_SEGMENT.test(segment))
-  ) {
-    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
-  }
+  const pathProblem = plainPathProblem(route);
+  if (pathProblem !== null || typeof route !== 'string') return pathProblem;
   // Exactly a listed page, not a URL an `[x]` pattern also names: a concrete
   // `/admin/workflows/abc123` is one org's row, a not-found for every other.
   if (!pages.includes(route)) {
@@ -108,17 +114,8 @@ export function namedTierLandingProblem(
   route: unknown,
   named: readonly NamedTierAdminPage[]
 ): string | null {
-  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
-    return 'is not a path under /admin/.';
-  }
-  if (
-    !route
-      .split('/')
-      .slice(2)
-      .every((segment) => LITERAL_SEGMENT.test(segment))
-  ) {
-    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
-  }
+  const pathProblem = plainPathProblem(route);
+  if (pathProblem !== null || typeof route !== 'string') return pathProblem;
   if (!named.some((page) => page.pattern === route && page.tier === tier)) {
     return `is not a page registered for tier ${JSON.stringify(tier)}. Name one registered with registerOrgTierAdminPage(pattern, { tier: ${JSON.stringify(tier)} }), word for word.`;
   }
@@ -127,6 +124,11 @@ export function namedTierLandingProblem(
 
 /** Landings already logged as unusable, so a misconfigured one is said once per process, not per request. */
 const loggedLandingProblems = new Set<string>();
+
+/** Test-only: forget which landings were logged, so a test sees its own log line. */
+export function __resetLandingLogForTests(): void {
+  loggedLandingProblems.clear();
+}
 
 /**
  * Where `/admin` sends someone who holds these tiers and not `'org'` (t-999):

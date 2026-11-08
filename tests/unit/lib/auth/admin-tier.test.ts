@@ -41,7 +41,6 @@ import {
   registeredAppOrgTierAdminPages,
   registerOrgTierAdminPage,
   restoreAppOrgTierAdminPages,
-  viewerReaches,
 } from '@/lib/auth/admin-tier';
 
 afterEach(() => {
@@ -100,16 +99,6 @@ describe('adminPageTier', () => {
     expect(adminPageTier('/admin/orchestration/providers', core)).toBeNull();
     expect(adminPageTier('/admin/orchestration/knowledge/tags', core)).toBeNull();
     expect(adminPageTier('/admin/users', core)).toBeNull();
-  });
-});
-
-describe('viewerReaches', () => {
-  it('lets a platform viewer reach every surface and an org viewer the org-tier ones only', () => {
-    expect(viewerReaches('platform', null)).toBe(true);
-    expect(viewerReaches('platform', 'org')).toBe(true);
-    expect(viewerReaches('org', 'org')).toBe(true);
-    expect(viewerReaches('org', null)).toBe(false);
-    expect(viewerReaches('org', undefined)).toBe(false);
   });
 });
 
@@ -332,12 +321,16 @@ describe('registerAdminTier (t-999)', () => {
     expect(registeredNamedAdminTiers()).toEqual([]);
   });
 
-  it('refuses a second registration of a name with a different definition', () => {
+  it('replaces a definition registered again, as a hot reload of the scaffold does', () => {
     registerAdminTier('media', { holds });
-    expect(() => registerAdminTier('media', { holds: () => false })).toThrow(/already registered/);
-    expect(() => registerAdminTier('media', { holds, landing: '/admin/media' })).toThrow(
-      /already registered/
-    );
+    const view = registeredNamedAdminTiers();
+    const reloaded = (): boolean => false;
+    registerAdminTier('media', { holds: reloaded, landing: '/admin/media' });
+    // One tier, in its first place, answering with the new holds().
+    expect(registeredNamedAdminTiers()).toEqual([
+      ['media', { holds: reloaded, landing: '/admin/media' }],
+    ]);
+    expect(registeredNamedAdminTiers()).not.toBe(view);
   });
 });
 

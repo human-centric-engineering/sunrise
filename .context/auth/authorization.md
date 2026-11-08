@@ -411,17 +411,20 @@ org switcher does, should send a holder to a page their tier opens.
   digits, `_` and `-` (a letter first, at most 48 characters);
 - a page whose tier is not registered yet;
 - a page already listed for another tier (a page is in one tier);
-- a page in one of `CORE_ADMIN_SECTIONS`, as for every fork page;
-- a second registration of a name with a different definition.
+- a page in one of `CORE_ADMIN_SECTIONS`, as for every fork page.
 
-Anything the init registers rolls back with its pages if the init throws.
+Registering a name again replaces its definition, as `registerNavSection()`
+replaces a section, so a hot reload of the scaffold under `next dev` takes the
+new `holds()`. Anything the init registers rolls back with its pages if the
+init throws.
 
 **The roster test covers named tiers.** It fails on:
 
 - a route, or a nav item, that names a tier nobody registered;
 - a core-listed route that declares a named tier, because core's routes are
   `'org'`;
-- a nav item marked with a named tier over a page of another tier;
+- a nav item marked with a named tier over a page of another tier, or marked
+  `'org'` over a named-tier page, which that tier's holders would never see;
 - a landing that is not its own tier's page.
 
 It also holds named-tier routes and pages to every check an `'org'` one meets.

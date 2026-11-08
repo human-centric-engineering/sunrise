@@ -281,8 +281,13 @@ const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']
  * Throws, so a mistake opens nothing, on a name that is not lower case
  * letters, digits, `_` and `-` (a letter first, at most 48), on `'org'` or
  * `'platform'`, on a `holds` that is not a function, on a `landing` that is
- * not a plain `/admin/…` path, and on a second registration of the name with
- * a different definition. Registering the same definition again is a no-op.
+ * not a plain `/admin/…` path.
+ *
+ * Registering a name again replaces its definition, as `registerNavSection()`
+ * replaces a section: under `next dev` a hot reload of the scaffold runs the
+ * init again with a fresh `holds` closure while this registry, which the
+ * scaffold imports rather than the reverse, keeps the old one. Refusing the
+ * second call would fail that init and leave the stale `holds()` answering.
  *
  * @example
  * ```ts
@@ -320,16 +325,17 @@ export function registerAdminTier(
     );
   }
   const existing = namedTiers.get(name);
-  if (existing) {
-    if (existing.holds === definition.holds && existing.landing === landing) return;
-    refuse('is already registered with a different definition. A tier is registered once.');
-  }
+  if (existing?.holds === definition.holds && existing.landing === landing) return;
   namedTiers.set(name, Object.freeze({ holds: definition.holds, landing }));
   namedTiersView = null;
 }
 
-/** `/admin/` then one or more literal segments: a page you can type, not a pattern. */
-function isPlainAdminPath(path: unknown): path is string {
+/**
+ * `/admin/` then one or more literal segments: a page you can type, not a
+ * pattern, with no trailing slash, query or fragment. What a landing must be,
+ * here and in `lib/auth/admin-landing.ts`.
+ */
+export function isPlainAdminPath(path: unknown): path is string {
   return (
     typeof path === 'string' &&
     path.startsWith('/admin/') &&
@@ -861,14 +867,6 @@ export function adminPageTier(
   return pages.some((pattern) => matchesAdminPagePattern(pattern, pathname)) ? 'org' : null;
 }
 
-/** May a viewer of this tier see a surface of that one? */
-export function viewerReaches(
-  viewer: AdminViewerTier,
-  surface: AdminTier | null | undefined
-): boolean {
-  return viewer === 'platform' || surface === 'org';
-}
-
 /**
  * Is pattern `a` more specific than `b`, as Next.js routes them? At the first
  * segment where one is literal and the other `[x]`, the literal wins. Both are
@@ -911,7 +909,9 @@ export function mostSpecificAdminPagePattern(
  * `/admin/designs/[id]` would be let into an `'org'` page beside it,
  * `/admin/designs/settings`, because the `[id]` pattern names its URL too.
  * Judges against the lists it is handed — every org-tier pattern, and the
- * named-tier ones among them — for the reason {@link adminPageTier} does.
+ * named-tier ones among them (`named` is a subset of `pages`, as
+ * `orgTierAdminPages()` and `namedTierAdminPages()` return them) — for the
+ * reason {@link adminPageTier} does.
  */
 export function adminPageTierOf(
   pathname: string | null | undefined,
@@ -919,8 +919,7 @@ export function adminPageTierOf(
   named: readonly NamedTierAdminPage[]
 ): DeclaredAdminTier | null {
   if (!pathname) return null;
-  const all = named.length === 0 ? pages : [...pages, ...named.map((p) => p.pattern)];
-  const pattern = mostSpecificAdminPagePattern(pathname, all);
+  const pattern = mostSpecificAdminPagePattern(pathname, pages);
   if (pattern === null) return null;
   return named.find((p) => p.pattern === pattern)?.tier ?? 'org';
 }
@@ -954,5 +953,10 @@ export function reachesAdminPage(
   pageTier: DeclaredAdminTier | null
 ): boolean {
   if (reachesTier(reach, pageTier)) return true;
-  return reach !== 'platform' && reach.landing !== null && pathname === ADMIN_INDEX_PATH;
+  return (
+    reach !== 'platform' &&
+    reach.landing !== null &&
+    // As the matcher reads it: `/admin/` is the index too.
+    pathname?.replace(/\/+$/, '') === ADMIN_INDEX_PATH
+  );
 }

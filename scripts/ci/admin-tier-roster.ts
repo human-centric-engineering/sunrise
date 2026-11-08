@@ -35,7 +35,9 @@
  * a route, page or nav item may declare a tier only if the fork registered it
  * (`registerAdminTier()`); a nav item marked with a named tier must point at a
  * page registered for that tier, which is the page its holders can open; and
- * a tier's `landing` must be a page registered for it, word for word.
+ * a tier's `landing` must be a page registered for it, word for word. A nav
+ * item marked `'org'` over a named-tier page is reported too: its holders
+ * would never see it.
  *
  * With core sections closed (`closeCoreOrgTierSection()`, t-929), a fork's nav
  * item is judged against the narrowed list: one marked `tier: 'org'` over a
@@ -67,12 +69,11 @@ export interface TierDeclaration {
   /** `path#METHOD`. */
   at: string;
   /**
-   * The option is a string literal; `false` when it is anything else (a
-   * variable, a spread). Whether that literal names a tier anyone registered
-   * is {@link findAdminTierRosterProblems}'s to say.
+   * The option's value when it is a string literal — `'org'`, or a named
+   * tier — or `null` when it is anything else (a variable, a spread), which
+   * review cannot read. Whether the literal names a tier anyone registered is
+   * {@link findAdminTierRosterProblems}'s to say.
    */
-  literal: boolean;
-  /** The literal's value — `'org'`, or a named tier — or `null` when it is not one. */
   tier: string | null;
   /** The same options object declares `ownership`. */
   declaresOwnership: boolean;
@@ -196,7 +197,7 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
       : [];
     const ats = (methods.length ? methods : [name ?? '(unbound)']).map((m) => `${file.path}#${m}`);
     const record = (tier: string | null, declaresOwnership: boolean): void => {
-      for (const at of ats) found.push({ at, literal: tier !== null, tier, declaresOwnership });
+      for (const at of ats) found.push({ at, tier, declaresOwnership });
     };
     const unreadable = (): void => record(null, false);
 
@@ -305,7 +306,7 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   for (const d of declarations) {
     if (d.tier === null) {
       problems.push(
-        `${d.at}: its \`tier\` is not the literal 'org', so review cannot see what it opens. Write \`tier: 'org'\` in the options object.`
+        `${d.at}: its \`tier\` is not a string literal, so review cannot see what it opens. Write the tier in the options object: \`tier: 'org'\`, or the named tier's name.`
       );
     } else if (!tierNames.has(d.tier)) {
       problems.push(
@@ -446,7 +447,14 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     if (item.tier !== 'org') continue;
     // The page an href opens: a query string or fragment is not part of it.
     const page = item.href.split(/[?#]/)[0];
-    if (adminPageTier(page, allPages) !== 'org') {
+    const pageTier = adminPageTierOf(page, allPages, namedPages);
+    if (pageTier !== null && pageTier !== 'org') {
+      // An org admin sees it either way; the page's holders never do, since
+      // the sidebar shows them only items marked with a tier they hold.
+      problems.push(
+        `nav item ${item.href}: marked tier 'org' over a page registered for tier '${pageTier}', so that tier's holders never see it. Mark the item with tier '${pageTier}'.`
+      );
+    } else if (adminPageTier(page, allPages) !== 'org') {
       problems.push(
         `nav item ${item.href}: marked tier 'org' over a page neither ORG_TIER_ADMIN_PAGES nor lib/app/admin-tier.ts lists, so an org admin would follow it to a redirect.`
       );

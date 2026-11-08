@@ -27,6 +27,7 @@ import {
 } from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
+  __resetLandingLogForTests,
   CLOSED_DEFAULT_ORG_ADMIN_LANDING,
   DEFAULT_ORG_ADMIN_LANDING,
   heldTierLanding,
@@ -39,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   app.route = null;
   __resetAppOrgTierAdminPagesForTests();
+  __resetLandingLogForTests();
 });
 
 describe('orgAdminLandingProblem', () => {

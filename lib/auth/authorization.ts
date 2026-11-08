@@ -596,7 +596,9 @@ async function administersOrgTier(
   if (named === undefined) return false;
   try {
     // A copy, frozen: the fork's predicate reads the principal and must not
-    // change what the guard goes on to hand the handler.
+    // change what the guard goes on to hand the handler. Shallow, which is
+    // enough here: the principal's one nested value is an API key's
+    // `scopes`, and a key never reaches this line (refused above).
     return (await named.holds(Object.freeze({ ...viewer }))) === true;
   } catch (error) {
     logger.error(
