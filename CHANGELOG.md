@@ -31,7 +31,8 @@ release process.
   and the tier's holders to that tier's surfaces only: no `'org'` surface, no
   platform one, no other tier's. A tier nobody registered admits nobody. The
   layout now asks the policy once per tier and judges each page by its own
-  tier; `/admin` sends a holder to their tier's `landing`. The roster test
+  tier; `/admin` sends a holder to their tier's `landing`, or else its first
+  page with no `[x]` segment. The roster test
   checks named tiers as it checks `'org'`. Behaviour-neutral until a fork
   registers one. **Forks:** if you replace `canAdminister`, a named tier
   arrives as `scope.tier`; delegate to `DEFAULT_AUTHORIZATION_POLICY` for
