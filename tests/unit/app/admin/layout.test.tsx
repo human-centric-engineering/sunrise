@@ -110,19 +110,25 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/components/admin/admin-sidebar', () => ({
   AdminSidebar: ({
-    viewerTier,
+    reach,
     multiTenant,
     orgTierPages,
+    namedTierPages = [],
   }: {
-    viewerTier: string;
+    reach: 'platform' | { tiers: readonly string[]; landing: string | null };
     multiTenant?: boolean;
     orgTierPages: readonly string[];
+    namedTierPages?: readonly { pattern: string; tier: string }[];
   }) => (
     <div
       data-testid="admin-sidebar"
-      data-viewer-tier={viewerTier}
+      // 'platform', or the tiers the policy admitted this viewer to: 'org'
+      // for an org admin, a named tier's name for its holder (t-999).
+      data-viewer-tier={reach === 'platform' ? 'platform' : reach.tiers.join(' ')}
+      data-landing={reach === 'platform' ? '' : (reach.landing ?? '')}
       data-multi-tenant={String(!!multiTenant)}
       data-org-tier-pages={orgTierPages.join(' ')}
+      data-named-tier-pages={namedTierPages.map((p) => `${p.pattern}=${p.tier}`).join(' ')}
     />
   ),
 }));

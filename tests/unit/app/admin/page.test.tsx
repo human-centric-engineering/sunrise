@@ -7,9 +7,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const viewer = vi.hoisted(() => ({ tier: 'platform' }));
+import type { AdminReach } from '@/lib/auth/admin-tier';
+
+/** An org OWNER/ADMIN, as `requestAdminReach()` answers for one. */
+const ORG: AdminReach = { tiers: ['org'], landing: null };
+const viewer = vi.hoisted(() => ({ reach: 'platform' }));
 vi.mock('@/lib/auth/admin-page-viewer', () => ({
-  adminPageViewerTier: vi.fn(() => Promise.resolve(viewer.tier)),
+  requestAdminReach: vi.fn(() => Promise.resolve(viewer.reach)),
 }));
 const app = vi.hoisted(() => ({ route: null as string | null }));
 vi.mock('@/lib/app/admin-landing', () => ({
@@ -35,30 +39,50 @@ beforeEach(() => {
 
 describe('AdminIndexPage', () => {
   it('sends a platform admin to the overview', async () => {
-    viewer.tier = 'platform';
+    viewer.reach = 'platform';
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/overview');
   });
 
   it('sends an org admin to the orchestration dashboard', async () => {
-    viewer.tier = 'org';
+    viewer.reach = ORG;
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
   });
 
   it('sends an org admin to the page the fork names (t-928)', async () => {
-    viewer.tier = 'org';
+    viewer.reach = ORG;
     app.route = '/admin/members';
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/members');
   });
 
   it('keeps an org admin off a fork landing they may not open (t-928)', async () => {
-    viewer.tier = 'org';
+    viewer.reach = ORG;
     app.route = '/admin/users';
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
   });
 
   it('sends a platform admin to the overview whatever the fork names (t-928)', async () => {
-    viewer.tier = 'platform';
+    viewer.reach = 'platform';
     app.route = '/admin/members';
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/overview');
+  });
+
+  describe('someone who holds a fork’s named tiers and is not an org admin (t-999)', () => {
+    it('goes to the landing their tier names', async () => {
+      viewer.reach = { tiers: ['page_designs'], landing: '/admin/designs' };
+      await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/designs');
+    });
+
+    it('is not sent there when they are an org admin as well: an org admin lands as one', async () => {
+      // The landing is only worked out for a holder who is not an org admin,
+      // so this one cannot arise from requestAdminReach(); the page still
+      // must not prefer it over the org admin's landing.
+      viewer.reach = { tiers: ['org', 'page_designs'], landing: '/admin/designs' };
+      await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
+    });
+
+    it('with no landing, falls through to the org admin landing, which the layout refuses them', async () => {
+      viewer.reach = { tiers: ['page_designs'], landing: null };
+      await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
+    });
   });
 });

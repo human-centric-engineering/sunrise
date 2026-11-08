@@ -26,6 +26,10 @@ vi.mock('@/lib/app/admin-tier', () => ({
 
 import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import type { AdminReach } from '@/lib/auth/admin-tier';
+
+/** An org OWNER/ADMIN as the layout works them out: the org tier, and no named tier registered. */
+const ORG_REACH: AdminReach = { tiers: ['org'], landing: null };
 
 const PAGES = ['/admin/orchestration/agents/[id]'];
 const page = <div data-testid="page">page</div>;
@@ -39,7 +43,7 @@ describe('AdminTierGate', () => {
   it('renders an org-tier page for an org viewer, and does not navigate', () => {
     nav.pathname = '/admin/orchestration/agents/agent-1';
     render(
-      <AdminTierGate viewerTier="org" orgTierPages={PAGES}>
+      <AdminTierGate reach={ORG_REACH} orgTierPages={PAGES}>
         {page}
       </AdminTierGate>
     );
@@ -51,7 +55,7 @@ describe('AdminTierGate', () => {
   it('renders nothing for an org viewer on a platform page, and sends them to the landing route', () => {
     nav.pathname = '/admin/users';
     render(
-      <AdminTierGate viewerTier="org" orgTierPages={PAGES}>
+      <AdminTierGate reach={ORG_REACH} orgTierPages={PAGES}>
         {page}
       </AdminTierGate>
     );
@@ -63,7 +67,7 @@ describe('AdminTierGate', () => {
   it('passes a platform viewer through on any page', () => {
     nav.pathname = '/admin/users';
     render(
-      <AdminTierGate viewerTier="platform" orgTierPages={PAGES}>
+      <AdminTierGate reach="platform" orgTierPages={PAGES}>
         {page}
       </AdminTierGate>
     );
@@ -84,7 +88,7 @@ describe('AdminTierGate on a page the fork lists in lib/app/admin-tier.ts (t-817
 
   it('renders it for an org viewer when the list it is handed has it, without running the fork’s init', () => {
     render(
-      <AdminTierGate viewerTier="org" orgTierPages={[...PAGES, FORK_PAGE]}>
+      <AdminTierGate reach={ORG_REACH} orgTierPages={[...PAGES, FORK_PAGE]}>
         {page}
       </AdminTierGate>
     );
@@ -96,7 +100,7 @@ describe('AdminTierGate on a page the fork lists in lib/app/admin-tier.ts (t-817
 
   it('sends an org viewer away when the list it is handed does not have it — the layout’s list, not one built here', () => {
     render(
-      <AdminTierGate viewerTier="org" orgTierPages={PAGES}>
+      <AdminTierGate reach={ORG_REACH} orgTierPages={PAGES}>
         {page}
       </AdminTierGate>
     );

@@ -548,7 +548,7 @@ describe('what it catches', () => {
   it('sees the guard imported under another name', () => {
     const source = `import { withAdminAuth as guard } from '@/lib/auth/guards';\nexport const GET = guard(h, { tier: 'org' });`;
     expect(tierDeclarations({ path: ROUTE, source })).toEqual([
-      { at: `${ROUTE}#GET`, literal: true, declaresOwnership: false },
+      { at: `${ROUTE}#GET`, literal: true, tier: 'org', declaresOwnership: false },
     ]);
   });
 
@@ -585,7 +585,7 @@ describe('what it catches', () => {
         input({ routes: [route(`{ ${OWNED} }`)], appListedRoutes: [`${ROUTE}#GET`] })
       )
     ).toEqual([
-      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org'.`,
+      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org' or a registered named tier.`,
     ]);
   });
 
@@ -725,7 +725,7 @@ describe('what it catches', () => {
 
   it('reads one declaration per exported handler, by method', () => {
     expect(tierDeclarations(route(`{ tier: 'org', ${OWNED} }`))).toEqual([
-      { at: `${ROUTE}#GET`, literal: true, declaresOwnership: true },
+      { at: `${ROUTE}#GET`, literal: true, tier: 'org', declaresOwnership: true },
     ]);
   });
 });

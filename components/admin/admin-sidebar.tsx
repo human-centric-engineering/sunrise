@@ -51,7 +51,12 @@ import {
   type NavSubgroup,
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
-import { adminPageTier, viewerReaches, type AdminViewerTier } from '@/lib/auth/admin-tier';
+import {
+  adminPageTierOf,
+  reachesTier,
+  type AdminReach,
+  type NamedTierAdminPage,
+} from '@/lib/auth/admin-tier';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
@@ -438,19 +443,26 @@ function CollapsibleSubgroup({
 interface AdminSidebarProps {
   className?: string;
   /**
-   * Who the layout worked out this viewer is to the console (§111 t-810). A
-   * platform viewer sees every item; an org viewer only the items marked
-   * `tier: 'org'`. Required, so no render site can forget it and show an org
-   * admin the platform's nav.
+   * What the layout worked out this viewer may open (§111 t-810, t-999). A
+   * platform viewer sees every item; anyone else only the items marked with a
+   * tier they hold — `'org'` for an org admin, a fork's named tier for its
+   * holders. Required, so no render site can forget it and show an org admin
+   * the platform's nav.
    */
-  viewerTier: AdminViewerTier;
+  reach: AdminReach;
   /**
-   * Every page an org admin may open, as the layout read it (t-929). An org
-   * viewer sees an item marked `tier: 'org'` only when its page is on this
-   * list, so a core section the fork closed drops out of the nav with its
-   * pages. Unread for a platform viewer.
+   * Every page an org admin may open, as the layout read it (t-929). A viewer
+   * sees an item only when its page is on this list and in a tier they hold,
+   * so a core section the fork closed drops out of the nav with its pages.
+   * Unread for a platform viewer.
    */
   orgTierPages: readonly string[];
+  /**
+   * The fork's pages declared for a named tier (t-999), as the layout read
+   * them, so the sidebar can tell which tier an item's page is in. Empty
+   * unless the fork registered one.
+   */
+  namedTierPages?: readonly NamedTierAdminPage[];
   /**
    * The install runs `TENANCY_MODE=multi`. Items that only mean something
    * with more than one org (`MULTI_TENANT_ONLY`) are hidden otherwise, so the
@@ -603,21 +615,28 @@ function injectBadges(
 }
 
 /**
- * The sections an org viewer may see: the items marked `tier: 'org'` whose
- * page is on the org-tier list, and the subgroups and sections that still hold
- * one. A platform viewer gets the same array back, untouched.
+ * The sections a viewer other than a platform admin may see: the items marked
+ * with a tier they hold whose page is listed in a tier they hold, and the
+ * subgroups and sections that still hold one. For an org admin that is the
+ * items marked `tier: 'org'` over org-tier pages, as before t-999; for a holder
+ * of a fork's named tier, the items and pages declared for it. A platform
+ * viewer gets the same array back, untouched.
  */
 export function sectionsForViewer(
   sections: NavSection[],
-  viewerTier: AdminViewerTier,
-  orgTierPages: readonly string[]
+  reach: AdminReach,
+  orgTierPages: readonly string[],
+  namedTierPages: readonly NamedTierAdminPage[] = []
 ): NavSection[] {
-  if (viewerTier === 'platform') return sections;
+  if (reach === 'platform') return sections;
   const reachable = (items: NavItem[]) =>
     items.filter(
       (item) =>
-        viewerReaches(viewerTier, item.tier) &&
-        adminPageTier(item.href.split(/[?#]/)[0], orgTierPages) === 'org'
+        reachesTier(reach, item.tier) &&
+        reachesTier(
+          reach,
+          adminPageTierOf(item.href.split(/[?#]/)[0], orgTierPages, namedTierPages)
+        )
     );
   return sections.flatMap((section) => {
     const items = section.items ? reachable(section.items) : undefined;
@@ -635,16 +654,20 @@ export function sectionsForViewer(
   });
 }
 
+/** The default for {@link AdminSidebarProps.namedTierPages}: one array, so the memo below is not rebuilt each render. */
+const NO_NAMED_TIER_PAGES: readonly NamedTierAdminPage[] = Object.freeze([]);
+
 export function AdminSidebar({
   className,
-  viewerTier,
+  reach,
   orgTierPages,
+  namedTierPages = NO_NAMED_TIER_PAGES,
   multiTenant = false,
   waitlistEnabled = false,
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const counts = useExecutionCounts(BADGE_STATUSES, viewerTier === 'platform');
+  const counts = useExecutionCounts(BADGE_STATUSES, reach === 'platform');
   const approvalCount = sumCounts(counts, APPROVAL_STATUSES);
   const inProgressCount = sumCounts(counts, IN_PROGRESS_STATUSES);
   const sections = useMemo(
@@ -658,15 +681,24 @@ export function AdminSidebar({
             sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
             { waitlistEnabled }
           ),
-          viewerTier,
-          orgTierPages
+          reach,
+          orgTierPages,
+          namedTierPages
         ),
         {
           '/admin/orchestration/approvals': approvalCount,
           '/admin/orchestration/executions': inProgressCount,
         }
       ),
-    [approvalCount, inProgressCount, viewerTier, orgTierPages, multiTenant, waitlistEnabled]
+    [
+      approvalCount,
+      inProgressCount,
+      reach,
+      orgTierPages,
+      namedTierPages,
+      multiTenant,
+      waitlistEnabled,
+    ]
   );
 
   return (

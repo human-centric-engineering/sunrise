@@ -20,7 +20,10 @@ import {
   sectionsForCapabilities,
 } from '@/components/admin/admin-sidebar';
 import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
-import { ORG_TIER_ADMIN_PAGES } from '@/lib/auth/admin-tier';
+import { ORG_TIER_ADMIN_PAGES, type AdminReach } from '@/lib/auth/admin-tier';
+
+/** An org OWNER/ADMIN as the layout works them out: the org tier, and no named tier registered. */
+const ORG_REACH: AdminReach = { tiers: ['org'], landing: null };
 
 const pathnameMock = vi.fn(() => '/admin/overview');
 
@@ -65,7 +68,7 @@ describe('AdminSidebar', () => {
   });
 
   it('renders all four top-level sections', () => {
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
     expect(screen.getByText('Overview')).toBeInTheDocument();
     expect(screen.getByText('Management')).toBeInTheDocument();
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
@@ -73,7 +76,7 @@ describe('AdminSidebar', () => {
   });
 
   it('renders the canonical orchestration items with correct hrefs', () => {
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const expected: Array<{ label: string; href: string }> = [
       { label: 'Dashboard', href: '/admin/orchestration' },
@@ -98,7 +101,7 @@ describe('AdminSidebar', () => {
 
   it('lists Organisations under Management, active on an org page (§120 t-745)', () => {
     pathnameMock.mockReturnValue('/admin/orgs/cmorg00000000000000grant');
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const link = screen.getByRole('link', { name: /^organisations$/i });
     expect(link).toHaveAttribute('href', '/admin/orgs');
@@ -107,7 +110,7 @@ describe('AdminSidebar', () => {
 
   it('highlights the Agents item when on a nested agents route', () => {
     pathnameMock.mockReturnValue('/admin/orchestration/agents/abc123');
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const agentsLink = screen.getByRole('link', { name: /^agents$/i });
     expect(agentsLink).toHaveAttribute('aria-current', 'page');
@@ -124,7 +127,7 @@ describe('AdminSidebar', () => {
 
   it('highlights the orchestration Dashboard on exact match', () => {
     pathnameMock.mockReturnValue('/admin/orchestration');
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const dashboardLinks = screen.getAllByRole('link', { name: /^dashboard$/i });
     const orchestrationDashboard = dashboardLinks.find(
@@ -136,7 +139,7 @@ describe('AdminSidebar', () => {
 
   it('collapse toggle hides labels but keeps icons', async () => {
     const user = userEvent.setup();
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
 
@@ -155,7 +158,7 @@ describe('AdminSidebar', () => {
   it('shows approval badge when pending approvals exist', async () => {
     mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 3, pending: 0, running: 0 }));
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     await waitFor(() => {
       expect(screen.getByText('3')).toBeInTheDocument();
@@ -165,7 +168,7 @@ describe('AdminSidebar', () => {
   it('sums pending + running for the executions badge', async () => {
     mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 0, pending: 2, running: 4 }));
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // 2 + 4 = 6 — proves the call site sums the two statuses rather than
     // displaying either alone.
@@ -177,7 +180,7 @@ describe('AdminSidebar', () => {
   it('does not show approval badge when count is zero', async () => {
     mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled();
@@ -188,7 +191,7 @@ describe('AdminSidebar', () => {
   it('issues a single counts request per poll (not one per status)', async () => {
     mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // The previous implementation fanned out 3 list-endpoint calls per tick
     // (one per status). The new endpoint collapses them — anything > 1 call
@@ -217,7 +220,7 @@ describe('AdminSidebar', () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
 
     // Act
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // Assert: fetch was attempted, sidebar still renders, no badge appears
     await waitFor(() => {
@@ -232,7 +235,7 @@ describe('AdminSidebar', () => {
     mockFetch.mockResolvedValue(new Response(null, { status: 429 }));
 
     // Act
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // Assert: fetch was called, but no numeric badge is rendered
     await waitFor(() => {
@@ -254,7 +257,7 @@ describe('AdminSidebar', () => {
     );
 
     // Act
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // Assert: fetch was called, the garbage value must never appear, sidebar
     // keeps rendering normally.
@@ -311,7 +314,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
     });
 
     // Act
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // Assert — the section heading is present.
     expect(screen.getByText('My App')).toBeInTheDocument();
@@ -335,7 +338,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
     });
 
     // Act
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     // Assert — the "System" heading (last core section) must come before the
     // "App Section" heading in DOM order.
@@ -366,7 +369,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
       ],
     });
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByTestId('wordmark')).toBeInTheDocument();
     // The literal title text is not rendered — the node replaced it …
@@ -384,7 +387,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
       items: [{ href: '/admin/plain', label: 'Plain Page', icon: StubIcon, description: 'Plain' }],
     });
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const heading = screen.getByRole('heading', { name: 'Plain Section' });
     expect(heading.className).toContain('uppercase');
@@ -433,7 +436,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
     // The fork listed its org-tier page, as the roster test makes it.
     render(
       <AdminSidebar
-        viewerTier="org"
+        reach={ORG_REACH}
         orgTierPages={[...ORG_TIER_ADMIN_PAGES, '/admin/fork/org-thing']}
       />
     );
@@ -449,7 +452,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
   });
 
   it('shows an org viewer exactly the customer’s core sections and the mixed pages (t-811, t-812)', () => {
-    render(<AdminSidebar viewerTier="org" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach={ORG_REACH} orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     const hrefs = screen
       .getAllByRole('link')
@@ -474,7 +477,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
 
   it('shows an org viewer Members and Support access alone when orchestration is closed (t-929)', () => {
     const open = ORG_TIER_ADMIN_PAGES.filter((p) => !p.startsWith('/admin/orchestration'));
-    render(<AdminSidebar viewerTier="org" multiTenant orgTierPages={open} />);
+    render(<AdminSidebar reach={ORG_REACH} multiTenant orgTierPages={open} />);
 
     const hrefs = screen
       .getAllByRole('link')
@@ -485,7 +488,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
   });
 
   it('control: a platform viewer still sees the platform’s items beside them', () => {
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByRole('link', { name: /Providers/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Agents/ })).toBeInTheDocument();
@@ -494,16 +497,16 @@ describe('AdminSidebar — what an org viewer sees', () => {
   it('does not poll the platform-only execution counts for an org viewer', () => {
     const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS));
     vi.stubGlobal('fetch', fetchSpy);
-    render(<AdminSidebar viewerTier="org" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach={ORG_REACH} orgTierPages={ORG_TIER_ADMIN_PAGES} />);
     expect(fetchSpy).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('control: a platform viewer sees both, and every core section', () => {
     registerMixedSection();
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByRole('link', { name: /Org Thing/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Platform Thing/ })).toBeInTheDocument();
@@ -536,7 +539,7 @@ describe('sectionsForViewer', () => {
         ],
       },
     ];
-    expect(sectionsForViewer(sections, 'org', ['/agents'])).toEqual([
+    expect(sectionsForViewer(sections, ORG_REACH, ['/agents'])).toEqual([
       {
         title: 'Orchestration',
         items: undefined,
@@ -554,10 +557,11 @@ describe('sectionsForViewer', () => {
     ];
     // Both shown while both pages are open, the query read as the page it opens…
     expect(
-      sectionsForViewer(sections, 'org', ['/admin/members', '/admin/orchestration/agents'])[0].items
+      sectionsForViewer(sections, ORG_REACH, ['/admin/members', '/admin/orchestration/agents'])[0]
+        .items
     ).toHaveLength(2);
     // …and the closed one dropped once its page is not.
-    expect(sectionsForViewer(sections, 'org', ['/admin/members'])).toEqual([
+    expect(sectionsForViewer(sections, ORG_REACH, ['/admin/members'])).toEqual([
       { title: 'Management', items: [item('/admin/members', 'org')], subgroups: undefined },
     ]);
   });
@@ -583,19 +587,19 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
       .filter((href): href is string => href !== null);
 
   it('hides Members for a platform viewer when the prop is omitted', () => {
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
     expect(screen.queryByRole('link', { name: /Members/ })).not.toBeInTheDocument();
     expect(hrefsOf()).not.toContain('/admin/members');
   });
 
   it('shows Members and Support access for a platform viewer at multi, and every other link is unchanged', () => {
     const { unmount } = render(
-      <AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />
+      <AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />
     );
     const single = hrefsOf();
     unmount();
 
-    render(<AdminSidebar viewerTier="platform" multiTenant orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" multiTenant orgTierPages={ORG_TIER_ADMIN_PAGES} />);
     const multi = hrefsOf();
 
     const members = screen.getByRole('link', { name: /Members/ });
@@ -609,7 +613,7 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
   });
 
   it('shows an org viewer Members and Support access at multi but not Users or Organisations', () => {
-    render(<AdminSidebar viewerTier="org" multiTenant orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach={ORG_REACH} multiTenant orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByRole('link', { name: /Members/ })).toHaveAttribute('href', '/admin/members');
     expect(screen.getByRole('link', { name: /Support access/ })).toHaveAttribute(
@@ -622,7 +626,7 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
 
   it('shows an org viewer no Members or Support access at single', () => {
     render(
-      <AdminSidebar viewerTier="org" multiTenant={false} orgTierPages={ORG_TIER_ADMIN_PAGES} />
+      <AdminSidebar reach={ORG_REACH} multiTenant={false} orgTierPages={ORG_TIER_ADMIN_PAGES} />
     );
     expect(screen.queryByRole('link', { name: /Members/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Support access/ })).not.toBeInTheDocument();
@@ -721,9 +725,7 @@ describe('AdminSidebar — Waitlist (§125)', () => {
   });
 
   it('shows a Waitlist link to /admin/waitlist for a platform viewer when waitlistEnabled', () => {
-    render(
-      <AdminSidebar viewerTier="platform" waitlistEnabled orgTierPages={ORG_TIER_ADMIN_PAGES} />
-    );
+    render(<AdminSidebar reach="platform" waitlistEnabled orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByRole('link', { name: /Waitlist/ })).toHaveAttribute(
       'href',
@@ -732,7 +734,7 @@ describe('AdminSidebar — Waitlist (§125)', () => {
   });
 
   it('hides the Waitlist link when the prop is omitted', () => {
-    render(<AdminSidebar viewerTier="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
+    render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.queryByRole('link', { name: /Waitlist/ })).not.toBeInTheDocument();
   });

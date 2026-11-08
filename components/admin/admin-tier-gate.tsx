@@ -5,7 +5,8 @@
  *
  * The admin layout decides, on a full load, whether this viewer may open the
  * page: a platform admin any page, an org admin only one listed as org-tier,
- * by core or by the fork. Next.js does not re-render a layout on in-app
+ * by core or by the fork, and a holder of a fork's named tier only one
+ * declared for a tier they hold (t-999). Next.js does not re-render a layout on in-app
  * navigation, so without this an org admin following a link from an org-tier
  * page to a platform page would get that page's shell, with every API call
  * on it refused.
@@ -24,21 +25,37 @@
 import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
-import { adminPageTier, viewerReaches, type AdminViewerTier } from '@/lib/auth/admin-tier';
+import {
+  adminPageTierOf,
+  reachesAdminPage,
+  type AdminReach,
+  type NamedTierAdminPage,
+} from '@/lib/auth/admin-tier';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 export interface AdminTierGateProps {
-  /** Who the layout worked out this viewer is to the console. */
-  viewerTier: AdminViewerTier;
+  /** What the layout worked out this viewer may open. */
+  reach: AdminReach;
   /** Every org-tier page pattern, core's and the fork's, as the layout read them. */
   orgTierPages: readonly string[];
+  /** The fork's pages declared for a named tier (t-999), as the layout read them. Empty unless it registered one. */
+  namedTierPages?: readonly NamedTierAdminPage[];
   children: React.ReactNode;
 }
 
-export function AdminTierGate({ viewerTier, orgTierPages, children }: AdminTierGateProps) {
+export function AdminTierGate({
+  reach,
+  orgTierPages,
+  namedTierPages = [],
+  children,
+}: AdminTierGateProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const allowed = viewerReaches(viewerTier, adminPageTier(pathname, orgTierPages));
+  const allowed = reachesAdminPage(
+    reach,
+    pathname,
+    adminPageTierOf(pathname, orgTierPages, namedTierPages)
+  );
 
   useEffect(() => {
     if (!allowed) router.replace(AUTH_LANDING_ROUTE);

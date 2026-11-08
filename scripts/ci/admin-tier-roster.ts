@@ -31,6 +31,12 @@
  *   page or nav item in a section the list does not name — the list is what
  *   keeps a fork's pages out of core's.
  *
+ * Named tiers (t-999) are held to the same checks, and to three of their own:
+ * a route, page or nav item may declare a tier only if the fork registered it
+ * (`registerAdminTier()`); a nav item marked with a named tier must point at a
+ * page registered for that tier, which is the page its holders can open; and
+ * a tier's `landing` must be a page registered for it, word for word.
+ *
  * With core sections closed (`closeCoreOrgTierSection()`, t-929), a fork's nav
  * item is judged against the narrowed list: one marked `tier: 'org'` over a
  * closed core page is a link an org admin would follow to a redirect. Core's
@@ -41,10 +47,13 @@
 import ts from 'typescript';
 import {
   adminPageTier,
+  adminPageTierOf,
   adminSectionOf,
   matchesAdminPagePattern,
   withoutClosedSections,
+  type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
+import { namedTierLandingProblem } from '@/lib/auth/admin-landing';
 
 export interface SourceFile {
   path: string;
@@ -57,8 +66,14 @@ const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', '
 export interface TierDeclaration {
   /** `path#METHOD`. */
   at: string;
-  /** The option is the literal `'org'`; `false` when it is anything else. */
+  /**
+   * The option is a string literal; `false` when it is anything else (a
+   * variable, a spread). Whether that literal names a tier anyone registered
+   * is {@link findAdminTierRosterProblems}'s to say.
+   */
   literal: boolean;
+  /** The literal's value — `'org'`, or a named tier — or `null` when it is not one. */
+  tier: string | null;
   /** The same options object declares `ownership`. */
   declaresOwnership: boolean;
 }
@@ -180,10 +195,10 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
         : (aliases.get(name) ?? []).filter((m) => HTTP_METHODS.has(m))
       : [];
     const ats = (methods.length ? methods : [name ?? '(unbound)']).map((m) => `${file.path}#${m}`);
-    const record = (literal: boolean, declaresOwnership: boolean): void => {
-      for (const at of ats) found.push({ at, literal, declaresOwnership });
+    const record = (tier: string | null, declaresOwnership: boolean): void => {
+      for (const at of ats) found.push({ at, literal: tier !== null, tier, declaresOwnership });
     };
-    const unreadable = (): void => record(false, false);
+    const unreadable = (): void => record(null, false);
 
     if (!ts.isObjectLiteralExpression(options)) {
       // Options built elsewhere could carry a tier the scanner cannot see.
@@ -203,10 +218,9 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
       return;
     }
     record(
-      !hidden &&
-        ts.isPropertyAssignment(tier) &&
-        ts.isStringLiteralLike(tier.initializer) &&
-        tier.initializer.text === 'org',
+      !hidden && ts.isPropertyAssignment(tier) && ts.isStringLiteralLike(tier.initializer)
+        ? tier.initializer.text
+        : null,
       options.properties.some((p) => keyText(p) === 'ownership')
     );
   };
@@ -248,6 +262,17 @@ export interface RosterInput {
   coreNavHrefs?: readonly string[];
   /** The core sections the fork closed to org admins (`closedCoreOrgTierSections()`). */
   closedSections?: readonly string[];
+  /**
+   * The fork's named tiers (t-999), as `registerAdminTier()` left them: the
+   * name, and the landing when it named one. Empty when left out, so a named
+   * tier anywhere is reported as unregistered.
+   */
+  namedTiers?: readonly { name: string; landing?: string }[];
+  /**
+   * The fork's pages registered for a named tier (`namedTierAdminPages()`).
+   * Each is also in {@link appListedPages}, as the registry keeps them.
+   */
+  appNamedTierPages?: readonly NamedTierAdminPage[];
 }
 
 /** The URL pattern a page file serves: `app/admin/(g)/x/[id]/page.tsx` → `/admin/x/[id]`. */
@@ -263,18 +288,32 @@ function pagePattern(file: string): string {
 /** Everything about the roster that does not match the tree, one sentence each. */
 export function findAdminTierRosterProblems(input: RosterInput): string[] {
   const problems: string[] = [];
+  const namedTiers = input.namedTiers ?? [];
+  const tierNames = new Set(['org', ...namedTiers.map((t) => t.name)]);
   const declarations = input.routes.flatMap(tierDeclarations);
-  const declared = new Set(declarations.filter((d) => d.literal).map((d) => d.at));
+  // A route counts as declared when its tier is one that opens something:
+  // `'org'`, or a named tier the fork registered. One naming no registered
+  // tier is reported below and opens nothing, as the policy answers it.
+  const declaredTier = new Map(
+    declarations
+      .filter((d) => d.tier !== null && tierNames.has(d.tier))
+      .map((d) => [d.at, d.tier ?? 'org'])
+  );
+  const declared = new Set(declaredTier.keys());
   const listed = new Set(input.listedRoutes);
 
   for (const d of declarations) {
-    if (!d.literal) {
+    if (d.tier === null) {
       problems.push(
         `${d.at}: its \`tier\` is not the literal 'org', so review cannot see what it opens. Write \`tier: 'org'\` in the options object.`
       );
+    } else if (!tierNames.has(d.tier)) {
+      problems.push(
+        `${d.at}: declared tier '${d.tier}', which is neither 'org' nor a tier registered with registerAdminTier() in lib/app/admin-tier.ts, so it admits nobody. Register the tier, or fix the name.`
+      );
     } else if (!d.declaresOwnership) {
       problems.push(
-        `${d.at}: declared tier 'org' with no \`ownership\`. An org admin's rows are narrowed to their own, so the guard demands one when it admits them — declare it.`
+        `${d.at}: declared tier '${d.tier}' with no \`ownership\`. An org admin's rows are narrowed to their own, so the guard demands one when it admits them — declare it.`
       );
     }
   }
@@ -282,7 +321,16 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   for (const at of declared) {
     if (!listed.has(at) && !appListed.has(at)) {
       problems.push(
-        `${at}: declared tier 'org' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`
+        `${at}: declared tier '${declaredTier.get(at)}' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`
+      );
+    }
+  }
+  for (const at of listed) {
+    // Core's routes open to the org tier, never to a fork's named one.
+    const tier = declaredTier.get(at);
+    if (tier !== undefined && tier !== 'org') {
+      problems.push(
+        `${at}: listed in ORG_TIER_ADMIN_ROUTES, core's, but declares the named tier '${tier}'. Core's routes are 'org'.`
       );
     }
   }
@@ -303,7 +351,9 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   for (const [where, ats] of routeLists) {
     for (const at of ats) {
       if (!declared.has(at)) {
-        problems.push(`${at}: listed in ${where} but does not declare tier 'org'.`);
+        problems.push(
+          `${at}: listed in ${where} but does not declare tier 'org' or a registered named tier.`
+        );
       }
     }
   }
@@ -372,13 +422,27 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     const section = adminSectionOf(at.replace(/^app/, ''));
     if (section !== null && closed.includes(section) && declared.has(at)) {
       problems.push(
-        `${at}: declared tier 'org' in a core section lib/app/admin-tier.ts closed to org admins, so the guard refuses org admins it. Move the route out of the section or drop its tier.`
+        `${at}: declared tier '${declaredTier.get(at)}' in a core section lib/app/admin-tier.ts closed to org admins, so the guard refuses org admins it. Move the route out of the section or drop its tier.`
       );
     }
   }
   const openPages = [...withoutClosedSections(input.listedPages, closed), ...appPages];
   const coreHrefs = new Set(input.coreNavHrefs ?? []);
+  const namedPages = input.appNamedTierPages ?? [];
   for (const item of input.navItems) {
+    if (item.tier !== undefined && item.tier !== 'org') {
+      const page = item.href.split(/[?#]/)[0];
+      if (!tierNames.has(item.tier)) {
+        problems.push(
+          `nav item ${item.href}: marked tier '${item.tier}', which is neither 'org' nor a tier registered with registerAdminTier(), so nobody but a platform admin sees it.`
+        );
+      } else if (adminPageTierOf(page, allPages, namedPages) !== item.tier) {
+        problems.push(
+          `nav item ${item.href}: marked tier '${item.tier}' over a page not registered for that tier, so its holders would follow it to a redirect. Register the page with { tier: '${item.tier}' }, or mark the item with the page's tier.`
+        );
+      }
+      continue;
+    }
     if (item.tier !== 'org') continue;
     // The page an href opens: a query string or fragment is not part of it.
     const page = item.href.split(/[?#]/)[0];
@@ -389,6 +453,15 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     } else if (!coreHrefs.has(item.href) && adminPageTier(page, openPages) !== 'org') {
       problems.push(
         `nav item ${item.href}: marked tier 'org' over a page in a core section lib/app/admin-tier.ts closed to org admins, so an org admin would follow it to a redirect.`
+      );
+    }
+  }
+  for (const { name, landing } of namedTiers) {
+    if (landing === undefined) continue;
+    const problem = namedTierLandingProblem(name, landing, namedPages);
+    if (problem !== null) {
+      problems.push(
+        `named tier '${name}': its landing ${landing} ${problem} /admin would ignore it and log why.`
       );
     }
   }

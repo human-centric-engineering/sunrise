@@ -26,7 +26,9 @@ import { headers } from 'next/headers';
 import { canAdminister } from '@/lib/auth/authorization';
 import { sessionPrincipal } from '@/lib/auth/session-principal';
 import { getServerSession } from '@/lib/auth/utils';
-import type { AdminViewerTier } from '@/lib/auth/admin-tier';
+import type { AdminReach, AdminViewerTier, DeclaredAdminTier } from '@/lib/auth/admin-tier';
+import { namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
+import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { prisma } from '@/lib/db/client';
 import { isPlatformAdmin } from '@/lib/auth/roles';
@@ -67,6 +69,30 @@ export const requestAdministersPlatform = cache(async (): Promise<boolean> => {
 export async function adminPageViewerTier(): Promise<AdminViewerTier> {
   return (await requestAdministersPlatform()) ? 'platform' : 'org';
 }
+
+/**
+ * What this request's viewer may open in the admin console (t-999): every
+ * surface for a platform admin, otherwise the tiers the policy admits them to
+ * in the org they entered — `'org'`, and each named tier the fork registered —
+ * and, for a holder of named tiers who is not an org admin, where `/admin`
+ * sends them.
+ *
+ * The policy is asked once per tier, with the same principal and scope the
+ * guards build, so the layout's answer for a page is the policy's answer for
+ * that page's own tier. Asked once per request, however many readers ask.
+ * No session reaches nothing.
+ */
+export const requestAdminReach = cache(async (): Promise<AdminReach> => {
+  if (await requestAdministersPlatform()) return 'platform';
+  const entry = await requestPrincipal();
+  if (!entry) return { tiers: [], landing: null };
+  const candidates: DeclaredAdminTier[] = ['org', ...namedAdminTiers()];
+  const admitted = await Promise.all(
+    candidates.map((tier) => canAdminister(entry.principal, null, { ...entry.scope, tier }))
+  );
+  const tiers = candidates.filter((_, i) => admitted[i]);
+  return { tiers, landing: tiers.includes('org') ? null : heldTierLanding(tiers) };
+});
 
 /**
  * The org this request acts in, as the guards entered it: its id and name,

@@ -14,6 +14,10 @@
  * not used: `/admin` logs why and falls back to the platform default, and the
  * roster test fails on the same check, so the fork hears of it in CI first.
  *
+ * Someone who holds a fork's named tiers and is not an org admin (t-999)
+ * lands on the `landing` their first tier names ({@link heldTierLanding}),
+ * held to the same rule against that tier's own pages.
+ *
  * Server only: it reads the roster through `orgTierAdminPages()`, which runs
  * the fork's page init.
  *
@@ -22,7 +26,13 @@
  */
 import { logger } from '@/lib/logging';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
-import { orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
+import {
+  namedAdminTier,
+  namedAdminTiers,
+  namedTierAdminPages,
+  orgTierAdminPages,
+} from '@/lib/auth/org-tier-admin-pages';
+import type { DeclaredAdminTier, NamedTierAdminPage } from '@/lib/auth/admin-tier';
 
 /** Where a platform admin lands. */
 export const PLATFORM_ADMIN_LANDING = '/admin/overview';
@@ -85,4 +95,59 @@ export function orgAdminLanding(): string {
     return defaultOrgAdminLanding(pages);
   }
   return route;
+}
+
+/**
+ * Why `route` cannot be where `/admin` sends a holder of `tier` (t-999), or
+ * `null` when it can: a plain `/admin/…` path, registered for that tier word
+ * for word. A page of another tier would turn the holder away on arrival, and
+ * a concrete URL of an `[x]` page is one row of one org.
+ */
+export function namedTierLandingProblem(
+  tier: string,
+  route: unknown,
+  named: readonly NamedTierAdminPage[]
+): string | null {
+  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
+    return 'is not a path under /admin/.';
+  }
+  if (
+    !route
+      .split('/')
+      .slice(2)
+      .every((segment) => LITERAL_SEGMENT.test(segment))
+  ) {
+    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
+  }
+  if (!named.some((page) => page.pattern === route && page.tier === tier)) {
+    return `is not a page registered for tier ${JSON.stringify(tier)}. Name one registered with registerOrgTierAdminPage(pattern, { tier: ${JSON.stringify(tier)} }), word for word.`;
+  }
+  return null;
+}
+
+/** Landings already logged as unusable, so a misconfigured one is said once per process, not per request. */
+const loggedLandingProblems = new Set<string>();
+
+/**
+ * Where `/admin` sends someone who holds these tiers and not `'org'` (t-999):
+ * the landing of the first named tier they hold, in registration order, that
+ * names a usable one. `null` when none does — then `/admin` is not theirs to
+ * open, as it is not any MEMBER's.
+ */
+export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | null {
+  if (held.length === 0) return null;
+  const named = namedTierAdminPages();
+  for (const tier of namedAdminTiers()) {
+    if (!held.includes(tier)) continue;
+    const route = namedAdminTier(tier)?.landing;
+    if (route === undefined) continue;
+    const problem = namedTierLandingProblem(tier, route, named);
+    if (problem === null) return route;
+    const key = JSON.stringify([tier, route]);
+    if (!loggedLandingProblems.has(key)) {
+      loggedLandingProblems.add(key);
+      logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
+    }
+  }
+  return null;
 }

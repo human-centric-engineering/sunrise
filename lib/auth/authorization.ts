@@ -126,6 +126,7 @@ import { orgAdministers } from '@/lib/tenancy/roles';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
+import { namedAdminTier } from '@/lib/auth/org-tier-admin-pages';
 
 /**
  * The ownership axis of #367: over whose data, within one tenant.
@@ -152,9 +153,11 @@ export interface AuthorizationScope {
    * Absent ⇒ the platform tier: every surface that has not declared one. Core
    * passes `'org'` (`AdminTier`, `lib/auth/admin-tier.ts`) from a route
    * declared `withAdminAuth(…, { tier: 'org' })` and from the admin layout on
-   * a page listed in `ORG_TIER_ADMIN_PAGES`. Typed `string` rather than
-   * `AdminTier` so a fork's policy may answer tiers of its own; a policy that
-   * ignores this key admits nobody new, which is the safe failure.
+   * a page listed in `ORG_TIER_ADMIN_PAGES`, and a fork's named tier
+   * (`registerAdminTier()`, t-999) from a surface declared for it. Typed
+   * `string` rather than `AdminTier` so a fork's policy may answer tiers of
+   * its own; a policy that ignores this key admits nobody new, which is the
+   * safe failure.
    */
   tier?: string;
   /** §106's org input. Absent ⇒ no org in context. */
@@ -523,22 +526,34 @@ function administersOrgOf(
 }
 
 /**
- * Whether this principal may use an org-tier admin surface (§111 t-810).
+ * Whether this principal may use an org-tier admin surface (§111 t-810), or
+ * one declared for a fork's named tier (t-999).
  *
  * The tier arm: a surface that declared `tier: 'org'` is the customer's, and
- * an org OWNER/ADMIN of the org the request entered may use it. Everything it
- * leaves out is deliberate:
+ * an org OWNER/ADMIN of the org the request entered may use it. A surface
+ * declared for a named tier is the customer's too, and narrower: the org's
+ * OWNER/ADMIN use it as they use an `'org'` one (the owner's ruling on t-999,
+ * so moving a page from `'org'` to a named tier only adds people), and so does
+ * whoever the fork's `holds()` says holds that tier in the entered org.
+ * Everything it leaves out is deliberate:
  *
  * - **No tier, no grant.** An undeclared surface is the platform's, so the
  *   arm answers nothing for one — every core admin surface until §111 opens
- *   them, and every fork surface until the fork does.
+ *   them, and every fork surface until the fork does. **A named tier nobody
+ *   registered grants nothing either**, to anyone: a misspelt tier is a
+ *   surface that stays shut, not one that opens to every org admin.
+ * - **A holder reaches their tier and nothing else.** `holds()` is asked about
+ *   the tier the surface declared, and only for a named one: never for
+ *   `'org'`, so holding a named tier opens no `'org'` surface, and never for
+ *   another named tier's surface.
  * - **A session grant**, as `administersOrgOf` is: an API key's standing is
  *   its scopes, and no scope means "administer an org". `withAdminAuth`'s floor
  *   refuses a non-`admin` key before the policy is asked, so this is the
  *   policy agreeing with the guard when called directly, not the only check.
  * - **The entered org only.** `viewer.orgId` is the org the guard entered and
  *   verified, and `viewer.orgRole` the caller's role in it — told, not
- *   sniffed. A principal with no org facts takes nothing here.
+ *   sniffed. A principal with no org facts takes nothing here, so `holds()`
+ *   is never asked about one.
  * - **Not over another org's row.** A route's resolver may name a resource;
  *   one carrying an `orgId` other than the entered org's is refused here
  *   whatever the tier says. A resource with no `orgId` (a row the resolver
@@ -555,13 +570,20 @@ function administersOrgOf(
  *   the arm admits nobody, and the console is the platform admin's alone, as
  *   it always was. This reads the install's mode, not a fact about the
  *   caller, which is why it is looked up rather than told.
+ *
+ * A `holds()` that throws is a no, logged with the tier, rather than a throw
+ * out of the policy: one fork lookup failing should refuse that one viewer,
+ * not read as the whole policy failing.
  */
-function administersOrgTier(
+async function administersOrgTier(
   viewer: AuthorizationPrincipal,
   resource: AuthorizationResource | null,
   scope: AuthorizationScope
-): boolean {
-  if (scope.tier !== 'org') return false;
+): Promise<boolean> {
+  const tier = scope.tier;
+  if (tier === undefined) return false;
+  const named = tier === 'org' ? undefined : namedAdminTier(tier);
+  if (tier !== 'org' && named === undefined) return false;
   if (!isMultiTenant()) return false;
   if (viewer.credential === 'api-key') return false;
   if (!viewer.orgId) return false;
@@ -570,12 +592,28 @@ function administersOrgTier(
   // this, `/orgs/[id]`-shaped routes would admit an admin of org A to org
   // B's row by URL, on a model row isolation may not cover.
   if (resource?.orgId !== undefined && resource.orgId !== viewer.orgId) return false;
-  return orgAdministers(viewer.orgRole);
+  if (orgAdministers(viewer.orgRole)) return true;
+  if (named === undefined) return false;
+  try {
+    // A copy, frozen: the fork's predicate reads the principal and must not
+    // change what the guard goes on to hand the handler.
+    return (await named.holds(Object.freeze({ ...viewer }))) === true;
+  } catch (error) {
+    logger.error(
+      'authorization: a named admin tier could not say who holds it, so it admits nobody',
+      {
+        tier,
+        userId: viewer.userId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
+    return false;
+  }
 }
 
 /**
  * Sunrise's own policy: what the guards did before this module existed, plus
- * the org arm (§106) and the tier arm (§111).
+ * the org arm (§106) and the tier arm (§111, with named tiers from t-999).
  *
  * Platform admin administers everything and reads everyone; an org
  * OWNER/ADMIN administers the org-tier surfaces of the org they act in (see
@@ -592,12 +630,10 @@ function administersOrgTier(
  * {@link AuthorizationPolicy}.
  */
 export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
-  canAdminister: (viewer, resource, scope) =>
-    Promise.resolve(
-      administersEverything(viewer) ||
-        administersOrgOf(viewer, resource) ||
-        administersOrgTier(viewer, resource, scope)
-    ),
+  canAdminister: async (viewer, resource, scope) =>
+    administersEverything(viewer) ||
+    administersOrgOf(viewer, resource) ||
+    (await administersOrgTier(viewer, resource, scope)),
 
   canRead: (viewer, target) => {
     switch (target.kind) {

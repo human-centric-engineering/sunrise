@@ -1,6 +1,7 @@
 /**
  * Every org-tier admin page: core's roster, then the fork's (t-817), less the
- * core sections the fork closed (t-929).
+ * core sections the fork closed (t-929) — and the fork's named tiers, with the
+ * pages declared for them (t-999).
  *
  * Core's list is the constant `ORG_TIER_ADMIN_PAGES`; the fork's comes from
  * `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`, run once through the
@@ -32,28 +33,38 @@ import { createAppInitGate, type AppInitState } from '@/lib/fork-init';
 import { initAppOrgTierAdminPages } from '@/lib/app/admin-tier';
 import {
   ORG_TIER_ADMIN_PAGES,
+  registeredAppNamedTierAdminPages,
   registeredAppOrgTierAdminPages,
   registeredClosedCoreOrgTierSections,
+  registeredNamedAdminTiers,
   restoreAppOrgTierAdminPages,
   restoreClosedCoreOrgTierSections,
+  restoreNamedAdminTiers,
   withoutClosedSections,
   type ClosableCoreOrgTierSection,
+  type NamedAdminTier,
+  type NamedAdminTierDefinition,
+  type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
 
 const appInit = createAppInitGate({
   label: 'admin-tier: initAppOrgTierAdminPages',
   // With the init rolled back, every fork page is the platform's again, so an
   // org admin is refused it rather than let into half a list. A section it
-  // had closed opens again with it: core's default, as the log says.
-  subject: 'app org-tier admin pages and closed core sections',
+  // had closed opens again with it: core's default, as the log says. A named
+  // tier goes with its pages, so nobody holds it.
+  subject: 'app org-tier admin pages, named tiers and closed core sections',
   init: initAppOrgTierAdminPages,
-  // Both registries the init writes, so a throw rolls back both.
+  // Every registry the init writes, so a throw rolls back all of them.
   snapshot: () => ({
     pages: registeredAppOrgTierAdminPages(),
+    pageTiers: registeredAppNamedTierAdminPages(),
+    tiers: registeredNamedAdminTiers(),
     closed: registeredClosedCoreOrgTierSections(),
   }),
-  restore: ({ pages, closed }) => {
-    restoreAppOrgTierAdminPages(pages);
+  restore: ({ pages, pageTiers, tiers, closed }) => {
+    restoreNamedAdminTiers(tiers);
+    restoreAppOrgTierAdminPages(pages, pageTiers);
     restoreClosedCoreOrgTierSections(closed);
   },
 });
@@ -116,6 +127,42 @@ export function orgScopedAdminPages(): readonly string[] {
 }
 
 /**
+ * The fork's pages registered for a named tier (t-999), with their tiers. A
+ * subset of {@link orgTierAdminPages}: an org admin opens these too. The layout
+ * hands it to the gate and the sidebar beside that list, so they can tell
+ * which tier a page is in (`adminPageTierOf()`).
+ */
+export function namedTierAdminPages(): readonly NamedTierAdminPage[] {
+  appInit.ensure();
+  return registeredAppNamedTierAdminPages();
+}
+
+/** {@link namedAdminTiers}'s answer, and the registry view it was built from. */
+let namesFrom: unknown = null;
+let names: readonly NamedAdminTier[] = Object.freeze([]);
+
+/** The names of the fork's named tiers (t-999), in registration order: empty unless it registered one. */
+export function namedAdminTiers(): readonly NamedAdminTier[] {
+  appInit.ensure();
+  const tiers = registeredNamedAdminTiers();
+  if (namesFrom !== tiers) {
+    namesFrom = tiers;
+    names = Object.freeze(tiers.map(([name]) => name));
+  }
+  return names;
+}
+
+/**
+ * One named tier's definition, or `undefined` when the fork registered none of
+ * that name. What the default policy asks before it admits anyone to a
+ * surface declared for the tier; a name nobody registered admits nobody.
+ */
+export function namedAdminTier(name: string): Readonly<NamedAdminTierDefinition> | undefined {
+  appInit.ensure();
+  return registeredNamedAdminTiers().find(([tier]) => tier === name)?.[1];
+}
+
+/**
  * How the fork's init went: `'ok'`, or `'failed'` when it threw and its pages
  * were rolled back. For the roster test, which must not pass a fork list that
  * is empty only because the init failed.
@@ -124,9 +171,10 @@ export function appOrgTierAdminPagesInitState(): AppInitState {
   return appInit.ensure();
 }
 
-/** Test-only: clear the fork's pages and closed sections, and re-arm the one-shot init. */
+/** Test-only: clear the fork's pages, named tiers and closed sections, and re-arm the one-shot init. */
 export function __resetAppOrgTierAdminPagesForTests(): void {
   restoreAppOrgTierAdminPages([]);
+  restoreNamedAdminTiers([]);
   restoreClosedCoreOrgTierSections([]);
   appInit.reset();
   combined = null;

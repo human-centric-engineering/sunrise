@@ -7,24 +7,21 @@ import { AdminHeader } from '@/components/admin/admin-header';
 import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
-import { canAdminister } from '@/lib/auth/authorization';
 import {
   requestActingOrg,
-  requestAdministersPlatform,
-  requestPrincipal,
+  requestAdminReach,
   requestSupportSession,
 } from '@/lib/auth/admin-page-viewer';
 import { SupportBanner } from '@/components/admin/support-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
+import { ADMIN_PATHNAME_HEADER, adminPageTierOf, reachesAdminPage } from '@/lib/auth/admin-tier';
 import {
-  ADMIN_PATHNAME_HEADER,
-  adminPageTier,
-  type AdminTier,
-  type AdminViewerTier,
-} from '@/lib/auth/admin-tier';
-import { orgScopedAdminPages, orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
+  namedTierAdminPages,
+  orgScopedAdminPages,
+  orgTierAdminPages,
+} from '@/lib/auth/org-tier-admin-pages';
 import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -38,37 +35,12 @@ export const metadata: Metadata = {
 };
 
 /**
- * Who this session is to the admin console on this page: `'platform'` (every
- * surface), `'org'` (the org-tier ones), or `null` (none of this one).
- *
- * The principal is the one the guards build, from the same org entry
- * (`sessionPrincipal`, via `requestPrincipal`), and the platform question is
- * the one the mixed pages ask (`lib/auth/admin-page-viewer.ts`), so a policy
- * that reads `viewer.orgRole` answers the layout as it answers the routes for
- * every admitted caller. One difference
- * is deliberate: where a guard refuses a session whose org entry is refused,
- * this asks with no org facts, so a platform admin still reaches the console
- * to switch org — see `lib/auth/session-principal.ts`.
- */
-async function adminViewerTier(pageTier: AdminTier | null): Promise<AdminViewerTier | null> {
-  if (await requestAdministersPlatform()) return 'platform';
-  const entry = await requestPrincipal();
-  if (
-    pageTier === 'org' &&
-    entry &&
-    (await canAdminister(entry.principal, null, { ...entry.scope, tier: 'org' }))
-  ) {
-    return 'org';
-  }
-  return null;
-}
-
-/**
  * Admin Layout (Phase 4.4)
  *
  * Layout for all admin routes.
  * Admits whoever the authorization policy says may use the page: a platform
- * admin anywhere, an org OWNER/ADMIN on an org-tier page (§111 t-810).
+ * admin anywhere, an org OWNER/ADMIN on an org-tier page (§111 t-810), and a
+ * holder of a fork's named tier on a page declared for it (t-999).
  * Everyone else is redirected to the landing route; unauthenticated users to
  * login.
  */
@@ -96,22 +68,32 @@ export default async function AdminLayout({
   // shell. A cookie session is the only way to reach a layout, so the
   // credential is not in doubt here.
   //
-  // Asked once for the platform tier and, for whoever that refuses, once for
-  // the org tier (§111 t-810): an org OWNER/ADMIN may open a page listed in
-  // `ORG_TIER_ADMIN_PAGES` or by the fork (t-817), and no other, less any core
-  // section the fork closed (t-929). The page comes from the proxy's
-  // header, because a layout is not handed a pathname; no header is no page,
-  // and no page is the platform's. This runs on a full load only — Next.js
-  // does not re-render a layout on in-app navigation — so `AdminTierGate`
-  // below re-checks each navigation for the reader, and every API route the
-  // page calls checks for itself. The gate and the sidebar judge by the list
-  // this read built, handed down, so the browser never builds its own.
+  // Asked once for the platform tier and, for whoever that refuses, once per
+  // tier (`requestAdminReach`): `'org'` (§111 t-810), and each named tier the
+  // fork registered (t-999). An org OWNER/ADMIN may open a page listed in
+  // `ORG_TIER_ADMIN_PAGES` or by the fork (t-817), less any core section the
+  // fork closed (t-929); a holder of a named tier only a page declared for a
+  // tier they hold. The page's tier is resolved from the proxy's header,
+  // because a layout is not handed a pathname; no header is no page, and no
+  // page is the platform's. The principal is the one the guards build, from
+  // the same org entry (`sessionPrincipal`, via `requestPrincipal`), so a
+  // policy that reads `viewer.orgRole` answers the layout as it answers the
+  // routes for every admitted caller. One difference is deliberate: where a
+  // guard refuses a session whose org entry is refused, this asks with no org
+  // facts, so a platform admin still reaches the console to switch org — see
+  // `lib/auth/session-principal.ts`.
+  //
+  // This runs on a full load only — Next.js does not re-render a layout on
+  // in-app navigation — so `AdminTierGate` below re-checks each navigation
+  // for the reader, and every API route the page calls checks for itself.
+  // The gate and the sidebar judge by the lists and the reach this read
+  // built, handed down, so the browser never builds its own.
   const requestHeaders = await headers();
+  const pathname = requestHeaders.get(ADMIN_PATHNAME_HEADER);
   const orgTierPages = orgTierAdminPages();
-  const viewerTier = await adminViewerTier(
-    adminPageTier(requestHeaders.get(ADMIN_PATHNAME_HEADER), orgTierPages)
-  );
-  if (!viewerTier) {
+  const namedTierPages = namedTierAdminPages();
+  const reach = await requestAdminReach();
+  if (!reachesAdminPage(reach, pathname, adminPageTierOf(pathname, orgTierPages, namedTierPages))) {
     redirect(AUTH_LANDING_ROUTE);
   }
 
@@ -146,9 +128,10 @@ export default async function AdminLayout({
   return (
     <div className="bg-background flex h-screen overflow-hidden">
       <AdminSidebar
-        viewerTier={viewerTier}
+        reach={reach}
         multiTenant={multiTenant}
         orgTierPages={orgTierPages}
+        namedTierPages={namedTierPages}
         waitlistEnabled={isWaitlistEnabled()}
       />
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -167,7 +150,11 @@ export default async function AdminLayout({
               installOrgMember={sharedSettings.installOrgMember}
               isInstallOrg={sharedSettings.isInstallOrg}
             >
-              <AdminTierGate viewerTier={viewerTier} orgTierPages={orgTierPages}>
+              <AdminTierGate
+                reach={reach}
+                orgTierPages={orgTierPages}
+                namedTierPages={namedTierPages}
+              >
                 {children}
               </AdminTierGate>
             </SharedSettingsAccessProvider>

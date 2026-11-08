@@ -37,6 +37,17 @@
  * layout and the sidebar read, and the guard treats the section's routes as
  * undeclared ({@link effectiveRouteTier}).
  *
+ * **Named tiers (t-999).** A fork can open some of its own surfaces to people
+ * narrower than an org admin, such as an agency's staff working in a client's
+ * org: it registers a tier with {@link registerAdminTier}, saying who holds
+ * it, and declares that tier where it would declare `'org'` — on the page
+ * (`registerOrgTierAdminPage(pattern, { tier })`), the route
+ * (`withAdminAuth(handler, { tier })`) and the nav item. The org's
+ * OWNER/ADMIN open a named-tier surface as they open an `'org'` one (the
+ * owner's ruling on t-999), so moving a page from `'org'` to a named tier
+ * only adds people. A holder opens the surfaces of the tiers they hold and
+ * nothing else: no `'org'` surface, no platform one.
+ *
  * **Where the refusal actually happens.** The API is the authority: a page is
  * a shell over `serverFetch` calls, and every one of those reaches a guard that
  * asks the policy with the route's own tier. The page-level refusal is the
@@ -47,7 +58,7 @@
  * `proxy.ts` would cover it server-side, and the framework says not to put one
  * there: the proxy runs on every route, prefetches included.
  *
- * **Imports nothing.** Read by `proxy.ts` (on every request), a server layout,
+ * **Imports nothing at runtime** (one type, which compiles away). Read by `proxy.ts` (on every request), a server layout,
  * client components and the fork's scaffold, so it stays a leaf: the scaffold
  * imports the registrar from here, and this must not import the scaffold back.
  * Running the fork's init lives in `lib/auth/org-tier-admin-pages.ts`, which
@@ -60,18 +71,76 @@
  * @see lib/auth/org-tier-admin-pages.ts — the fork's init, and the combined list
  */
 
+import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
+
 /**
- * The tier an admin surface may declare. Only one value: the absence of a
+ * The tier core's admin surfaces declare. Only one value: the absence of a
  * tier is the platform tier, so there is no `'platform'` to pass and no way
- * to declare one that widens anything.
+ * to declare one that widens anything. A fork's narrower tiers are named
+ * ({@link NamedAdminTier}), and {@link DeclaredAdminTier} is either.
  */
 export type AdminTier = 'org';
 
 /**
+ * A tier a fork registered with {@link registerAdminTier} (t-999): a name such
+ * as `'page_designs'`, held by whoever the fork's `holds()` says, and by the
+ * org's OWNER/ADMIN. Never `'org'` or `'platform'`.
+ */
+export type NamedAdminTier = string;
+
+/**
+ * Any tier a surface may declare: `'org'`, or a named tier the fork
+ * registered. Written `string & {}` so editors still offer `'org'`.
+ */
+export type DeclaredAdminTier = AdminTier | (NamedAdminTier & {});
+
+/**
  * Who the admin console is for, as the layout worked it out for one viewer:
  * a platform admin sees every surface, an org admin the org-tier ones only.
+ * The question the mixed pages ask, to decide whether to render their
+ * platform-ops half; {@link AdminReach} is what one viewer may open.
  */
 export type AdminViewerTier = 'platform' | 'org';
+
+/**
+ * What one viewer may open in the admin console, as the layout asked the
+ * policy on a full load: every surface, or the surfaces of the tiers it
+ * admitted them to. `landing` is where `/admin` sends a viewer who holds
+ * named tiers and not `'org'` — the first of their tiers that names one — or
+ * `null`. Plain data, so the layout hands it to the browser-side gate and the
+ * sidebar as a prop.
+ */
+export type AdminReach =
+  'platform' | { readonly tiers: readonly DeclaredAdminTier[]; readonly landing: string | null };
+
+/** A page a fork registered for a named tier: its pattern, and the tier. */
+export interface NamedTierAdminPage {
+  readonly pattern: string;
+  readonly tier: NamedAdminTier;
+}
+
+/**
+ * A named tier, as the fork registers it with {@link registerAdminTier}.
+ */
+export interface NamedAdminTierDefinition {
+  /**
+   * Does this principal hold the tier in the org they entered? Asked by the
+   * default policy only for a browser session, at `multi`, acting in an org
+   * (`viewer.orgId`, `viewer.orgRole`), on a surface declared for this tier,
+   * and only when they are not already that org's OWNER/ADMIN or a platform
+   * admin. Answer for `viewer.orgId` and no other org. May be async (a lookup
+   * of the fork's own rows). A throw, or anything but `true`, is no.
+   */
+  holds: (viewer: Readonly<AuthorizationPrincipal>) => boolean | Promise<boolean>;
+  /**
+   * Where `/admin` sends someone who holds this tier and is not an org admin:
+   * a page registered for this tier, written word for word with literal
+   * segments (`/admin/designs`). Optional; with none, `/admin` is not theirs
+   * to open, as it is not any MEMBER's. One that is not such a page is
+   * ignored and logged, and the roster test fails on it.
+   */
+  landing?: string;
+}
 
 /**
  * Admin pages an org OWNER/ADMIN may open, as route patterns: the path under
@@ -173,10 +242,112 @@ const STATIC_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 /** One dynamic segment, `[id]` — not a catch-all `[...x]` or an optional one `[[...x]]`. */
 const DYNAMIC_SEGMENT = /^\[[A-Za-z0-9_-]+\]$/;
 
-/** The fork's org-tier page patterns, in registration order. */
+/** The fork's org-tier page patterns, in registration order — named-tier pages included. */
 const appPages = new Set<string>();
 /** {@link appPages} as a frozen array, rebuilt only after it changes. */
 let appPagesView: readonly string[] | null = null;
+/** The fork's pages registered for a named tier (t-999), by pattern. */
+const appPageTiers = new Map<string, NamedAdminTier>();
+/** {@link appPageTiers} as a frozen array, rebuilt only after it changes. */
+let appPageTiersView: readonly NamedTierAdminPage[] | null = null;
+/** The fork's named tiers (t-999), in registration order. */
+const namedTiers = new Map<NamedAdminTier, Readonly<NamedAdminTierDefinition>>();
+/** {@link namedTiers} as a frozen array, rebuilt only after it changes. */
+let namedTiersView:
+  readonly (readonly [NamedAdminTier, Readonly<NamedAdminTierDefinition>])[] | null = null;
+
+/** What a named tier may be called: lower case, a letter first, at most 48 characters. */
+const NAMED_TIER = /^[a-z][a-z0-9_-]{0,47}$/;
+
+/**
+ * Names a named tier may not take: `'org'` is core's tier, and `'platform'`
+ * is what the absence of a tier means. A named tier spelled as either would
+ * read as one of them in review, and `'org'` would be answered as `'org'`.
+ */
+const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']);
+
+/**
+ * Register a tier narrower than an org admin (t-999), and say who holds it.
+ * Call it from `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`, before
+ * the pages that declare it, so a throw part-way rolls the tier back with its
+ * pages.
+ *
+ * A surface declared for the tier opens to the org's OWNER/ADMIN, as an
+ * `'org'` surface does, and to whoever `holds()` says holds it in the org they
+ * entered — at `multi`, for a browser session, as for the org tier. A holder
+ * opens that tier's surfaces only: no `'org'` surface, no platform one, and no
+ * other named tier's unless they hold that too.
+ *
+ * Throws, so a mistake opens nothing, on a name that is not lower case
+ * letters, digits, `_` and `-` (a letter first, at most 48), on `'org'` or
+ * `'platform'`, on a `holds` that is not a function, on a `landing` that is
+ * not a plain `/admin/…` path, and on a second registration of the name with
+ * a different definition. Registering the same definition again is a no-op.
+ *
+ * @example
+ * ```ts
+ * registerAdminTier('page_designs', {
+ *   holds: (viewer) => agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs'),
+ *   landing: '/admin/designs',
+ * });
+ * registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+ * ```
+ */
+export function registerAdminTier(
+  name: NamedAdminTier,
+  definition: NamedAdminTierDefinition
+): void {
+  const refuse = (why: string): never => {
+    throw new TypeError(`registerAdminTier: ${JSON.stringify(name)} ${why}`);
+  };
+  if (typeof name !== 'string' || !NAMED_TIER.test(name)) {
+    refuse(
+      'is not a tier name — lower case letters, digits, _ and -, starting with a letter, at most 48 characters.'
+    );
+  }
+  if (RESERVED_TIER_NAMES.includes(name)) {
+    refuse(
+      "is reserved: 'org' is core's tier and 'platform' is what no tier means. Name the narrower audience."
+    );
+  }
+  if (typeof definition?.holds !== 'function') {
+    refuse('has no holds() — say who holds the tier.');
+  }
+  const { landing } = definition;
+  if (landing !== undefined && !isPlainAdminPath(landing)) {
+    refuse(
+      `has a landing (${JSON.stringify(landing)}) that is not a plain /admin/ path: literal segments only, with no trailing slash, query, fragment or [x].`
+    );
+  }
+  const existing = namedTiers.get(name);
+  if (existing) {
+    if (existing.holds === definition.holds && existing.landing === landing) return;
+    refuse('is already registered with a different definition. A tier is registered once.');
+  }
+  namedTiers.set(name, Object.freeze({ holds: definition.holds, landing }));
+  namedTiersView = null;
+}
+
+/** `/admin/` then one or more literal segments: a page you can type, not a pattern. */
+function isPlainAdminPath(path: unknown): path is string {
+  return (
+    typeof path === 'string' &&
+    path.startsWith('/admin/') &&
+    path
+      .split('/')
+      .slice(2)
+      .every((segment) => STATIC_SEGMENT.test(segment))
+  );
+}
+
+/** Options for {@link registerOrgTierAdminPage}. */
+export interface OrgTierAdminPageOptions {
+  /**
+   * The tier the page is for: `'org'` (the default) or a named tier
+   * registered with {@link registerAdminTier} before this call (t-999).
+   */
+  tier?: DeclaredAdminTier;
+}
 
 /**
  * List one of the fork's admin pages as org-tier. Call it from
@@ -197,11 +368,19 @@ let appPagesView: readonly string[] | null = null;
  * - a first segment that is one of {@link CORE_ADMIN_SECTIONS}. Those pages
  *   are core's, and core's org-tier ones are already listed; a fork that
  *   could list the rest would open a platform page (`/admin/users`) without
- *   editing a core file.
+ *   editing a core file;
+ * - a `tier` that is neither `'org'` nor a named tier already registered, and
+ *   a page already listed for another tier: a page is in one tier.
  *
- * Idempotent: listing a pattern twice lists it once.
+ * With `{ tier }` naming a named tier (t-999), the page opens to that tier's
+ * holders as well as to the org's OWNER/ADMIN.
+ *
+ * Idempotent: listing a pattern twice for the same tier lists it once.
  */
-export function registerOrgTierAdminPage(pattern: string): void {
+export function registerOrgTierAdminPage(
+  pattern: string,
+  options: OrgTierAdminPageOptions = {}
+): void {
   const refuse = (why: string): never => {
     throw new TypeError(`registerOrgTierAdminPage: ${JSON.stringify(pattern)} ${why}`);
   };
@@ -222,15 +401,32 @@ export function registerOrgTierAdminPage(pattern: string): void {
       `is inside /admin/${segments[0]}, which is core's — put the fork's pages in a section of its own.`
     );
   }
-  if (appPages.has(pattern)) return;
+  const tier = options.tier ?? 'org';
+  if (tier !== 'org' && !namedTiers.has(tier)) {
+    refuse(
+      `declares tier ${JSON.stringify(tier)}, which is neither 'org' nor a tier registered with registerAdminTier() — register the tier before its pages.`
+    );
+  }
+  if (appPages.has(pattern)) {
+    const listed = appPageTiers.get(pattern) ?? 'org';
+    if (listed === tier) return;
+    refuse(
+      `is already listed for tier ${JSON.stringify(listed)}. A page is in one tier: declare it once.`
+    );
+  }
   appPages.add(pattern);
   appPagesView = null;
+  if (tier !== 'org') {
+    appPageTiers.set(pattern, tier);
+    appPageTiersView = null;
+  }
 }
 
 /**
  * What the fork has registered so far, without running its init. For the init
  * gate in `lib/auth/org-tier-admin-pages.ts`; read the list through
- * `getAppOrgTierAdminPages()` there, which runs the init first.
+ * `getAppOrgTierAdminPages()` there, which runs the init first. Every page an
+ * org admin may open, so named-tier pages are in it too.
  *
  * @internal
  */
@@ -240,15 +436,68 @@ export function registeredAppOrgTierAdminPages(): readonly string[] {
 }
 
 /**
- * Put the fork's registrations back to a list {@link registeredAppOrgTierAdminPages}
+ * The fork's pages registered for a named tier, without running its init.
+ * Read them through `namedTierAdminPages()` in `lib/auth/org-tier-admin-pages.ts`.
+ *
+ * @internal
+ */
+export function registeredAppNamedTierAdminPages(): readonly NamedTierAdminPage[] {
+  appPageTiersView ??= Object.freeze(
+    [...appPageTiers].map(([pattern, tier]) => Object.freeze({ pattern, tier }))
+  );
+  return appPageTiersView;
+}
+
+/**
+ * Put the fork's registrations back to what {@link registeredAppOrgTierAdminPages}
+ * and {@link registeredAppNamedTierAdminPages} returned — the init gate's
+ * rollback, and the tests' reset. A page whose tier is not in `tiers` is
+ * listed as `'org'`.
+ *
+ * @internal
+ */
+export function restoreAppOrgTierAdminPages(
+  pages: readonly string[],
+  tiers: readonly NamedTierAdminPage[] = []
+): void {
+  appPages.clear();
+  for (const pattern of pages) appPages.add(pattern);
+  appPagesView = null;
+  appPageTiers.clear();
+  for (const { pattern, tier } of tiers) {
+    if (appPages.has(pattern)) appPageTiers.set(pattern, tier);
+  }
+  appPageTiersView = null;
+}
+
+/**
+ * The fork's named tiers, without running its init, in registration order.
+ * Read them through `namedAdminTiers()` in `lib/auth/org-tier-admin-pages.ts`.
+ *
+ * @internal
+ */
+export function registeredNamedAdminTiers(): readonly (readonly [
+  NamedAdminTier,
+  Readonly<NamedAdminTierDefinition>,
+])[] {
+  namedTiersView ??= Object.freeze(
+    [...namedTiers].map(([name, definition]) => Object.freeze([name, definition] as const))
+  );
+  return namedTiersView;
+}
+
+/**
+ * Put the named tiers back to a list {@link registeredNamedAdminTiers}
  * returned — the init gate's rollback, and the tests' reset.
  *
  * @internal
  */
-export function restoreAppOrgTierAdminPages(pages: readonly string[]): void {
-  appPages.clear();
-  for (const pattern of pages) appPages.add(pattern);
-  appPagesView = null;
+export function restoreNamedAdminTiers(
+  tiers: readonly (readonly [NamedAdminTier, Readonly<NamedAdminTierDefinition>])[]
+): void {
+  namedTiers.clear();
+  for (const [name, definition] of tiers) namedTiers.set(name, definition);
+  namedTiersView = null;
 }
 
 /**
@@ -360,10 +609,10 @@ export function withoutClosedSections(
  * With nothing closed, the declaration is returned as it is.
  */
 export function effectiveRouteTier(
-  declared: AdminTier | undefined,
+  declared: DeclaredAdminTier | undefined,
   pathname: string | null | undefined,
   closed: readonly string[]
-): AdminTier | undefined {
+): DeclaredAdminTier | undefined {
   if (!declared || closed.length === 0) return declared;
   if (!pathname) return undefined;
   const raw = adminSectionOf(pathname);
@@ -618,4 +867,92 @@ export function viewerReaches(
   surface: AdminTier | null | undefined
 ): boolean {
   return viewer === 'platform' || surface === 'org';
+}
+
+/**
+ * Is pattern `a` more specific than `b`, as Next.js routes them? At the first
+ * segment where one is literal and the other `[x]`, the literal wins. Both are
+ * assumed to name the same pathname, so they have the same length.
+ */
+function moreSpecific(a: string, b: string): boolean {
+  const as = segmentsOf(a);
+  const bs = segmentsOf(b);
+  for (let i = 0; i < as.length; i += 1) {
+    const aDynamic = DYNAMIC_SEGMENT.test(as[i]);
+    const bDynamic = DYNAMIC_SEGMENT.test(bs[i]);
+    if (aDynamic !== bDynamic) return bDynamic;
+  }
+  return false;
+}
+
+/**
+ * The pattern that names this pathname as Next.js would serve it: of every
+ * listed pattern that matches, the most specific. `null` when none does.
+ */
+export function mostSpecificAdminPagePattern(
+  pathname: string,
+  pages: readonly string[]
+): string | null {
+  let best: string | null = null;
+  for (const pattern of pages) {
+    if (!matchesAdminPagePattern(pattern, pathname)) continue;
+    if (best === null || moreSpecific(pattern, best)) best = pattern;
+  }
+  return best;
+}
+
+/**
+ * The tier of the page at this pathname: `'org'`, the named tier the fork
+ * registered it for (t-999), or `null` for the platform's.
+ *
+ * Unlike {@link adminPageTier}, which says whether an org admin may open the
+ * page, this says WHICH tier it is in, so it resolves the pathname to the one
+ * pattern Next.js serves it by. Without that, a holder of a tier whose page is
+ * `/admin/designs/[id]` would be let into an `'org'` page beside it,
+ * `/admin/designs/settings`, because the `[id]` pattern names its URL too.
+ * Judges against the lists it is handed — every org-tier pattern, and the
+ * named-tier ones among them — for the reason {@link adminPageTier} does.
+ */
+export function adminPageTierOf(
+  pathname: string | null | undefined,
+  pages: readonly string[],
+  named: readonly NamedTierAdminPage[]
+): DeclaredAdminTier | null {
+  if (!pathname) return null;
+  const all = named.length === 0 ? pages : [...pages, ...named.map((p) => p.pattern)];
+  const pattern = mostSpecificAdminPagePattern(pathname, all);
+  if (pattern === null) return null;
+  return named.find((p) => p.pattern === pattern)?.tier ?? 'org';
+}
+
+/** Does this reach take in a surface of that tier? A surface with no tier is the platform's. */
+export function reachesTier(
+  reach: AdminReach,
+  surface: DeclaredAdminTier | null | undefined
+): boolean {
+  if (reach === 'platform') return true;
+  if (surface === null || surface === undefined) return false;
+  return reach.tiers.includes(surface);
+}
+
+/** The console's index, which sends each viewer to their landing and shows nothing itself. */
+export const ADMIN_INDEX_PATH = '/admin';
+
+/**
+ * May a viewer with this reach open the page at this pathname, whose tier is
+ * `pageTier` ({@link adminPageTierOf})? The layout's answer on a full load and
+ * the gate's on every in-app navigation, so the two agree.
+ *
+ * One page is answered apart: `/admin` itself, for a holder of named tiers
+ * with a landing. It is an `'org'` page so that it can send an org admin on,
+ * and it renders nothing — it redirects — so letting a holder in sends them to
+ * their landing rather than turning them away.
+ */
+export function reachesAdminPage(
+  reach: AdminReach,
+  pathname: string | null | undefined,
+  pageTier: DeclaredAdminTier | null
+): boolean {
+  if (reachesTier(reach, pageTier)) return true;
+  return reach !== 'platform' && reach.landing !== null && pathname === ADMIN_INDEX_PATH;
 }
