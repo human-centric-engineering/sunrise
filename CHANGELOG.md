@@ -39,6 +39,23 @@ release process.
   `tests/unit/lib/app/defaults.test.ts`, it gains a `namedAdminTiers()` line.
   See `.context/auth/authorization.md` ("Named tiers").
 
+### Changed
+
+- **`<AdminSidebar>` and `<AdminTierGate>` take `reach` instead of
+  `viewerTier`, and an optional `namedTierPages` (t-999).** `reach` is what
+  the layout's new `requestAdminReach()` (`lib/auth/admin-page-viewer.ts`)
+  returns: `'platform'`, or the tiers the policy admitted the viewer to.
+  **Forks:** a fork that renders its own admin layout passes
+  `reach={await requestAdminReach()}` where it passed `viewerTier`, and
+  `namedTierPages={namedTierAdminPages()}` beside `orgTierPages`.
+  `adminPageViewerTier()` is unchanged.
+
+### Removed
+
+- **`viewerReaches()` from `lib/auth/admin-tier.ts` (t-999).** Nothing read it
+  once the gate and sidebar moved to `reachesTier()`. A fork that called it
+  uses `reachesTier(reach, tier)` instead.
+
 ### Security
 
 - **A form submitted before the page had loaded put its fields in the URL.** A

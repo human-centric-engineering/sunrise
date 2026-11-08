@@ -599,7 +599,8 @@ async function administersOrgTier(
     // change what the guard goes on to hand the handler. Shallow, which is
     // enough here: the principal's one nested value is an API key's
     // `scopes`, and a key never reaches this line (refused above).
-    return (await named.holds(Object.freeze({ ...viewer }))) === true;
+    const orgId = viewer.orgId;
+    return (await named.holds(Object.freeze({ ...viewer, orgId }))) === true;
   } catch (error) {
     logger.error(
       'authorization: a named admin tier could not say who holds it, so it admits nobody',

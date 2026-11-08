@@ -137,7 +137,9 @@ export interface NamedAdminTierDefinition {
    * imports statically that in turn imports the guards or the policy is an
    * import cycle, and one that reads them at module scope fails at boot.
    */
-  holds: (viewer: Readonly<AuthorizationPrincipal>) => boolean | Promise<boolean>;
+  holds: (
+    viewer: Readonly<AuthorizationPrincipal & { orgId: string }>
+  ) => boolean | Promise<boolean>;
   /**
    * Where `/admin` sends someone who holds this tier and is not an org admin:
    * a page registered for this tier, written word for word with literal
@@ -897,7 +899,9 @@ export function adminPageTier(
   pages: readonly string[]
 ): AdminTier | null {
   if (!pathname) return null;
-  return pages.some((pattern) => matchesAdminPagePattern(pattern, pathname)) ? 'org' : null;
+  // One matcher with adminPageTierOf(): any pattern naming the page means a
+  // most specific one exists.
+  return mostSpecificAdminPagePattern(pathname, pages) === null ? null : 'org';
 }
 
 /**
