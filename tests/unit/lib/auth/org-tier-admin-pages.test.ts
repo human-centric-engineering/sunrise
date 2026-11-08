@@ -226,8 +226,6 @@ describe('named tiers (t-999)', () => {
     ]);
     expect(orgScopedAdminPages()).toContain('/admin/designs');
     expect(init).toHaveBeenCalledTimes(1);
-    // The names are one array until the tiers change.
-    expect(namedAdminTiers()).toBe(namedAdminTiers());
   });
 
   it('rolls a tier back with its pages when the init throws part-way, and says so', () => {

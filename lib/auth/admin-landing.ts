@@ -132,9 +132,12 @@ export function __resetLandingLogForTests(): void {
 
 /**
  * Where `/admin` sends someone who holds these tiers and not `'org'` (t-999):
- * the landing of the first named tier they hold, in registration order, that
- * names a usable one. `null` when none does — then `/admin` is not theirs to
- * open, as it is not any MEMBER's.
+ * for the first named tier they hold, in registration order, its `landing`,
+ * or, when it names none, the first page registered for it that has no `[x]`
+ * segment. A `landing` that is not one of the tier's own literal pages is
+ * logged once and passed over for that default. `null` only when no tier they
+ * hold has a literal page — then `/admin` is not theirs to open, as it is not
+ * any MEMBER's.
  */
 export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | null {
   if (held.length === 0) return null;
@@ -142,14 +145,17 @@ export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | nu
   for (const tier of namedAdminTiers()) {
     if (!held.includes(tier)) continue;
     const route = namedAdminTier(tier)?.landing;
-    if (route === undefined) continue;
-    const problem = namedTierLandingProblem(tier, route, named);
-    if (problem === null) return route;
-    const key = JSON.stringify([tier, route]);
-    if (!loggedLandingProblems.has(key)) {
-      loggedLandingProblems.add(key);
-      logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
+    if (route !== undefined) {
+      const problem = namedTierLandingProblem(tier, route, named);
+      if (problem === null) return route;
+      const key = JSON.stringify([tier, route]);
+      if (!loggedLandingProblems.has(key)) {
+        loggedLandingProblems.add(key);
+        logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
+      }
     }
+    const first = named.find((page) => page.tier === tier && isPlainAdminPath(page.pattern));
+    if (first) return first.pattern;
   }
   return null;
 }

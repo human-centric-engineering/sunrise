@@ -1,8 +1,10 @@
 /**
  * Who is viewing this admin page: the platform, or an org admin? (§111 t-812)
  *
- * The admin layout admits two kinds of viewer: a platform admin to any page,
- * and an org OWNER/ADMIN of the entered org to an org-tier page. Most org-tier
+ * The admin layout admits a platform admin to any page, an org OWNER/ADMIN
+ * of the entered org to an org-tier page, and a holder of a fork's named tier
+ * (t-999) to a page declared for it ({@link requestAdminReach} works out
+ * which). Most org-tier
  * pages serve both the same, because row isolation already bounds what their
  * API calls read to the entered org. The mixed pages do not — the
  * orchestration dashboard, costs, executions and the MCP landing each pair
@@ -13,7 +15,7 @@
  * not what it may read.
  *
  * The admin layout asks its platform question through
- * {@link requestAdministersPlatform} too, so a page and the layout cannot
+ * {@link requestAdministersPlatform} too (inside {@link requestAdminReach}), so a page and the layout cannot
  * disagree about who is the platform. Both are `cache()`d per request: the
  * session lookup, membership read and policy call run once per render, not
  * once in the layout and again in the page.
@@ -61,10 +63,13 @@ export const requestAdministersPlatform = cache(async (): Promise<boolean> => {
 });
 
 /**
- * The viewer tier of the admin page being rendered. Anyone the layout admitted
- * who does not administer the platform is an org viewer, and so is a request
- * with no session — the narrower view is the safe answer to a question that
- * could not be asked.
+ * The viewer tier of the admin page being rendered: `'platform'`, or `'org'`
+ * for everyone else the layout admitted — and for a request with no session,
+ * since the narrower view is the safe answer to a question that could not be
+ * asked. `'org'` means "not a platform viewer", not "an org OWNER/ADMIN": a
+ * holder of a fork's named tier (t-999) is `'org'` here too. The mixed pages
+ * ask only whether to render their platform-ops half; a page that needs to
+ * know which tiers the viewer holds asks {@link requestAdminReach}.
  */
 export async function adminPageViewerTier(): Promise<AdminViewerTier> {
   return (await requestAdministersPlatform()) ? 'platform' : 'org';

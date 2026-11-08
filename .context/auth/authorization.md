@@ -343,7 +343,10 @@ import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-ti
 export function initAppOrgTierAdminPages(): void {
   // Who holds it: answer for viewer.orgId, from the fork's own rows.
   registerAdminTier('page_designs', {
-    holds: (viewer) => agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs'),
+    holds: async (viewer) => {
+      const { agencyHoldsArea } = await import('@/lib/app/agency-access');
+      return agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs');
+    },
     landing: '/admin/designs', // where /admin sends a holder
   });
   // Register the tier first, then its pages.
@@ -382,7 +385,12 @@ shut.
 
 **`holds()` is the fork's lookup.** It is called only for a session at `multi`
 acting in `viewer.orgId` who is not already an org admin or platform admin.
-It may be async. It is handed a frozen copy of the principal. A throw, or any
+It may be async. It is handed a frozen copy of the principal. Load your
+lookup with `await import(…)` inside `holds()`, not a static import at the top
+of `lib/app/admin-tier.ts`: the policy imports that scaffold to read the
+registry, so a static import of a module that imports the guards or the policy
+is an import cycle, and fails at boot if anything in it reads them at module
+scope. A throw, or any
 answer but `true`, is a no, and a throw is logged with the tier. The layout
 asks every tier on a full load (`requestAdminReach()` in
 `lib/auth/admin-page-viewer.ts`, once per request), so for a MEMBER it runs
@@ -399,10 +407,12 @@ tiers the policy admitted them to. It hands that to `<AdminTierGate>` and
 `<AdminSidebar>` with the named pages (`namedTierAdminPages()`). The sidebar
 shows a holder only the items marked with a tier they hold, over a page in a
 tier they hold. `/admin` sends a holder who is not an org admin to their
-first tier's `landing`, in registration order. With no landing, `/admin` is not
-theirs to open, as it is not any MEMBER's. A landing must be a literal page
-registered for that tier. One that is not is ignored, logged once, and fails
-the roster test. A fork that lists the client orgs someone belongs to, as an
+first tier's `landing`, in registration order. A tier with no `landing` sends
+them to its first registered page with no `[x]` segment. A landing must be a
+literal page registered for that tier. One that is not is ignored, logged
+once, and fails the roster test, and the default is used instead. Only a
+holder whose tiers have no literal page at all is refused `/admin`, as any
+MEMBER is. A fork that lists the client orgs someone belongs to, as an
 org switcher does, should send a holder to a page their tier opens.
 
 **What the registrar refuses**, so no named tier can widen `'org'`:

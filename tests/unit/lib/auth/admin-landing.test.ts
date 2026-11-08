@@ -171,6 +171,23 @@ describe('heldTierLanding (t-999)', () => {
     expect(heldTierLanding(['brand_themes'])).toBeNull();
   });
 
+  it('without a landing, uses the tier’s first page with no [x] segment', () => {
+    registerAdminTier('page_designs', { holds });
+    registerOrgTierAdminPage('/admin/designs/[id]', { tier: 'page_designs' });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    registerOrgTierAdminPage('/admin/designs/archive', { tier: 'page_designs' });
+
+    expect(heldTierLanding(['page_designs'])).toBe('/admin/designs');
+  });
+
+  it('falls back to that default when the landing named is not the tier’s page', () => {
+    registerAdminTier('page_designs', { holds, landing: '/admin/members' });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+
+    expect(heldTierLanding(['page_designs'])).toBe('/admin/designs');
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
   it('passes over a landing that is not the tier’s page, and logs it once', () => {
     registerAdminTier('page_designs', { holds, landing: '/admin/members' });
     registerAdminTier('media', { holds, landing: '/admin/media' });

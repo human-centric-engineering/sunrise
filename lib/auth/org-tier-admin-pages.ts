@@ -36,6 +36,7 @@ import {
   registeredAppNamedTierAdminPages,
   registeredAppOrgTierAdminPages,
   registeredClosedCoreOrgTierSections,
+  registeredNamedAdminTier,
   registeredNamedAdminTiers,
   restoreAppOrgTierAdminPages,
   restoreClosedCoreOrgTierSections,
@@ -137,19 +138,10 @@ export function namedTierAdminPages(): readonly NamedTierAdminPage[] {
   return registeredAppNamedTierAdminPages();
 }
 
-/** {@link namedAdminTiers}'s answer, and the registry view it was built from. */
-let namesFrom: unknown = null;
-let names: readonly NamedAdminTier[] = Object.freeze([]);
-
 /** The names of the fork's named tiers (t-999), in registration order: empty unless it registered one. */
 export function namedAdminTiers(): readonly NamedAdminTier[] {
   appInit.ensure();
-  const tiers = registeredNamedAdminTiers();
-  if (namesFrom !== tiers) {
-    namesFrom = tiers;
-    names = Object.freeze(tiers.map(([name]) => name));
-  }
-  return names;
+  return registeredNamedAdminTiers().map(([name]) => name);
 }
 
 /**
@@ -159,7 +151,7 @@ export function namedAdminTiers(): readonly NamedAdminTier[] {
  */
 export function namedAdminTier(name: string): Readonly<NamedAdminTierDefinition> | undefined {
   appInit.ensure();
-  return registeredNamedAdminTiers().find(([tier]) => tier === name)?.[1];
+  return registeredNamedAdminTier(name);
 }
 
 /**

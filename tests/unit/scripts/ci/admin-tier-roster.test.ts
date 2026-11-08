@@ -439,13 +439,12 @@ describe('what it catches', () => {
     });
 
     it('a route declaring a tier nobody registered, which admits nobody', () => {
-      expect(findAdminTierRosterProblems(named({ namedTiers: [] }))).toEqual(
-        expect.arrayContaining([
-          `${FORK_ROUTE}#GET: declared tier 'page_designs', which is neither 'org' nor a tier registered with registerAdminTier() in lib/app/admin-tier.ts, so it admits nobody. Register the tier, or fix the name.`,
-          // …and it is then listed without opening anything.
-          `${FORK_ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org' or a registered named tier.`,
-        ])
-      );
+      const problems = findAdminTierRosterProblems(named({ namedTiers: [] }));
+      // Said once, as the misnamed tier it is — not again as a listed route
+      // that "does not declare" one.
+      expect(problems.filter((p) => p.startsWith(FORK_ROUTE))).toEqual([
+        `${FORK_ROUTE}#GET: declared tier 'page_designs', which is neither 'org' nor a tier registered with registerAdminTier() in lib/app/admin-tier.ts, so it admits nobody. Register the tier, or fix the name.`,
+      ]);
     });
 
     it('a named-tier route not listed, or with no ownership decision, as an org one would be', () => {

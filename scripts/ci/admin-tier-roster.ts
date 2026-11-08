@@ -349,9 +349,14 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       );
     }
   }
+  // A route whose literal names no registered tier was reported above; saying
+  // again that it "does not declare" one would misdescribe the same mistake.
+  const misnamed = new Set(
+    declarations.filter((d) => d.tier !== null && !tierNames.has(d.tier)).map((d) => d.at)
+  );
   for (const [where, ats] of routeLists) {
     for (const at of ats) {
-      if (!declared.has(at)) {
+      if (!declared.has(at) && !misnamed.has(at)) {
         problems.push(
           `${at}: listed in ${where} but does not declare tier 'org' or a registered named tier.`
         );

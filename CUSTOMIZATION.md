@@ -871,9 +871,16 @@ import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-ti
 
 export function initAppOrgTierAdminPages(): void {
   registerAdminTier('page_designs', {
-    // Answer for viewer.orgId, from your own rows. May be async.
-    holds: (viewer) => agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs'),
-    landing: '/admin/designs', // optional: where /admin sends a holder
+    // Answer for viewer.orgId, from your own rows. Import the lookup inside
+    // holds(): the policy imports this file, so a static import that reaches
+    // the guards or the policy is an import cycle.
+    holds: async (viewer) => {
+      const { agencyHoldsArea } = await import('@/lib/app/agency-access');
+      return agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs');
+    },
+    // Optional: where /admin sends a holder. Defaults to the tier's first
+    // page with no [x] segment.
+    landing: '/admin/designs',
   });
   registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
   registerOrgTierAdminPage('/admin/designs/[id]', { tier: 'page_designs' });

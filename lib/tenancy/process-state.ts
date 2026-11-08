@@ -491,9 +491,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/org-tier-admin-pages.ts',
-    holders: ['appInit', 'combined', 'namesFrom', 'names'],
+    holders: ['appInit', 'combined'],
     posture: 'no-tenant-data',
-    why: 'The one-shot latch on the fork’s org-tier page init (t-817), core’s and the fork’s page patterns combined once, and the names of the fork’s named tiers (t-999) with the registry view they were read from.',
+    why: 'The one-shot latch on the fork’s org-tier page init (t-817), and core’s and the fork’s page patterns combined once.',
   },
   {
     file: 'lib/auth/admin-landing.ts',

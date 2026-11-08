@@ -130,14 +130,21 @@ export interface NamedAdminTierDefinition {
    * and only when they are not already that org's OWNER/ADMIN or a platform
    * admin. Answer for `viewer.orgId` and no other org. May be async (a lookup
    * of the fork's own rows). A throw, or anything but `true`, is no.
+   *
+   * Load the lookup with `await import(…)` inside the function rather than
+   * a static import at the top of `lib/app/admin-tier.ts`. The authorization
+   * policy imports that scaffold to read this registry, so a module it
+   * imports statically that in turn imports the guards or the policy is an
+   * import cycle, and one that reads them at module scope fails at boot.
    */
   holds: (viewer: Readonly<AuthorizationPrincipal>) => boolean | Promise<boolean>;
   /**
    * Where `/admin` sends someone who holds this tier and is not an org admin:
    * a page registered for this tier, written word for word with literal
-   * segments (`/admin/designs`). Optional; with none, `/admin` is not theirs
-   * to open, as it is not any MEMBER's. One that is not such a page is
-   * ignored and logged, and the roster test fails on it.
+   * segments (`/admin/designs`). Optional; with none, it is the first page
+   * registered for the tier that has no `[x]` segment. One that is not such a
+   * page is ignored and logged (that default is used instead), and the roster
+   * test fails on it.
    */
   landing?: string;
 }
@@ -292,7 +299,10 @@ const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']
  * @example
  * ```ts
  * registerAdminTier('page_designs', {
- *   holds: (viewer) => agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs'),
+ *   holds: async (viewer) => {
+ *     const { agencyHoldsArea } = await import('@/lib/app/agency-access');
+ *     return agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs');
+ *   },
  *   landing: '/admin/designs',
  * });
  * registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
@@ -490,6 +500,19 @@ export function registeredNamedAdminTiers(): readonly (readonly [
     [...namedTiers].map(([name, definition]) => Object.freeze([name, definition] as const))
   );
   return namedTiersView;
+}
+
+/**
+ * One named tier's definition, without running the fork's init: `undefined`
+ * when none of that name is registered. Read it through `namedAdminTier()` in
+ * `lib/auth/org-tier-admin-pages.ts`.
+ *
+ * @internal
+ */
+export function registeredNamedAdminTier(
+  name: string
+): Readonly<NamedAdminTierDefinition> | undefined {
+  return namedTiers.get(name);
 }
 
 /**
@@ -842,8 +865,18 @@ export function matchesAdminPagePattern(pattern: string, pathname: string): bool
   const got = segmentsOf(pathname);
   if (want.length !== got.length) return false;
   return want.every((segment, i) =>
-    /^\[[^.[\]]+\]$/.test(segment) ? got[i] !== '' : segment === got[i]
+    isMatchedDynamicSegment(segment) ? got[i] !== '' : segment === got[i]
   );
+}
+
+/**
+ * A pattern segment the matcher reads as `[x]`, taking any one segment. The
+ * one test both {@link matchesAdminPagePattern} and the specificity ranking
+ * use, so the two cannot disagree about which segments are dynamic. Broader
+ * than the registrar's own rule, because core's list is not run through it.
+ */
+function isMatchedDynamicSegment(segment: string): boolean {
+  return /^\[[^.[\]]+\]$/.test(segment);
 }
 
 function segmentsOf(path: string): string[] {
@@ -876,8 +909,8 @@ function moreSpecific(a: string, b: string): boolean {
   const as = segmentsOf(a);
   const bs = segmentsOf(b);
   for (let i = 0; i < as.length; i += 1) {
-    const aDynamic = DYNAMIC_SEGMENT.test(as[i]);
-    const bDynamic = DYNAMIC_SEGMENT.test(bs[i]);
+    const aDynamic = isMatchedDynamicSegment(as[i]);
+    const bDynamic = isMatchedDynamicSegment(bs[i]);
     if (aDynamic !== bDynamic) return bDynamic;
   }
   return false;
