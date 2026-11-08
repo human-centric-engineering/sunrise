@@ -476,15 +476,30 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/admin-tier.ts',
-    holders: ['appPages', 'appPagesView', 'closedSections', 'closedSectionsView'],
+    holders: [
+      'appPages',
+      'appPagesView',
+      'appPageTiers',
+      'appPageTiersView',
+      'namedTiers',
+      'namedTiersView',
+      'closedSections',
+      'closedSectionsView',
+    ],
     posture: 'no-tenant-data',
-    why: 'Admin page patterns a fork lists as org-tier from code (t-817), the core sections it closes to org admins for the whole install (t-929), and a frozen copy of each rebuilt when it changes.',
+    why: 'Admin page patterns a fork lists as org-tier from code (t-817), the named tiers it registers and the pages it declares for each (t-999), the core sections it closes to org admins for the whole install (t-929), and a frozen copy of each rebuilt when it changes. A named tier holds the fork’s holds() function, which looks up who holds it per request; it stores nobody’s answer.',
   },
   {
     file: 'lib/auth/org-tier-admin-pages.ts',
     holders: ['appInit', 'combined'],
     posture: 'no-tenant-data',
     why: 'The one-shot latch on the fork’s org-tier page init (t-817), and core’s and the fork’s page patterns combined once.',
+  },
+  {
+    file: 'lib/auth/admin-landing.ts',
+    holders: ['loggedLandingProblems'],
+    posture: 'no-tenant-data',
+    why: 'Which named-tier landings the fork configured wrongly have already been logged (t-999), as tier and path pairs from code, so each is said once per process.',
   },
   {
     file: 'lib/auth/config.ts',

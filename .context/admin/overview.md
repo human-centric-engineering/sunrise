@@ -63,7 +63,7 @@ Client component (`components/admin/admin-sidebar.tsx`) providing navigation:
 
 - **Collapsible**: Toggle between expanded (256px) and collapsed (64px) states
 - **Active state**: Highlights current route based on pathname matching
-- **Viewer tier**: takes a required `viewerTier` from the layout; an org viewer sees only items marked `tier: 'org'`
+- **Viewer reach**: takes a required `reach` from the layout (`requestAdminReach()`): a platform viewer sees every item; anyone else only the items marked with a tier they hold whose page is in a tier they hold — `tier: 'org'` for an org admin, a fork's named tier for its holders (t-999)
 - **Sections**:
   - Overview: Dashboard
   - Management: Users, Feature Flags

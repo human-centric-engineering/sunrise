@@ -13,7 +13,10 @@ vi.mock('next/headers', () => ({ headers: vi.fn() }));
 vi.mock('@/lib/auth/session-principal', () => ({ sessionPrincipal: vi.fn() }));
 vi.mock('@/lib/auth/authorization', () => ({ canAdminister: vi.fn() }));
 
-import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
+import { adminPageViewerTier, requestAdminReach } from '@/lib/auth/admin-page-viewer';
+import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
+import type { AuthorizationScope } from '@/lib/auth/authorization';
 import { getServerSession } from '@/lib/auth/utils';
 import { headers } from 'next/headers';
 import { sessionPrincipal } from '@/lib/auth/session-principal';
@@ -68,5 +71,65 @@ describe('adminPageViewerTier', () => {
 
     await expect(adminPageViewerTier()).resolves.toBe('org');
     expect(canAdminister).not.toHaveBeenCalled();
+  });
+});
+
+describe('requestAdminReach (t-999)', () => {
+  /** Answer as a policy would: platform for nobody here, and the tiers in `admits`. */
+  const policyAdmitting = (...admits: (string | undefined)[]) =>
+    vi
+      .mocked(canAdminister)
+      .mockImplementation((_p, _r, scope?: AuthorizationScope) =>
+        Promise.resolve(admits.includes(scope?.tier))
+      );
+
+  beforeEach(() => {
+    __resetAppOrgTierAdminPagesForTests();
+  });
+
+  it('is the platform, asking nothing more, for a platform admin', async () => {
+    vi.mocked(canAdminister).mockResolvedValue(true);
+    await expect(requestAdminReach()).resolves.toBe('platform');
+    expect(canAdminister).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no tier registered, asks the org tier alone, as the layout did before', async () => {
+    policyAdmitting('org');
+    await expect(requestAdminReach()).resolves.toEqual({ tiers: ['org'], landing: null });
+    expect(canAdminister).toHaveBeenCalledTimes(2);
+    expect(canAdminister).toHaveBeenLastCalledWith(principal, null, { org: ORG_B, tier: 'org' });
+  });
+
+  it('asks the policy once per tier, with the guards’ principal and scope', async () => {
+    registerAdminTier('page_designs', { holds: () => true, landing: '/admin/designs' });
+    registerAdminTier('media', { holds: () => true });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    policyAdmitting('page_designs');
+
+    await expect(requestAdminReach()).resolves.toEqual({
+      tiers: ['page_designs'],
+      landing: '/admin/designs',
+    });
+    for (const tier of ['org', 'page_designs', 'media']) {
+      expect(canAdminister).toHaveBeenCalledWith(principal, null, { org: ORG_B, tier });
+    }
+  });
+
+  it('names no landing for an org admin, who lands as one', async () => {
+    registerAdminTier('page_designs', { holds: () => true, landing: '/admin/designs' });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    policyAdmitting('org', 'page_designs');
+
+    await expect(requestAdminReach()).resolves.toEqual({
+      tiers: ['org', 'page_designs'],
+      landing: null,
+    });
+  });
+
+  it('reaches nothing with no session', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null);
+    vi.mocked(sessionPrincipal).mockResolvedValue(null as never);
+    vi.mocked(canAdminister).mockResolvedValue(false);
+    await expect(requestAdminReach()).resolves.toEqual({ tiers: [], landing: null });
   });
 });

@@ -42,6 +42,9 @@ import {
   appOrgTierAdminPagesInitState,
   closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
+  namedAdminTier,
+  namedAdminTiers,
+  namedTierAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
@@ -94,6 +97,11 @@ const TREE: RosterInput = {
   // The core sections the fork closed, from lib/app/admin-tier.ts: its nav
   // items are judged against what is left open.
   closedSections: closedCoreOrgTierSections(),
+  // The fork's named tiers and the pages declared for them (t-999), from
+  // lib/app/admin-tier.ts: a route, page or nav item may only name one of
+  // these, and each landing must be one of its own tier's pages.
+  namedTiers: namedAdminTiers().map((name) => ({ name, landing: namedAdminTier(name)?.landing })),
+  appNamedTierPages: namedTierAdminPages(),
 };
 
 describe('the pins', () => {
@@ -401,6 +409,113 @@ describe('what it catches', () => {
     ...over,
   });
 
+  describe('named tiers (t-999)', () => {
+    const FORK_ROUTE = 'app/api/v1/app/designs/route.ts';
+    const forkRoute = (options: string): SourceFile => ({
+      path: FORK_ROUTE,
+      source: `export const GET = withAdminAuth(async () => ok(), ${options});`,
+    });
+    const DESIGNS_PAGE = 'app/admin/designs/page.tsx';
+    const named = (over: Partial<RosterInput> = {}): RosterInput =>
+      input({
+        routes: [forkRoute(`{ tier: 'page_designs', ${OWNED} }`)],
+        appListedRoutes: [`${FORK_ROUTE}#GET`],
+        appListedPages: ['/admin/designs', '/admin/designs/settings'],
+        appNamedTierPages: [{ pattern: '/admin/designs', tier: 'page_designs' }],
+        pageFiles: [DESIGNS_PAGE, 'app/admin/designs/settings/page.tsx'],
+        navItems: [{ href: '/admin/designs', tier: 'page_designs' }],
+        namedTiers: [{ name: 'page_designs', landing: '/admin/designs' }],
+        ...over,
+      });
+
+    it('accepts a consistent named tier — the control the cases below differ from', () => {
+      expect(findAdminTierRosterProblems(named())).toEqual([]);
+    });
+
+    it('reads a named tier as the literal it is', () => {
+      expect(tierDeclarations(forkRoute(`{ tier: 'page_designs', ${OWNED} }`))).toEqual([
+        { at: `${FORK_ROUTE}#GET`, tier: 'page_designs', declaresOwnership: true },
+      ]);
+    });
+
+    it('a route declaring a tier nobody registered, which admits nobody', () => {
+      const problems = findAdminTierRosterProblems(named({ namedTiers: [] }));
+      // Said once, as the misnamed tier it is — not again as a listed route
+      // that "does not declare" one.
+      expect(problems.filter((p) => p.startsWith(FORK_ROUTE))).toEqual([
+        `${FORK_ROUTE}#GET: declared tier 'page_designs', which is neither 'org' nor a tier registered with registerAdminTier() in lib/app/admin-tier.ts, so it admits nobody. Register the tier, or fix the name.`,
+      ]);
+    });
+
+    it('a named-tier route not listed, or with no ownership decision, as an org one would be', () => {
+      expect(findAdminTierRosterProblems(named({ appListedRoutes: [] }))).toEqual([
+        `${FORK_ROUTE}#GET: declared tier 'page_designs' but not listed in ORG_TIER_ADMIN_ROUTES (core's) or lib/app/admin-tier-routes.ts (the fork's).`,
+      ]);
+      expect(
+        findAdminTierRosterProblems(named({ routes: [forkRoute(`{ tier: 'page_designs' }`)] }))
+      ).toEqual([expect.stringContaining("declared tier 'page_designs' with no `ownership`")]);
+    });
+
+    it('a core-listed route that declares a named tier: core’s routes are org', () => {
+      expect(
+        findAdminTierRosterProblems(
+          named({ appListedRoutes: [], listedRoutes: [`${FORK_ROUTE}#GET`] })
+        )
+      ).toEqual([
+        `${FORK_ROUTE}#GET: listed in ORG_TIER_ADMIN_ROUTES, core's, but declares the named tier 'page_designs'. Core's routes are 'org'.`,
+      ]);
+    });
+
+    it('a nav item marked org over a named-tier page, which that tier’s holders never see', () => {
+      expect(
+        findAdminTierRosterProblems(named({ navItems: [{ href: '/admin/designs', tier: 'org' }] }))
+      ).toEqual([
+        `nav item /admin/designs: marked tier 'org' over a page registered for tier 'page_designs', so that tier's holders never see it. Mark the item with tier 'page_designs'.`,
+      ]);
+      // An org item over an org page beside it is still fine.
+      expect(
+        findAdminTierRosterProblems(
+          named({ navItems: [{ href: '/admin/designs/settings', tier: 'org' }] })
+        )
+      ).toEqual([]);
+    });
+
+    it('a nav item marked with a named tier over a page of another tier, or with no tier registered', () => {
+      expect(
+        findAdminTierRosterProblems(
+          named({ navItems: [{ href: '/admin/designs/settings', tier: 'page_designs' }] })
+        )
+      ).toEqual([
+        `nav item /admin/designs/settings: marked tier 'page_designs' over a page not registered for that tier, so its holders would follow it to a redirect. Register the page with { tier: 'page_designs' }, or mark the item with the page's tier.`,
+      ]);
+      expect(
+        findAdminTierRosterProblems(
+          named({ navItems: [{ href: '/admin/designs', tier: 'media' }] })
+        )
+      ).toEqual([
+        expect.stringContaining("marked tier 'media', which is neither 'org' nor a tier"),
+      ]);
+    });
+
+    it('a landing that is not its own tier’s page', () => {
+      expect(
+        findAdminTierRosterProblems(
+          named({ namedTiers: [{ name: 'page_designs', landing: '/admin/designs/settings' }] })
+        )
+      ).toEqual([
+        expect.stringMatching(
+          /^named tier 'page_designs': its landing \/admin\/designs\/settings is not a page registered for tier "page_designs"/
+        ),
+      ]);
+    });
+
+    it('holds a named tier’s pages to the page checks: real, and not naming an unlisted page', () => {
+      expect(findAdminTierRosterProblems(named({ pageFiles: [DESIGNS_PAGE] }))).toEqual([
+        expect.stringContaining('/admin/designs/settings: listed in lib/app/admin-tier.ts but'),
+      ]);
+    });
+  });
+
   it('accepts a consistent roster — the control every case below differs from by one thing', () => {
     expect(
       findAdminTierRosterProblems(
@@ -435,7 +550,7 @@ describe('what it catches', () => {
       'ORG_tier_OPTIONS',
     ]) {
       expect(findAdminTierRosterProblems(input({ routes: [route(options)] }))).toEqual([
-        expect.stringContaining('not the literal'),
+        expect.stringContaining('not a string literal'),
       ]);
     }
   });
@@ -548,7 +663,7 @@ describe('what it catches', () => {
   it('sees the guard imported under another name', () => {
     const source = `import { withAdminAuth as guard } from '@/lib/auth/guards';\nexport const GET = guard(h, { tier: 'org' });`;
     expect(tierDeclarations({ path: ROUTE, source })).toEqual([
-      { at: `${ROUTE}#GET`, literal: true, declaresOwnership: false },
+      { at: `${ROUTE}#GET`, tier: 'org', declaresOwnership: false },
     ]);
   });
 
@@ -585,7 +700,7 @@ describe('what it catches', () => {
         input({ routes: [route(`{ ${OWNED} }`)], appListedRoutes: [`${ROUTE}#GET`] })
       )
     ).toEqual([
-      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org'.`,
+      `${ROUTE}#GET: listed in lib/app/admin-tier-routes.ts but does not declare tier 'org' or a registered named tier.`,
     ]);
   });
 
@@ -623,7 +738,7 @@ describe('what it catches', () => {
         input({ routes: [wrapper(`{ tier: TIER, ${OWNED} }`)], ...listed })
       )
     ).toEqual([
-      expect.stringContaining('not the literal'),
+      expect.stringContaining('not a string literal'),
       expect.stringContaining('listed in lib/app/admin-tier-routes.ts but does not declare'),
     ]);
   });
@@ -631,7 +746,7 @@ describe('what it catches', () => {
   it('treats a computed key that mentions tier as unreadable', () => {
     expect(
       findAdminTierRosterProblems(input({ routes: [route(`{ [TIER_KEY]: 'org', ${OWNED} }`)] }))
-    ).toEqual([expect.stringContaining('not the literal')]);
+    ).toEqual([expect.stringContaining('not a string literal')]);
   });
 
   it('a listed page with a catch-all or route-group segment, which the matcher cannot match', () => {
@@ -725,7 +840,7 @@ describe('what it catches', () => {
 
   it('reads one declaration per exported handler, by method', () => {
     expect(tierDeclarations(route(`{ tier: 'org', ${OWNED} }`))).toEqual([
-      { at: `${ROUTE}#GET`, literal: true, declaresOwnership: true },
+      { at: `${ROUTE}#GET`, tier: 'org', declaresOwnership: true },
     ]);
   });
 });

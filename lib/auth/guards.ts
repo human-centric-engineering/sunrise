@@ -52,7 +52,7 @@ import {
   type SubjectFilter,
 } from '@/lib/auth/authorization';
 import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
-import { effectiveRouteTier, type AdminTier } from '@/lib/auth/admin-tier';
+import { effectiveRouteTier, type DeclaredAdminTier } from '@/lib/auth/admin-tier';
 import { closedCoreOrgTierSections } from '@/lib/auth/org-tier-admin-pages';
 import { env } from '@/lib/env';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -421,8 +421,14 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * widens admission only: the handler still runs in the entered org, so what
    * it reads is that org's by row isolation, and `writesSharedSettings` still
    * refuses a shared-settings write from outside the install org.
+   *
+   * A fork's route may declare a named tier instead (t-999): one it
+   * registered with `registerAdminTier()` in `lib/app/admin-tier.ts`. The
+   * default policy then admits the org's OWNER/ADMIN and whoever holds that
+   * tier in the entered org, and nobody else; a tier nobody registered admits
+   * nobody. Listed like an `'org'` route, in `lib/app/admin-tier-routes.ts`.
    */
-  tier?: AdminTier;
+  tier?: DeclaredAdminTier;
 }
 
 /**
@@ -433,9 +439,9 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
  * three agree. With nothing closed it is the declaration, unchanged.
  */
 function tierScope(
-  declared: AdminTier | undefined,
+  declared: DeclaredAdminTier | undefined,
   pathname: string | undefined
-): { tier?: AdminTier } {
+): { tier?: DeclaredAdminTier } {
   // An undeclared route is the platform's whatever is closed: no need to run
   // the fork's init to learn that.
   if (!declared) return {};

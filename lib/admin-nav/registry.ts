@@ -21,7 +21,7 @@
  */
 
 import type { ComponentType, ReactNode } from 'react';
-import type { AdminTier } from '@/lib/auth/admin-tier';
+import type { DeclaredAdminTier } from '@/lib/auth/admin-tier';
 
 /** A single navigable link in the admin sidebar. */
 export interface NavItem {
@@ -44,8 +44,12 @@ export interface NavItem {
    * routes it calls declared `withAdminAuth(…, { tier: 'org' })`. An item
    * marked here over a page that is not is a link an org admin follows to a
    * redirect.
+   *
+   * A fork's item may carry one of its named tiers instead (t-999), over a
+   * page registered for that tier: the sidebar then shows it to that tier's
+   * holders as well as to org admins.
    */
-  tier?: AdminTier;
+  tier?: DeclaredAdminTier;
 }
 
 /** A collapsible group of items nested inside a section. */

@@ -165,7 +165,8 @@ org it owns (`POST /api/v1/orgs/switch` is not mode-gated), so admitting that
 owner would hand them every row the surface reads. An API key never takes the
 arm, and `withAdminAuth`'s scope floor refuses a non-`admin` key before the
 policy is asked. A tier the default policy does not know (`'team'`) admits
-nobody.
+nobody. A fork's named tier is the one exception, and only once the fork has
+registered it (see "Named tiers" below).
 
 **Where the refusal actually happens.** The API is the authority. Admin pages
 are shells over `serverFetch` calls, and each call reaches a guard that asks
@@ -327,9 +328,125 @@ fork calls `closeCoreOrgTierSection('orchestration')` inside
   over a closed core page fails it; core's own items there are hidden by the
   sidebar and not reported.
 
-`lib/auth/admin-tier.ts` imports nothing, so the scaffold can import the
-registrar from it and `proxy.ts` its header name without either pulling the
-fork's scaffold in.
+**Named tiers: a narrower audience than an org admin** (t-999). Some forks
+need people who are not the org's admins to open a few of its pages: an
+agency's designers working in a client's org, say, who should reach the
+client's page designs and nothing else. Org roles stop at `OWNER` / `ADMIN` /
+`MEMBER`, and a policy override cannot do it alone, because `canAdminister`
+sees `scope.tier` and not which page is asking. So the fork registers a
+**named tier** and declares it where it would declare `'org'`:
+
+```ts
+// lib/app/admin-tier.ts
+import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+
+export function initAppOrgTierAdminPages(): void {
+  // Who holds it: answer for viewer.orgId, from the fork's own rows.
+  registerAdminTier('page_designs', {
+    holds: async (viewer) => {
+      const { agencyHoldsArea } = await import('@/lib/app/agency-access');
+      return agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs');
+    },
+    landing: '/admin/designs', // where /admin sends a holder
+  });
+  // Register the tier first, then its pages.
+  registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+  registerOrgTierAdminPage('/admin/designs/[id]', { tier: 'page_designs' });
+}
+```
+
+| Surface  | Declaration                                                      | Listed in                                              |
+| -------- | ---------------------------------------------------------------- | ------------------------------------------------------ |
+| API      | `withAdminAuth(handler, { tier: 'page_designs', ownership: … })` | `lib/app/admin-tier-routes.ts`, as an `'org'` route is |
+| Page     | `registerOrgTierAdminPage(pattern, { tier: 'page_designs' })`    | the registration is the listing                        |
+| Nav item | `tier: 'page_designs'` on the `NavItem` (`lib/app/admin-nav.ts`) | (none)                                                 |
+
+**Who opens a named-tier surface.** The default policy admits:
+
+- the org's `OWNER`/`ADMIN`, as on an `'org'` surface, without asking `holds()`.
+  This is the owner's ruling on t-999. It means moving a page from `'org'` to a
+  named tier only adds people, and never locks the client's own admins out of
+  it;
+- whoever `holds(viewer)` says holds the tier;
+- a platform admin, as everywhere.
+
+**What a holder does not open.** `holds()` is asked about the tier the surface
+declared, and only for a named one, so a holder opens:
+
+- no `'org'` surface, core's or the fork's;
+- no platform surface;
+- no other named tier's surface, unless they hold that tier too.
+
+Every rule of the `'org'` tier applies as well: the policy admits only at
+`multi`, only a browser session, only acting in an org, and never on a
+resource that names another org. **A tier nobody registered admits nobody,
+org admins included**, so a misspelt tier on a route is a route that stays
+shut.
+
+**`holds()` is the fork's lookup.** It is called only for a session at `multi`
+acting in `viewer.orgId` who is not already an org admin or platform admin.
+It may be async. It is handed a frozen copy of the principal. Load your
+lookup with `await import(…)` inside `holds()`, not a static import at the top
+of `lib/app/admin-tier.ts`: the policy imports that scaffold to read the
+registry, so a static import of a module that imports the guards or the policy
+is an import cycle, and fails at boot if anything in it reads them at module
+scope. A throw, or any
+answer but `true`, is a no, and a throw is logged with the tier. The layout
+asks every tier on a full load (`requestAdminReach()` in
+`lib/auth/admin-page-viewer.ts`, once per request), so for a MEMBER it runs
+once per registered tier per page load. Keep it to one indexed read.
+
+**Which tier a page is in** is decided by the one pattern Next.js serves it by
+(`adminPageTierOf()`): at the first segment where two patterns differ, a
+literal one beats `[x]`. Without that, a holder of `/admin/designs/[id]` would
+be let into an `'org'` page `/admin/designs/settings` beside it, because the
+`[id]` pattern names that URL too.
+
+**What the console shows them.** The layout works out the viewer's reach: the
+tiers the policy admitted them to. It hands that to `<AdminTierGate>` and
+`<AdminSidebar>` with the named pages (`namedTierAdminPages()`). The sidebar
+shows a holder only the items marked with a tier they hold, over a page in a
+tier they hold. `/admin` sends a holder who is not an org admin to their
+first tier's `landing`, in registration order. A tier with no `landing` sends
+them to its first registered page with no `[x]` segment. A landing must be a
+literal page registered for that tier. One that is not is ignored, logged
+once, and fails the roster test, and the default is used instead. Only a
+holder whose tiers have no literal page at all is refused `/admin`, as any
+MEMBER is. A fork that lists the client orgs someone belongs to, as an
+org switcher does, should send a holder to a page their tier opens.
+
+**What the registrar refuses**, so no named tier can widen `'org'`:
+
+- the names `'org'` and `'platform'`, or anything but lower-case letters,
+  digits, `_` and `-` (a letter first, at most 48 characters);
+- a page whose tier is not registered yet;
+- a page already listed for another tier (a page is in one tier);
+- a page in one of `CORE_ADMIN_SECTIONS`, as for every fork page.
+
+Registering a name again replaces its definition, as `registerNavSection()`
+replaces a section, so a hot reload of the scaffold under `next dev` takes the
+new `holds()`. Anything the init registers rolls back with its pages if the
+init throws.
+
+**The roster test covers named tiers.** It fails on:
+
+- a route, or a nav item, that names a tier nobody registered;
+- a core-listed route that declares a named tier, because core's routes are
+  `'org'`;
+- a nav item marked with a named tier over a page of another tier, or marked
+  `'org'` over a named-tier page, which that tier's holders would never see;
+- a landing that is not its own tier's page.
+
+It also holds named-tier routes and pages to every check an `'org'` one meets.
+
+**If you replace `canAdminister`,** a named tier arrives as `scope.tier`, the
+same as `'org'`. Delegate to `DEFAULT_AUTHORIZATION_POLICY.canAdminister`
+for tiers you do not answer yourself, or the named tier admits nobody. That is
+the safe failure.
+
+`lib/auth/admin-tier.ts` imports nothing at runtime (one type compiles away),
+so the scaffold can import the registrar from it and `proxy.ts` its header name
+without either pulling the fork's scaffold in.
 
 ---
 
@@ -344,7 +461,7 @@ count** — three ask `canAdminister`, one asks `canRead`:
 | Chokepoint                             | Face            | What it gates                                                                                                                                                                                |
 | -------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `withAdminAuth` (`lib/auth/guards.ts`) | `canAdminister` | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                                                                                                    |
-| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree, asked with `tier: 'org'` on a page listed in `ORG_TIER_ADMIN_PAGES` ([Admin tiers](#admin-tiers))                                                              |
+| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree, asked once per tier (`'org'` and each named tier, t-999) and judged by the page's own tier ([Admin tiers](#admin-tiers))                                       |
 | `components/maintenance-wrapper.tsx`   | `canAdminister` | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site                                                                          |
 | `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them; all but one declare no `resource` resolver, so it is asked about `{ kind: 'nothing' }`. The exception is `app/api/v1/users/[id]` (GET) |
 

@@ -8,11 +8,25 @@
  * And the fork's registrar (t-817): what it refuses, so that a fork's list
  * cannot reach a page core owns. Running the fork's init is
  * `org-tier-admin-pages.test.ts`.
+ *
+ * And named tiers (t-999): what `registerAdminTier()` refuses, so no named
+ * tier can widen `'org'`; which tier a page is in, by the pattern Next.js
+ * serves it by; and who reaches which page, swept over core's whole roster.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 
 import {
+  ADMIN_INDEX_PATH,
   adminPageTier,
+  adminPageTierOf,
+  mostSpecificAdminPagePattern,
+  reachesAdminPage,
+  registerAdminTier,
+  registeredAppNamedTierAdminPages,
+  registeredNamedAdminTiers,
+  restoreNamedAdminTiers,
+  type AdminReach,
+  type NamedTierAdminPage,
   adminSectionOf,
   CLOSABLE_CORE_ORG_TIER_SECTIONS,
   closeCoreOrgTierSection,
@@ -27,11 +41,11 @@ import {
   registeredAppOrgTierAdminPages,
   registerOrgTierAdminPage,
   restoreAppOrgTierAdminPages,
-  viewerReaches,
 } from '@/lib/auth/admin-tier';
 
 afterEach(() => {
   restoreAppOrgTierAdminPages([]);
+  restoreNamedAdminTiers([]);
   restoreClosedCoreOrgTierSections([]);
 });
 
@@ -85,16 +99,6 @@ describe('adminPageTier', () => {
     expect(adminPageTier('/admin/orchestration/providers', core)).toBeNull();
     expect(adminPageTier('/admin/orchestration/knowledge/tags', core)).toBeNull();
     expect(adminPageTier('/admin/users', core)).toBeNull();
-  });
-});
-
-describe('viewerReaches', () => {
-  it('lets a platform viewer reach every surface and an org viewer the org-tier ones only', () => {
-    expect(viewerReaches('platform', null)).toBe(true);
-    expect(viewerReaches('platform', 'org')).toBe(true);
-    expect(viewerReaches('org', 'org')).toBe(true);
-    expect(viewerReaches('org', null)).toBe(false);
-    expect(viewerReaches('org', undefined)).toBe(false);
   });
 });
 
@@ -278,5 +282,216 @@ describe('effectiveRouteTier', () => {
 
   it('never widens an undeclared route', () => {
     expect(effectiveRouteTier(undefined, '/api/v1/admin/leads', ['orchestration'])).toBeUndefined();
+  });
+});
+
+const holds = (): boolean => true;
+
+describe('registerAdminTier (t-999)', () => {
+  it('registers a tier, once, in registration order', () => {
+    registerAdminTier('page_designs', { holds, landing: '/admin/designs' });
+    registerAdminTier('media', { holds });
+    // The same definition again is a no-op, as under HMR.
+    registerAdminTier('media', { holds });
+    expect(registeredNamedAdminTiers().map(([name]) => name)).toEqual(['page_designs', 'media']);
+    expect(registeredNamedAdminTiers()[0][1]).toEqual({ holds, landing: '/admin/designs' });
+    expect(Object.isFrozen(registeredNamedAdminTiers()[0][1])).toBe(true);
+  });
+
+  it.each([
+    ['org', /reserved/],
+    ['platform', /reserved/],
+    ['Org', /not a tier name/],
+    ['page designs', /not a tier name/],
+    ['1st', /not a tier name/],
+    ['', /not a tier name/],
+    ['a'.repeat(49), /not a tier name/],
+  ])('refuses the name %j, so no named tier reads as core’s', (name, why) => {
+    expect(() => registerAdminTier(name, { holds })).toThrow(why);
+    expect(registeredNamedAdminTiers()).toEqual([]);
+  });
+
+  it('refuses a tier with no holds(), or with a landing that is not a plain admin path', () => {
+    expect(() => registerAdminTier('media', {} as unknown as { holds: () => boolean })).toThrow(
+      /no holds\(\)/
+    );
+    for (const landing of ['/designs', '/admin/designs/[id]', '/admin/designs/', '/admin/x?y=1']) {
+      expect(() => registerAdminTier('media', { holds, landing })).toThrow(/landing/);
+    }
+    expect(registeredNamedAdminTiers()).toEqual([]);
+  });
+
+  it('replaces a definition registered again, as a hot reload of the scaffold does', () => {
+    registerAdminTier('media', { holds });
+    const view = registeredNamedAdminTiers();
+    const reloaded = (): boolean => false;
+    registerAdminTier('media', { holds: reloaded, landing: '/admin/media' });
+    // One tier, in its first place, answering with the new holds().
+    expect(registeredNamedAdminTiers()).toEqual([
+      ['media', { holds: reloaded, landing: '/admin/media' }],
+    ]);
+    expect(registeredNamedAdminTiers()).not.toBe(view);
+  });
+});
+
+describe('registerOrgTierAdminPage with a tier (t-999)', () => {
+  it('lists a page for a registered named tier, among the pages an org admin opens', () => {
+    registerAdminTier('page_designs', { holds });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    registerOrgTierAdminPage('/admin/designs/settings');
+    expect(registeredAppOrgTierAdminPages()).toEqual(['/admin/designs', '/admin/designs/settings']);
+    expect(registeredAppNamedTierAdminPages()).toEqual([
+      { pattern: '/admin/designs', tier: 'page_designs' },
+    ]);
+  });
+
+  it('refuses a tier nobody registered first, opening nothing', () => {
+    expect(() => registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' })).toThrow(
+      /register the tier before its pages/
+    );
+    expect(registeredAppOrgTierAdminPages()).toEqual([]);
+  });
+
+  it('refuses a page in two tiers, either way round', () => {
+    registerAdminTier('page_designs', { holds });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    expect(() => registerOrgTierAdminPage('/admin/designs')).toThrow(/already listed for tier/);
+    registerOrgTierAdminPage('/admin/leads');
+    expect(() => registerOrgTierAdminPage('/admin/leads', { tier: 'page_designs' })).toThrow(
+      /already listed for tier "org"/
+    );
+    // Listing again for the same tier is a no-op.
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    expect(registeredAppNamedTierAdminPages()).toHaveLength(1);
+  });
+
+  it('keeps a named tier out of core’s sections, as it keeps the org tier out', () => {
+    registerAdminTier('page_designs', { holds });
+    expect(() =>
+      registerOrgTierAdminPage('/admin/orchestration/agents', { tier: 'page_designs' })
+    ).toThrow(/core's/);
+    expect(() => registerOrgTierAdminPage('/admin/users', { tier: 'page_designs' })).toThrow(
+      /core's/
+    );
+  });
+
+  it('restores both lists, and drops a tier for a page the restored list does not hold', () => {
+    registerAdminTier('page_designs', { holds });
+    registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    const pages = registeredAppOrgTierAdminPages();
+    const tiers = registeredAppNamedTierAdminPages();
+    restoreAppOrgTierAdminPages([]);
+    expect(registeredAppNamedTierAdminPages()).toEqual([]);
+    restoreAppOrgTierAdminPages(pages, tiers);
+    expect(registeredAppNamedTierAdminPages()).toEqual(tiers);
+    restoreAppOrgTierAdminPages([], tiers);
+    expect(registeredAppNamedTierAdminPages()).toEqual([]);
+  });
+});
+
+describe('adminPageTierOf (t-999)', () => {
+  const NAMED: NamedTierAdminPage[] = [
+    { pattern: '/admin/designs/[id]', tier: 'page_designs' },
+    { pattern: '/admin/designs', tier: 'page_designs' },
+  ];
+  const PAGES = [
+    '/admin/designs',
+    '/admin/designs/[id]',
+    '/admin/designs/settings',
+    '/admin/leads',
+  ];
+
+  it('names the tier a page was registered for, and org for the rest of the list', () => {
+    expect(adminPageTierOf('/admin/designs', PAGES, NAMED)).toBe('page_designs');
+    expect(adminPageTierOf('/admin/designs/d1', PAGES, NAMED)).toBe('page_designs');
+    expect(adminPageTierOf('/admin/leads', PAGES, NAMED)).toBe('org');
+    expect(adminPageTierOf('/admin/users', PAGES, NAMED)).toBeNull();
+    expect(adminPageTierOf(null, PAGES, NAMED)).toBeNull();
+  });
+
+  it('resolves a page by the pattern Next.js serves it by, so a named [id] opens no org page beside it', () => {
+    // `/admin/designs/[id]` names `/admin/designs/settings` too; Next.js
+    // serves the literal page, which is the org's.
+    expect(matchesAdminPagePattern('/admin/designs/[id]', '/admin/designs/settings')).toBe(true);
+    expect(adminPageTierOf('/admin/designs/settings', PAGES, NAMED)).toBe('org');
+    // …whichever order the patterns were listed in.
+    expect(adminPageTierOf('/admin/designs/settings', [...PAGES].reverse(), NAMED)).toBe('org');
+  });
+
+  it('prefers a literal segment at the first place two patterns differ', () => {
+    const pages = ['/admin/a/[x]/c', '/admin/a/b/[y]', '/admin/a/[x]/[y]'];
+    expect(mostSpecificAdminPagePattern('/admin/a/b/c', pages)).toBe('/admin/a/b/[y]');
+    expect(mostSpecificAdminPagePattern('/admin/a/z/c', pages)).toBe('/admin/a/[x]/c');
+    expect(mostSpecificAdminPagePattern('/admin/a/z/q', pages)).toBe('/admin/a/[x]/[y]');
+    expect(mostSpecificAdminPagePattern('/admin/b', pages)).toBeNull();
+  });
+
+  it('with nothing named, answers as adminPageTier does', () => {
+    for (const path of ['/admin/orchestration/agents/a1', '/admin/users', '/admin']) {
+      expect(adminPageTierOf(path, ORG_TIER_ADMIN_PAGES, [])).toBe(
+        adminPageTier(path, ORG_TIER_ADMIN_PAGES)
+      );
+    }
+  });
+});
+
+describe('reachesAdminPage (t-999)', () => {
+  const NAMED: NamedTierAdminPage[] = [{ pattern: '/admin/designs/[id]', tier: 'page_designs' }];
+  const PAGES = [...ORG_TIER_ADMIN_PAGES, '/admin/designs/[id]', '/admin/designs/settings'];
+  /** A concrete URL for a pattern: each `[x]` becomes `x1`. */
+  const urlOf = (pattern: string) => pattern.replace(/\[([^\]]+)\]/g, '$11');
+  const reaches = (reach: AdminReach, path: string) =>
+    reachesAdminPage(reach, path, adminPageTierOf(path, PAGES, NAMED));
+
+  const HOLDER: AdminReach = { tiers: ['page_designs'], landing: '/admin/designs' };
+  const ORG_ADMIN: AdminReach = { tiers: ['org', 'page_designs'], landing: null };
+
+  it('opens a holder their tier’s page', () => {
+    expect(reaches(HOLDER, '/admin/designs/d1')).toBe(true);
+  });
+
+  it('opens a holder no org-tier page on core’s whole roster, and no platform page', () => {
+    // Every core org-tier page, as a URL, but `/admin` (below).
+    const orgPages = ORG_TIER_ADMIN_PAGES.filter((p) => p !== ADMIN_INDEX_PATH).map(urlOf);
+    expect(orgPages.length).toBeGreaterThan(30);
+    for (const path of [...orgPages, '/admin/designs/settings']) {
+      expect([path, reaches(HOLDER, path)]).toEqual([path, false]);
+    }
+    for (const path of ['/admin/users', '/admin/overview', '/admin/orgs', '/admin/logs']) {
+      expect([path, reaches(HOLDER, path)]).toEqual([path, false]);
+    }
+  });
+
+  it('opens a holder no page of a tier they do not hold', () => {
+    const other: AdminReach = { tiers: ['media'], landing: null };
+    expect(reaches(other, '/admin/designs/d1')).toBe(false);
+  });
+
+  it('lets a holder with a landing through /admin, which only sends them on — and one without, not', () => {
+    expect(reaches(HOLDER, ADMIN_INDEX_PATH)).toBe(true);
+    expect(reaches({ tiers: ['page_designs'], landing: null }, ADMIN_INDEX_PATH)).toBe(false);
+    // Only /admin itself: not a page below it.
+    expect(reaches(HOLDER, '/admin/orchestration')).toBe(false);
+  });
+
+  it('opens an org admin the named tier’s page and the org pages, and a platform admin everything', () => {
+    for (const path of [
+      '/admin/designs/d1',
+      '/admin/designs/settings',
+      '/admin/members',
+      '/admin',
+    ]) {
+      expect(reaches(ORG_ADMIN, path)).toBe(true);
+    }
+    expect(reaches(ORG_ADMIN, '/admin/users')).toBe(false);
+    expect(reaches('platform', '/admin/users')).toBe(true);
+    expect(reaches('platform', '/admin/designs/d1')).toBe(true);
+  });
+
+  it('opens nothing to a viewer the policy admitted to no tier', () => {
+    const none: AdminReach = { tiers: [], landing: null };
+    for (const path of ['/admin', '/admin/members', '/admin/designs/d1', '/admin/users']) {
+      expect(reaches(none, path)).toBe(false);
+    }
   });
 });

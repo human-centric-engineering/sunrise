@@ -802,7 +802,8 @@ uppercase label, pass `titleNode` (any `ReactNode`); `title` stays required and
 remains the React key, the registry's dedupe key, and the heading's accessible
 name, so a wordmark image can't cost you the label. An item is shown to platform admins
 only unless it carries `tier: 'org'`, which also shows it to an org OWNER/ADMIN
-at `multi`. Mark it only when the page and the routes behind it are org-tier
+at `multi`, or one of your named tiers, which also shows it to that tier's
+holders (see named tiers below). Mark it only when the page and the routes behind it are org-tier
 too (see [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers)).
 
 **Org-tier admin pages — `lib/app/admin-tier.ts`.** Every admin page is the
@@ -859,6 +860,45 @@ org admins. A platform admin's console is unchanged. With no
 `appOrgAdminLandingRoute`, `/admin` sends an org admin to Members. If the init
 throws, nothing is closed.
 
+**A narrower audience: named tiers.** Org roles stop at OWNER / ADMIN /
+MEMBER. When people who are not the org's admins need a few of its pages, such
+as an agency's designers working in a client's org, register a named tier in
+the same init. Say who holds it, then declare it on those pages:
+
+```ts
+// lib/app/admin-tier.ts
+import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+
+export function initAppOrgTierAdminPages(): void {
+  registerAdminTier('page_designs', {
+    // Answer for viewer.orgId, from your own rows. Import the lookup inside
+    // holds(): the policy imports this file, so a static import that reaches
+    // the guards or the policy is an import cycle.
+    holds: async (viewer) => {
+      const { agencyHoldsArea } = await import('@/lib/app/agency-access');
+      return agencyHoldsArea(viewer.orgId, viewer.userId, 'page_designs');
+    },
+    // Optional: where /admin sends a holder. Defaults to the tier's first
+    // page with no [x] segment.
+    landing: '/admin/designs',
+  });
+  registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+  registerOrgTierAdminPage('/admin/designs/[id]', { tier: 'page_designs' });
+}
+```
+
+Declare the same tier on the routes those pages call,
+`withAdminAuth(handler, { tier: 'page_designs', ownership })`, listed in
+`lib/app/admin-tier-routes.ts` like any other. Declare it on their nav items
+too, with `tier: 'page_designs'`. The org's OWNER/ADMIN open a named-tier page
+as they open an `'org'` one, so moving a page from `'org'` to a named tier
+only adds people. A holder opens their tier's pages and routes and nothing
+else: no `'org'` surface, no platform surface, no other tier's. Register the
+tier before its pages. The registrar throws on `'org'`, on `'platform'`, on a
+page whose tier is not registered, and on a page already listed for another
+tier. A tier nobody registered admits nobody. See
+[Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
+
 **Org-tier admin routes — `lib/app/admin-tier-routes.ts`.** A route opens to
 an org admin at its call site, `withAdminAuth(handler, { tier: 'org',
 ownership })`, and the roster test fails until it is listed. List yours here,
@@ -876,8 +916,8 @@ Each entry is the file's path from the repo root, `#`, then the HTTP method,
 or the name of a wrapper that bakes the tier in (list the wrapper, not each
 route that uses it). Nothing reads the list at runtime; it is how the opening
 shows in your diff. The roster test fails if a listed entry does not declare
-`tier: 'org'`, if one that declares it is listed nowhere, or if it has no
-`ownership`.
+`tier: 'org'` or a registered named tier, if one that declares it is listed
+nowhere, or if it has no `ownership`.
 
 **Where an org admin lands — `lib/app/admin-landing.ts`.** `/admin` sends an
 org OWNER/ADMIN to the orchestration dashboard. Point it elsewhere with

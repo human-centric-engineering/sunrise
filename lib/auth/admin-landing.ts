@@ -14,6 +14,10 @@
  * not used: `/admin` logs why and falls back to the platform default, and the
  * roster test fails on the same check, so the fork hears of it in CI first.
  *
+ * Someone who holds a fork's named tiers and is not an org admin (t-999)
+ * lands on the `landing` their first tier names ({@link heldTierLanding}),
+ * held to the same rule against that tier's own pages.
+ *
  * Server only: it reads the roster through `orgTierAdminPages()`, which runs
  * the fork's page init.
  *
@@ -22,7 +26,17 @@
  */
 import { logger } from '@/lib/logging';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
-import { orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
+import {
+  namedAdminTier,
+  namedAdminTiers,
+  namedTierAdminPages,
+  orgTierAdminPages,
+} from '@/lib/auth/org-tier-admin-pages';
+import {
+  isPlainAdminPath,
+  type DeclaredAdminTier,
+  type NamedTierAdminPage,
+} from '@/lib/auth/admin-tier';
 
 /** Where a platform admin lands. */
 export const PLATFORM_ADMIN_LANDING = '/admin/overview';
@@ -37,25 +51,27 @@ export const DEFAULT_ORG_ADMIN_LANDING = '/admin/orchestration';
  */
 export const CLOSED_DEFAULT_ORG_ADMIN_LANDING = '/admin/members';
 
-/** One literal segment of a URL path: no query, fragment, or `[x]`. */
-const LITERAL_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+/**
+ * Why `route` is not a plain path under `/admin/` — the first rule every
+ * landing meets, org admin's or named tier's — or `null` when it is.
+ */
+function plainPathProblem(route: unknown): string | null {
+  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
+    return 'is not a path under /admin/.';
+  }
+  if (!isPlainAdminPath(route)) {
+    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
+  }
+  return null;
+}
 
 /**
  * Why an org admin could not land on this page, or `null` when they can.
  * Judges against the org-tier page patterns it is handed.
  */
 export function orgAdminLandingProblem(route: unknown, pages: readonly string[]): string | null {
-  if (typeof route !== 'string' || !route.startsWith('/admin/')) {
-    return 'is not a path under /admin/.';
-  }
-  if (
-    !route
-      .split('/')
-      .slice(2)
-      .every((segment) => LITERAL_SEGMENT.test(segment))
-  ) {
-    return 'is not a plain path: literal segments only, with no trailing slash, query, fragment or [x].';
-  }
+  const pathProblem = plainPathProblem(route);
+  if (pathProblem !== null || typeof route !== 'string') return pathProblem;
   // Exactly a listed page, not a URL an `[x]` pattern also names: a concrete
   // `/admin/workflows/abc123` is one org's row, a not-found for every other.
   if (!pages.includes(route)) {
@@ -85,4 +101,61 @@ export function orgAdminLanding(): string {
     return defaultOrgAdminLanding(pages);
   }
   return route;
+}
+
+/**
+ * Why `route` cannot be where `/admin` sends a holder of `tier` (t-999), or
+ * `null` when it can: a plain `/admin/…` path, registered for that tier word
+ * for word. A page of another tier would turn the holder away on arrival, and
+ * a concrete URL of an `[x]` page is one row of one org.
+ */
+export function namedTierLandingProblem(
+  tier: string,
+  route: unknown,
+  named: readonly NamedTierAdminPage[]
+): string | null {
+  const pathProblem = plainPathProblem(route);
+  if (pathProblem !== null || typeof route !== 'string') return pathProblem;
+  if (!named.some((page) => page.pattern === route && page.tier === tier)) {
+    return `is not a page registered for tier ${JSON.stringify(tier)}. Name one registered with registerOrgTierAdminPage(pattern, { tier: ${JSON.stringify(tier)} }), word for word.`;
+  }
+  return null;
+}
+
+/** Landings already logged as unusable, so a misconfigured one is said once per process, not per request. */
+const loggedLandingProblems = new Set<string>();
+
+/** Test-only: forget which landings were logged, so a test sees its own log line. */
+export function __resetLandingLogForTests(): void {
+  loggedLandingProblems.clear();
+}
+
+/**
+ * Where `/admin` sends someone who holds these tiers and not `'org'` (t-999):
+ * for the first named tier they hold, in registration order, its `landing`,
+ * or, when it names none, the first page registered for it that has no `[x]`
+ * segment. A `landing` that is not one of the tier's own literal pages is
+ * logged once and passed over for that default. `null` only when no tier they
+ * hold has a literal page — then `/admin` is not theirs to open, as it is not
+ * any MEMBER's.
+ */
+export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | null {
+  if (held.length === 0) return null;
+  const named = namedTierAdminPages();
+  for (const tier of namedAdminTiers()) {
+    if (!held.includes(tier)) continue;
+    const route = namedAdminTier(tier)?.landing;
+    if (route !== undefined) {
+      const problem = namedTierLandingProblem(tier, route, named);
+      if (problem === null) return route;
+      const key = JSON.stringify([tier, route]);
+      if (!loggedLandingProblems.has(key)) {
+        loggedLandingProblems.add(key);
+        logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
+      }
+    }
+    const first = named.find((page) => page.tier === tier && isPlainAdminPath(page.pattern));
+    if (first) return first.pattern;
+  }
+  return null;
 }

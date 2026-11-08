@@ -16,6 +16,47 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **A fork can open some admin pages to people narrower than an org admin
+  (t-999, #1180).** Until now an admin page opened to the platform's admins,
+  or also to the org's OWNER/ADMIN, and nothing in between. So a client's
+  agency could not be given the client's design pages without making them an
+  admin of the whole org. `registerAdminTier(name, { holds, landing? })` in
+  `lib/auth/admin-tier.ts`, called from `initAppOrgTierAdminPages()`,
+  registers a named tier and says who holds it in the entered org. Declare it
+  where you declare `'org'`: `registerOrgTierAdminPage(pattern, { tier })`,
+  `withAdminAuth(handler, { tier })` and `NavItem.tier`. The default policy
+  admits the org's OWNER/ADMIN to a named-tier surface as to an `'org'` one,
+  and the tier's holders to that tier's surfaces only: no `'org'` surface, no
+  platform one, no other tier's. A tier nobody registered admits nobody. The
+  layout now asks the policy once per tier and judges each page by its own
+  tier; `/admin` sends a holder to their tier's `landing`, or else its first
+  page with no `[x]` segment. The roster test
+  checks named tiers as it checks `'org'`. Behaviour-neutral until a fork
+  registers one. **Forks:** if you replace `canAdminister`, a named tier
+  arrives as `scope.tier`; delegate to `DEFAULT_AUTHORIZATION_POLICY` for
+  tiers you do not answer. If you pinned the `lib/app/admin-tier.ts` row in
+  `tests/unit/lib/app/defaults.test.ts`, it gains a `namedAdminTiers()` line.
+  See `.context/auth/authorization.md` ("Named tiers").
+
+### Changed
+
+- **`<AdminSidebar>` and `<AdminTierGate>` take `reach` instead of
+  `viewerTier`, and an optional `namedTierPages` (t-999).** `reach` is what
+  the layout's new `requestAdminReach()` (`lib/auth/admin-page-viewer.ts`)
+  returns: `'platform'`, or the tiers the policy admitted the viewer to.
+  **Forks:** a fork that renders its own admin layout passes
+  `reach={await requestAdminReach()}` where it passed `viewerTier`, and
+  `namedTierPages={namedTierAdminPages()}` beside `orgTierPages`.
+  `adminPageViewerTier()` is unchanged.
+
+### Removed
+
+- **`viewerReaches()` from `lib/auth/admin-tier.ts` (t-999).** Nothing read it
+  once the gate and sidebar moved to `reachesTier()`. A fork that called it
+  uses `reachesTier(reach, tier)` instead.
+
 ### Security
 
 - **A form submitted before the page had loaded put its fields in the URL.** A

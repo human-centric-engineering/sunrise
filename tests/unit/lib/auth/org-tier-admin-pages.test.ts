@@ -22,6 +22,7 @@ import {
   adminPageTier,
   closeCoreOrgTierSection,
   ORG_TIER_ADMIN_PAGES,
+  registerAdminTier,
   registerOrgTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import {
@@ -29,6 +30,9 @@ import {
   appOrgTierAdminPagesInitState,
   closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
+  namedAdminTier,
+  namedAdminTiers,
+  namedTierAdminPages,
   orgScopedAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
@@ -188,6 +192,74 @@ describe('closing a core section to org admins (t-929)', () => {
       expect.stringContaining('initAppOrgTierAdminPages threw'),
       expect.objectContaining({
         error: expect.stringContaining('not a core section a fork may close'),
+      })
+    );
+  });
+});
+
+describe('named tiers (t-999)', () => {
+  const holds = (): boolean => true;
+
+  it('registers none as shipped', () => {
+    expect(namedAdminTiers()).toEqual([]);
+    expect(namedTierAdminPages()).toEqual([]);
+    expect(namedAdminTier('page_designs')).toBeUndefined();
+  });
+
+  it('reads the tiers and their pages through the same lazy init, once', () => {
+    const init = vi.fn(() => {
+      registerAdminTier('page_designs', { holds, landing: '/admin/designs' });
+      registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+      registerOrgTierAdminPage('/admin/leads');
+    });
+    fork.init = init;
+
+    expect(namedAdminTiers()).toEqual(['page_designs']);
+    expect(namedAdminTier('page_designs')).toEqual({ holds, landing: '/admin/designs' });
+    expect(namedTierAdminPages()).toEqual([{ pattern: '/admin/designs', tier: 'page_designs' }]);
+    // An org admin opens the named tier's page too, so it is on their list,
+    // and it shows one org's rows, so the header names the org on it.
+    expect(orgTierAdminPages()).toEqual([
+      ...ORG_TIER_ADMIN_PAGES,
+      '/admin/designs',
+      '/admin/leads',
+    ]);
+    expect(orgScopedAdminPages()).toContain('/admin/designs');
+    expect(init).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls a tier back with its pages when the init throws part-way, and says so', () => {
+    fork.init = () => {
+      registerAdminTier('page_designs', { holds });
+      registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+      throw new Error('boom');
+    };
+
+    expect(namedAdminTiers()).toEqual([]);
+    expect(namedAdminTier('page_designs')).toBeUndefined();
+    expect(namedTierAdminPages()).toEqual([]);
+    expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
+    expect(appOrgTierAdminPagesInitState()).toBe('failed');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('initAppOrgTierAdminPages threw'),
+      expect.objectContaining({ error: expect.stringContaining('boom') })
+    );
+  });
+
+  it('rolls everything back when the init declares a page for a tier it never registered', () => {
+    fork.init = () => {
+      registerAdminTier('media', { holds });
+      registerOrgTierAdminPage('/admin/media', { tier: 'media' });
+      registerOrgTierAdminPage('/admin/designs', { tier: 'page_designs' });
+    };
+
+    expect(namedAdminTiers()).toEqual([]);
+    expect(namedTierAdminPages()).toEqual([]);
+    expect(getAppOrgTierAdminPages()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('initAppOrgTierAdminPages threw'),
+      expect.objectContaining({
+        error: expect.stringContaining('register the tier before its pages'),
       })
     );
   });
