@@ -16,7 +16,9 @@
  *   - the subject context (`lib/auth/subject-context.ts`), which narrows owner-scoped reads. Split,
  *     the other graph answers `none`, and `none` is not narrowed;
  *   - the paid-call hold (`lib/orchestration/llm/spend-caps.ts`). Split, a capability's paid call
- *     misses the hold its turn set.
+ *     misses the hold its turn set;
+ *   - the log buffer's tenancy resolver (`lib/admin/logs.ts`). Split, a graph that never loaded
+ *     the tenancy module stamps a line logged inside an org with `null`.
  *
  * Each case fails against a module-level store. The `globalThis` slots are put back after every
  * case, so each one creates its stores afresh.
@@ -24,14 +26,24 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 
 vi.mock('@/lib/env', () => ({ env: { TENANCY_MODE: 'multi' } }));
-// Every cap read fails against this client and is skipped, so a refusal can only come from the hold.
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
+// No global cap is set, and at multi a call outside any org has no org cap, so only the hold can
+// refuse a paid call here.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() => Promise.resolve({ globalMonthlyBudgetUsd: null })),
+  invalidateOrchestrationSettingsCache: vi.fn(),
+}));
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 const ORG = 'cmorg00000000000000000orga';
-const SLOTS = ['sunriseTenantContext', 'sunriseSubjectContext', 'sunrisePaidCallHold'] as const;
+const SLOTS = [
+  'sunriseTenantContext',
+  'sunriseSubjectContext',
+  'sunrisePaidCallHold',
+  'sunriseLogTenancy',
+] as const;
 
 const NO_UNATTRIBUTED_READS = {
   conversation: false,
@@ -143,9 +155,30 @@ describe('the paid-call hold across two evaluations of its module', () => {
       refusals.push(refusal);
     }
 
-    // From the hold, not the global or org cap: those reads fail against the empty client and are
-    // skipped, so only the hold can refuse here.
     expect(refusals).toHaveLength(1);
     expect(refusals[0]).toMatchObject({ cap: 'agent' });
+  });
+
+  it('the same paid call goes ahead with no hold set', async () => {
+    const capability = await fresh(load);
+
+    // The control for the case above: nothing but the hold refuses in this setup.
+    await expect(capability.spendCapRefusal('openai', false)).resolves.toBeNull();
+  });
+});
+
+describe('the log tenancy resolver across two evaluations of its modules', () => {
+  it('a graph that never loaded the tenancy module stamps the org a route entered', async () => {
+    const route = await fresh(() => import('@/lib/tenancy/context'));
+    // A graph holding only the log buffer: the resolver the route graph registered must reach it.
+    const logs = await fresh(() => import('@/lib/admin/logs'));
+    logs.clearLogBuffer();
+
+    await route.runAsOrg(ORG, async () => {
+      logs.addLogEntry({ timestamp: new Date().toISOString(), level: 'info', message: 'in org' });
+    });
+
+    const [entry] = await route.runAsOrg(ORG, async () => logs.getLogEntries({}).entries);
+    expect(entry).toMatchObject({ message: 'in org', orgId: ORG });
   });
 });

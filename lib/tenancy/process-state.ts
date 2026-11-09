@@ -545,9 +545,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/admin/logs.ts',
-    holders: ['tenancy'],
+    holders: ['globalForLogTenancy'],
     posture: 'no-tenant-data',
-    why: "The resolver `lib/tenancy/context.ts` registers so the buffer can stamp and filter without importing it — two functions, no org data of its own (§108 t-714). Module-local on purpose: each module graph registers its own resolver. The store those resolvers read is one process-wide store on globalThis (the `lib/tenancy/context.ts` row, #1138), so every graph's resolver answers the org of the current call stack.",
+    why: 'The resolver `lib/tenancy/context.ts` registers so the buffer can stamp and filter without importing it — two functions, no org data of its own (§108 t-714). On globalThis (#1138), like the tenant store it reads: that store is one per process, so one resolver serves every module graph, including one that logs without loading the tenancy module.',
   },
   {
     file: 'lib/logging/index.ts',

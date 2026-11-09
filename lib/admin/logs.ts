@@ -51,10 +51,11 @@
  *
  * So the dependency is inverted: `lib/tenancy/context.ts` — which is
  * server-only and already imports the logger — registers a resolver here at
- * its module scope. The resolver is module-local: each module graph registers
- * its own. The store every resolver reads is one process-wide store on
- * `globalThis` (#1138), so a line logged from any graph is stamped with the
- * org of the call stack that logged it.
+ * its module scope. The resolver is on `globalThis` (`sunriseLogTenancy`),
+ * like the store it reads (#1138): that store is one per process, so any
+ * module graph's resolver gives the same answer, and sharing it means a graph
+ * that logs without ever loading `lib/tenancy/context.ts` still stamps and
+ * filters by the org of the call stack.
  *
  * Tenancy posture: org-keyed — every entry carries the org it was produced in
  * and the query filters to the reader's (lib/tenancy/process-state.ts).
@@ -73,7 +74,9 @@ export interface LogTenancy {
   multi: () => boolean;
 }
 
-let tenancy: LogTenancy | null = null;
+const globalForLogTenancy = globalThis as unknown as {
+  sunriseLogTenancy?: LogTenancy | null;
+};
 
 /**
  * Teach the buffer whose call stack it is running in. Called by
@@ -93,16 +96,13 @@ let tenancy: LogTenancy | null = null;
  *
  * So there is **one** reader of the mode, the same `isMultiTenant()`
  * everything else uses, reached through this registration — and no resolver
- * means the strict answer. The cost is that a realm which never loaded the
- * tenancy module hides stamped entries it holds; that is `next dev` only
- * (production gives each realm its own ring), it is not a leak, and the
- * reading path — the admin logs route, whose guard imports the tenancy module
- * — always has a resolver.
+ * means the strict answer.
  *
- * **The writer side has the same realm split**: a realm that stamps without a
- * resolver writes `null` onto lines produced inside a real org scope, so in
- * `next dev` at `multi` they vanish from their own org's page. Also not a
- * leak, and also only reachable where the buffer is shared.
+ * The resolver is process-wide (#1138), so once any module graph has loaded
+ * the tenancy module every graph stamps and filters with it. Before that, a
+ * graph that stamps writes `null` and a graph that reads hides stamped
+ * entries. Neither is a leak, and the reading path — the admin logs route,
+ * whose guard imports the tenancy module — always has a resolver.
  *
  * **A timer is stamped where it was armed, not where it fires.** An
  * `AsyncLocalStorage` propagates into `setInterval`, so a timer whose work
@@ -119,7 +119,11 @@ let tenancy: LogTenancy | null = null;
  * transport (§39 t-718), so the rule stands with nothing presently obeying it.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
-  tenancy = bridge;
+  globalForLogTenancy.sunriseLogTenancy = bridge;
+}
+
+function tenancy(): LogTenancy | null {
+  return globalForLogTenancy.sunriseLogTenancy ?? null;
 }
 
 /**
@@ -172,7 +176,7 @@ export function addLogEntry(entry: Omit<LogEntry, 'id'> & { id?: string }): void
     // production caller — the logger's payload type does not carry the field —
     // and what it actually provided was a way for code running in one org to
     // write a line onto another org's Logs page.
-    orgId: tenancy?.orgId() ?? null,
+    orgId: tenancy()?.orgId() ?? null,
     id,
   };
 
@@ -201,11 +205,11 @@ export function getLogEntries(options: {
   // Whose lines these are. The resolver answers `null` rather than throwing —
   // a platform credential at `multi` enters no org and must get an empty page,
   // not a 500.
-  const readerOrgId = tenancy?.orgId() ?? null;
+  const readerOrgId = tenancy()?.orgId() ?? null;
   // Resolved once, not per entry: `isVisibleTo` runs for every line in the
   // ring, and a thousand calls through the registration to answer one question
   // is a thousand answers that cannot differ.
-  const multi = tenancy?.multi() ?? true;
+  const multi = tenancy()?.multi() ?? true;
 
   // The scope filter comes first: `total` is what this reader can see, so the
   // pagination below counts their lines and not the process's.

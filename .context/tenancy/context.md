@@ -93,14 +93,17 @@ a singleton reads: the subject context (`sunriseSubjectContext`,
 With only the tenant store shared, the dispatcher's reads would run in the
 right org, but the subject store would answer `none`, which is not narrowed by
 owner. A loud failure would become a quiet, over-wide read. Sharing the handle
-shares no contents: a scope still covers only its own call stack.
+shares no contents: a scope still covers only its own call stack. The log
+buffer's tenancy resolver (`sunriseLogTenancy`, `lib/admin/logs.ts`) is on
+`globalThis` for the same reason, so a graph that logs without loading this
+module still stamps lines with the org.
 `txScope` (`lib/db/tenancy-extension.ts`) and `invitedSignupContext`
 (`lib/auth/signup-mode.ts`) stay per graph, because each is written and read
 in one graph. Their docblocks and the
 [`process-state.ts`](../../lib/tenancy/process-state.ts) rows say why.
 [`context-shared-store.test.ts`](../../tests/unit/lib/tenancy/context-shared-store.test.ts)
-loads each shared module twice and fails if any of the three goes back to
-module level.
+loads each shared module twice and fails if any of them goes back to module
+level.
 
 - **`getTenantContext()`** — the scope, or `null` when none was entered.
 - **`requireTenantContext()`** — the scope; at `multi` **throws** when none

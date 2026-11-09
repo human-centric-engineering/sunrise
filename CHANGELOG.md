@@ -27,11 +27,14 @@ release process.
   (`sunriseTenantContext`, `sunriseSubjectContext`, `sunrisePaidCallHold`),
   with their exports unchanged. All three move together: sharing only the
   tenant store would have left the subject store answering `none` in the
-  dispatcher's graph, an over-wide read in place of a loud failure. A fork
-  that already carries its own `globalThis` stores under these keys can take
-  upstream's `lib/tenancy/context.ts`, `lib/auth/subject-context.ts`,
-  `lib/orchestration/llm/spend-caps.ts`, `lib/tenancy/process-state.ts`,
-  `lib/db/client.ts` and `lib/admin/logs.ts`.
+  dispatcher's graph, an over-wide read in place of a loud failure. The admin
+  log buffer's tenancy resolver moves to `globalThis` too
+  (`sunriseLogTenancy`), so a module graph that never loaded the tenancy
+  module still stamps and filters log lines by org. If your fork already
+  patched these stores onto `globalThis` under the same keys, resolve the
+  store declarations in `lib/tenancy/context.ts`,
+  `lib/auth/subject-context.ts` and `lib/orchestration/llm/spend-caps.ts`, and
+  the resolver in `lib/admin/logs.ts`, by taking upstream's.
   `tests/unit/lib/tenancy/context-shared-store.test.ts` loads each module
   twice to prove it.
 
