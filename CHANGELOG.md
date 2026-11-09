@@ -119,11 +119,10 @@ release process.
 ### Security
 
 - **A form submitted before the page had loaded put its fields in the URL
-  (t-998).** A
-  server-rendered `<form>` with an `onSubmit` and no `method` is a working HTML
-  form until React attaches, so a press on a slow load, with a script blocked,
-  or with JavaScript off was a GET carrying every named field, passwords and
-  reset tokens included. Those URLs reach browser history and the logs of any
+  (t-998).** A server-rendered `<form>` with an `onSubmit` and no `method` is a
+  working HTML form until React attaches, so a press on a slow load, with a
+  script blocked, or with JavaScript off was a GET carrying every named field,
+  passwords and reset tokens included. Those URLs reach browser history and the logs of any
   host, CDN or proxy in front of the site. Every `<form>` now sets
   `method="post"`, and the sign-in, sign-up, reset, invitation, password,
   contact and waitlist forms tell someone with no JavaScript that they can't
@@ -10823,7 +10822,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.15.0...v0.16.0
