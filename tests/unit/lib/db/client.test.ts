@@ -410,8 +410,8 @@ describe('lib/db/client', () => {
         });
 
       // Assert — no new base client, but a fresh extension over the cached
-      // one: a retained extended client would close over the previous
-      // evaluation's AsyncLocalStorage and see no context after a reload.
+      // one: a retained extended client would keep running the previous
+      // evaluation's context readers after a reload.
       expect(MockPrismaClient).not.toHaveBeenCalled();
       expect(mockWithTenancy).toHaveBeenCalledTimes(1);
       expect(mockWithTenancy.mock.calls[0][0]).toBe(cachedBase);

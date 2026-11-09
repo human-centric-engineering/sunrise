@@ -16,6 +16,25 @@ release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`
+  (#1138).** The capability dispatcher is one `globalThis` instance, built in
+  the instrumentation module graph at boot, but the tenant context it read was
+  a module-level `AsyncLocalStorage`, one per graph. So a capability's queries
+  read an empty store and threw "No tenant context". The tenant context, the
+  subject context and the paid-call hold now each live on `globalThis`
+  (`sunriseTenantContext`, `sunriseSubjectContext`, `sunrisePaidCallHold`),
+  with their exports unchanged. All three move together: sharing only the
+  tenant store would have left the subject store answering `none` in the
+  dispatcher's graph, an over-wide read in place of a loud failure. A fork
+  that already carries its own `globalThis` stores under these keys can take
+  upstream's `lib/tenancy/context.ts`, `lib/auth/subject-context.ts`,
+  `lib/orchestration/llm/spend-caps.ts`, `lib/tenancy/process-state.ts`,
+  `lib/db/client.ts` and `lib/admin/logs.ts`.
+  `tests/unit/lib/tenancy/context-shared-store.test.ts` loads each module
+  twice to prove it.
+
 ## [0.18.0] — 2026-11-09
 
 > **Alpha release.** Twenty-fifth tagged Sunrise release. **MINOR bump**: one

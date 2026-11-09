@@ -63,6 +63,12 @@ interface InvitedSignup {
 /**
  * Marks the async context of a signup that has already been authorised by a
  * validated invitation token.
+ *
+ * Module-level, so one store per module graph, on purpose. The tenant,
+ * subject and paid-call stores are on `globalThis` because a singleton built
+ * in another graph reads them (#1138); this one has no such reader. It is set
+ * around an `auth.api` call and read by that same `auth` instance's hooks, so
+ * the writer and the reader are always in the graph serving the auth request.
  */
 const invitedSignupContext = new AsyncLocalStorage<InvitedSignup>();
 
