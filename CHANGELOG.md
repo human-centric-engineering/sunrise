@@ -16,6 +16,65 @@ release process.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-11-09
+
+> **Alpha release.** Twenty-fifth tagged Sunrise release. **MINOR bump**: one
+> new seam and one security fix. A fork can now open some admin pages to
+> people narrower than an org admin, through a named tier it registers, such as
+> an agency given a client's design pages and nothing else. Every form now
+> posts, so a form submitted before the page loaded no longer puts its fields,
+> passwords included, in the URL. Measured against `v0.17.1`: 2 PRs merged, no
+> direct commits, 1 issue closed; the suite is 1,531 files and 31,904
+> tests.
+>
+> ## What a fork has to do
+>
+> **No migration, seed or dependency change.** Beside the version bump, the
+> merge edits the admin layout, sidebar and tier gate, the admin-tier and
+> authorization modules, and every core `<form>`. **Keep your own `version`**
+> in `package.json` and the lockfile if you set one.
+>
+> **A fork that edited `app/admin/layout.tsx` resolves that file by hand.** The
+> layout no longer works out the viewer's tier itself: it asks
+> `requestAdminReach()` once and judges each page with `reachesAdminPage()`.
+> Keep core's version and carry your edit onto it, with a divergence-ledger
+> row.
+>
+> **Your `validate` will flag** every `<form>` without `method="post"`, in your
+> components as in core's. Add it. A form whose fields belong in the URL, such
+> as a search box, takes `{/* form-method-ignore: <why> */}` on the line above
+> it.
+>
+> **Your type-check will flag:**
+>
+> - A layout that renders `<AdminSidebar>` or `<AdminTierGate>` with
+>   `viewerTier`. Pass `reach={await requestAdminReach()}` instead, and
+>   `namedTierPages={namedTierAdminPages()}` beside `orgTierPages`.
+> - A call to `viewerReaches()`, which is gone. Use `reachesTier(reach, tier)`.
+>
+> **Your tests will flag** `tests/unit/lib/app/defaults.test.ts`, if you
+> pinned the `lib/app/admin-tier.ts` row: it gains a `namedAdminTiers()` line.
+> Pin it; don't delete the row.
+>
+> **Changes a build will not catch:** if you replaced `canAdminister`, a named
+> tier now reaches it as `scope.tier`. Nothing changes until a fork registers
+> a tier, but once one does, a policy that answers only `'org'` and
+> `'platform'` decides that tier too. Delegate to
+> `DEFAULT_AUTHORIZATION_POLICY` for the tiers you don't answer.
+>
+> **Dependency alerts accepted for this release:** the same five as 0.17.0.
+> This release takes no dependency change.
+>
+> - `zod` < 4.6.6 (high), under `@vercel/blob`, which still accepts only
+>   `@vercel/oidc` 3.x. That copy reads the Vercel CLI's own config files on
+>   disk, not untrusted input.
+> - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`. It
+>   parses only the app's own CSS, at build time.
+> - `glob` and `minimatch` (moderate), under `react-email`'s command-line tool,
+>   and `minimatch` under `typescript-eslint` too. Neither runs in the app.
+> - `deepmerge` (low), under `@react-email/components`. It merges the
+>   renderer's own options, not user input.
+
 ### Added
 
 - **A fork can open some admin pages to people narrower than an org admin
@@ -59,7 +118,8 @@ release process.
 
 ### Security
 
-- **A form submitted before the page had loaded put its fields in the URL.** A
+- **A form submitted before the page had loaded put its fields in the URL
+  (t-998).** A
   server-rendered `<form>` with an `onSubmit` and no `method` is a working HTML
   form until React attaches, so a press on a slow load, with a script blocked,
   or with JavaScript off was a GET carrying every named field, passwords and
