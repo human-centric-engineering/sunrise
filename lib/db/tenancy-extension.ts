@@ -122,7 +122,18 @@ const SET_ORG = (orgId: string): Prisma.Sql =>
   Prisma.sql`SELECT set_config('app.current_org', ${orgId}, true)`;
 const SET_BYPASS: Prisma.Sql = Prisma.sql`SELECT set_config('app.bypass_rls', 'on', true)`;
 
-/** Marks the async subtree of a scoped transaction: the org its setter named. */
+/**
+ * Marks the async subtree of a scoped transaction: the org its setter named.
+ *
+ * Module-level, so one store per module graph, on purpose. The tenant,
+ * subject and paid-call stores are on `globalThis` because a singleton built
+ * in another graph reads them (#1138). This one is written by one extended
+ * client's `$transaction` and read only by the ops bound to that
+ * transaction. Those run through the `tx` client it hands the callback,
+ * which is the same client, so they meet this store whichever graph the
+ * callback's code came from. A shared store would add nothing, and an op on
+ * another graph's client is never bound to this transaction.
+ */
 interface TxScope {
   orgId: string | null;
 }

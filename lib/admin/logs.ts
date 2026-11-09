@@ -51,9 +51,11 @@
  *
  * So the dependency is inverted: `lib/tenancy/context.ts` — which is
  * server-only and already imports the logger — registers a resolver here at
- * its module scope. The resolver is module-local, **not** on `globalThis`,
- * because an `AsyncLocalStorage` belongs to the module instance that created
- * it; sharing one across bundles would read another realm's store.
+ * its module scope. The resolver is module-local: each module graph that loads
+ * the tenancy module registers its own. They all read one process-wide store
+ * on `globalThis` (#1138), so in any such graph a line is stamped with the org
+ * of the call stack that logged it. A graph that never loaded the tenancy
+ * module still stamps `null`; see {@link registerLogTenancy}.
  *
  * Tenancy posture: org-keyed — every entry carries the org it was produced in
  * and the query filters to the reader's (lib/tenancy/process-state.ts).

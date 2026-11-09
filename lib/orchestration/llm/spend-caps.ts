@@ -323,7 +323,17 @@ export interface PaidCallHold {
   cap: SpendCap | null;
 }
 
-const paidCallHold = new AsyncLocalStorage<PaidCallHold>();
+/**
+ * On `globalThis` for the reason `lib/tenancy/context.ts` gives above its
+ * store (#1138): a capability the turn dispatches runs in the dispatcher's
+ * module graph, and its paid calls must meet the hold the turn set in the
+ * route's. The hold itself is still per turn.
+ */
+const globalForPaidCallHold = globalThis as unknown as {
+  sunrisePaidCallHold?: AsyncLocalStorage<PaidCallHold>;
+};
+const paidCallHold = (globalForPaidCallHold.sunrisePaidCallHold ??=
+  new AsyncLocalStorage<PaidCallHold>());
 
 /**
  * Drive `inner` with `hold` as the paid-call hold for everything it does: each

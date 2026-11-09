@@ -95,10 +95,10 @@ const adapter = new PrismaPg(pool);
 /**
  * The base client — the one thing retained across hot reloads, because it
  * owns the connection. The extension is applied fresh on every evaluation
- * of this module: it closes over `getTenantContext`, and a dev reload that
- * re-evaluates `lib/tenancy/context.ts` gives the guards a new
- * `AsyncLocalStorage` — a retained extended client would keep reading the
- * old one and see no context.
+ * of this module and closes over that evaluation's `getTenantContext` and
+ * `getSubjectReadScope`, so a reload's client runs the reloaded code. The
+ * stores those read live on `globalThis` (#1138), so every module graph's
+ * client, and every reload's, sees the same tenant and subject context.
  */
 const baseClient =
   globalForPrisma.prisma ??
