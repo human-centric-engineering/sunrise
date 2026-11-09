@@ -130,7 +130,18 @@ interface SubjectStore {
   admitted: string | null;
 }
 
-const subjectContext = new AsyncLocalStorage<SubjectStore>();
+/**
+ * On `globalThis` for the reason `lib/tenancy/context.ts` gives above its
+ * store (#1138): a singleton built in another module graph (the capability
+ * dispatcher, from the instrumentation graph) reads through that graph's
+ * client, and a per-graph store would answer `none` there, which is not
+ * narrowed. The contents are still per request.
+ */
+const globalForSubject = globalThis as unknown as {
+  sunriseSubjectContext?: AsyncLocalStorage<SubjectStore>;
+};
+const subjectContext = (globalForSubject.sunriseSubjectContext ??=
+  new AsyncLocalStorage<SubjectStore>());
 
 /** As in `lib/tenancy/context.ts`: await inside the scope so a lazy `PrismaPromise` cannot escape it. */
 async function settleInside<T>(fn: () => Promise<T>): Promise<T> {

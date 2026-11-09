@@ -110,7 +110,32 @@ export interface SupportEntry {
   expiresAt: Date;
 }
 
-const tenantContext = new AsyncLocalStorage<TenantContext>();
+/**
+ * One store for the whole process, on `globalThis`, not one per module graph
+ * (#1138).
+ *
+ * Next evaluates this module once per module graph: the route handlers in
+ * one, `instrumentation.ts` in another. A `globalThis` singleton is built in
+ * whichever graph reaches it first, so the capability dispatcher, built at
+ * boot, runs the instrumentation graph's code. With a module-level store, a
+ * route's `runAsOrg` filled the route graph's copy while the dispatcher's
+ * queries read the instrumentation graph's, which was empty, and at `multi`
+ * they threw "No tenant context". A shared store makes an org entered in any
+ * graph visible to code from every graph, and survives a dev reload of this
+ * module. The contents are still per call stack: sharing the handle shares
+ * nothing between requests.
+ *
+ * The subject context (`lib/auth/subject-context.ts`) and the paid-call hold
+ * (`lib/orchestration/llm/spend-caps.ts`) are shared the same way, and must
+ * stay so together: with this store shared and the subject store per graph,
+ * the dispatcher's reads would run in the right org but answer `none` for
+ * the subject, which is not narrowed by owner.
+ */
+const globalForTenancy = globalThis as unknown as {
+  sunriseTenantContext?: AsyncLocalStorage<TenantContext>;
+};
+const tenantContext = (globalForTenancy.sunriseTenantContext ??=
+  new AsyncLocalStorage<TenantContext>());
 
 /** True when this install runs more than one org. Read once per call, not cached. */
 export function isMultiTenant(): boolean {
