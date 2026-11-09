@@ -16,9 +16,7 @@
  *   - the subject context (`lib/auth/subject-context.ts`), which narrows owner-scoped reads. Split,
  *     the other graph answers `none`, and `none` is not narrowed;
  *   - the paid-call hold (`lib/orchestration/llm/spend-caps.ts`). Split, a capability's paid call
- *     misses the hold its turn set;
- *   - the log buffer's tenancy resolver (`lib/admin/logs.ts`). Split, a graph that never loaded
- *     the tenancy module stamps a line logged inside an org with `null`.
+ *     misses the hold its turn set.
  *
  * Each case fails against a module-level store. The `globalThis` slots are put back after every
  * case, so each one creates its stores afresh.
@@ -38,12 +36,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 const ORG = 'cmorg00000000000000000orga';
-const SLOTS = [
-  'sunriseTenantContext',
-  'sunriseSubjectContext',
-  'sunrisePaidCallHold',
-  'sunriseLogTenancy',
-] as const;
+const SLOTS = ['sunriseTenantContext', 'sunriseSubjectContext', 'sunrisePaidCallHold'] as const;
 
 const NO_UNATTRIBUTED_READS = {
   conversation: false,
@@ -164,21 +157,5 @@ describe('the paid-call hold across two evaluations of its module', () => {
 
     // The control for the case above: nothing but the hold refuses in this setup.
     await expect(capability.spendCapRefusal('openai', false)).resolves.toBeNull();
-  });
-});
-
-describe('the log tenancy resolver across two evaluations of its modules', () => {
-  it('a graph that never loaded the tenancy module stamps the org a route entered', async () => {
-    const route = await fresh(() => import('@/lib/tenancy/context'));
-    // A graph holding only the log buffer: the resolver the route graph registered must reach it.
-    const logs = await fresh(() => import('@/lib/admin/logs'));
-    logs.clearLogBuffer();
-
-    await route.runAsOrg(ORG, async () => {
-      logs.addLogEntry({ timestamp: new Date().toISOString(), level: 'info', message: 'in org' });
-    });
-
-    const [entry] = await route.runAsOrg(ORG, async () => logs.getLogEntries({}).entries);
-    expect(entry).toMatchObject({ message: 'in org', orgId: ORG });
   });
 });
