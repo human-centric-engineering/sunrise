@@ -273,6 +273,10 @@ export const POST = withAdminAuth(async (request, session) => {
     name: body.name,
     metadata: invitationMetadata,
     isResend: !!existingInvitation,
+    // The row read above is the one re-sent, even when the body moves it to
+    // another org; the target org's own pending row goes too. Invitations for
+    // the address into other orgs stay (#1199).
+    replacingId: existingInvitation?.id,
     inviterName: session.user.name || 'Administrator',
     log,
   });

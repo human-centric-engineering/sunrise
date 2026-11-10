@@ -37,8 +37,8 @@ import {
 } from '@/lib/auth/pending-signup';
 import {
   validateInvitationToken,
-  deleteInvitationToken,
-  getValidInvitation,
+  findInvitationByToken,
+  consumeInvitation,
 } from '@/lib/utils/invitation-token';
 import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
 import {
@@ -314,11 +314,15 @@ export async function userCreateBeforeHook(
           // account as invited.
           oauthInvitationAccepted = true;
 
-          const invitation = await getValidInvitation(invitationEmail);
+          // This token's own row: the address may hold invitations into
+          // several orgs (#1199), so neither the newest row nor all of them.
+          const found = await findInvitationByToken(invitationEmail, invitationToken);
 
           // Delete token NOW to prevent race: token must be consumed before user
           // creation, so a concurrent OAuth signup cannot reuse the same single-use token.
-          await deleteInvitationToken(invitationEmail);
+          // Only the call that deleted the row applies what it grants.
+          const consumed = found ? await consumeInvitation(found.id) : false;
+          const invitation = consumed && found?.metadata ? { metadata: found.metadata } : null;
           logger.info('OAuth invitation token consumed', { email: invitationEmail });
 
           // When a valid invitation record exists, honour its explicit role

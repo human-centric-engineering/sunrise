@@ -67,6 +67,14 @@ export interface EmailPropsMap {
     inviteeEmail: string;
     invitationUrl: string;
     expiresAt: Date;
+    /** The org the invitation joins. Absent ⇒ the email names the app (#1199). */
+    orgName?: string;
+    /**
+     * The address already has an account: the email asks them to sign in and
+     * accept, not to set a password. An override that ignores it sends an
+     * existing user to a page that will ask them to sign in anyway.
+     */
+    hasAccount?: boolean;
   };
   /**
    * Sent to the address currently on the account when a change to a new one is
