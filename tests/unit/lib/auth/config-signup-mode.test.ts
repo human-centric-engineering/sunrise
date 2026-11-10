@@ -83,8 +83,9 @@ vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
 
 vi.mock('@/lib/utils/invitation-token', () => ({
   validateInvitationToken: vi.fn(),
-  deleteInvitationToken: vi.fn(),
-  getValidInvitation: vi.fn(),
+  // The OAuth hook reads and consumes the token's own row (#1199).
+  findInvitationByToken: vi.fn(),
+  consumeInvitation: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({
@@ -107,7 +108,11 @@ vi.mock('@/emails/reset-password', () => ({ default: vi.fn(() => null) }));
 import { signupModeBeforeHook, userCreateBeforeHook } from '@/lib/auth/config';
 import { isInviteOnly, isInvitedSignup, isFirstHumanBootstrap } from '@/lib/auth/signup-mode';
 import { getOAuthState } from 'better-auth/api';
-import { validateInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
+import {
+  validateInvitationToken,
+  findInvitationByToken,
+  consumeInvitation,
+} from '@/lib/utils/invitation-token';
 
 // Loosely-typed handles for the better-auth / invitation mocks, matching the
 // MockedFn pattern in config-database-hook.test.ts: the real signatures demand
@@ -116,7 +121,8 @@ import { validateInvitationToken, getValidInvitation } from '@/lib/utils/invitat
 type MockedFn = ReturnType<typeof vi.fn>;
 const mockGetOAuthState = getOAuthState as unknown as MockedFn;
 const mockValidateInvitationToken = validateInvitationToken as unknown as MockedFn;
-const mockGetValidInvitation = getValidInvitation as unknown as MockedFn;
+const mockFindInvitationByToken = findInvitationByToken as unknown as MockedFn;
+const mockConsumeInvitation = consumeInvitation as unknown as MockedFn;
 
 const OAUTH_CTX = { path: '/callback/google' };
 
@@ -230,11 +236,37 @@ describe('userCreateBeforeHook — invite_only creation gate', () => {
       invitationToken: 'token-abc',
     });
     mockValidateInvitationToken.mockResolvedValue(true);
-    mockGetValidInvitation.mockResolvedValue({ metadata: { role: 'USER' } });
+    mockFindInvitationByToken.mockResolvedValue({
+      id: 'row-1',
+      metadata: { name: 'I', role: 'USER', invitedBy: 'x', invitedAt: '2026-01-01' },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockConsumeInvitation.mockResolvedValue(true);
 
     const result = await userCreateBeforeHook(oauthUser('invited@example.com'), OAUTH_CTX);
 
     expect(result.data.role).toBe('USER');
+  });
+
+  it('refuses an invited OAuth signup that lost the race for its token', async () => {
+    // Code review finding (t-1006): a concurrent signup that consumed nothing
+    // was still treated as invited and passed the invite_only gate.
+    vi.mocked(isInviteOnly).mockReturnValue(true);
+    mockGetOAuthState.mockResolvedValue({
+      invitationEmail: 'invited@example.com',
+      invitationToken: 'token-abc',
+    });
+    mockValidateInvitationToken.mockResolvedValue(true);
+    mockFindInvitationByToken.mockResolvedValue({
+      id: 'row-1',
+      metadata: { name: 'I', role: 'USER', invitedBy: 'x', invitedAt: '2026-01-01' },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockConsumeInvitation.mockResolvedValue(false);
+
+    await expect(
+      userCreateBeforeHook(oauthUser('invited@example.com'), OAUTH_CTX)
+    ).rejects.toMatchObject({ status: 'FORBIDDEN' });
   });
 
   it('admits a valid token whose invitation record does not parse', async () => {
@@ -247,7 +279,12 @@ describe('userCreateBeforeHook — invite_only creation gate', () => {
       invitationToken: 'token-abc',
     });
     mockValidateInvitationToken.mockResolvedValue(true);
-    mockGetValidInvitation.mockResolvedValue(null);
+    mockFindInvitationByToken.mockResolvedValue({
+      id: 'row-1',
+      metadata: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockConsumeInvitation.mockResolvedValue(true);
 
     const result = await userCreateBeforeHook(oauthUser('invited@example.com'), OAUTH_CTX);
 

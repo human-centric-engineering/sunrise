@@ -49,7 +49,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as React from 'react';
 import { createMockUser } from '@/tests/types/mocks';
-import type { InvitationRecord } from '@/lib/utils/invitation-token';
+import type { InvitationMetadata } from '@/lib/validations/admin';
+
+/** What `findInvitationByToken` answers: the row this token redeems. */
+interface FoundInvitation {
+  id: string;
+  metadata: InvitationMetadata | null;
+  expiresAt: Date;
+}
 import type { UserCreateData, DatabaseHookContext } from '@/lib/auth/config';
 import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import { humanWhere } from '@/lib/auth/account';
@@ -148,8 +155,8 @@ vi.mock('@/lib/email/client', () => ({
 
 vi.mock('@/lib/utils/invitation-token', () => ({
   validateInvitationToken: vi.fn(),
-  deleteInvitationToken: vi.fn(),
-  getValidInvitation: vi.fn(),
+  consumeInvitation: vi.fn(),
+  findInvitationByToken: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({
@@ -209,8 +216,8 @@ interface SharedMocks {
   getOAuthState: MockedFn;
   sendEmail: MockedFn;
   validateInvitationToken: MockedFn;
-  deleteInvitationToken: MockedFn;
-  getValidInvitation: MockedFn;
+  consumeInvitation: MockedFn;
+  findInvitationByToken: MockedFn;
   APIError: new (
     status: string,
     body?: { code?: string; message?: string }
@@ -308,8 +315,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       APIError: oauthApi.APIError,
       sendEmail: vi.mocked(emailSend.sendEmail),
       validateInvitationToken: vi.mocked(invitationToken.validateInvitationToken),
-      deleteInvitationToken: vi.mocked(invitationToken.deleteInvitationToken),
-      getValidInvitation: vi.mocked(invitationToken.getValidInvitation),
+      consumeInvitation: vi.mocked(invitationToken.consumeInvitation),
+      findInvitationByToken: vi.mocked(invitationToken.findInvitationByToken),
       prisma: {
         user: {
           update: vi.mocked(db.prisma.user.update),
@@ -343,7 +350,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     mocks.prisma.user.update.mockResolvedValue(createMockUser());
 
     // Default mock behavior: no valid invitation
-    mocks.getValidInvitation.mockResolvedValue(null);
+    mocks.findInvitationByToken.mockResolvedValue(null);
 
     // Default mock behavior: database already has human users, so the
     // first-human-is-admin bootstrap does NOT fire for the typical test.
@@ -388,8 +395,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         role: 'USER',
       });
 
-      const mockInvitation: InvitationRecord = {
-        email: 'admin@example.com',
+      const mockInvitation: FoundInvitation = {
+        id: 'row-admin',
         metadata: {
           name: 'Admin User',
           role: 'ADMIN',
@@ -397,7 +404,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           invitedAt: new Date().toISOString(),
         },
         expiresAt: new Date(Date.now() + 86400000),
-        createdAt: new Date(),
       };
 
       mocks.getOAuthState.mockResolvedValue({
@@ -405,8 +411,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         invitationEmail: 'admin@example.com',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
-      mocks.deleteInvitationToken.mockResolvedValue(undefined);
+      mocks.findInvitationByToken.mockResolvedValue(mockInvitation);
+      mocks.consumeInvitation.mockResolvedValue(true);
 
       const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
 
@@ -421,11 +427,16 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         'admin@example.com',
         'valid-token-admin'
       );
-      expect(mocks.getValidInvitation).toHaveBeenCalledWith('admin@example.com');
-      // Token consumed immediately in before hook to prevent race conditions
-      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('admin@example.com');
+      // The row is found by the presented token, not by address
+      expect(mocks.findInvitationByToken).toHaveBeenCalledWith(
+        'admin@example.com',
+        'valid-token-admin'
+      );
+      // Only that row is consumed, immediately in the before hook to prevent races
+      expect(mocks.consumeInvitation).toHaveBeenCalledWith('row-admin');
       expect(mocks.logger.info).toHaveBeenCalledWith('OAuth invitation token consumed', {
         email: 'admin@example.com',
+        consumed: true,
       });
       expect(mocks.logger.info).toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',
@@ -441,8 +452,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         role: 'USER',
       });
 
-      const mockInvitation: InvitationRecord = {
-        email: 'user@example.com',
+      const mockInvitation: FoundInvitation = {
+        id: 'row-user',
         metadata: {
           name: 'Regular User',
           role: 'USER',
@@ -450,7 +461,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           invitedAt: new Date().toISOString(),
         },
         expiresAt: new Date(Date.now() + 86400000),
-        createdAt: new Date(),
       };
 
       mocks.getOAuthState.mockResolvedValue({
@@ -458,8 +468,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         invitationEmail: 'user@example.com',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
-      mocks.deleteInvitationToken.mockResolvedValue(undefined);
+      mocks.findInvitationByToken.mockResolvedValue(mockInvitation);
+      mocks.consumeInvitation.mockResolvedValue(true);
 
       const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
 
@@ -471,7 +481,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(result.data.role).toBe('USER');
 
       // Token is still consumed even for USER-role invitations (prevent reuse)
-      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
+      expect(mocks.consumeInvitation).toHaveBeenCalledWith('row-user');
 
       // The invitation role IS applied explicitly now (with role USER) and the
       // bootstrap count is never consulted — the early return prevents it.
@@ -503,7 +513,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       // Token validation should not have been called (rejected before reaching that branch)
       expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
+      expect(mocks.findInvitationByToken).not.toHaveBeenCalled();
     });
 
     it('should throw APIError when invitationEmail is present but no token and OAuth email does not match', async () => {
@@ -547,7 +557,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // Assert: user returned unchanged
       expect(result.data).toEqual(expect.objectContaining(mockUser));
       expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
+      expect(mocks.findInvitationByToken).not.toHaveBeenCalled();
     });
 
     it('should return unmodified user when invitation token is invalid', async () => {
@@ -570,9 +580,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       // Assert: user returned unchanged (invalid token means no role change)
       expect(result.data).toEqual(expect.objectContaining(mockUser));
-      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
-      // Token not consumed — validation failed so we never reached deleteInvitationToken
-      expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+      expect(mocks.findInvitationByToken).not.toHaveBeenCalled();
+      // Token not consumed — validation failed so we never reached consumeInvitation
+      expect(mocks.consumeInvitation).not.toHaveBeenCalled();
       expect(mocks.logger.info).not.toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',
         expect.any(Object)
@@ -601,7 +611,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       );
     });
 
-    it('should not block signup when getValidInvitation throws inside the invitation-valid branch', async () => {
+    it('should not block signup when findInvitationByToken throws inside the invitation-valid branch', async () => {
       // Arrange: set up a matching email + valid token so we enter the isValidToken branch
       const mockUser = makeUserCreateData({
         id: 'oauth-before-getinv-throws',
@@ -613,9 +623,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         invitationToken: 'valid-token',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      // getValidInvitation throws — outer catch should swallow it and return user unchanged
+      // findInvitationByToken throws — outer catch should swallow it and return user unchanged
       const dbError = new Error('DB connection lost');
-      mocks.getValidInvitation.mockRejectedValue(dbError);
+      mocks.findInvitationByToken.mockRejectedValue(dbError);
 
       const ctx: DatabaseHookContext = { path: '/callback/google' };
 
@@ -634,13 +644,13 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         dbError
       );
 
-      // Assert: deleteInvitationToken was NOT called — getValidInvitation threw before
-      // deleteInvitationToken is reached (source order: getValidInvitation L95, deleteInvitationToken L99)
-      expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+      // Assert: consumeInvitation was NOT called — findInvitationByToken threw before
+      // consumeInvitation is reached (find runs before consume)
+      expect(mocks.consumeInvitation).not.toHaveBeenCalled();
     });
 
-    it('should return unmodified user when getValidInvitation returns null with a valid token', async () => {
-      // Arrange: token is valid but getValidInvitation returns null (e.g. invitation already consumed
+    it('should return unmodified user when findInvitationByToken returns null with a valid token', async () => {
+      // Arrange: token is valid but findInvitationByToken returns null (e.g. invitation already consumed
       // or cleaned up). The hook should fall through and return the user unchanged — no role applied.
       const mockUser = makeUserCreateData({
         id: 'oauth-before-inv-null',
@@ -652,9 +662,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         invitationToken: 'valid-token-but-no-record',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      // getValidInvitation returns null — invitation record not found
-      mocks.getValidInvitation.mockResolvedValue(null);
-      mocks.deleteInvitationToken.mockResolvedValue(undefined);
+      // findInvitationByToken returns null — invitation record not found
+      mocks.findInvitationByToken.mockResolvedValue(null);
 
       const ctx: DatabaseHookContext = { path: '/callback/google' };
 
@@ -667,8 +676,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       });
       expect(result.data.role).toBe(mockUser.role);
 
-      // Token is still consumed (deleteInvitationToken called before the null check)
-      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('norecord@example.com');
+      // There is no row to consume
+      expect(mocks.consumeInvitation).not.toHaveBeenCalled();
 
       // Role-apply log should NOT have been called
       expect(mocks.logger.info).not.toHaveBeenCalledWith(
@@ -677,18 +686,89 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       );
     });
 
-    it('should not block signup when deleteInvitationToken throws inside the valid-invitation branch', async () => {
-      // Arrange: token is valid and invitation record exists, but deleteInvitationToken throws.
+    it('should apply nothing when another request consumed the row first (lost the race)', async () => {
+      // Arrange: the token validates and the row is found, but the delete
+      // reports it was already gone, so this signup did not redeem it.
+      const mockUser = makeUserCreateData({
+        id: 'oauth-before-lost-race',
+        email: 'race@example.com',
+        role: 'USER',
+      });
+      mocks.getOAuthState.mockResolvedValue({
+        invitationEmail: 'race@example.com',
+        invitationToken: 'raced-token',
+      });
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      mocks.findInvitationByToken.mockResolvedValue({
+        id: 'row-raced',
+        metadata: {
+          name: 'Racer',
+          role: 'ADMIN',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+        },
+        expiresAt: new Date(Date.now() + 86400000),
+      });
+      mocks.consumeInvitation.mockResolvedValue(false);
+
+      // Act
+      const result = await userCreateBeforeHook(mockUser, {
+        path: '/api/auth/callback/google',
+      });
+
+      // Assert: the ADMIN role the row grants is not applied
+      expect(mocks.consumeInvitation).toHaveBeenCalledWith('row-raced');
+      expect(result.data.role).toBe('USER');
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
+        expect.any(Object)
+      );
+    });
+
+    it('should consume a valid row whose metadata cannot be read, applying nothing', async () => {
+      // Arrange: found, but unparseable metadata (null)
+      const mockUser = makeUserCreateData({
+        id: 'oauth-before-unreadable',
+        email: 'unreadable@example.com',
+        role: 'USER',
+      });
+      mocks.getOAuthState.mockResolvedValue({
+        invitationEmail: 'unreadable@example.com',
+        invitationToken: 'tok',
+      });
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      mocks.findInvitationByToken.mockResolvedValue({
+        id: 'row-unreadable',
+        metadata: null,
+        expiresAt: new Date(Date.now() + 86400000),
+      });
+      mocks.consumeInvitation.mockResolvedValue(true);
+
+      // Act
+      const result = await userCreateBeforeHook(mockUser, {
+        path: '/api/auth/callback/google',
+      });
+
+      // Assert: the single-use token is spent, but no role is granted
+      expect(mocks.consumeInvitation).toHaveBeenCalledWith('row-unreadable');
+      expect(result.data.role).toBe('USER');
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
+        expect.any(Object)
+      );
+    });
+
+    it('should not block signup when consumeInvitation throws inside the valid-invitation branch', async () => {
+      // Arrange: token is valid and invitation record exists, but consumeInvitation throws.
       // The outer catch should swallow the error and return the user unchanged.
       const mockUser = makeUserCreateData({
         id: 'oauth-before-delete-throws',
         email: 'deletethrows@example.com',
       });
 
-      const mockInvitation = {
-        email: 'deletethrows@example.com',
+      const mockInvitation: FoundInvitation = {
+        id: 'row-delete-throws',
         expiresAt: new Date(Date.now() + 86400000),
-        createdAt: new Date(),
         metadata: {
           name: 'Test User',
           role: 'ADMIN',
@@ -702,9 +782,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         invitationToken: 'valid-token-delete-fails',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+      mocks.findInvitationByToken.mockResolvedValue(mockInvitation);
       const deleteError = new Error('Token store unavailable');
-      mocks.deleteInvitationToken.mockRejectedValue(deleteError);
+      mocks.consumeInvitation.mockRejectedValue(deleteError);
 
       const ctx: DatabaseHookContext = { path: '/callback/google' };
 
@@ -986,8 +1066,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           email: 'invited@example.com',
           role: 'USER',
         });
-        const mockInvitation: InvitationRecord = {
-          email: 'invited@example.com',
+        const mockInvitation: FoundInvitation = {
+          id: 'row-fresh-db',
           metadata: {
             name: 'Invited Admin',
             role: 'ADMIN',
@@ -995,22 +1075,21 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
             invitedAt: new Date().toISOString(),
           },
           expiresAt: new Date(Date.now() + 86400000),
-          createdAt: new Date(),
         };
         // Reset the invitation mocks' implementations (the suite's beforeEach
         // uses clearAllMocks, which does not drain implementations/once-queues
         // from earlier tests) so this test is hermetic.
         mocks.getOAuthState.mockReset();
         mocks.validateInvitationToken.mockReset();
-        mocks.getValidInvitation.mockReset();
-        mocks.deleteInvitationToken.mockReset();
+        mocks.findInvitationByToken.mockReset();
+        mocks.consumeInvitation.mockReset();
         mocks.getOAuthState.mockResolvedValue({
           invitationEmail: 'invited@example.com',
           invitationToken: 'valid-token',
         });
         mocks.validateInvitationToken.mockResolvedValue(true);
-        mocks.getValidInvitation.mockResolvedValue(mockInvitation);
-        mocks.deleteInvitationToken.mockResolvedValue(undefined);
+        mocks.findInvitationByToken.mockResolvedValue(mockInvitation);
+        mocks.consumeInvitation.mockResolvedValue(true);
         mocks.prisma.user.count.mockResolvedValue(0);
 
         const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
@@ -1047,9 +1126,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
   describe('databaseHooks.user.create.before — pending membership', () => {
     const OTHER_ORG = 'cmorg000000000000000other';
 
-    function oauthInvitation(metadata: Partial<InvitationRecord['metadata']>): InvitationRecord {
+    function oauthInvitation(metadata: Partial<InvitationMetadata>): FoundInvitation {
       return {
-        email: 'invitee@example.com',
+        id: 'row-oauth',
         metadata: {
           name: 'Invitee',
           role: 'USER',
@@ -1058,18 +1137,17 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           ...metadata,
         },
         expiresAt: new Date(Date.now() + 86400000),
-        createdAt: new Date(),
       };
     }
 
-    function armOAuthInvitation(invitation: InvitationRecord) {
+    function armOAuthInvitation(invitation: FoundInvitation) {
       mocks.getOAuthState.mockResolvedValue({
-        invitationEmail: invitation.email,
+        invitationEmail: 'invitee@example.com',
         invitationToken: 'valid-token',
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
-      mocks.getValidInvitation.mockResolvedValue(invitation);
-      mocks.deleteInvitationToken.mockResolvedValue(undefined);
+      mocks.findInvitationByToken.mockResolvedValue(invitation);
+      mocks.consumeInvitation.mockResolvedValue(true);
     }
 
     it('records the org and org role an OAuth invitation names', async () => {
@@ -1866,7 +1944,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         // Assert: Token deletion and validation do NOT happen in after hook
         expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.consumeInvitation).not.toHaveBeenCalled();
 
         // Assert: Welcome email was sent (OAuth → always sent immediately)
         expect(mocks.sendEmail).toHaveBeenCalledWith(
@@ -2049,8 +2127,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         // would find it and fail this test. Reported
         // as invited, a fork would grant that invitation's roles to whoever
         // claimed the address first.
-        mocks.getValidInvitation.mockResolvedValue({
-          email: 'victim@example.com',
+        mocks.findInvitationByToken.mockResolvedValue({
+          id: 'row-victim',
           metadata: {
             name: 'V',
             role: 'USER',
@@ -2058,7 +2136,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
             invitedAt: REDEEMED.invitedAt,
           },
           expiresAt: new Date(Date.now() + 86400000),
-          createdAt: new Date(),
         });
         mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
         const mockUser = makeUserCreateData({ id: 'claimer', email: 'victim@example.com' });
@@ -2307,7 +2384,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         });
 
         // No active invitation
-        mocks.getValidInvitation.mockResolvedValue(null);
+        mocks.findInvitationByToken.mockResolvedValue(null);
 
         const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
 
@@ -2605,7 +2682,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
 
         // Assert: No token deletion in after hook — it was done in the before hook
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.consumeInvitation).not.toHaveBeenCalled();
       });
     });
 
@@ -2653,7 +2730,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
           mocks.sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
           mocks.prisma.user.update.mockResolvedValue(createMockUser());
-          mocks.getValidInvitation.mockResolvedValue(null);
+          mocks.findInvitationByToken.mockResolvedValue(null);
 
           // Act
           await userCreateAfterHook(mockUser, path !== undefined ? { path } : null);

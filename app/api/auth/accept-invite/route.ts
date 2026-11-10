@@ -15,7 +15,7 @@
  *    invitation: the org and org role it names decide the membership the
  *    signup writes, and its platform role decides the install-org role (§106)
  * 5. IMMEDIATELY set emailVerified=true AND role (BEFORE session check)
- * 6. Delete invitation token
+ * 6. Delete the redeemed invitation (only this token's row)
  * 7. Create explicit session via sign-in endpoint (better-auth sees emailVerified=true)
  * 8. Capture Set-Cookie headers from sign-in response
  * 9. Return success response with forwarded session cookies for auto-login
@@ -48,10 +48,9 @@ import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { acceptInvitationSchema } from '@/lib/validations/user';
 import {
   validateInvitationToken,
-  deleteInvitationToken,
-  hashInvitationToken,
+  consumeInvitation,
+  findInvitationByToken,
 } from '@/lib/utils/invitation-token';
-import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { getRouteLogger } from '@/lib/api/context';
 import { auth } from '@/lib/auth/config';
@@ -121,15 +120,12 @@ export async function POST(request: NextRequest): Promise<Response> {
     // between would swap, nor an expired one lingering beside it. Its
     // metadata decides the membership and is reported to the user-created
     // seam as the invitation redeemed (#1136).
-    const invitation = await prisma.verification.findFirst({
-      where: {
-        identifier: `invitation:${email}`,
-        value: hashInvitationToken(token),
-        expiresAt: { gt: new Date() },
-      },
-    });
+    // (The address may hold invitations into several orgs, #1199; the token
+    // picks out its own — `findInvitationByToken`, the one statement of that
+    // match.)
+    const invitation = await findInvitationByToken(email, token);
 
-    if (!invitation || !invitation.metadata) {
+    if (!invitation) {
       log.warn('Invitation not found', { email });
       return errorResponse('Invitation not found', {
         code: ErrorCodes.NOT_FOUND,
@@ -137,7 +133,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     }
 
-    const metadata = parseInvitationMetadata(invitation.metadata);
+    const metadata = invitation.metadata;
 
     if (!metadata) {
       log.warn('Invalid invitation metadata', { email });
@@ -148,6 +144,22 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     log.info('Invitation metadata retrieved', { email, role: metadata.role });
+
+    // An address that already has an account accepts by signing in
+    // (`POST /api/v1/invitations/accept`, #1199): this route creates
+    // accounts. Saying so tells the token holder only what the invitation
+    // email already told them.
+    const existingAccount = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existingAccount) {
+      log.info('Invitation acceptance needs sign-in: the account exists', { email });
+      return errorResponse('You already have an account. Sign in to accept this invitation.', {
+        code: ErrorCodes.EMAIL_TAKEN,
+        status: 409,
+      });
+    }
 
     // 4. Create user via better-auth signup (FIRST TIME - stable ID)
     // Using auth.api directly to avoid HTTP round-trip and CSRF origin checks
@@ -203,8 +215,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       role: metadata.role,
     });
 
-    // 6. Delete invitation token
-    await deleteInvitationToken(email);
+    // 6. Delete the invitation this token redeemed — only that one, so an
+    // invitation into another org stays pending for the new account (#1199).
+    await consumeInvitation(invitation.id);
 
     log.info('Invitation accepted successfully', { email, userId: newUserId });
 

@@ -32,10 +32,13 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   generateInvitationToken: vi.fn(async () => 'raw-token'),
   updateInvitationToken: vi.fn(async () => 'raw-token'),
-  getValidInvitation: vi.fn(async () => null),
+  pendingInvitationsFor: vi.fn(async () => ({ readable: [], unreadable: 0 })),
 }));
 
 vi.mock('@/lib/email/send', () => ({
@@ -69,15 +72,26 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import {
   generateInvitationToken,
-  getValidInvitation,
+  pendingInvitationsFor,
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
+import { sendEmail } from '@/lib/email/send';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
+
+/** Mock the address's pending invitations as this one (or none). */
+function mockPending(inv: Parameters<typeof pendingOf>[0], once = true) {
+  const m = vi.mocked(pendingInvitationsFor);
+  if (once) m.mockResolvedValueOnce(pendingOf(inv));
+  else m.mockResolvedValue(pendingOf(inv));
+}
+function pendingOf(inv: import('@/lib/utils/invitation-token').InvitationRecord | null) {
+  return { readable: inv ? [inv] : [], unreadable: 0 };
+}
 
 const OTHER_ORG = 'cmorg000000000000000other';
 
@@ -158,6 +172,36 @@ describe('POST /api/v1/users/invite — org axis', () => {
     );
   });
 
+  it('names the org in the email, as the org route does (code review, t-1006)', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+      id: OTHER_ORG,
+      status: 'ACTIVE',
+      name: 'Acme',
+    } as never);
+
+    await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: "You've been invited to join Acme" })
+    );
+  });
+
+  it('names the app, not the org, for an invitation into the install org', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+      id: 'install',
+      status: 'ACTIVE',
+      name: 'Default organisation',
+    } as never);
+
+    await POST(request({ ...invitee, orgId: 'install' }));
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.not.stringContaining('Default organisation'),
+      })
+    );
+  });
+
   it('refuses an org that does not exist, and a suspended one, with the same answer', async () => {
     vi.mocked(prisma.org.findUnique).mockResolvedValueOnce(null);
     const missing = await POST(request({ ...invitee, orgId: OTHER_ORG }));
@@ -220,7 +264,7 @@ describe('POST /api/v1/users/invite — org axis', () => {
   it('the "already pending" response says where the pending invitation points', async () => {
     // A resend rewrites the metadata from the body, so an admin has to be
     // able to see the pending org before choosing to overwrite it.
-    vi.mocked(getValidInvitation).mockResolvedValueOnce({
+    mockPending({
       email: invitee.email,
       metadata: {
         name: 'Jane Doe',
@@ -234,7 +278,8 @@ describe('POST /api/v1/users/invite — org axis', () => {
       createdAt: new Date(),
     });
 
-    const res = await POST(request({ ...invitee }));
+    // The org is named: an address holds one invitation per org (#1199).
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
     const body = JSON.parse(await res.text());
 
     expect(res.status).toBe(200);
@@ -244,7 +289,7 @@ describe('POST /api/v1/users/invite — org axis', () => {
   });
 
   it('a legacy pending invitation (no org keys) reports null, not undefined', async () => {
-    vi.mocked(getValidInvitation).mockResolvedValueOnce({
+    mockPending({
       email: invitee.email,
       metadata: {
         name: 'Jane Doe',
@@ -266,7 +311,8 @@ describe('POST /api/v1/users/invite — org axis', () => {
     // The admin table's Resend button posts `{ name, email, role }` only, so
     // the pending row's org keys must survive a resend that does not name one.
     function pending(metadata: Record<string, unknown>) {
-      vi.mocked(getValidInvitation).mockResolvedValueOnce({
+      mockPending({
+        id: 'row-pending',
         email: invitee.email,
         metadata: {
           name: 'Jane Doe',
@@ -281,10 +327,13 @@ describe('POST /api/v1/users/invite — org axis', () => {
     }
     const rewritten = () => vi.mocked(updateInvitationToken).mock.calls[0]?.[1];
 
-    it('keeps the pending org keys when the body names none', async () => {
+    it('re-sends the row the admin table names, keeping its org keys', async () => {
+      // The table's Resend posts the row's orgId and orgRole (#1199).
       pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
 
-      const res = await POST(request({ ...invitee, role: 'USER' }, '?resend=true'));
+      const res = await POST(
+        request({ ...invitee, role: 'USER', orgId: OTHER_ORG, orgRole: 'ADMIN' }, '?resend=true')
+      );
 
       expect(res.status).toBe(201);
       expect(rewritten()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
@@ -296,6 +345,86 @@ describe('POST /api/v1/users/invite — org axis', () => {
       expect(prisma.org.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OTHER_ORG } })
       );
+    });
+
+    it('a body naming another org writes that org its own invitation, leaving the pending one', async () => {
+      // One invitation per (email, org) (#1199): the pending row is OTHER_ORG's,
+      // so it is not this request's to replace.
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+      const another = 'cmorg00000000000000another';
+      vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+        id: another,
+        status: 'ACTIVE',
+      } as never);
+
+      const res = await POST(request({ ...invitee, orgId: another }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(generateInvitationToken).toHaveBeenCalledWith(
+        invitee.email,
+        expect.objectContaining({ orgId: another })
+      );
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('re-sends the named org’s invitation, not the newest one for the address', async () => {
+      const row = (id: string, orgId: string) => ({
+        id,
+        email: invitee.email,
+        metadata: {
+          name: 'Jane Doe',
+          role: 'USER',
+          invitedBy: 'admin-1',
+          invitedAt: '2026-09-17T00:00:00.000Z',
+          orgId,
+        },
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+      });
+      const another = 'cmorg00000000000000another';
+      // Newest first: another org's row, then OTHER_ORG's.
+      vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+        readable: [row('row-another', another), row('row-other', OTHER_ORG)],
+        unreadable: 0,
+      });
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(updateInvitationToken).toHaveBeenCalledWith(
+        invitee.email,
+        expect.objectContaining({ orgId: OTHER_ORG })
+      );
+    });
+
+    it('with several pending and no org named, re-sends the install org’s, not the newest', async () => {
+      const base = {
+        email: invitee.email,
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+      };
+      const meta = { name: 'Jane Doe', role: 'USER', invitedBy: 'a', invitedAt: '2026-09-17' };
+      vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+        readable: [
+          { ...base, id: 'row-org', metadata: { ...meta, orgId: OTHER_ORG } },
+          { ...base, id: 'row-install', metadata: meta },
+        ],
+        unreadable: 0,
+      });
+
+      const res = await POST(request({ ...invitee, role: 'USER' }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      const written = vi.mocked(updateInvitationToken).mock.calls[0]?.[1];
+      expect(written?.orgId).toBeUndefined();
+    });
+
+    it('passes no replacing id when there is no pending invitation to re-send', async () => {
+      const res = await POST(request({ ...invitee }));
+
+      expect(res.status).toBe(201);
+      expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+      expect(updateInvitationToken).not.toHaveBeenCalled();
     });
 
     it('drops an install-org orgRole a pending invitation carries from before #871', async () => {
@@ -319,8 +448,11 @@ describe('POST /api/v1/users/invite — org axis', () => {
       const res = await POST(request({ ...invitee, orgId: another }, '?resend=true'));
 
       expect(res.status).toBe(201);
-      expect(rewritten()).toMatchObject({ orgId: another });
-      expect(rewritten()).not.toHaveProperty('orgRole');
+      // Another org's invitation is its own row (#1199): written fresh, with
+      // the body's org and none of the pending row's org role.
+      const written = vi.mocked(generateInvitationToken).mock.calls[0]?.[1];
+      expect(written).toMatchObject({ orgId: another });
+      expect(written).not.toHaveProperty('orgRole');
     });
 
     it('a legacy pending invitation resent without org keys stays keyless', async () => {
@@ -340,10 +472,46 @@ describe('POST /api/v1/users/invite — org axis', () => {
         status: 'SUSPENDED',
       } as never);
 
-      const res = await POST(request({ ...invitee }, '?resend=true'));
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
 
       expect(res.status).toBe(400);
       expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('a body naming no org does not adopt a lone org invitation (code review, t-1006)', async () => {
+      // Naming no org means the install org. With only OTHER_ORG's invitation
+      // pending, that is a new platform invitation beside an org one, which is
+      // refused: the platform one could never be redeemed once the org one
+      // creates the account.
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+
+      const res = await POST(request({ ...invitee, role: 'ADMIN' }, '?resend=true'));
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('re-sends a pending platform invitation even with an org invitation beside it', async () => {
+      const base = {
+        email: invitee.email,
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+      };
+      const meta = { name: 'Jane Doe', role: 'ADMIN', invitedBy: 'a', invitedAt: '2026-09-17' };
+      vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+        readable: [
+          { ...base, id: 'row-org', metadata: { ...meta, role: 'USER', orgId: OTHER_ORG } },
+          { ...base, id: 'row-install', metadata: meta },
+        ],
+        unreadable: 0,
+      });
+
+      const res = await POST(request({ ...invitee, role: 'ADMIN' }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(updateInvitationToken).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -438,7 +606,7 @@ describe('POST /api/v1/users/invite — platform role floor', () => {
   it('refuses that caller re-sending a pending ADMIN invitation, even at the default role', async () => {
     registerWideningPolicy();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
-    vi.mocked(getValidInvitation).mockResolvedValueOnce(pendingInvitation('ADMIN'));
+    mockPending(pendingInvitation('ADMIN'));
 
     const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
 
@@ -447,14 +615,70 @@ describe('POST /api/v1/users/invite — platform role floor', () => {
     expect(updateInvitationToken).not.toHaveBeenCalled();
   });
 
+  it('refuses that caller when the ADMIN invitation is older than a default-role one', async () => {
+    // Code review finding (t-1006): the floor read only the newest row.
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    const userRow = { ...pendingInvitation('USER'), id: 'row-user' };
+    userRow.metadata = { ...userRow.metadata, orgId: OTHER_ORG } as typeof userRow.metadata;
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [userRow, { ...pendingInvitation('ADMIN'), id: 'row-admin' }],
+      unreadable: 0,
+    });
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
+
+    expect(res.status).toBe(403);
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
   it('still lets that caller re-send a pending default-role invitation', async () => {
     registerWideningPolicy();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
-    vi.mocked(getValidInvitation).mockResolvedValueOnce(pendingInvitation('USER'));
+    // Pending in the org it re-sends: one invitation per (email, org) (#1199).
+    const row = pendingInvitation('USER');
+    mockPending({ ...row, metadata: { ...row.metadata, orgId: OTHER_ORG } });
 
     const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
 
     expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an org invitation beside a pending platform invitation (code review, t-1006)', async () => {
+    // The mirror of the org route: accepting the org one first would strand
+    // the platform one.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    mockPending(pendingInvitation('USER')); // install org: a platform invitation
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(409);
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('refuses a resend that turns an org invitation into a platform one beside another org’s', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const base = pendingInvitation('USER');
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [
+        { ...base, id: 'row-x', metadata: { ...base.metadata, orgId: OTHER_ORG } },
+        {
+          ...base,
+          id: 'row-y',
+          metadata: { ...base.metadata, orgId: 'cmorg00000000000000000orgy' },
+        },
+      ],
+      unreadable: 0,
+    });
+
+    const res = await POST(
+      request({ ...invitee, role: 'ADMIN', orgId: OTHER_ORG }, '?resend=true')
+    );
+
+    expect(res.status).toBe(409);
+    expect(updateInvitationToken).not.toHaveBeenCalled();
   });
 
   it('lets a platform admin set the ADMIN role', async () => {

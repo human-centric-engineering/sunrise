@@ -5,7 +5,7 @@
  * and `checkInvitationInto`, with Prisma mocked at the delegates. The token
  * store, mailer and invite limiter are mocked at the module edge.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
@@ -27,14 +27,16 @@ vi.mock('@/lib/db/client', () => ({
     org: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn(), findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
-    verification: { count: vi.fn() },
   },
 }));
 
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   generateInvitationToken: vi.fn(),
   updateInvitationToken: vi.fn(),
-  getValidInvitation: vi.fn(),
+  pendingInvitationsFor: vi.fn(),
   INVITATION_IDENTIFIER_PREFIX: 'invitation:',
 }));
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
@@ -58,10 +60,11 @@ import { POST } from '@/app/api/v1/orgs/[id]/invitations/route';
 import { prisma } from '@/lib/db/client';
 import {
   generateInvitationToken,
-  getValidInvitation,
+  pendingInvitationsFor,
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
+import { resolveEmailTemplate } from '@/lib/email/registry';
 import { inviteLimiter } from '@/lib/security/rate-limit';
 import { createMockAuthSession } from '@/tests/helpers/auth';
 
@@ -100,9 +103,12 @@ function writtenMetadata() {
   return vi.mocked(generateInvitationToken).mock.calls[0]?.[1];
 }
 
-function pending(metadata: Record<string, unknown>) {
-  vi.mocked(getValidInvitation).mockResolvedValue({
+function pendingRow(metadata: Record<string, unknown>, id = 'row-1') {
+  return {
+    id,
+    email: 'jane@example.com',
     expiresAt: new Date('2026-12-01T00:00:00.000Z'),
+    createdAt: new Date('2026-10-01T00:00:00.000Z'),
     metadata: {
       name: 'Jane Doe',
       role: 'USER',
@@ -110,7 +116,15 @@ function pending(metadata: Record<string, unknown>) {
       invitedAt: '2026-10-01T00:00:00.000Z',
       ...metadata,
     },
-  } as never);
+  };
+}
+
+/** The pending invitations the token store reports for the address. */
+function pending(metadata: Record<string, unknown>, unreadable = 0) {
+  vi.mocked(pendingInvitationsFor).mockResolvedValue({
+    readable: [pendingRow(metadata)],
+    unreadable,
+  });
 }
 
 beforeEach(() => {
@@ -118,9 +132,12 @@ beforeEach(() => {
   mockEnv.TENANCY_MODE = 'single';
   vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
   vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
-  vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: ORG, status: 'ACTIVE' } as never);
-  vi.mocked(getValidInvitation).mockResolvedValue(null);
-  vi.mocked(prisma.verification.count).mockResolvedValue(0);
+  vi.mocked(prisma.org.findUnique).mockResolvedValue({
+    id: ORG,
+    name: 'Acme Org',
+    status: 'ACTIVE',
+  } as never);
+  vi.mocked(pendingInvitationsFor).mockResolvedValue({ readable: [], unreadable: 0 });
   vi.mocked(generateInvitationToken).mockResolvedValue('tok-new');
   vi.mocked(updateInvitationToken).mockResolvedValue('tok-re');
   vi.mocked(sendEmail).mockResolvedValue({ success: true, status: 'sent', id: 'e1' });
@@ -293,27 +310,113 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     mockGetSession.mockResolvedValue(session('USER', ORG));
     memberOf(ORG_ADMIN_ROLE);
   });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-  it('answers 409 EMAIL_TAKEN for an email that has an account, writing nothing', async () => {
-    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'u9' } as never);
+  it('gives an existing account the same 201 body as a new address, and flags the email', async () => {
+    // One instant for both requests: the bodies carry `invitedAt` and
+    // `expiresAt`, and two real clock reads can differ by a millisecond.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-10T12:00:00.000Z') });
+    // New address first
+    const fresh = await post(invitee);
+    const freshBody = await json(fresh);
+    const freshProps = vi.mocked(resolveEmailTemplate).mock.calls[0][1] as Record<string, unknown>;
+    vi.mocked(generateInvitationToken).mockClear();
+    vi.mocked(resolveEmailTemplate).mockClear();
+
+    // Then an address that has an account (not a member of this org)
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'u9', orgMemberships: [] } as never);
+    const existing = await post(invitee);
+    const existingBody = await json(existing);
+    const existingProps = vi.mocked(resolveEmailTemplate).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+
+    // The inviter cannot tell the two apart...
+    expect(existing.status).toBe(201);
+    expect(fresh.status).toBe(201);
+    vi.useRealTimers();
+    expect(existingBody).toEqual(freshBody);
+    // ...but the invitee's email can.
+    expect(freshProps).not.toHaveProperty('hasAccount');
+    expect(existingProps).toMatchObject({ hasAccount: true, orgName: 'Acme Org' });
+    expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(writtenMetadata()).toMatchObject({ role: 'USER', orgId: ORG });
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'jane@example.com',
+        subject: "You've been invited to join Acme Org",
+      })
+    );
+  });
+
+  it('looks the account up by email and asks for this org membership only', async () => {
+    await post(invitee);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: 'jane@example.com' },
+      select: { id: true, orgMemberships: { where: { orgId: ORG }, select: { id: true } } },
+    });
+  });
+
+  it('answers 409 ALREADY_MEMBER for someone already in this org, writing nothing', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u9',
+      orgMemberships: [{ id: 'm1' }],
+    } as never);
 
     const res = await post(invitee);
 
     expect(res.status).toBe(409);
-    expect((await json(res)).error.code).toBe('EMAIL_TAKEN');
-    expect(prisma.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { email: 'jane@example.com' } })
-    );
+    expect((await json(res)).error.code).toBe('ALREADY_MEMBER');
     expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(updateInvitationToken).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
+  it("creates a new invitation beside a pending one into ANOTHER org, leaving the other org's alone", async () => {
+    pending({ orgId: OTHER_ORG });
+
+    const res = await post(invitee);
+    const text = await res.text();
+
+    expect(res.status).toBe(201);
+    expect(text).not.toContain(OTHER_ORG);
+    // A first-time write for this org: not a resend, which would replace the other row.
+    expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(writtenMetadata()).toMatchObject({ orgId: ORG });
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats this org's invitation as the existing one even when another org's is newer", async () => {
+    vi.mocked(pendingInvitationsFor).mockResolvedValue({
+      readable: [
+        pendingRow({ orgId: OTHER_ORG }, 'row-other'),
+        pendingRow({ orgId: ORG, orgRole: ORG_ADMIN_ROLE }, 'row-mine'),
+      ],
+      unreadable: 0,
+    });
+
+    const res = await post(invitee, ORG, '?resend=true');
+
+    expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledWith(
+      'jane@example.com',
+      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE })
+    );
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['another org', { orgId: OTHER_ORG }],
     ['no org', {}],
-    ['a platform ADMIN role', { orgId: ORG, role: 'ADMIN' }],
+    ['the install org', { orgId: INSTALL_ORG_ID }],
+    ['a platform ADMIN role in another org', { orgId: OTHER_ORG, role: 'ADMIN' }],
+    ['a platform ADMIN role in this org', { orgId: ORG, role: 'ADMIN' }],
   ])(
-    'leaves a pending invitation into %s alone and names neither org',
+    'refuses, leaving it alone and naming no org, a pending platform invitation: %s',
     async (_label, metadata) => {
       pending(metadata);
 
@@ -330,21 +433,15 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
   );
 
   it('refuses, rather than replaces, a pending invitation it cannot read', async () => {
-    // getValidInvitation answers null for unparseable metadata or a failed
-    // read; a row that is still there belongs to someone this route cannot see.
-    vi.mocked(getValidInvitation).mockResolvedValue(null);
-    vi.mocked(prisma.verification.count).mockResolvedValue(1);
+    // An unparseable row has no known org, so it may be this one; it is not
+    // this route's to replace.
+    vi.mocked(pendingInvitationsFor).mockResolvedValue({ readable: [], unreadable: 1 });
 
     const res = await post(invitee, ORG, '?resend=true');
 
     expect(res.status).toBe(409);
     expect((await json(res)).error.code).toBe('CONFLICT');
-    expect(prisma.verification.count).toHaveBeenCalledWith({
-      where: {
-        identifier: 'invitation:jane@example.com',
-        expiresAt: { gt: expect.any(Date) },
-      },
-    });
+    expect(pendingInvitationsFor).toHaveBeenCalledWith('jane@example.com');
     expect(generateInvitationToken).not.toHaveBeenCalled();
     expect(updateInvitationToken).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();

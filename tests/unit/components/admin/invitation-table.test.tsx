@@ -689,7 +689,8 @@ describe('components/admin/invitation-table', () => {
       // Assert: Should call delete API
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenCalledWith(
-          '/api/v1/admin/invitations/alice%40example.com'
+          // A row with no org is the install org's: only that invitation goes
+          '/api/v1/admin/invitations/alice%40example.com?orgId=install'
         );
       });
 
@@ -767,9 +768,148 @@ describe('components/admin/invitation-table', () => {
       // Assert: Should URL-encode email
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenCalledWith(
-          '/api/v1/admin/invitations/user%2Btest%40example.com'
+          '/api/v1/admin/invitations/user%2Btest%40example.com?orgId=install'
         );
       });
+    });
+  });
+
+  describe('one address invited into several orgs (#1199)', () => {
+    const sameAddress = (orgId: string | null, orgRole: string | null): InvitationListItem => ({
+      email: 'dana@example.com',
+      name: `Dana ${orgId ?? 'install'}`,
+      role: 'USER',
+      orgId,
+      orgRole,
+      invitedBy: 'admin-1',
+      invitedByName: 'Admin User',
+      invitedAt: new Date('2025-01-15T10:00:00Z'),
+      expiresAt: new Date('2025-01-27T10:00:00Z'),
+    });
+    const rows = [sameAddress('org-a', 'ADMIN'), sameAddress('org-b', null)];
+    const meta: PaginationMeta = { page: 1, limit: 20, total: 2, totalPages: 1 };
+
+    async function openMenuFor(user: ReturnType<typeof userEvent.setup>, index: number) {
+      const buttons = screen.getAllByRole('button', { name: /open menu/i });
+      await user.click(buttons[index]);
+    }
+
+    it('should render a row for each org, though the email is the same', () => {
+      // Distinct keys: React warns about two children with the same key
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      expect(screen.getAllByText('dana@example.com')).toHaveLength(2);
+      expect(screen.getByText('Dana org-a')).toBeInTheDocument();
+      expect(screen.getByText('Dana org-b')).toBeInTheDocument();
+      const duplicateKeyWarnings = errorSpy.mock.calls.filter((call) =>
+        String(call[0]).includes('same key')
+      );
+      expect(duplicateKeyWarnings).toHaveLength(0);
+    });
+
+    it('should delete only the org of the row chosen', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
+      mockFetch.mockResolvedValue(
+        createMockFetchResponse(createMockInvitationsResponse([rows[0]], meta))
+      );
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      // Act: delete the second row (org-b)
+      await openMenuFor(user, 1);
+      await user.click(screen.getByRole('menuitem', { name: /delete/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(
+          '/api/v1/admin/invitations/dana%40example.com?orgId=org-b'
+        );
+      });
+      expect(apiClient.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it('should resend with the orgId and orgRole of the row chosen', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+      mockFetch.mockResolvedValue(
+        createMockFetchResponse(createMockInvitationsResponse(rows, meta))
+      );
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      // Act: resend the first row (org-a, with a role)
+      await openMenuFor(user, 0);
+      await user.click(screen.getByRole('menuitem', { name: /resend/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith('/api/v1/users/invite?resend=true', {
+          body: {
+            name: 'Dana org-a',
+            email: 'dana@example.com',
+            role: 'USER',
+            orgId: 'org-a',
+            orgRole: 'ADMIN',
+          },
+        });
+      });
+    });
+
+    it('should mark only the row being resent as resending, not the same address in another org', async () => {
+      // Code review finding (t-1006): the resending state was keyed by email.
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      await openMenuFor(user, 0);
+      await user.click(screen.getByRole('menuitem', { name: /resend/i }));
+      await openMenuFor(user, 1);
+
+      const item = screen.getByRole('menuitem', { name: /resend/i });
+      expect(item).toHaveTextContent(/^Resend$/);
+      expect(item).not.toHaveAttribute('data-disabled');
+    });
+
+    it('should resend an org row with no org role without an orgRole key', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+      mockFetch.mockResolvedValue(
+        createMockFetchResponse(createMockInvitationsResponse(rows, meta))
+      );
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      await openMenuFor(user, 1);
+      await user.click(screen.getByRole('menuitem', { name: /resend/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+      const body = vi.mocked(apiClient.post).mock.calls[0][1]?.body as Record<string, unknown>;
+      expect(body).toMatchObject({ orgId: 'org-b' });
+      expect(body).not.toHaveProperty('orgRole');
+    });
+
+    it('should resend an install-org row without an orgId', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+      mockFetch.mockResolvedValue(
+        createMockFetchResponse(createMockInvitationsResponse([sameAddress(null, null)], meta))
+      );
+      render(<InvitationTable initialInvitations={[sameAddress(null, null)]} initialMeta={meta} />);
+
+      await openMenuFor(user, 0);
+      await user.click(screen.getByRole('menuitem', { name: /resend/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+      expect(vi.mocked(apiClient.post).mock.calls[0][1]?.body).not.toHaveProperty('orgId');
     });
   });
 

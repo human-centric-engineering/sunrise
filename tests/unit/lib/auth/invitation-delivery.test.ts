@@ -18,6 +18,7 @@ import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { generateInvitationToken, updateInvitationToken } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import { resolveEmailTemplate } from '@/lib/email/registry';
+import { BRAND } from '@/lib/brand';
 import type { Logger } from '@/lib/logging';
 
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -28,7 +29,11 @@ const metadata = {
   invitedAt: '2026-10-15T00:00:00.000Z',
 } as const;
 
-function run(isResend: boolean, email = 'jane+x@example.com') {
+function run(
+  isResend: boolean,
+  extra: { orgName?: string; hasAccount?: boolean } = {},
+  email = 'jane+x@example.com'
+) {
   return deliverInvitation({
     email,
     name: 'Jane',
@@ -36,6 +41,7 @@ function run(isResend: boolean, email = 'jane+x@example.com') {
     isResend,
     inviterName: 'Admin',
     log: log as unknown as Logger,
+    ...extra,
   });
 }
 
@@ -63,6 +69,37 @@ describe('deliverInvitation', () => {
     expect(updateInvitationToken).toHaveBeenCalledWith('jane+x@example.com', metadata);
     expect(generateInvitationToken).not.toHaveBeenCalled();
     expect(res.link).toContain('token=re-token');
+  });
+
+  it('names the org in the subject and the template props', async () => {
+    await run(false, { orgName: 'Acme' });
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: "You've been invited to join Acme" })
+    );
+    expect(resolveEmailTemplate).toHaveBeenCalledWith(
+      'invitation',
+      expect.objectContaining({ orgName: 'Acme' })
+    );
+  });
+
+  it('falls back to the brand name in the subject, and sends no orgName, when none is given', async () => {
+    await run(false);
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: `You've been invited to join ${BRAND.name}` })
+    );
+    const props = vi.mocked(resolveEmailTemplate).mock.calls[0][1] as Record<string, unknown>;
+    expect(props).not.toHaveProperty('orgName');
+  });
+
+  it('tells the template an existing account is being invited, and only then', async () => {
+    await run(false, { hasAccount: true });
+    await run(false);
+
+    const calls = vi.mocked(resolveEmailTemplate).mock.calls;
+    expect(calls[0][1]).toMatchObject({ hasAccount: true });
+    expect(calls[1][1]).not.toHaveProperty('hasAccount');
   });
 
   it('mails the invitee the same link it returns, and expires it in about 7 days', async () => {

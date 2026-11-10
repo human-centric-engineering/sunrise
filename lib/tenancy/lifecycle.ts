@@ -523,14 +523,15 @@ export async function addMember(
  * issues no new invitations. One issued before the suspension can still be
  * accepted; its member is then refused at entry, like every member of a
  * suspended org (`.context/tenancy/identity.md`). No role means the
- * acceptance-time rule decides (`membershipForNewUser`).
+ * acceptance-time rule decides (`membershipForNewUser`). Answers the org, so
+ * the route can name it in the invitation email.
  */
 export async function checkInvitationInto(
   orgId: string,
   role: OrgRole | undefined,
   actor: MembershipActor,
   db: LifecycleDb = prisma
-): Promise<void> {
+): Promise<OrgRecord> {
   // The install org first: it takes no invitation from here at any role, so
   // that is the reason to give, not the caller's standing.
   if (orgId === INSTALL_ORG_ID) {
@@ -544,6 +545,7 @@ export async function checkInvitationInto(
   if (org.status !== 'ACTIVE') {
     throw new OrgLifecycleError('ORG_NOT_ACTIVE', 'A suspended organisation cannot invite members');
   }
+  return org;
 }
 
 /**

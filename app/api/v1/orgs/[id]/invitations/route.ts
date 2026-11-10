@@ -14,16 +14,24 @@
  * on what may be invited are `checkInvitationInto` in
  * `lib/tenancy/lifecycle.ts`. Nothing here decides who may call it.
  *
- * What this route will not do to an invitation it does not own: a pending
- * invitation for the same email into another org, or one carrying a platform
- * role, is answered with a 409 that names neither, and is left as it was.
- * Re-sending it from here would re-target someone else's invitation to this
- * org. An email that already has an account gets a 409 too: an org admin
- * cannot add an existing account, because the roster's add-by-id takes a user
- * id they have no way to look up. That leaves the answer saying an account
- * exists, which an org admin could not otherwise learn. The cost is accepted
- * because the invitation cannot be sent either way, and the inviter needs to
- * know why.
+ * **An address that already has an account is invited like any other**
+ * (#1199). The invitation is stored and sent; the email asks them to sign in
+ * and accept rather than set a password, and acceptance then needs a session
+ * signed in as that verified address (`POST /api/v1/invitations/accept`). The
+ * answer here is the same whether or not the account exists, so an org admin
+ * learns nothing about accounts outside their roster. The one exception is
+ * someone already a member of this org, who is on the roster the caller can
+ * read anyway: that is a 409 `ALREADY_MEMBER`.
+ *
+ * Pending invitations are kept one per (email, org), so an address may hold
+ * invitations into several orgs at once, and this route reads and replaces
+ * only this org's. Two pending invitations it does not own still refuse it
+ * with a 409 that names neither, leaving them as they were: one carrying a
+ * platform role or naming no org (the platform's, from Users), and one whose
+ * metadata cannot be read (its org is unknown, so it may be this one). A
+ * platform invitation creates an account with a platform role, and an
+ * existing account cannot redeem one; letting this invitation be accepted
+ * first would strand it.
  *
  * **The invitation link is never returned.** The platform route returns it so
  * a platform admin can hand it over when email is down. Here the inviter is a
@@ -46,10 +54,11 @@ import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, inviteOrgMemberSchema } from '@/lib/validations/tenancy';
 import {
   checkInvitationInto,
+  OrgLifecycleError,
   resolveOrgResource,
   membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
-import { getValidInvitation, INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
+import { isPlatformInvitation, pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -89,40 +98,30 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const resend = new URL(request.url).searchParams.get('resend') === 'true';
 
   const actor = membershipActorOf(session);
-  await checkInvitationInto(id, body.orgRole, actor);
+  const org = await checkInvitationInto(id, body.orgRole, actor);
 
+  // An existing account is invited like a new one (#1199); whether it exists
+  // changes only the email the invitee gets. A member of this org is already
+  // on the caller's roster, so saying so discloses nothing.
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
-    select: { id: true },
+    select: { id: true, orgMemberships: { where: { orgId: id }, select: { id: true } } },
   });
-  if (existingUser) {
-    return errorResponse(
-      'This person already has an account. Ask a platform admin to add them to the organisation.',
-      { code: ErrorCodes.EMAIL_TAKEN, status: 409 }
-    );
+  if (existingUser && existingUser.orgMemberships.length > 0) {
+    throw new OrgLifecycleError('ALREADY_MEMBER', 'That person is already a member');
   }
 
-  // `getValidInvitation` answers null for a row it cannot parse, and for a
-  // failed read, which here would mean "nothing pending" and let a new token
-  // replace another org's invitation. So when it says null, look for any
-  // unexpired row before believing it: a row this route cannot read is one
-  // it does not own.
-  const existingInvitation = await getValidInvitation(body.email);
-  const unreadablePending =
-    !existingInvitation &&
-    (await prisma.verification.count({
-      where: {
-        identifier: `${INVITATION_IDENTIFIER_PREFIX}${body.email}`,
-        expiresAt: { gt: new Date() },
-      },
-    })) > 0;
-  if (
-    unreadablePending ||
-    (existingInvitation &&
-      (existingInvitation.metadata.orgId !== id ||
-        existingInvitation.metadata.role !== DEFAULT_USER_ROLE))
-  ) {
-    log.info('Invitation refused: another invitation is pending for this email', {
+  // Invitations are one per (email, org): this org's is the only one this
+  // route may replace. A platform invitation (a platform role, or no org) and
+  // one it cannot read (its org is unknown) are not its to touch, and refuse
+  // it. `pendingInvitationsFor` throws on a failed read rather than answering
+  // "none", which here would let a new token sit beside one this route
+  // cannot see.
+  const pending = await pendingInvitationsFor(body.email);
+  const notOurs =
+    pending.unreadable > 0 || pending.readable.some((inv) => isPlatformInvitation(inv.metadata));
+  if (notOurs) {
+    log.info('Invitation refused: a platform invitation is pending for this email', {
       orgId: id,
       userId: session.user.id,
     });
@@ -131,6 +130,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       status: 409,
     });
   }
+  const existingInvitation = pending.readable.find((inv) => inv.metadata.orgId === id) ?? null;
 
   if (existingInvitation && !resend) {
     return successResponse({
@@ -171,6 +171,8 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     },
     isResend: !!existingInvitation,
     inviterName: session.user.name || 'Administrator',
+    orgName: org.name,
+    hasAccount: !!existingUser,
     log,
   });
 

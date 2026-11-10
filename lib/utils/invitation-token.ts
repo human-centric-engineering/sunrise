@@ -8,6 +8,14 @@
  * - validateInvitationToken() - Validate token and check expiration
  * - deleteInvitationToken() - Clean up used or expired tokens
  *
+ * Keying (#1199): one email can hold several pending invitations — one per
+ * org — all under the same `invitation:<email>` identifier, told apart by
+ * `metadata.orgId`. So nothing here reads "the invitation for this email":
+ * a token is matched to its own row by its hash, a resend replaces only the
+ * row in the same org, and acceptance consumes only the row it redeemed.
+ * {@link deleteInvitationToken} is the one exception, and deletes every
+ * invitation for the address on purpose (a platform admin's revoke).
+ *
  * Security:
  * - Uses crypto.randomBytes for cryptographically secure tokens
  * - Stores hashed tokens (SHA-256) to prevent token theft from database
@@ -19,6 +27,8 @@ import { randomBytes, createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseInvitationMetadata, type InvitationMetadata } from '@/lib/validations/admin';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * Token Configuration
@@ -104,53 +114,32 @@ export async function generateInvitationToken(
 /**
  * Validate an invitation token
  *
- * Checks if:
- * - Token exists for the given email
- * - Token hash matches the stored hash
- * - Token has not expired
+ * True when an unexpired invitation for `email` carries this token. Matched
+ * by the token's hash, not by taking the newest row: the email may hold
+ * invitations into several orgs, and each link redeems its own.
  *
  * @param email - The email address to validate the token for
  * @param token - The plain text token to validate
  * @returns True if token is valid, false otherwise
- *
- * @example
- * ```typescript
- * const isValid = await validateInvitationToken('user@example.com', token);
- * if (isValid) {
- *   await createUser(email);
- *   await deleteInvitationToken(email);
- * }
- * ```
  */
 export async function validateInvitationToken(email: string, token: string): Promise<boolean> {
   try {
-    const hashedToken = hashToken(token);
-
-    // Find the most recent non-expired verification record for this email
     const verification = await prisma.verification.findFirst({
       where: {
         identifier: `${IDENTIFIER_PREFIX}${email}`,
+        value: hashToken(token),
         expiresAt: { gt: new Date() },
       },
-      orderBy: { createdAt: 'desc' },
+      select: { id: true },
     });
 
-    // Token not found or all expired
     if (!verification) {
-      logger.warn('Invitation token not found or expired', { email });
+      logger.warn('Invitation token not found, expired or mismatched', { email });
       return false;
     }
 
-    // Compare hashed tokens
-    const isValid = verification.value === hashedToken;
-
-    if (!isValid) {
-      logger.warn('Invitation token mismatch', { email });
-    } else {
-      logger.info('Invitation token validated', { email });
-    }
-
-    return isValid;
+    logger.info('Invitation token validated', { email });
+    return true;
   } catch (error) {
     logger.error('Failed to validate invitation token', error, { email });
     return false;
@@ -158,7 +147,56 @@ export async function validateInvitationToken(email: string, token: string): Pro
 }
 
 /**
- * Delete all invitation tokens for a given email
+ * The unexpired invitation row this token redeems, or null.
+ *
+ * `metadata` is null when the row's metadata cannot be parsed: the token is
+ * still valid, and the caller decides what an unreadable invitation grants.
+ */
+export async function findInvitationByToken(
+  email: string,
+  token: string
+): Promise<{ id: string; metadata: InvitationMetadata | null; expiresAt: Date } | null> {
+  const row = await prisma.verification.findFirst({
+    where: {
+      identifier: `${IDENTIFIER_PREFIX}${email}`,
+      value: hashToken(token),
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true, metadata: true, expiresAt: true },
+  });
+  if (!row) return null;
+  return { id: row.id, metadata: parseInvitationMetadata(row.metadata), expiresAt: row.expiresAt };
+}
+
+/**
+ * Delete one invitation row. Answers whether this call deleted it, so two
+ * concurrent redemptions of the same token cannot both proceed: the one that
+ * gets `false` lost the race.
+ */
+export async function consumeInvitation(id: string): Promise<boolean> {
+  const { count } = await prisma.verification.deleteMany({ where: { id } });
+  return count > 0;
+}
+
+/**
+ * Delete the invitation this token redeems, expired or not — the invitee
+ * declining it. Every other invitation for the address is left. Answers
+ * whether a row went.
+ */
+export async function deleteInvitationByToken(email: string, token: string): Promise<boolean> {
+  const { count } = await prisma.verification.deleteMany({
+    where: { identifier: `${IDENTIFIER_PREFIX}${email}`, value: hashToken(token) },
+  });
+  logger.info('Invitation deleted by token', { email, deleted: count > 0 });
+  return count > 0;
+}
+
+/**
+ * Delete all invitation tokens for a given email — every org's.
+ *
+ * A platform admin's revoke. Acceptance and decline remove only the row they
+ * redeemed ({@link consumeInvitation}, {@link deleteInvitationByToken}), so
+ * an invitation into one org does not take the address's others with it.
  *
  * Should be called after:
  * - Successful token validation and user creation
@@ -193,9 +231,37 @@ export async function deleteInvitationToken(email: string): Promise<void> {
 }
 
 /**
+ * Delete the address's invitations into one org — `orgId` `null` for the
+ * install org — and no other org's (#1199). A platform admin's revoke of one
+ * row in the pending list. Answers how many went.
+ */
+export async function deleteInvitationsInOrg(email: string, orgId: string | null): Promise<number> {
+  const rows = await prisma.verification.findMany({
+    where: { identifier: `${IDENTIFIER_PREFIX}${email}` },
+    select: { id: true, metadata: true },
+  });
+  const slot = invitationOrgSlot(orgId);
+  const ids = rows
+    .filter((row) => {
+      const parsed = parseInvitationMetadata(row.metadata);
+      return parsed !== null && invitationOrgSlot(parsed.orgId) === slot;
+    })
+    .map((row) => row.id);
+  if (ids.length === 0) return 0;
+  const { count } = await prisma.verification.deleteMany({ where: { id: { in: ids } } });
+  logger.info('Invitations deleted for one org', { email, orgId: slot, count });
+  return count;
+}
+
+/**
  * Invitation record returned by getValidInvitation
  */
 export type InvitationRecord = {
+  /**
+   * The `Verification` row's id. Every reader here sets it; optional so a
+   * record built by hand (a fork's test fixture) still type-checks.
+   */
+  id?: string;
   email: string;
   metadata: InvitationMetadata;
   expiresAt: Date;
@@ -240,6 +306,7 @@ export async function getValidInvitation(email: string): Promise<InvitationRecor
     }
 
     return {
+      id: verification.id,
       email,
       metadata,
       expiresAt: verification.expiresAt,
@@ -252,38 +319,89 @@ export async function getValidInvitation(email: string): Promise<InvitationRecor
 }
 
 /**
+ * The org an invitation occupies, for keeping one per (email, org): its
+ * `orgId`, or `null` for the install org, whether named or absent (#1199).
+ */
+export function invitationOrgSlot(orgId: string | null | undefined): string | null {
+  return orgId && orgId !== INSTALL_ORG_ID ? orgId : null;
+}
+
+/**
+ * A platform invitation: one granting a platform role, or into the install
+ * org (named, absent or empty). It exists to create an account, so an
+ * existing account cannot redeem it, and an org's own invitation route does
+ * not write beside it (#1199). The one statement of the rule, for the routes
+ * and the accept page alike.
+ */
+export function isPlatformInvitation(
+  metadata: Pick<InvitationMetadata, 'role' | 'orgId'>
+): boolean {
+  return metadata.role !== DEFAULT_USER_ROLE || invitationOrgSlot(metadata.orgId) === null;
+}
+
+/** Every unexpired invitation for an address, as {@link pendingInvitationsFor} reads them. */
+export interface PendingInvitations {
+  /** Readable rows, newest first. */
+  readable: InvitationRecord[];
+  /** Unexpired rows whose metadata cannot be parsed, so whose org is unknown. */
+  unreadable: number;
+}
+
+/**
+ * Every unexpired invitation for `email`, newest first — one per org it has
+ * been invited into. Throws on a failed read rather than answering "none",
+ * because a caller deciding whether it may write a new invitation must not
+ * read an outage as an empty slot.
+ */
+export async function pendingInvitationsFor(email: string): Promise<PendingInvitations> {
+  const rows = await prisma.verification.findMany({
+    where: { identifier: `${IDENTIFIER_PREFIX}${email}`, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const readable: InvitationRecord[] = [];
+  let unreadable = 0;
+  for (const row of rows) {
+    const metadata = parseInvitationMetadata(row.metadata);
+    if (!metadata) {
+      unreadable += 1;
+      continue;
+    }
+    readable.push({
+      id: row.id,
+      email,
+      metadata,
+      expiresAt: row.expiresAt,
+      createdAt: row.createdAt,
+    });
+  }
+  return { readable, unreadable };
+}
+
+/**
  * Update (regenerate) an invitation token for an email
  *
- * Deletes all existing invitation tokens for the email and creates a new one.
- * Use this for resending invitations - ensures the new token is valid.
+ * Replaces the pending invitation in the same org as `metadata`
+ * ({@link invitationOrgSlot}: the install org named or absent counts as one)
+ * and creates a new one. An invitation for the same address into another org
+ * is left alone, as is a row whose metadata cannot be read.
  *
  * @param email - The email address to update the invitation for
  * @param metadata - Updated invitation metadata
  * @returns The new unhashed token string
- *
- * @example
- * ```typescript
- * // Resend invitation with new token
- * const newToken = await updateInvitationToken('user@example.com', {
- *   name: 'John Doe',
- *   role: 'USER',
- *   invitedBy: 'admin-id',
- *   invitedAt: new Date().toISOString(),
- * });
- * await sendInvitationEmail(email, newToken);
- * ```
  */
 export async function updateInvitationToken(
   email: string,
   metadata: InvitationMetadata
 ): Promise<string> {
-  // Delete all existing invitations for this email
-  await deleteInvitationToken(email);
+  const replaced = await deleteInvitationsInOrg(email, metadata.orgId ?? null);
 
-  // Generate and store new token
   const token = await generateInvitationToken(email, metadata);
 
-  logger.info('Invitation token updated (regenerated)', { email });
+  logger.info('Invitation token updated (regenerated)', {
+    email,
+    orgId: metadata.orgId ?? null,
+    replaced,
+  });
 
   return token;
 }
@@ -320,48 +438,50 @@ export async function getInvitationMetadata(
   token: string
 ): Promise<InvitationMetadataResult> {
   try {
-    const hashedToken = hashToken(token);
-
-    // First check if any invitation exists for this email (including expired)
-    const anyInvitation = await prisma.verification.findFirst({
+    // This token's own row, expired or not. The address may hold invitations
+    // into several orgs, so the newest row is not necessarily this link's.
+    const invitation = await prisma.verification.findFirst({
       where: {
         identifier: `${IDENTIFIER_PREFIX}${email}`,
+        value: hashToken(token),
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!anyInvitation) {
+    if (!invitation) {
+      // Some invitation for the address exists, but not this token's: a
+      // stale link (re-sent since) or a mistyped one.
+      const anyInvitation = await prisma.verification.count({
+        where: { identifier: `${IDENTIFIER_PREFIX}${email}` },
+      });
+      if (anyInvitation > 0) {
+        logger.warn('Invitation token mismatch for metadata lookup', { email });
+        return { valid: false, reason: 'invalid_token' };
+      }
       logger.warn('Invitation not found for metadata lookup', { email });
       return { valid: false, reason: 'not_found' };
     }
 
-    // Check if the invitation has expired
-    if (anyInvitation.expiresAt <= new Date()) {
+    if (invitation.expiresAt <= new Date()) {
       logger.warn('Invitation expired for metadata lookup', {
         email,
-        expiredAt: anyInvitation.expiresAt.toISOString(),
+        expiredAt: invitation.expiresAt.toISOString(),
       });
       return { valid: false, reason: 'expired' };
     }
 
-    // Validate the token
-    if (anyInvitation.value !== hashedToken) {
-      logger.warn('Invitation token mismatch for metadata lookup', { email });
-      return { valid: false, reason: 'invalid_token' };
-    }
-
-    logger.info('Invitation metadata retrieved', { email });
-
-    const metadata = parseInvitationMetadata(anyInvitation.metadata);
+    const metadata = parseInvitationMetadata(invitation.metadata);
     if (!metadata) {
       logger.warn('Invalid invitation metadata for metadata lookup', { email });
       return { valid: false, reason: 'not_found' as const };
     }
 
+    logger.info('Invitation metadata retrieved', { email });
+
     return {
       valid: true,
       metadata,
-      expiresAt: anyInvitation.expiresAt,
+      expiresAt: invitation.expiresAt,
     };
   } catch (error) {
     logger.error('Failed to get invitation metadata', error, { email });
@@ -390,6 +510,14 @@ export interface GetAllPendingInvitationsOptions {
  */
 export interface PendingInvitationItem {
   email: string;
+  /**
+   * The org it joins, `null` for the install org (#1199). An address can have
+   * one row per org, so `(email, orgId)` names a row; email alone does not.
+   * Optional so a hand-built item still type-checks.
+   */
+  orgId?: string | null;
+  /** The org role it grants, when it names one. */
+  orgRole?: string | null;
   name: string;
   role: string;
   invitedBy: string;
@@ -442,7 +570,7 @@ export async function getAllPendingInvitations(
     // Transform verification records to invitation items with metadata
     // Skip records with invalid/corrupt metadata
     const allItems = await Promise.all(
-      verifications.map(async (v) => {
+      verifications.map(async (v): Promise<PendingInvitationItem | null> => {
         const metadata = parseInvitationMetadata(v.metadata);
         if (!metadata) return null;
 
@@ -460,6 +588,8 @@ export async function getAllPendingInvitations(
 
         return {
           email,
+          orgId: invitationOrgSlot(metadata.orgId),
+          orgRole: metadata.orgRole ?? null,
           name: metadata.name,
           role: metadata.role,
           invitedBy: metadata.invitedBy,

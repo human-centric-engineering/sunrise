@@ -79,6 +79,14 @@ function isExpiringSoon(expiresAt: Date): boolean {
   return expiresAt <= twentyFourHoursFromNow;
 }
 
+/**
+ * A row's identity: an address holds one pending invitation per org (#1199),
+ * so the email alone does not name a row.
+ */
+function rowKey(invitation: Pick<InvitationListItem, 'email' | 'orgId'>): string {
+  return `${invitation.email}:${invitation.orgId ?? ''}`;
+}
+
 export function InvitationTable({
   initialInvitations,
   initialMeta,
@@ -92,7 +100,13 @@ export function InvitationTable({
   const [sortBy, setSortBy] = useState<'name' | 'email' | 'invitedAt' | 'expiresAt'>(initialSortBy);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
-  const [deleteEmail, setDeleteEmail] = useState<string | null>(null);
+  // The row to delete. An address can hold one invitation per org (#1199),
+  // so the row is (email, org), and only that org's invitation is deleted.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    email: string;
+    orgId: string | null;
+  } | null>(null);
+  const deleteEmail = deleteTarget?.email ?? null;
   const [isDeleting, setIsDeleting] = useState(false);
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
@@ -239,13 +253,13 @@ export function InvitationTable({
    * Handle invitation deletion
    */
   const handleDelete = useCallback(async () => {
-    if (!deleteEmail) return;
+    if (!deleteTarget) return;
 
     setIsDeleting(true);
     clearDelete();
     try {
-      await apiClient.delete(API.ADMIN.invitationByEmail(deleteEmail));
-      setDeleteEmail(null);
+      await apiClient.delete(API.ADMIN.invitationByEmail(deleteTarget.email, deleteTarget.orgId));
+      setDeleteTarget(null);
       void fetchInvitations(meta.page);
     } catch (error) {
       // The dialog stays open with the failure above its buttons.
@@ -253,13 +267,13 @@ export function InvitationTable({
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteEmail, fetchInvitations, meta.page, clearDelete, reportDelete]);
+  }, [deleteTarget, fetchInvitations, meta.page, clearDelete, reportDelete]);
 
   // Committed while the delete runs; a failure from one row never shows on the next.
   const deleteDialog = useCommittedDialog({
     open: !!deleteEmail,
     pending: isDeleting,
-    onClose: () => setDeleteEmail(null),
+    onClose: () => setDeleteTarget(null),
     clear: clearDelete,
   });
 
@@ -268,7 +282,7 @@ export function InvitationTable({
    */
   const handleResend = useCallback(
     async (invitation: InvitationListItem) => {
-      setResendingEmail(invitation.email);
+      setResendingEmail(rowKey(invitation));
       setResendSuccess(null);
       clearList();
       try {
@@ -278,6 +292,14 @@ export function InvitationTable({
             name: invitation.name,
             email: invitation.email,
             role: invitation.role,
+            // Which org's invitation this row is (#1199): without it the
+            // route cannot tell it from the address's others.
+            ...(invitation.orgId
+              ? {
+                  orgId: invitation.orgId,
+                  ...(invitation.orgRole ? { orgRole: invitation.orgRole } : {}),
+                }
+              : {}),
           },
         });
         setResendSuccess(invitation.email);
@@ -397,7 +419,7 @@ export function InvitationTable({
               </TableRow>
             ) : (
               invitations.map((invitation) => (
-                <TableRow key={invitation.email}>
+                <TableRow key={rowKey(invitation)}>
                   <TableCell className="truncate font-medium">{invitation.name}</TableCell>
                   <TableCell className="text-muted-foreground truncate">
                     {invitation.email}
@@ -444,16 +466,21 @@ export function InvitationTable({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={() => void handleResend(invitation)}
-                          disabled={resendingEmail === invitation.email}
+                          disabled={resendingEmail === rowKey(invitation)}
                         >
                           <RefreshCw
-                            className={`mr-2 h-4 w-4 ${resendingEmail === invitation.email ? 'animate-spin' : ''}`}
+                            className={`mr-2 h-4 w-4 ${resendingEmail === rowKey(invitation) ? 'animate-spin' : ''}`}
                           />
-                          {resendingEmail === invitation.email ? 'Resending...' : 'Resend'}
+                          {resendingEmail === rowKey(invitation) ? 'Resending...' : 'Resend'}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => setDeleteEmail(invitation.email)}
+                          onClick={() =>
+                            setDeleteTarget({
+                              email: invitation.email,
+                              orgId: invitation.orgId ?? null,
+                            })
+                          }
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete

@@ -25,8 +25,19 @@ import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
  */
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   getInvitationMetadata: vi.fn(),
+}));
+
+// Mock the database: org name and account existence are looked up by the route
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    org: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn() },
+  },
 }));
 
 // Mock route logger
@@ -45,6 +56,7 @@ vi.mock('@/lib/api/context', async () => {
 
 // Import mocked modules
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
+import { prisma } from '@/lib/db/client';
 
 /**
  * Response type interfaces
@@ -54,6 +66,10 @@ interface SuccessResponse {
   data: {
     name: string;
     role: string;
+    orgName: string | null;
+    accountExists: boolean;
+    accountVerified: boolean;
+    newAccountOnly: boolean;
   };
 }
 
@@ -96,7 +112,11 @@ async function parseResponse<T = APIResponse>(response: Response): Promise<T> {
 /**
  * Helper function to create a valid metadata result
  */
-function createValidResult(metadata: { name: string; role: string }): InvitationMetadataResult {
+function createValidResult(metadata: {
+  name: string;
+  role: string;
+  orgId?: string;
+}): InvitationMetadataResult {
   return {
     valid: true,
     metadata: {
@@ -123,6 +143,8 @@ function createInvalidResult(
 describe('GET /api/v1/invitations/metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.org.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
   });
 
   describe('Success Scenarios', () => {
@@ -149,12 +171,73 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data).toEqual({
         name: 'John Doe',
         role: 'USER',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        newAccountOnly: true,
       });
 
       // Verify mocks were called correctly
       expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
       expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata requested', { email });
       expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata retrieved', { email });
+    });
+
+    it('should report the org name and an existing account for an invitation into an org', async () => {
+      // Arrange
+      const email = 'member@example.com';
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Member', role: 'USER', orgId: 'org-a' })
+      );
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ name: 'Acme Org' } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
+
+      // Act
+      const response = await GET(createMockRequest({ token: 'tok', email }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(data.data).toEqual({
+        name: 'Member',
+        role: 'USER',
+        orgName: 'Acme Org',
+        accountExists: true,
+        accountVerified: true,
+        // a USER invitation into a named org can be taken by an existing account
+        newAccountOnly: false,
+      });
+      expect(prisma.org.findUnique).toHaveBeenCalledWith({
+        where: { id: 'org-a' },
+        select: { name: true },
+      });
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email },
+        select: { emailVerified: true },
+      });
+    });
+
+    it('should look up a mixed-case address lowercased, as invitations are stored', async () => {
+      // Arrange
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Mixed', role: 'USER', orgId: 'org-a' })
+      );
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
+
+      // Act
+      const response = await GET(
+        createMockRequest({ token: 'tok', email: 'Mixed.Case@Example.COM' })
+      );
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert: token lookup and account lookup both use the lowercased address
+      expect(response.status).toBe(200);
+      expect(getInvitationMetadata).toHaveBeenCalledWith('mixed.case@example.com', 'tok');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'mixed.case@example.com' },
+        select: { emailVerified: true },
+      });
+      expect(data.data.accountExists).toBe(true);
     });
 
     it('should return invitation metadata for valid token (ADMIN role)', async () => {
@@ -180,6 +263,10 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data).toEqual({
         name: 'Admin User',
         role: 'ADMIN',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        newAccountOnly: true,
       });
     });
   });
@@ -463,6 +550,10 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data).toEqual({
         name: 'User with Extra Fields',
         role: 'USER',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        newAccountOnly: true,
       });
     });
 
@@ -489,6 +580,10 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data).toEqual({
         name: 'User Plus',
         role: 'USER',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        newAccountOnly: true,
       });
     });
 

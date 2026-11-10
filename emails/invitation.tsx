@@ -19,6 +19,10 @@ interface InvitationEmailProps {
   inviteeEmail: string;
   invitationUrl: string;
   expiresAt: Date;
+  /** The org the invitation joins. Absent ⇒ the app. */
+  orgName?: string;
+  /** The address already has an account: sign in and accept, no password to set. */
+  hasAccount?: boolean;
 }
 
 export default function InvitationEmail({
@@ -27,9 +31,12 @@ export default function InvitationEmail({
   inviteeEmail,
   invitationUrl,
   expiresAt,
+  orgName,
+  hasAccount = false,
 }: InvitationEmailProps): React.ReactElement {
-  const previewText = `You've been invited to join ${BRAND.name}`;
   const appName = BRAND.name;
+  const joining = orgName ?? appName;
+  const previewText = `You've been invited to join ${joining}`;
 
   // Format expiration time
   const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
@@ -52,8 +59,14 @@ export default function InvitationEmail({
           <Text style={text}>Hi {inviteeName},</Text>
 
           <Text style={text}>
-            <strong>{inviterName}</strong> has invited you to join <strong>{appName}</strong>.
-            We&apos;re excited to have you on board!
+            <strong>{inviterName}</strong> has invited you to join <strong>{joining}</strong>
+            {orgName ? (
+              <>
+                {' '}
+                on <strong>{appName}</strong>
+              </>
+            ) : null}
+            . We&apos;re excited to have you on board!
           </Text>
 
           <Section style={infoBox}>
@@ -65,7 +78,9 @@ export default function InvitationEmail({
           </Section>
 
           <Text style={text}>
-            Click the button below to accept your invitation and set up your password:
+            {hasAccount
+              ? `You already have a ${appName} account with this address. Click the button below, sign in as ${inviteeEmail}, and accept the invitation:`
+              : 'Click the button below to accept your invitation and set up your password:'}
           </Text>
 
           <Section style={buttonContainer}>
@@ -80,7 +95,11 @@ export default function InvitationEmail({
           </Text>
 
           <ul style={list}>
-            <li style={listItem}>Set your own secure password</li>
+            {hasAccount ? (
+              <li style={listItem}>Switch to {joining} from your account</li>
+            ) : (
+              <li style={listItem}>Set your own secure password</li>
+            )}
             <li style={listItem}>Access your personalized dashboard</li>
             <li style={listItem}>Start collaborating with your team</li>
           </ul>

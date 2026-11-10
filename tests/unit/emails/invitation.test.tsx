@@ -146,4 +146,49 @@ describe('InvitationEmail', () => {
     expect(html).toContain('François Dubois');
     expect(html).toContain('José García');
   });
+  describe('orgName', () => {
+    it('should name the org in the preview and body, and the app after it', async () => {
+      const html = await render(<InvitationEmail {...defaultProps} orgName="Acme Org" />);
+
+      expect(html).toContain('You&#x27;ve been invited to join Acme Org');
+      expect(html).toContain('<strong>Acme Org</strong>');
+      expect(html).toContain('on <strong>Sunrise</strong>');
+    });
+
+    it('should name only the app when no org is given', async () => {
+      const html = await render(<InvitationEmail {...defaultProps} />);
+
+      expect(html).not.toContain('Acme Org');
+      expect(html).not.toMatch(/on <strong>Sunrise<\/strong>/);
+    });
+  });
+
+  describe('hasAccount', () => {
+    it('should ask an existing account to sign in as the invited address, with no password setup', async () => {
+      const html = await render(
+        <InvitationEmail {...defaultProps} orgName="Acme Org" hasAccount />
+      );
+
+      expect(html).toContain('You already have a Sunrise account with this address');
+      expect(html).toContain('sign in as bob@example.com');
+      // React splices `<!-- -->` between adjacent text nodes
+      expect(html.replace(/<!-- -->/g, '')).toContain('Switch to Acme Org from your account');
+      expect(html).not.toContain('set up your password');
+      expect(html).not.toContain('Set your own secure password');
+    });
+
+    it('should fall back to the app name in the benefit line when no org is given', async () => {
+      const html = await render(<InvitationEmail {...defaultProps} hasAccount />);
+
+      expect(html.replace(/<!-- -->/g, '')).toContain('Switch to Sunrise from your account');
+    });
+
+    it('should keep the set-a-password copy for a new address', async () => {
+      const html = await render(<InvitationEmail {...defaultProps} hasAccount={false} />);
+
+      expect(html).toContain('set up your password');
+      expect(html).toContain('Set your own secure password');
+      expect(html).not.toContain('You already have a');
+    });
+  });
 });

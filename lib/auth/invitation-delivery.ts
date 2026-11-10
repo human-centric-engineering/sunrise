@@ -30,6 +30,14 @@ export interface DeliverInvitationInput {
   /** A pending invitation exists for this email and is being re-sent. */
   isResend: boolean;
   inviterName: string;
+  /** The org the invitation joins, named in the email. Absent ⇒ the email names the app. */
+  orgName?: string;
+  /**
+   * The address already has an account, so the email asks them to sign in
+   * and accept rather than set a password (#1199). The route's answer to the
+   * inviter must not depend on this.
+   */
+  hasAccount?: boolean;
   log: Logger;
 }
 
@@ -46,9 +54,11 @@ export async function deliverInvitation({
   metadata,
   isResend,
   inviterName,
+  orgName,
+  hasAccount = false,
   log,
 }: DeliverInvitationInput): Promise<DeliveredInvitation> {
-  // A resend deletes the old token and creates a new one.
+  // A resend deletes the old token (that org's only) and creates a new one.
   const token = isResend
     ? await updateInvitationToken(email, metadata)
     : await generateInvitationToken(email, metadata);
@@ -62,13 +72,15 @@ export async function deliverInvitation({
 
   const emailResult = await sendEmail({
     to: email,
-    subject: `You've been invited to join ${BRAND.name}`,
+    subject: `You've been invited to join ${orgName ?? BRAND.name}`,
     react: resolveEmailTemplate('invitation', {
       inviterName,
       inviteeName: name,
       inviteeEmail: email,
       invitationUrl: link,
       expiresAt,
+      ...(orgName !== undefined ? { orgName } : {}),
+      ...(hasAccount ? { hasAccount } : {}),
     }),
   });
 

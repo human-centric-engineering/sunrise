@@ -24,8 +24,19 @@ import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
  */
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   getInvitationMetadata: vi.fn(),
+}));
+
+// Mock the database: org name and account existence are looked up by the route
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    org: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn() },
+  },
 }));
 
 // Mock route logger
@@ -44,6 +55,7 @@ vi.mock('@/lib/api/context', async () => {
 
 // Import mocked modules
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
+import { prisma } from '@/lib/db/client';
 
 /**
  * Response type interfaces
@@ -53,6 +65,10 @@ interface SuccessResponse {
   data: {
     name: string;
     role: string;
+    orgName: string | null;
+    accountExists: boolean;
+    accountVerified: boolean;
+    newAccountOnly: boolean;
   };
 }
 
@@ -95,7 +111,11 @@ async function parseResponse<T = APIResponse>(response: Response): Promise<T> {
 /**
  * Helper function to create a valid metadata result
  */
-function createValidResult(metadata: { name: string; role: string }): InvitationMetadataResult {
+function createValidResult(metadata: {
+  name: string;
+  role: string;
+  orgId?: string;
+}): InvitationMetadataResult {
   return {
     valid: true,
     metadata: {
@@ -125,6 +145,8 @@ function createInvalidResult(
 describe('GET /api/v1/invitations/metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.org.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
   });
 
   describe('Successful metadata retrieval', () => {
@@ -150,6 +172,11 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data).toEqual({
         name: 'John Doe',
         role: 'USER',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        // no org named: a platform invitation, which only creates an account
+        newAccountOnly: true,
       });
     });
 
@@ -189,7 +216,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata retrieved', { email });
     });
 
-    it('should return only name and role fields from metadata', async () => {
+    it('should return only the fields the accept page needs, not the inviter or dates', async () => {
       // Arrange
       const email = 'user@example.com';
       const token = 'valid_token';
@@ -205,14 +232,164 @@ describe('GET /api/v1/invitations/metadata', () => {
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
-      // Should only include name and role, not invitedBy, invitedAt, or expiresAt
+      // Only name, role, orgName and accountExists: not invitedBy, invitedAt, or expiresAt
       expect(data.data).toEqual({
         name: 'Test User',
         role: 'USER',
+        orgName: null,
+        accountExists: false,
+        accountVerified: false,
+        // no org named: a platform invitation, which only creates an account
+        newAccountOnly: true,
       });
       expect(data.data).not.toHaveProperty('invitedBy');
       expect(data.data).not.toHaveProperty('invitedAt');
       expect(data.data).not.toHaveProperty('expiresAt');
+    });
+
+    it('should return the name of the org the invitation joins', async () => {
+      // Arrange
+      const orgId = 'cmorg00000000000000org01';
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER', orgId })
+      );
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ name: 'Acme Org' } as never);
+
+      // Act
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert
+      expect(data.data.orgName).toBe('Acme Org');
+      expect(prisma.org.findUnique).toHaveBeenCalledWith({
+        where: { id: orgId },
+        select: { name: true },
+      });
+    });
+
+    it('should return a null orgName without an org lookup when the invitation names no org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.orgName).toBeNull();
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should return a null orgName when the named org no longer exists', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER', orgId: 'cmorg-gone' })
+      );
+      vi.mocked(prisma.org.findUnique).mockResolvedValue(null);
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.orgName).toBeNull();
+    });
+
+    it('should report an existing but unverified account as accountVerified false', async () => {
+      // Code review finding (t-1006): accepting needs a verified address, so
+      // the page must tell an unverified one to verify first.
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER' })
+      );
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: false } as never);
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.accountExists).toBe(true);
+      expect(data.data.accountVerified).toBe(false);
+    });
+
+    it('should report accountExists true when the address already has an account', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER' })
+      );
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.accountExists).toBe(true);
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'jane@example.com' },
+        select: { emailVerified: true },
+      });
+    });
+
+    it('should not look up the org or the account for an invalid token', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('invalid_token'));
+
+      await GET(createMockRequest({ token: 'bad', email: 'jane@example.com' }));
+
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should report newAccountOnly true for a platform-role invitation, even into a named org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Ada', role: 'ADMIN', orgId: 'org-a' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'ada@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly true for a USER invitation that names no org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Una', role: 'USER' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'una@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly true for a USER invitation into the install org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Ines', role: 'USER', orgId: 'install' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'ines@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly false for a USER invitation into a named org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Olly', role: 'USER', orgId: 'org-a' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'olly@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(false);
+    });
+
+    it('should look the address up lowercased and trimmed when the query is mixed case', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER', orgId: 'org-a' })
+      );
+
+      await GET(createMockRequest({ token: 'tok', email: 'Jane.Doe@Example.COM' }));
+
+      expect(getInvitationMetadata).toHaveBeenCalledWith('jane.doe@example.com', 'tok');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'jane.doe@example.com' },
+        select: { emailVerified: true },
+      });
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata requested', {
+        email: 'jane.doe@example.com',
+      });
     });
 
     it('should handle ADMIN role metadata', async () => {

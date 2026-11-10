@@ -591,7 +591,12 @@ model Verification {
 **Get Invitation Metadata:**
 
 - `GET /api/v1/invitations/metadata?token={token}&email={email}` - Get invitation details (public)
-- Response: `{ name, role }`
+- Response: `{ name, role, orgName, accountExists }`
+
+**An address that already has an account** (#1199) signs in and accepts
+through `POST /api/v1/invitations/accept`; the password route above answers
+it `409 EMAIL_TAKEN`. Either can decline with `POST /api/v1/invitations/decline`.
+See [identity.md](../tenancy/identity.md#accepting-as-an-existing-account).
 
 ### Email Templates
 

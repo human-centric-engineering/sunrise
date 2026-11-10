@@ -176,6 +176,13 @@ export type UserListResponse = APIResponse<UserListItem[]>;
 export type InvitationListItem = {
   /** Email address of the invited user */
   email: string;
+  /**
+   * The org it joins, `null` for the install org (#1199). An address can hold
+   * one invitation per org, so `(email, orgId)` identifies a row.
+   */
+  orgId?: string | null;
+  /** The org role it grants, when it names one */
+  orgRole?: string | null;
   /** Display name of the invited user */
   name: string;
   /** Role assigned to the invitation */

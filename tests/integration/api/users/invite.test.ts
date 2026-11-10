@@ -54,9 +54,12 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   generateInvitationToken: vi.fn(),
-  getValidInvitation: vi.fn(),
+  pendingInvitationsFor: vi.fn(async () => ({ readable: [], unreadable: 0 })),
   updateInvitationToken: vi.fn(),
 }));
 
@@ -110,13 +113,23 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import {
   generateInvitationToken,
-  getValidInvitation,
+  pendingInvitationsFor,
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+
+/** Mock the address's pending invitations as this one (or none). */
+function mockPending(inv: Parameters<typeof pendingOf>[0], once = true) {
+  const m = vi.mocked(pendingInvitationsFor);
+  if (once) m.mockResolvedValueOnce(pendingOf(inv));
+  else m.mockResolvedValue(pendingOf(inv));
+}
+function pendingOf(inv: import('@/lib/utils/invitation-token').InvitationRecord | null) {
+  return { readable: inv ? [inv] : [], unreadable: 0 };
+}
 
 /**
  * Helper function to create a mock NextRequest
@@ -196,8 +209,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock no existing invitation (using new getValidInvitation)
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      // Mock no existing invitation
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
@@ -266,7 +279,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-456');
@@ -302,7 +315,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-789');
@@ -450,7 +463,7 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock existing invitation using getValidInvitation
+      // Mock existing invitation
       const existingInvitation = {
         email: 'existing@example.com',
         metadata: {
@@ -462,7 +475,7 @@ describe('POST /api/v1/users/invite', () => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+      mockPending(existingInvitation, false);
 
       // Act: Call the invite endpoint without resend param
       const request = createMockRequest({
@@ -514,6 +527,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Mock existing invitation
       const existingInvitation = {
+        id: 'existing-row-id',
         email: 'resend@example.com',
         metadata: {
           name: 'Resend User',
@@ -524,7 +538,7 @@ describe('POST /api/v1/users/invite', () => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+      mockPending(existingInvitation, false);
 
       // Mock updateInvitationToken (used for resend)
       vi.mocked(updateInvitationToken).mockResolvedValue('new-resend-token-123');
@@ -651,7 +665,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
@@ -689,7 +703,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-999');
@@ -743,7 +757,7 @@ describe('POST /api/v1/users/invite', () => {
         vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
         // Mock no existing invitation
-        vi.mocked(getValidInvitation).mockResolvedValue(null);
+        mockPending(null, false);
 
         // Mock invitation token generation
         vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-fallback');
@@ -793,7 +807,7 @@ describe('POST /api/v1/users/invite', () => {
         vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
         // Mock no existing invitation
-        vi.mocked(getValidInvitation).mockResolvedValue(null);
+        mockPending(null, false);
 
         // Mock invitation token generation
         vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-localhost');
@@ -844,7 +858,7 @@ describe('POST /api/v1/users/invite', () => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+      mockPending(existingInvitation, false);
 
       // Act: Call the invite endpoint WITHOUT resend
       const request = createMockRequest({
@@ -881,7 +895,7 @@ describe('POST /api/v1/users/invite', () => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+      mockPending(existingInvitation, false);
 
       // Mock different tokens for each resend
       vi.mocked(updateInvitationToken)
@@ -941,7 +955,7 @@ describe('POST /api/v1/users/invite', () => {
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
         };
-        vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+        mockPending(existingInvitation, false);
 
         // Mock updateInvitationToken
         vi.mocked(updateInvitationToken).mockResolvedValue('resend-token-url');
@@ -1098,7 +1112,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: No database queries were made
       expect(vi.mocked(prisma.user.findUnique)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
-      expect(vi.mocked(getValidInvitation)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(pendingInvitationsFor)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: No email was sent
@@ -1126,7 +1140,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null, false);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('token-123');

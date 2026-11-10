@@ -340,6 +340,22 @@ describe('API Endpoints', () => {
       const path = API.ADMIN.invitationByEmail('test@test.com');
       expect(path).toMatch(/^\/api\//);
     });
+
+    it('should append the org id as a query parameter when one is given', () => {
+      expect(API.ADMIN.invitationByEmail('user@example.com', 'org-a')).toBe(
+        '/api/v1/admin/invitations/user%40example.com?orgId=org-a'
+      );
+    });
+
+    it('should name the install org "install" when orgId is null', () => {
+      expect(API.ADMIN.invitationByEmail('user@example.com', null)).toBe(
+        '/api/v1/admin/invitations/user%40example.com?orgId=install'
+      );
+    });
+
+    it('should leave the query off when orgId is omitted, so every org is deleted', () => {
+      expect(API.ADMIN.invitationByEmail('user@example.com')).not.toContain('?');
+    });
   });
 
   describe('PUBLIC endpoints', () => {

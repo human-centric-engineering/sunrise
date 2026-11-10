@@ -32,6 +32,8 @@ the per-admin export sub-cap noted below.
 | `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
 | `GET /api/v1/orgs/[id]/audit-log`           | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
 | `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
+| `POST /api/v1/invitations/accept`           | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
+| `POST /api/v1/invitations/decline`          | none            | Whoever holds the invitation token. Per-IP accept-invite sub-cap.                                                                                      |
 | `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
@@ -236,6 +238,13 @@ The org's own invitation (§111 t-813), behind the Members page. Same admission
 as the members routes. The invitee joins this org on acceptance, as a platform
 `USER`.
 
+**An address that already has an account is invited the same way** (#1199).
+The answer does not depend on whether the account exists. The email asks an
+existing account to sign in and accept (`POST /api/v1/invitations/accept`)
+rather than set a password. Pending invitations are kept one per (email, org),
+so an invitation into another org neither blocks this one nor is touched by
+it. See [identity.md](../tenancy/identity.md#accepting-as-an-existing-account).
+
 **Request Body** (`inviteOrgMemberSchema`):
 
 ```json
@@ -262,10 +271,31 @@ pending, the answer is `200` with `emailStatus: "pending"` and no link. Send
 
 **Error Responses**: `400 INSTALL_ORG_MEMBERSHIP` (invite into the install org
 from Users) · `400 ORG_NOT_ACTIVE` (suspended) · `403 OWNER_STANDING` ·
-`409 EMAIL_TAKEN` (the email has an account; a platform admin adds it by id) ·
-`409 CONFLICT` (an invitation for this email is pending into another org, or
-carries a platform role; it is left untouched and not named) · `429` (invite
-sub-cap).
+`409 ALREADY_MEMBER` (already a member of this org) · `409 CONFLICT` (a
+platform invitation for this email is pending, carrying a platform role or
+naming no org, or one this route cannot read; it is left untouched and not
+named) · `429` (invite sub-cap).
+
+### Accept or decline an invitation
+
+```
+POST /api/v1/invitations/accept    { token, email }   — signed in, browser session
+POST /api/v1/invitations/decline   { token, email }   — public, token-gated
+```
+
+**Accept** is for an address that already has an account (#1199). The session
+must be signed in as the invited address, verified. The membership follows the
+new-account rule (the invitation's `orgRole`, default `MEMBER`, and `OWNER` for
+an empty org's first member). Only that invitation is consumed.
+**Response** (200): `{ message, membership: { orgId, role } }`.
+**Errors**: `403 INVITATION_WRONG_ACCOUNT` (signed in as another address) ·
+`403 EMAIL_NOT_VERIFIED` · `404` (no such invitation, or already used) ·
+`409 ALREADY_MEMBER` (the moot invitation is deleted) ·
+`409 INVITATION_NEEDS_NEW_ACCOUNT` (a platform invitation, which only creates
+an account) · `410 INVITATION_EXPIRED` · `429` (accept-invite sub-cap).
+
+**Decline** deletes only the invitation the token names, expired or not, and
+needs no session. **Errors**: `404` · `429`.
 
 ### Change a member's role
 
