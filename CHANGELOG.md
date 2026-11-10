@@ -69,9 +69,10 @@ release process.
   newest. `updateInvitationToken()` replaces only the same org's row.
   `POST /api/v1/users/invite` reads and re-sends the pending invitation in the
   org it targets (the install org when the body names none), not the newest
-  for the address. It answers `409 CONFLICT` to a new platform invitation (a
-  platform role, or the install org) while an org invitation is pending for
-  the address, the mirror of the org route's refusal. Acceptance, by password or
+  for the address. It answers `409 CONFLICT` rather than write a platform invitation (a platform
+  role, or the install org) and an org invitation side by side for one
+  address, the mirror of the org route's refusal. Its org invitations' emails
+  name the org. Acceptance, by password or
   OAuth, deletes only the row it redeemed. `deleteInvitationToken()` still
   deletes every row for the address. New helpers: `findInvitationByToken()`,
   `consumeInvitation()`, `deleteInvitationByToken()`,

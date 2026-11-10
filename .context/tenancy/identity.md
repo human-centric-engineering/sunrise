@@ -372,11 +372,12 @@ replaces both), and the inherited org goes through the same existence, status an
 policy checks. The "already pending" response echoes the pending org keys.
 Which pending invitation is _this_ one (#1199): the one in the org the body
 names, and with no org named the install org's. Never simply the newest,
-which may be another org's. A new platform invitation (a platform role, or the
-install org) is refused with a `409` while an org invitation is pending for
-the address, the mirror of the org route's refusal: whichever is accepted
-first creates the account, and the platform one could then never be
-redeemed. The admin table's Resend
+which may be another org's. A platform invitation (a platform role, or the
+install org) and an org invitation are never written side by side for one
+address: a new one of either kind, or a resend that changes the pending one's
+kind, is refused with a `409` while the other kind is pending. Whichever is
+accepted first creates the account, and the platform one could then never be
+redeemed. The org route refuses the same way. The admin table's Resend
 and Delete name the row's org for that reason, and Delete revokes only that
 org's invitation (`?orgId=`). A caller who is not a platform admin is refused
 while any platform-role invitation is pending for the address.
