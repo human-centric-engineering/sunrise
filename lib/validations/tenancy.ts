@@ -370,3 +370,11 @@ export const listSupportActivityQuerySchema = paginationQuerySchema.extend({
   limit: z.coerce.number().int().positive().max(100).default(50),
   grantId: cuidSchema.optional(),
 });
+
+/**
+ * `GET /api/v1/orgs/[id]/audit-log` query (t-1005): the org's own admin
+ * history, newest first.
+ */
+export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+});

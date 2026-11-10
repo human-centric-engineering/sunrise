@@ -40,7 +40,8 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { DELETE } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-tokens/[tokenId]/route';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const CUSTOMER = 'cmorg00000000000customer1';
 const GRANT_ID = 'cmgrant000000000000grant1';
@@ -120,6 +121,7 @@ describe('a real admin handler inside a support session', () => {
       action: 'agent.invite_token_revoke',
       supportGrantId: GRANT_ID,
       supportOrgId: CUSTOMER,
+      actingOrgId: CUSTOMER,
     });
   });
 
@@ -139,6 +141,8 @@ describe('a real admin handler inside a support session', () => {
       action: 'agent.invite_token_revoke',
       supportGrantId: null,
       supportOrgId: null,
+      // …but it still names the org it was made in (t-1005).
+      actingOrgId: CUSTOMER,
     });
     expect(db.orgSupportGrant.findFirst).not.toHaveBeenCalled();
   });
@@ -171,5 +175,66 @@ describe('logAdminAction’s support stamp', () => {
   it('takes an explicit stamp from a caller acting on a session from outside it', () => {
     logAdminAction({ ...entry, support: { grantId: GRANT_ID, orgId: CUSTOMER } });
     expect(writtenRow()).toMatchObject({ supportGrantId: GRANT_ID, supportOrgId: CUSTOMER });
+  });
+});
+
+describe('logAdminAction’s acting org (t-1005)', () => {
+  const entry = { userId: 'user_1', action: 'agent.update', entityType: 'agent' };
+
+  it('names the org of an ordinary org context', async () => {
+    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), { source: 'session' });
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER, supportOrgId: null });
+  });
+
+  it('is read when the action is logged, so a write settling after the scope still carries it', async () => {
+    let settle: (v: unknown) => void = () => {};
+    db.aiAdminAuditLog.create.mockReturnValue(new Promise((r) => (settle = r)));
+
+    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), { source: 'session' });
+    settle({});
+
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  });
+
+  it('names no org outside any tenant context, or in a system scope', async () => {
+    logAdminAction(entry);
+    expect(db.aiAdminAuditLog.create.mock.calls[0][0].data.actingOrgId).toBeNull();
+
+    await runAsSystem('test: a system-scope write', async () => logAdminAction(entry));
+    expect(db.aiAdminAuditLog.create).toHaveBeenCalledTimes(2);
+    expect(db.aiAdminAuditLog.create.mock.calls[1][0].data.actingOrgId).toBeNull();
+  });
+
+  it('names the org an explicit support stamp entered, not the caller’s own org', async () => {
+    // The switch route's `support.enter`: logged from the support person's own
+    // org, about the org they are entering.
+    await runAsOrg(
+      INSTALL_ORG_ID,
+      async () => logAdminAction({ ...entry, support: { grantId: GRANT_ID, orgId: CUSTOMER } }),
+      { source: 'session' }
+    );
+    expect(writtenRow()).toMatchObject({
+      actingOrgId: CUSTOMER,
+      supportGrantId: GRANT_ID,
+      supportOrgId: CUSTOMER,
+    });
+  });
+
+  it('at TENANCY_MODE=single names the install org and writes the row otherwise unchanged', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    await runAsOrg(INSTALL_ORG_ID, async () => logAdminAction(entry), { source: 'session' });
+    expect(writtenRow()).toEqual({
+      userId: 'user_1',
+      action: 'agent.update',
+      entityType: 'agent',
+      entityId: null,
+      entityName: null,
+      changes: expect.anything(),
+      metadata: expect.anything(),
+      clientIp: null,
+      supportGrantId: null,
+      supportOrgId: null,
+      actingOrgId: INSTALL_ORG_ID,
+    });
   });
 });

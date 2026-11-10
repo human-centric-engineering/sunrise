@@ -153,12 +153,20 @@ function supportStampFromContext(): AuditSupportStamp | null {
 /**
  * Log an admin action. Fire-and-forget — never throws to the caller.
  *
- * Inside a support session (§121 t-825) the row is stamped with the grant and
- * the org from the tenant context, so every caller's row names the support
- * actor's grant without the caller knowing a support session exists.
+ * Every row written inside an org names that org (`actingOrgId`, t-1005), so
+ * an org can be shown its own admin history (`listOrgAuditLog`). A
+ * system-scope write names none.
+ *
+ * Inside a support session (§121 t-825) the row is also stamped with the grant
+ * and the org from the tenant context, so every caller's row names the support
+ * actor's grant without the caller knowing a support session exists. A caller
+ * passing the stamp explicitly acts on that org from outside it, so the row is
+ * that org's too: `support.enter` belongs in the history of the org entered.
  */
 export function logAdminAction(entry: AdminAuditEntry): void {
   const support = entry.support ?? supportStampFromContext();
+  // Read synchronously, as the support stamp is — see supportStampFromContext.
+  const actingOrgId = support?.orgId ?? getTenantContext()?.orgId ?? null;
   void prisma.aiAdminAuditLog
     .create({
       data: {
@@ -178,6 +186,7 @@ export function logAdminAction(entry: AdminAuditEntry): void {
         clientIp: entry.clientIp ?? null,
         supportGrantId: support?.grantId ?? null,
         supportOrgId: support?.orgId ?? null,
+        actingOrgId,
       },
     })
     .catch((err: unknown) => {

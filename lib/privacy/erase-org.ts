@@ -23,6 +23,13 @@
  * members with them), or refusing to erase an org with members (makes
  * offboarding a two-step with a manual roster purge) — were both rejected.
  *
+ * **The admin audit rows made in the org are kept, still naming it** (t-1005).
+ * `AiAdminAuditLog.actingOrgId` has no FK, like `supportOrgId`, so the org
+ * delete neither removes those rows nor nulls the column, and nothing here
+ * writes to them. The log is the vendor's (a system model), and the org is
+ * not a data subject. The people on those rows are erased through
+ * `eraseUser()`, which nulls `userId`.
+ *
  * **The install org is refused** (ruling b): it is the one row that always
  * exists. No receipt is written: the org is not a data subject, and the
  * memberships that go with it are exported to their subjects while they

@@ -137,6 +137,14 @@ model AiAdminAuditLog {
   // marked as support, naming where it happened.
   supportGrantId String?
   supportOrgId   String?
+  // t-1005 (#1181): the org the action was made in — on every row written
+  // inside an org, support or not; null for a system-scope write. Stamped by
+  // `logAdminAction`; read per org only through `listOrgAuditLog`, which is
+  // what confines it. Deliberately not named `orgId`: that would make this a
+  // tenant-owned model under row isolation, and the vendor's own cross-org
+  // log would stop being one. No FK, like `supportOrgId`: erasing the org
+  // keeps the rows naming where they happened.
+  actingOrgId    String?
   createdAt      DateTime @default(now())
 
   user         User?            @relation("AiAdminAuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
@@ -145,6 +153,7 @@ model AiAdminAuditLog {
   @@index([userId])
   @@index([supportGrantId, createdAt])
   @@index([supportOrgId])
+  @@index([actingOrgId, createdAt])
   @@index([action])
   @@index([entityType, entityId])
   @@index([createdAt])

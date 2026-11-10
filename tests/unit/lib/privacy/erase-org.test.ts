@@ -10,6 +10,8 @@
  * And the storage sweep (§109 t-736): the org's prefix is deleted only after
  * the transaction commits, and a sweep failure is reported, never thrown.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -19,6 +21,7 @@ const tx = vi.hoisted(() => ({
   session: { updateMany: vi.fn() },
   user: { delete: vi.fn(), deleteMany: vi.fn() },
   orgMembership: { deleteMany: vi.fn() },
+  aiAdminAuditLog: { updateMany: vi.fn(), deleteMany: vi.fn() },
 }));
 const db = vi.hoisted(() => ({ $transaction: vi.fn(), org: { findUnique: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -86,6 +89,27 @@ describe('eraseOrg', () => {
       sessionsCleared: 4,
       storageSwept: true,
     });
+  });
+
+  it('keeps the org on the admin audit rows made in it (t-1005)', async () => {
+    await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+
+    // The vendor's log is a system model: the erasure writes nothing to it…
+    expect(tx.org.delete).toHaveBeenCalledTimes(1);
+    expect(tx.aiAdminAuditLog.updateMany).not.toHaveBeenCalled();
+    expect(tx.aiAdminAuditLog.deleteMany).not.toHaveBeenCalled();
+
+    // …and the schema cannot do it behind the code's back: `actingOrgId`
+    // carries no relation, so the org delete neither cascades to the rows nor
+    // nulls the column.
+    const schema = readFileSync(
+      join(process.cwd(), 'prisma/schema/orchestration-ops.prisma'),
+      'utf8'
+    );
+    const model = schema.slice(schema.indexOf('model AiAdminAuditLog {'));
+    const block = model.slice(0, model.indexOf('\n}'));
+    expect(block).toMatch(/^\s*actingOrgId\s+String\?\s*$/m);
+    expect(block).not.toMatch(/fields:\s*\[[^\]]*actingOrgId/);
   });
 
   it("deletes the org's storage prefix only after the transaction has committed", async () => {
