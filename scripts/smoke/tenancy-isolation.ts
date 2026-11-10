@@ -103,6 +103,9 @@
  *     is demoted, after revocation, and into A, which granted nothing; under
  *     a READ_ONLY grant a write is refused by the guard's rule and B's agents
  *     are unchanged;
+ *   - an org's admin history (t-1005): a support row and a member's row
+ *     made in B both name B, B's `listOrgAuditLog` reads both back and A's
+ *     reads neither, and after B's erasure both still name B;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -145,6 +148,7 @@ import {
   revokeSupportGrant,
 } from '@/lib/tenancy/support-grants';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { listOrgAuditLog } from '@/lib/orchestration/audit/org-audit-log';
 import { isRefusedReadOnlyWrite } from '@/lib/auth/support-principal';
 import {
   agentProfileUsage,
@@ -3584,7 +3588,7 @@ async function main(): Promise<void> {
       for (let i = 0; i < 40; i++) {
         const row = await prisma.aiAdminAuditLog.findFirst({
           where: { entityName },
-          select: { id: true, supportGrantId: true, supportOrgId: true },
+          select: { id: true, supportGrantId: true, supportOrgId: true, actingOrgId: true },
         });
         if (row) return row;
         await new Promise((r) => setTimeout(r, 50));
@@ -3651,6 +3655,33 @@ async function main(): Promise<void> {
         aNamesBsGrant.total === 0 &&
         !aReadsAll.entries.some((e) => e.id === supportRow?.id),
       `A naming B’s grant reads nothing (${aNamesBsGrant.total}), and A’s own list holds none of B’s`
+    );
+
+    // ── [19e] Every audit row names the org it was made in, read back by that org only (t-1005)
+    console.log('\n[19e] org audit history: rows name their org, and only B reads B’s back');
+    check(
+      supportRow?.actingOrgId === b.orgId && memberRow?.actingOrgId === b.orgId,
+      `the support row and B’s owner’s own row both name B (${supportRow?.actingOrgId}, ${memberRow?.actingOrgId})`
+    );
+    const history = (orgId: string) =>
+      runAsOrg(orgId, () => listOrgAuditLog(orgId, { page: 1, limit: 100 }), {
+        source: 'session',
+        role: ORG_OWNER_ROLE,
+      });
+    const bHistory = await history(b.orgId);
+    const bHistoryIds = new Set(bHistory.entries.map((e) => e.id));
+    check(
+      bHistoryIds.has(supportRow?.id ?? '') &&
+        bHistoryIds.has(memberRow?.id ?? '') &&
+        bHistory.entries.find((e) => e.id === supportRow?.id)?.support?.grantId === adminGrant.id &&
+        bHistory.entries.find((e) => e.id === memberRow?.id)?.support === null,
+      `B reads both rows back, the support one marked with its grant (${bHistory.total} rows)`
+    );
+    const aHistory = await history(a.orgId);
+    check(
+      bHistory.total > 0 &&
+        !aHistory.entries.some((e) => e.id === supportRow?.id || e.id === memberRow?.id),
+      `A’s history holds neither of B’s rows (${aHistory.total} rows of its own)`
     );
 
     // ── [20] Org erasure: from inside another org, with knowledge documents ─
@@ -3728,13 +3759,25 @@ async function main(): Promise<void> {
     const supportRowAfterErasure = await runAsSystem('smoke: read the support audit row', () =>
       prisma.aiAdminAuditLog.findFirst({
         where: { entityName: supportAction },
-        select: { supportGrantId: true, supportOrgId: true },
+        select: { supportGrantId: true, supportOrgId: true, actingOrgId: true },
       })
     );
     check(
       supportRowAfterErasure?.supportGrantId === null &&
         supportRowAfterErasure.supportOrgId === b.orgId,
       `after B’s erasure, its support audit row stays, marked as support in B (${JSON.stringify(supportRowAfterErasure)})`
+    );
+    // t-1005: erasing B keeps the org on the rows made in it, member rows too.
+    const memberRowAfterErasure = await runAsSystem('smoke: read the member audit row', () =>
+      prisma.aiAdminAuditLog.findFirst({
+        where: { entityName: memberAction },
+        select: { actingOrgId: true },
+      })
+    );
+    check(
+      supportRowAfterErasure?.actingOrgId === b.orgId &&
+        memberRowAfterErasure?.actingOrgId === b.orgId,
+      `after B’s erasure, its audit rows still name B (${supportRowAfterErasure?.actingOrgId}, ${memberRowAfterErasure?.actingOrgId})`
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
