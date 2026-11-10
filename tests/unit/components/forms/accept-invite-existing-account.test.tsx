@@ -78,6 +78,38 @@ describe('AcceptInviteExistingAccount', () => {
     expect(screen.getByText(/accepting needs a\s+verified address/i)).toBeInTheDocument();
   });
 
+  it('signed in and unverified: sends a verification email to the invited address', async () => {
+    // Seen on the final look (t-1006): an install that does not require
+    // verification to sign in never offers the email, so the page does.
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockResolvedValue({});
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} accountVerified={false} />);
+
+    await user.click(screen.getByRole('button', { name: /send verification email/i }));
+
+    expect(
+      await screen.findByText(/verification email sent to pat@example.com/i)
+    ).toBeInTheDocument();
+    expect(apiClient.post).toHaveBeenCalledWith(API.AUTH.SEND_VERIFICATION_EMAIL, {
+      body: { email: 'pat@example.com' },
+    });
+  });
+
+  it('signed in and unverified: a failed send shows why and keeps the button', async () => {
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('Too many requests', 'RATE_LIMIT_EXCEEDED', 429)
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} accountVerified={false} />);
+
+    await user.click(screen.getByRole('button', { name: /send verification email/i }));
+
+    expect(await screen.findByText(/too many requests/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send verification email/i })).toBeEnabled();
+  });
+
   it('signed in as someone else: names both addresses and offers sign-out, not accept', async () => {
     signedInAs('other@example.com');
     const user = userEvent.setup();

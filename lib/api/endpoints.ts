@@ -22,6 +22,8 @@ export const API = {
     /** better-auth catch-all */
     BASE: '/api/auth',
     SIGN_OUT: '/api/auth/sign-out',
+    /** Send a verification email to an unverified address (rate limited) */
+    SEND_VERIFICATION_EMAIL: '/api/auth/send-verification-email',
   },
 
   /** Current user endpoints */

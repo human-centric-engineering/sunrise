@@ -51,6 +51,11 @@ export function AcceptInviteExistingAccount({
   const [accepted, setAccepted] = useState(false);
   const [declined, setDeclined] = useState(false);
   const save = useSaveFailure({ fallback: 'Failed to accept invitation. Please try again.' });
+  const [isSendingVerification, setIsSendingVerification] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const verification = useSaveFailure({
+    fallback: 'Failed to send verification email. Please try again.',
+  });
 
   const joining = orgName ?? 'the organisation';
   const returnTo = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
@@ -79,6 +84,21 @@ export function AcceptInviteExistingAccount({
     } catch (err) {
       setIsAccepting(false);
       save.report(err);
+    }
+  };
+
+  // Signed in but unverified: sign-in need not have offered a verification
+  // email (an install may not require one to sign in), so offer it here.
+  const sendVerification = async () => {
+    verification.clear();
+    setIsSendingVerification(true);
+    try {
+      await apiClient.post(API.AUTH.SEND_VERIFICATION_EMAIL, { body: { email } });
+      setVerificationSent(true);
+    } catch (err) {
+      verification.report(err);
+    } finally {
+      setIsSendingVerification(false);
     }
   };
 
@@ -159,11 +179,29 @@ export function AcceptInviteExistingAccount({
       )}
 
       {isInvitedAccount && !accountVerified && (
-        <p className="text-muted-foreground text-sm">
-          Your account&apos;s email address has not been verified yet, and accepting needs a
-          verified address. Use the verification email (sign out and sign in again to have one
-          sent), then open this invitation link again.
-        </p>
+        <>
+          <p className="text-muted-foreground text-sm">
+            Your account&apos;s email address has not been verified yet, and accepting needs a
+            verified address. Send yourself a verification email, follow its link, then open this
+            invitation link again.
+          </p>
+          {verificationSent ? (
+            <p className="text-sm" role="status">
+              Verification email sent to {email}. Check your inbox.
+            </p>
+          ) : (
+            <>
+              <SaveError failure={verification.failure} />
+              <Button
+                className="w-full"
+                onClick={() => void sendVerification()}
+                disabled={isSendingVerification}
+              >
+                {isSendingVerification ? 'Sending...' : 'Send verification email'}
+              </Button>
+            </>
+          )}
+        </>
       )}
 
       {isInvitedAccount && accountVerified && (
