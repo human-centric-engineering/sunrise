@@ -881,6 +881,68 @@ describe('POST /api/v1/users/invite — an address that already has an account (
     });
   });
 
+  describe('an OWNER org invitation needs owner standing, as on the org route', () => {
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    /** A fork policy admitting a non-platform-admin, as t-671 will an org's admins. */
+    function asAdmittedNonPlatformAdmin() {
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canAdminister: async () => true,
+        subjectScope: async () => ({}),
+      });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    }
+
+    it('refuses inviting an existing account as OWNER without it', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).toBe('OWNER_STANDING');
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('refuses re-sending a pending OWNER invitation without it, whatever role the body names', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+      mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      const res = await resendOrgRow(); // the body names MEMBER
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).toBe('OWNER_STANDING');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('lets a platform admin invite an existing account as OWNER', async () => {
+      accountExists();
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      expect(res.status).toBe(201);
+      expect(vi.mocked(generateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+        orgId: OTHER_ORG,
+        orgRole: 'OWNER',
+      });
+    });
+  });
+
+  it('refuses a new invitation while a pending one cannot be read, as the org route does', async () => {
+    accountExists();
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({ readable: [], unreadable: 1 });
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
   describe('a platform invitation to an existing account is still refused', () => {
     it('an install-org invitation (no org named)', async () => {
       accountExists();

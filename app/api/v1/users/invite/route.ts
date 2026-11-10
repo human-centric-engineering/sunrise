@@ -33,12 +33,14 @@
  * 2. Authorize user (require ADMIN role)
  * 3. Validate request body
  * 4. Parse resend query parameter
- * 5. Find the pending invitation in the target org, and resolve that org
- *    (§106): the body's, else on a resend the pending invitation's
- * 6. Check the org: it must exist and be active, and the policy must let
+ * 5. Find the pending invitation in the target org
+ * 6. Resolve that org (§106): the body's, else on a resend the pending
+ *    invitation's
+ * 6a. Check the org: it must exist and be active, and the policy must let
  *    this caller administer it (`canAdminister` on an org resource — the
  *    seam §106 t-671 makes org-aware; today it answers as the admin guard
- *    did). Asked before anything answers about the address.
+ *    did). Asked before anything answers about the address. An OWNER org
+ *    invitation, or a resend of one, needs owner standing too
  * 6b. If the address already has an account: a platform invitation (a
  *    platform role, or the install org) is a 409 EMAIL_TAKEN; someone
  *    already in the target org is a 409 ALREADY_MEMBER; an org invitation
@@ -72,7 +74,8 @@ import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limi
 import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE, isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
+import { checkInvitationInto, membershipActorOf, OrgLifecycleError } from '@/lib/tenancy/lifecycle';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /**
  * POST /api/v1/users/invite
@@ -222,6 +225,17 @@ export const POST = withAdminAuth(async (request, session) => {
       });
       throw new ForbiddenError('You cannot invite users into that organisation');
     }
+
+    // Inviting someone as an OWNER, or replacing a pending OWNER invitation,
+    // needs owner standing, as on the org route: accepting one writes the
+    // membership on the strength of the check made here (t-1008). A platform
+    // admin has it.
+    if (
+      !intoInstall &&
+      (target.orgRole === ORG_OWNER_ROLE || existingInvitation?.metadata.orgRole === ORG_OWNER_ROLE)
+    ) {
+      await checkInvitationInto(org.id, ORG_OWNER_ROLE, membershipActorOf(session));
+    }
   }
 
   // 6b. An address that already has an account (#1199, t-1008). A platform
@@ -236,11 +250,9 @@ export const POST = withAdminAuth(async (request, session) => {
     where: { email: body.email },
     select: {
       id: true,
-      // A platform invitation is refused on the account alone, and only an
-      // org invitation has a target org to look in.
-      ...(writesPlatform || !target.orgId
-        ? {}
-        : { orgMemberships: { where: { orgId: target.orgId }, select: { id: true } } }),
+      orgMemberships: target.orgId
+        ? { where: { orgId: target.orgId }, select: { id: true } }
+        : { take: 0, select: { id: true } },
     },
   });
 
@@ -250,10 +262,11 @@ export const POST = withAdminAuth(async (request, session) => {
       status: 409,
     });
   }
-  if (existingUser && (existingUser.orgMemberships?.length ?? 0) > 0) {
+  if (existingUser && existingUser.orgMemberships.length > 0) {
     throw new OrgLifecycleError('ALREADY_MEMBER', 'That person is already a member');
   }
 
+  // 6c. An invitation already pending in this org.
   if (existingInvitation && !resend) {
     // Return existing invitation details WITHOUT a link (can't generate valid one)
     // Admin must use ?resend=true to send a new email with valid link
@@ -315,7 +328,13 @@ export const POST = withAdminAuth(async (request, session) => {
     existingInvitation !== null &&
     isPlatformInvitation(existingInvitation.metadata) === writesPlatform;
   const others = pending.readable.filter((inv) => inv !== existingInvitation);
-  if (!keepsKind && others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform)) {
+  // A row it cannot read could be either kind, so it refuses too, as the org
+  // route does.
+  if (
+    !keepsKind &&
+    (pending.unreadable > 0 ||
+      others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform))
+  ) {
     log.info('Invitation refused: it would sit beside the other kind of pending invitation', {
       adminId: session.user.id,
       writesPlatform,
