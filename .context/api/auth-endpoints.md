@@ -338,15 +338,24 @@ GET /api/v1/invitations/metadata?token={token}&email={email}
   "success": true,
   "data": {
     "name": "Jane Doe",
-    "role": "USER"
+    "role": "USER",
+    "orgName": "Acme",
+    "accountExists": false
   }
 }
 ```
 
+`orgName` is the org the invitation joins (`null` for none). `accountExists`
+tells the accept page which way the invitation is taken: `false`, set a
+password here; `true`, sign in and accept through
+`POST /api/v1/invitations/accept` (#1199, see
+[org endpoints](./org-endpoints.md#accept-or-decline-an-invitation)).
+
 **Error Responses**:
 
-- **400 Validation Error**: Invalid or expired token
+- **400 Validation Error**: Invalid token
 - **404 Not Found**: Invitation not found
+- **410 Gone** (`INVITATION_EXPIRED`): The invitation has expired
 
 **Usage**: Pre-fill user details in acceptance form before user sets password.
 
@@ -390,6 +399,8 @@ POST /api/auth/accept-invite
 
 - **400 Validation Error**: Invalid token, passwords don't match, etc.
 - **404 Not Found**: Invitation not found
+- **409 Conflict** (`EMAIL_TAKEN`): The address already has an account; sign in
+  and accept through `POST /api/v1/invitations/accept` (#1199)
 - **500 Internal Error**: User creation failed
 
 **Flow**:
@@ -399,7 +410,8 @@ POST /api/auth/accept-invite
 3. Create user via better-auth signup (stable User ID)
 4. Update role if non-default
 5. Mark email as verified
-6. Delete invitation token
+6. Delete the redeemed invitation (only this token's; the address's
+   invitations into other orgs stay pending)
 7. Send welcome email (non-blocking)
 8. Return success (user must log in)
 
