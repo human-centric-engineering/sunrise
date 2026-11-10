@@ -46,8 +46,10 @@ release process.
   (`{ token, email }`, a browser session signed in as the invited, verified
   address) and `POST /api/v1/invitations/decline` (token only), with their
   rules in `lib/tenancy/accept-invitation.ts`.
-  `GET /api/v1/invitations/metadata` also returns `orgName` and
-  `accountExists`. The `invitation` email props gain optional `orgName` and
+  `GET /api/v1/invitations/metadata` also returns `orgName`, `accountExists`
+  and `newAccountOnly`. `DELETE /api/v1/admin/invitations/[email]` takes an
+  optional `?orgId=<id|install>` to revoke only that org's invitation. The
+  admin list items (`InvitationListItem`) gain `orgId` and `orgRole`. The `invitation` email props gain optional `orgName` and
   `hasAccount`. A fork that overrides that template should use `hasAccount` to
   ask an existing account to sign in rather than set a password.
   `checkInvitationInto()` now returns the org instead of `void`.
@@ -64,12 +66,14 @@ release process.
 - **Pending invitations are kept one per (email, org)** under the same
   `invitation:<email>` identifier (no migration). `validateInvitationToken()`
   and `getInvitationMetadata()` match the token's own row rather than the
-  newest. `updateInvitationToken()` replaces only the same org's row, and
-  takes an optional `replacingId`. Acceptance, by password or OAuth, deletes
-  only the row it redeemed. `deleteInvitationToken()` still deletes every row
-  for the address. New helpers: `findInvitationByToken()`,
-  `consumeInvitation()`, `deleteInvitationByToken()` and
-  `pendingInvitationsFor()`. `InvitationRecord` gains an optional `id`.
+  newest. `updateInvitationToken()` replaces only the same org's row.
+  `POST /api/v1/users/invite` reads and re-sends the pending invitation in the
+  org it targets, not the newest for the address. Acceptance, by password or
+  OAuth, deletes only the row it redeemed. `deleteInvitationToken()` still
+  deletes every row for the address. New helpers: `findInvitationByToken()`,
+  `consumeInvitation()`, `deleteInvitationByToken()`,
+  `deleteInvitationsInOrg()`, `pendingInvitationsFor()` and
+  `invitationOrgSlot()`. `InvitationRecord` gains an optional `id`.
   `POST /api/auth/accept-invite` answers `409 EMAIL_TAKEN` for an address that
   already has an account, instead of a 500 from the failed sign-up.
 

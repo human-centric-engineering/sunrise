@@ -368,9 +368,14 @@ org (the guard — [context.md](./context.md) — and the switch), never by
 withholding memberships. A
 resend (`?resend=true`) re-sends _this_ invitation: the pending `orgId` /
 `orgRole` carry over (an install-org `orgRole` is dropped) unless the body sends either key (then the body's pair
-replaces both) — the admin table's Resend button posts only name, email and
-role — and the inherited org goes through the same existence, status and
+replaces both), and the inherited org goes through the same existence, status and
 policy checks. The "already pending" response echoes the pending org keys.
+Which pending invitation is _this_ one (#1199): the one in the org the body
+names; with no org named, the only pending one, or else the install org's.
+Never simply the newest, which may be another org's. The admin table's Resend
+and Delete name the row's org for that reason, and Delete revokes only that
+org's invitation (`?orgId=`). A caller who is not a platform admin is refused
+while any platform-role invitation is pending for the address.
 
 ## Accepting as an existing account
 

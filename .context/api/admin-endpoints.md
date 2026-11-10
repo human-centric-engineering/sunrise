@@ -316,6 +316,8 @@ GET /api/v1/admin/invitations?page=1&limit=20&search=john&sortBy=invitedAt&sortO
   "data": [
     {
       "email": "jane@example.com",
+      "orgId": "cmorg000000000000000acme1",
+      "orgRole": null,
       "name": "Jane Doe",
       "role": "USER",
       "invitedAt": "2026-01-10T14:30:00.000Z",
@@ -334,6 +336,9 @@ GET /api/v1/admin/invitations?page=1&limit=20&search=john&sortBy=invitedAt&sortO
 **Invitation Fields**:
 
 - `email`: Invitee's email address
+- `orgId`: The org it joins, `null` for the install org. An address can hold
+  one pending invitation per org (#1199), so a row is `(email, orgId)`
+- `orgRole`: The org role it grants, when it names one
 - `name`: Invitee's name
 - `role`: Role assigned to the invitation (`USER`, `ADMIN`)
 - `invitedAt`: When the invitation was created
@@ -352,6 +357,11 @@ DELETE /api/v1/admin/invitations/:email
 **Authentication**: Required (ADMIN role)
 
 **URL Parameter**: `email` - URL-encoded email address of the invitation to cancel
+
+**Query Parameter** (optional): `orgId` - an org id, or `install` for the
+install org. Cancels only that org's invitation for the address (#1199); the
+admin table sends it, so revoking one row leaves the address's other orgs'
+invitations. Without it, every invitation for the address is cancelled.
 
 **Example**:
 

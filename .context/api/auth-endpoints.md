@@ -340,7 +340,8 @@ GET /api/v1/invitations/metadata?token={token}&email={email}
     "name": "Jane Doe",
     "role": "USER",
     "orgName": "Acme",
-    "accountExists": false
+    "accountExists": false,
+    "newAccountOnly": false
   }
 }
 ```
@@ -350,6 +351,9 @@ tells the accept page which way the invitation is taken: `false`, set a
 password here; `true`, sign in and accept through
 `POST /api/v1/invitations/accept` (#1199, see
 [org endpoints](./org-endpoints.md#accept-or-decline-an-invitation)).
+`newAccountOnly` marks a platform invitation (a platform role, or the install
+org), which only creates an account; with `accountExists` the page says it
+cannot be used. The `email` is trimmed and lowercased, as stored.
 
 **Error Responses**:
 
