@@ -23,10 +23,11 @@ release process.
   data each action changed. `logAdminAction()` sets it, in order, from a new
   optional `actingOrgId` on the entry, which a route passes when it changes
   an org it may be outside of (`/api/v1/admin/orgs/[id]` quotas and
-  providers, and the support-grant routes); then from the support stamp; then
-  from the tenant context, except on a platform-tier `withAdminAuth` route,
-  which names no org. `TenantContext` gains an optional `surface: 'platform'`
-  for that. A fork's org-tier and named-tier routes need no change. The new
+  providers, the support-grant routes, backup export and import); then from
+  the support stamp; then from the tenant context (the install org at
+  `single` when there is none). A fork route that changes an org other than
+  the one it runs in passes `actingOrgId`; no other fork route needs a
+  change. The new
   `GET /api/v1/orgs/[id]/audit-log` and its reader
   `listOrgAuditLog(orgId, { page, limit, userId?, entityTypes? })`
   (`lib/orchestration/audit/org-audit-log.ts`) return that org's rows,

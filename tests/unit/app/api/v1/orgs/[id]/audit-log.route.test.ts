@@ -283,12 +283,24 @@ describe('GET — an org’s own admin history', () => {
     );
   });
 
-  it('rejects an empty or oversized entity-type list', async () => {
+  it('reads an empty entity-type selection as no filter', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG_A));
+    memberOf(ORG_OWNER_ROLE);
+
+    for (const query of ['entityType=', 'entityType=,']) {
+      const json = await body(await get(ORG_A, query));
+      expect(json.data.map((e: { id: string }) => e.id)).toEqual(['a1', 'a2', 'a3']);
+    }
+    expect(mockDb.aiAdminAuditLog.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { actingOrgId: ORG_A } })
+    );
+  });
+
+  it('rejects more than twenty entity types', async () => {
     mockGetSession.mockResolvedValue(session('USER', ORG_A));
     memberOf(ORG_OWNER_ROLE);
     const tooMany = Array.from({ length: 21 }, (_, i) => `t${i}`).join(',');
 
-    expect((await get(ORG_A, 'entityType=,')).status).toBe(400);
     expect((await get(ORG_A, `entityType=${tooMany}`)).status).toBe(400);
     expect(mockDb.aiAdminAuditLog.findMany).not.toHaveBeenCalled();
   });

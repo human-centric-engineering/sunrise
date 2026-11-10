@@ -266,41 +266,26 @@ describe('logAdminAction’s acting org: the org whose data changed (t-1005 revi
     expect(writtenRow()).toMatchObject({ actingOrgId: null });
   });
 
-  it('names no org on a platform-tier surface, though the admin is in a customer org', async () => {
-    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), {
-      source: 'session',
-      surface: 'platform',
-    });
-    expect(writtenRow()).toMatchObject({ actingOrgId: null, supportOrgId: null });
-  });
-
-  it('still takes an explicit org on a platform-tier surface', async () => {
-    await runAsOrg(
-      CUSTOMER,
-      async () => logAdminAction({ ...entry, actingOrgId: 'cmorg0000000000000target1' }),
-      {
-        source: 'session',
-        surface: 'platform',
-      }
-    );
-    expect(writtenRow()).toMatchObject({ actingOrgId: 'cmorg0000000000000target1' });
+  it('with no context at all names the install org at single, as the data layer does', () => {
+    mockEnv.TENANCY_MODE = 'single';
+    logAdminAction(entry);
+    expect(writtenRow()).toMatchObject({ actingOrgId: INSTALL_ORG_ID });
   });
 });
 
-describe('withAdminAuth marks a platform-tier surface, so its rows name no org (t-1005 review)', () => {
+describe('a real admin route files its row under the org it changed (t-1005 review)', () => {
   // A platform admin who is also an ADMIN member of the customer org, acting
-  // in it. The same handler body, behind a platform-tier route and an
-  // org-tier one: only the tier differs.
+  // in it. The same body behind a platform-tier route and an org-tier one: a
+  // platform-tier route (clearing conversations, force-failing a run) changes
+  // the entered org's own rows, so both are that org's history.
   const body = () => {
-    logAdminAction({ userId: 'user_1', action: 'user.update', entityType: 'user' });
+    logAdminAction({ userId: 'user_1', action: 'execution.force_failed', entityType: 'execution' });
     return new Response(null, { status: 204 });
   };
   const platformRoute = withAdminAuth(async () => body());
   const orgRoute = withAdminAuth(async () => body(), { tier: 'org' });
   const call = (route: typeof platformRoute) =>
-    route(new NextRequest('http://localhost:3000/api/v1/admin/users/x', { method: 'PATCH' }), {
-      params: Promise.resolve({}),
-    });
+    route(new NextRequest('http://localhost:3000/api/v1/admin/x', { method: 'POST' }));
 
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN'));
@@ -310,15 +295,13 @@ describe('withAdminAuth marks a platform-tier surface, so its rows name no org (
     });
   });
 
-  it('a platform-tier route writes no org, though the request entered the customer org', async () => {
-    const res = await call(platformRoute);
-    expect(res.status).toBe(204);
-    expect(writtenRow()).toMatchObject({ action: 'user.update', actingOrgId: null });
+  it('on a platform-tier route', async () => {
+    expect((await call(platformRoute)).status).toBe(204);
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
   });
 
-  it('an org-tier route writes the customer org', async () => {
-    const res = await call(orgRoute);
-    expect(res.status).toBe(204);
-    expect(writtenRow()).toMatchObject({ action: 'user.update', actingOrgId: CUSTOMER });
+  it('on an org-tier route', async () => {
+    expect((await call(orgRoute)).status).toBe(204);
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
   });
 });

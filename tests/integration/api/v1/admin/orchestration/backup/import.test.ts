@@ -321,7 +321,8 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
       await POST(makePostRequest(makeValidPayload()));
 
       expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
-        expect.objectContaining({ entityId: INSTALL_ORG_ID })
+        // …and files it under that org, which need not be the admin's (t-1005).
+        expect.objectContaining({ entityId: INSTALL_ORG_ID, actingOrgId: INSTALL_ORG_ID })
       );
     });
   });

@@ -101,14 +101,6 @@ export interface TenantContext {
    * the support actor and the grant (t-825).
    */
   support?: SupportEntry;
-  /**
-   * Set when the request came through a platform-tier admin surface:
-   * `withAdminAuth` with no org tier in effect (t-1005). Such a surface is the
-   * vendor's, not the customer's, so what it does is not this org's history
-   * however the request entered it: `logAdminAction` names no org for it.
-   * Absent everywhere else, including every org-tier surface.
-   */
-  surface?: 'platform';
 }
 
 /** The grant a support session acts under, as entry verified it for this request. */
@@ -255,8 +247,6 @@ export function runAsOrg<T>(
     source?: Exclude<TenantContextSource, 'system' | 'implicit'>;
     role?: OrgRole | null;
     support?: SupportEntry;
-    /** See {@link TenantContext.surface}. Only `withAdminAuth` passes it. */
-    surface?: 'platform';
   } = {}
 ): Promise<T> {
   return tenantContext.run(
@@ -265,7 +255,6 @@ export function runAsOrg<T>(
       source: options.source ?? 'job',
       role: options.role,
       ...(options.support ? { support: options.support } : {}),
-      ...(options.surface ? { surface: options.surface } : {}),
     },
     () => settleInside(fn)
   );

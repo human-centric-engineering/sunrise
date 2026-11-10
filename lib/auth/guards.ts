@@ -1080,31 +1080,14 @@ function orgScope(entry: OrgEntry | null): { org?: string } {
  * policy was given. A platform credential (no entry) runs outside any scope,
  * which at `single` still resolves to the install org for whatever asks.
  */
-function inTenantScope<T>(entry: ScopedEntry | null, fn: () => Promise<T>): Promise<T> {
+function inTenantScope<T>(entry: OrgEntry | null, fn: () => Promise<T>): Promise<T> {
   return entry
     ? runAsOrg(entry.orgId, fn, {
         source: entry.source,
         role: entry.role,
         ...(entry.support ? { support: entry.support } : {}),
-        ...(entry.surface ? { surface: entry.surface } : {}),
       })
     : fn();
-}
-
-/** An entry, and whether the request came through a platform-tier admin surface. */
-type ScopedEntry = OrgEntry & { surface?: 'platform' };
-
-/**
- * `withAdminAuth`'s entry, marked as a platform-tier surface when no org tier
- * is in effect for the route (t-1005). The tenant context then records it, so
- * the audit log does not file what the vendor does there under the org the
- * admin happens to be in. A credential that entered no org has nothing to mark.
- */
-function onAdminSurface(
-  entry: OrgEntry | null,
-  tier: { tier?: DeclaredAdminTier }
-): ScopedEntry | null {
-  return entry && !tier.tier ? { ...entry, surface: 'platform' } : entry;
 }
 
 /**
@@ -1416,13 +1399,9 @@ export function withAdminAuth(
         principal = principalOf(session, 'session', undefined, entry);
       }
 
-      // The tier the request is judged at: what the route declared, unless
-      // the fork closed its section. None is a platform-tier surface.
-      const tier = tierScope(options?.tier, (request as NextRequest).nextUrl?.pathname);
-
       // Inside the entered org from here — resolver, decision and handler
       // alike; see the same comment in `withAuth`.
-      return await inTenantScope(onAdminSurface(entry, tier), async () => {
+      return await inTenantScope(entry, async () => {
         const resource = await resolveResource(
           options?.resource,
           request as NextRequest,
@@ -1440,7 +1419,7 @@ export function withAdminAuth(
           resource === UNRESOLVED ||
           !(await canAdminister(principal, resource, {
             ...orgScope(entry),
-            ...tier,
+            ...tierScope(options?.tier, (request as NextRequest).nextUrl?.pathname),
           }))
         ) {
           // Same reason as the `canRead` refusal above: the guard owns the

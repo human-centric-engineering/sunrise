@@ -11,7 +11,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getTenantContext } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -162,15 +163,19 @@ function supportStampFromContext(): AuditSupportStamp | null {
  * The org whose history a row belongs to (t-1005): the org whose data the
  * action changed. In order —
  *
- * 1. the caller's explicit `actingOrgId`, for a route acting on an org from
- *    outside it;
+ * 1. the caller's explicit `actingOrgId`, for a route acting on an org it may
+ *    be outside of (`/admin/orgs/[id]`, the support grants, a backup's scope);
  * 2. the support stamp's org: a support session's, or the one `support.enter`
  *    names, which is the org entered;
- * 3. nothing, on a platform-tier admin surface (`surface: 'platform'`): that
- *    is the vendor's work, not the org's, even when the admin's active org is
- *    a customer's;
- * 4. otherwise the org the call stack runs in, and nothing in a system scope
- *    or outside any.
+ * 3. the org the call stack runs in — the org every tenant-owned write in it
+ *    lands in. A system scope names none. With no context at all, the org the
+ *    data layer would use: the install org at `single`, none at `multi`.
+ *
+ * A route whose surface is platform-tier is not treated differently: most of
+ * them change the entered org's own rows (clearing its conversations,
+ * force-failing its run), which belong in its history. The ones that change
+ * shared settings are refused outside the install org, so they land in the
+ * vendor's own history.
  *
  * Read synchronously when the action is logged, as the support stamp is.
  */
@@ -178,8 +183,8 @@ function actingOrgFor(entry: AdminAuditEntry, support: AuditSupportStamp | null)
   if (entry.actingOrgId !== undefined) return entry.actingOrgId;
   if (support) return support.orgId;
   const context = getTenantContext();
-  if (context?.surface === 'platform') return null;
-  return context?.orgId ?? null;
+  if (context) return context.orgId;
+  return isMultiTenant() ? null : INSTALL_ORG_ID;
 }
 
 /**

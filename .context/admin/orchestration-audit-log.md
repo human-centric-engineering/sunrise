@@ -156,22 +156,23 @@ it. Nullable and indexed with `createdAt`, no FK.
   is logged):
   1. **An explicit `actingOrgId`** on the entry. A route that changes an org
      it may be outside of passes it: `PATCH /api/v1/admin/orgs/[id]` (quotas),
-     `PUT …/providers`, and the support-grant create, replace and revoke. So a
-     platform admin changing org B from the install org, or with an admin API
-     key, files the row under B. `null` means no org's history.
+     `PUT …/providers`, the support-grant create, replace and revoke, and
+     backup export and import (the scope's org). So a platform admin changing
+     org B from the install org, or with an admin API key, files the row under
+     B. `null` means no org's history.
   2. **The support stamp's org.** A support session's, or the one the switch
      route's `support.enter` names, which is the org entered.
-  3. **No org on a platform-tier admin surface.** `withAdminAuth` with no org
-     tier in effect marks the tenant context `surface: 'platform'`. What the
-     vendor does there (users, shared settings, another org) is not the org's
-     history, even when the admin's active org is a customer's.
-  4. **Otherwise the org the call stack runs in.** Every org-tier admin route
-     (a fork's named tiers included), the `/api/v1/orgs/[id]/*` routes, jobs.
-     A system scope, or no context, names none, and so do the direct writers
-     (erasure).
+  3. **Otherwise the org the call stack runs in**, the org every tenant-owned
+     write in it lands in. A system scope names none, and so do the direct
+     writers (erasure). With no context at all, the org the data layer would
+     use: the install org at `single`, none at `multi`.
 
-  At `TENANCY_MODE=single` the org-tier rows name the install org and the
-  platform-tier ones none; nothing else about a row changes.
+  **A platform-tier route is not treated differently.** Most of them change
+  the entered org's own rows (clearing its conversations, force-failing its
+  run, its hooks), and those belong in its history. The ones that change
+  shared settings are refused outside the install org (t-751), so they land in
+  the vendor's own history. A route that changes something that is neither the
+  entered org's nor shared, from inside a customer org, passes `actingOrgId`.
 
 - **Not `orgId`, on purpose.** A scalar named `orgId` makes a model
   tenant-owned (`lib/tenancy/classification.ts`): row isolation, write
@@ -189,7 +190,7 @@ entityTypes? })` (`lib/orchestration/audit/org-audit-log.ts`) is the only
   org-tier route after its own admission, with `entityTypes` for the area and
   `userId` for the person, and joins its own names onto `actor.id`. It does
   not query the table under `runAsSystem`. Its routes' rows are already the
-  org's by rule 4, provided they declare an org or named tier.
+  org's by rule 3.
 - **What the org gets.** Action, entity, when, the actor's id and name, the
   `changes` diff (secrets redacted at write) and `metadata`, and `support`
   (`{ grantId }` on a support row). It does not get the IP address or the

@@ -62,6 +62,8 @@ export const POST = withAdminAuth(async (request, session) => {
       entityType: 'backup',
       // The org the backup is of; `includesShared` says whether the shared part moved too.
       entityId: scope.orgId,
+      // The scope's org, which need not be the one the admin is in (t-1005).
+      actingOrgId: scope.orgId,
       metadata: {
         orgId: scope.orgId,
         includesShared: scope.includeShared,

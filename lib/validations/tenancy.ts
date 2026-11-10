@@ -389,6 +389,8 @@ export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
         .map((type) => type.trim())
         .filter((type) => type.length > 0)
     )
-    .pipe(z.array(z.string().max(100)).min(1).max(20))
+    .pipe(z.array(z.string().max(100)).max(20))
+    // `?entityType=` (an empty selection) is no filter, not an empty one.
+    .transform((types) => (types.length > 0 ? types : undefined))
     .optional(),
 });
