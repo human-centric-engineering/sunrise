@@ -292,6 +292,16 @@ POST /api/v1/users/invite
 unless the body sends either `orgId` or `orgRole`, in which case the body's
 pair replaces both; the platform `role` is always the body's.
 
+**An address that already has an account** (#1199, t-1008) may be invited
+into an org other than the install org at the default `USER` role, which is
+how the admin invitations table re-sends an invitation the org route wrote
+(`POST /api/v1/orgs/[id]/invitations`). It is stored and sent as for a new
+address, and the email asks them to sign in and accept
+(`POST /api/v1/invitations/accept`). The answer is the same whether or not the
+account exists. Any other invitation to such an address is a platform one (a
+platform role, or the install org), which an existing account cannot redeem,
+and is refused with `409 EMAIL_TAKEN`.
+
 **Error Responses**:
 
 - **401 Unauthorized**: No valid session
@@ -299,14 +309,21 @@ pair replaces both; the platform `role` is always the body's.
   named org
 - **400 Validation Error**: Invalid request body, or the named (or pending)
   org does not exist / is not active
-- **409 Conflict**: User already exists with this email
+- **409 Conflict** (`EMAIL_TAKEN`): The address has an account and this is a
+  platform invitation (a platform role, or the install org)
+- **409 Conflict** (`ALREADY_MEMBER`): The address's account is already a
+  member of the named org
 
 **Flow**:
 
-1. Check if user already exists (409 if exists)
-2. Check if invitation already sent (return existing if valid, unless resending)
-3. Resolve the org — the body's, else the pending invitation's — and check it
-   exists, is active, and the policy allows this caller to invite into it
+1. Find the pending invitation in the named org, and resolve the target org —
+   the body's, else the pending invitation's
+2. If the address has an account: a platform invitation is a 409
+   `EMAIL_TAKEN`, a member of the target org a 409 `ALREADY_MEMBER`; an org
+   invitation goes on, its email asking them to sign in
+3. Check if invitation already sent (return existing if valid, unless
+   resending), then check the org exists, is active, and the policy allows
+   this caller to invite into it
 4. Generate secure token (SHA-256 hashed)
 5. Store invitation in `Verification` table with metadata
 6. Send invitation email
