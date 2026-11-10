@@ -12,9 +12,9 @@ export const metadata: Metadata = {
 /**
  * Accept Invitation Page
  *
- * Allows invited users to set their password and activate their account.
- * Reads token and email from URL parameters, validates invitation,
- * and redirects to login after successful acceptance.
+ * A new invitee sets a password (or uses OAuth) to create their account; an
+ * address that already has an account signs in and accepts instead (#1199).
+ * Either can decline. Reads token and email from URL parameters.
  *
  * Note: AcceptInviteForm uses useSearchParams() which requires Suspense boundary
  */
@@ -23,7 +23,7 @@ export default function AcceptInvitePage() {
     <Card>
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold">Accept Invitation</CardTitle>
-        <CardDescription>Set your password to activate your account</CardDescription>
+        <CardDescription>Accept your invitation, or decline it</CardDescription>
       </CardHeader>
       <CardContent>
         <Suspense fallback={<div>Loading...</div>}>

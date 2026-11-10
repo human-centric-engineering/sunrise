@@ -12,7 +12,14 @@
  * Flow:
  * 1. Validate query parameters
  * 2. Validate token and get metadata in one operation
- * 3. Return metadata (name, role) or specific error code
+ * 3. Return metadata (name, role, the org it joins, and whether the address
+ *    already has an account) or specific error code
+ *
+ * `accountExists` tells the accept page which way the invitation is taken:
+ * a new account sets a password (`POST /api/auth/accept-invite`), an
+ * existing one signs in and accepts (`POST /api/v1/invitations/accept`,
+ * #1199). It is answered only to a caller holding a valid token, who was
+ * sent the invitation email that already says so.
  *
  * Response Error Codes:
  *   - VALIDATION_ERROR: Invalid query parameters or invalid token
@@ -30,6 +37,7 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
+import { prisma } from '@/lib/db/client';
 
 /**
  * Query parameter validation schema
@@ -97,9 +105,17 @@ export async function GET(request: NextRequest): Promise<Response> {
     log.info('Invitation metadata retrieved', { email: validated.email });
 
     // 3. Return metadata
+    const [org, account] = await Promise.all([
+      result.metadata.orgId
+        ? prisma.org.findUnique({ where: { id: result.metadata.orgId }, select: { name: true } })
+        : null,
+      prisma.user.findUnique({ where: { email: validated.email }, select: { id: true } }),
+    ]);
     return successResponse({
       name: result.metadata.name,
       role: result.metadata.role,
+      orgName: org?.name ?? null,
+      accountExists: account !== null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

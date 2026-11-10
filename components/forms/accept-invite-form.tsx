@@ -21,6 +21,8 @@ import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { AcceptInviteExistingAccount } from '@/components/forms/accept-invite-existing-account';
+import { DeclineInvitationButton } from '@/components/forms/decline-invitation-button';
 
 /** Server path → the field that shows it: every field here renders its message. */
 // No `email`: its input is read-only (the invitation's address), so a message
@@ -103,6 +105,9 @@ export function AcceptInviteForm() {
   const errorCallbackUrl = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`;
   const [success, setSuccess] = useState(false);
   const [invitationName, setInvitationName] = useState<string>('');
+  // The address already has an account: it signs in and accepts, with no
+  // password to set (#1199).
+  const [existingAccount, setExistingAccount] = useState<{ orgName: string | null } | null>(null);
 
   const {
     register,
@@ -143,12 +148,18 @@ export function AcceptInviteForm() {
       try {
         setInvitationStatus('loading');
         // Fetch invitation metadata
-        const response = await apiClient.get<{ name: string; role: string }>(
+        const response = await apiClient.get<{
+          name: string;
+          role: string;
+          orgName?: string | null;
+          accountExists?: boolean;
+        }>(
           `${API.INVITATIONS.METADATA}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
         );
 
         // Store invitation name and mark as valid
         setInvitationName(response.name);
+        setExistingAccount(response.accountExists ? { orgName: response.orgName ?? null } : null);
         setInvitationStatus('valid');
         // Don't clear error if it came from OAuth redirect (preserve URL error)
         if (!oauthError) {
@@ -290,6 +301,18 @@ export function AcceptInviteForm() {
     );
   }
 
+  // Valid invitation for an address that already has an account: sign in
+  // and accept, rather than set a password.
+  if (existingAccount) {
+    return (
+      <AcceptInviteExistingAccount
+        token={token}
+        email={emailFromUrl}
+        orgName={existingAccount.orgName}
+      />
+    );
+  }
+
   // Valid invitation - show the form
   return (
     <>
@@ -400,6 +423,12 @@ export function AcceptInviteForm() {
           <a href="/login" className="text-primary font-medium hover:underline">
             Sign in
           </a>
+        </div>
+      )}
+
+      {!success && (
+        <div className="mt-2">
+          <DeclineInvitationButton token={token} email={emailFromUrl} />
         </div>
       )}
     </>

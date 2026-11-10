@@ -18,22 +18,24 @@ anti-pattern below.
 
 ## Quick Reference
 
-| Need                              | Use                                                               |
-| --------------------------------- | ----------------------------------------------------------------- |
-| The models                        | `prisma/schema/tenancy.prisma` — `Org`, `OrgMembership`           |
-| The install org's fixed id / slug | `INSTALL_ORG_ID`, `INSTALL_ORG_SLUG` — `lib/tenancy/constants.ts` |
-| The role vocabulary (client-safe) | `ORG_ROLES`, `orgAdministers()` — `lib/tenancy/roles.ts`          |
-| Make a user a member              | `ensureMembership()` — `lib/tenancy/membership.ts`                |
-| The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module |
-| The org a new session starts in   | `activeOrgForSession()` — same module                             |
-| Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`    |
-| Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`) — platform |
-| …as that org's OWNER/ADMIN        | `POST /api/v1/orgs/[id]/invitations` — `checkInvitationInto()`    |
-| Create / suspend / erase an org   | `/api/v1/admin/orgs` — `lib/tenancy/lifecycle.ts`, `erase-org.ts` |
-| Manage an org's members           | `/api/v1/orgs/[id]/members` — `lib/tenancy/lifecycle.ts`          |
-| Give an org its data              | `exportOrgData()` — `lib/privacy/export-org.ts`                   |
-| Prove it against a real database  | `npm run smoke:tenancy`                                           |
-| The migration                     | `prisma/migrations/20260917120000_org_identity/`                  |
+| Need                              | Use                                                                    |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| The models                        | `prisma/schema/tenancy.prisma` — `Org`, `OrgMembership`                |
+| The install org's fixed id / slug | `INSTALL_ORG_ID`, `INSTALL_ORG_SLUG` — `lib/tenancy/constants.ts`      |
+| The role vocabulary (client-safe) | `ORG_ROLES`, `orgAdministers()` — `lib/tenancy/roles.ts`               |
+| Make a user a member              | `ensureMembership()` — `lib/tenancy/membership.ts`                     |
+| The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module      |
+| The org a new session starts in   | `activeOrgForSession()` — same module                                  |
+| Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`         |
+| Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`) — platform      |
+| …as that org's OWNER/ADMIN        | `POST /api/v1/orgs/[id]/invitations` — `checkInvitationInto()`         |
+| Accept as an existing account     | `POST /api/v1/invitations/accept` — `lib/tenancy/accept-invitation.ts` |
+| Decline an invitation             | `POST /api/v1/invitations/decline` — same module                       |
+| Create / suspend / erase an org   | `/api/v1/admin/orgs` — `lib/tenancy/lifecycle.ts`, `erase-org.ts`      |
+| Manage an org's members           | `/api/v1/orgs/[id]/members` — `lib/tenancy/lifecycle.ts`               |
+| Give an org its data              | `exportOrgData()` — `lib/privacy/export-org.ts`                        |
+| Prove it against a real database  | `npm run smoke:tenancy`                                                |
+| The migration                     | `prisma/migrations/20260917120000_org_identity/`                       |
 
 ### Anti-Pattern
 
@@ -342,13 +344,20 @@ an invitation into the URL's org as a platform `USER`. It has no platform
 role and no `orgId` in its body. `checkInvitationInto()` holds the rules: an
 `OWNER` invitation needs owner standing, the install org is refused (invite
 there from Users, where the platform role is set), and a suspended org is
-refused. Two refusals protect invitations the caller does not own. A pending
-invitation for the same email into another org, or one carrying a platform
-role, gets a `409` that names neither and is left untouched; re-sending it
-from here would re-target it. An email that already has an account also gets
-a `409`. That tells an org admin an account exists, which is the cost of
-telling them why the invitation cannot go: adding an existing account takes
-its user id, which only a platform admin can look up.
+refused. Pending invitations are kept **one per (email, org)** (#1199): the
+address may hold invitations into several orgs at once, and this route reads,
+re-sends and replaces only the URL's org's. Two pending invitations it does
+not own refuse it with a `409` that names neither, and are left untouched: one
+carrying a platform role or naming no org (the platform's, from Users, which
+an existing account could never redeem if this one were accepted first), and
+one whose metadata cannot be read (its org is unknown). **An address that
+already has an account is invited like any other**: the invitation is stored
+and sent, and the answer is the same whether or not the account exists, so an
+org admin learns nothing about accounts outside their roster. Only someone
+already a member of the org gets a different answer, `409 ALREADY_MEMBER`, and
+they are on the roster the caller can read. The email names the inviter and
+the org, and asks an existing account to sign in and accept rather than set a
+password; see [existing accounts](#accepting-as-an-existing-account).
 The named org must exist and be `ACTIVE` _when the invitation
 is written_; a missing and a suspended org get the same 400, so the endpoint
 leaks nothing about orgs the caller may not administer. Acceptance does not
@@ -362,6 +371,47 @@ resend (`?resend=true`) re-sends _this_ invitation: the pending `orgId` /
 replaces both) — the admin table's Resend button posts only name, email and
 role — and the inherited org goes through the same existence, status and
 policy checks. The "already pending" response echoes the pending org keys.
+
+## Accepting as an existing account
+
+An invitation to an address that already has an account cannot be redeemed by
+creating one, so its owner signs in and accepts (#1199, t-1006):
+`POST /api/v1/invitations/accept` with `{ token, email }`, the rules in
+`acceptInvitationAsExistingUser` (`lib/tenancy/accept-invitation.ts`). The
+accept page learns which way to go from `GET /api/v1/invitations/metadata`
+(`accountExists`, answered only to a valid token).
+
+- **The session must be signed in as the invited address, and it must be
+  verified.** The token proves the email arrived; the session proves who is
+  acting on it. A session for any other account is refused with `403
+INVITATION_WRONG_ACCOUNT`, and the page says who is signed in and offers to
+  sign out, rather than redeeming the invitation into the wrong account. An
+  unverified address gets `403 EMAIL_NOT_VERIFIED`.
+- **Only an org invitation with no platform role.** One that grants a platform
+  role, or names no org, is the platform's: it exists to create an account,
+  and following a link does not give an existing account a platform role
+  (`409 INVITATION_NEEDS_NEW_ACCOUNT`). The password accept route answers an
+  address with an account `409 EMAIL_TAKEN` and points it here.
+- **The membership follows the new-account rule.** `membershipForNewUser`
+  decides the role (the invitation's `orgRole`, default `MEMBER`, and `OWNER`
+  for the first member of an empty org), and `addMember` writes it. The
+  inviter's owner standing for an `OWNER` invitation was checked when it was
+  issued, so acceptance writes what that check admitted. An existing user
+  already has their install-org floor at `single`, so nothing else is
+  written. A suspended org's invitation is accepted as on the new-account
+  path, and the member is refused at entry.
+- **Only the redeemed invitation is consumed**, after the membership is
+  written, so a failure in between leaves it to retry. Someone already a
+  member gets `409 ALREADY_MEMBER`, and the moot invitation is deleted. The
+  address's invitations into other orgs stay pending; so do they when a new
+  account is created from one of them, which then become existing-account
+  invitations.
+- **Declining needs only the token**: `POST /api/v1/invitations/decline`,
+  public, deletes that one invitation. Whoever received the link may turn it
+  down without an account.
+
+Acceptance runs in the session's current org like any guarded route, so a
+member whose active org is suspended switches to another org first.
 
 ## The active org: which org a session acts in
 

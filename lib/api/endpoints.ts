@@ -40,6 +40,10 @@ export const API = {
   /** Invitation endpoints (public, token-gated) */
   INVITATIONS: {
     METADATA: '/api/v1/invitations/metadata',
+    /** Accept as an account that already exists — needs a session (#1199) */
+    ACCEPT: '/api/v1/invitations/accept',
+    /** Decline — token-gated, no session needed (#1199) */
+    DECLINE: '/api/v1/invitations/decline',
   },
 
   /** Org endpoints (§106) */

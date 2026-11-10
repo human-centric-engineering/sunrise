@@ -41,6 +41,38 @@ release process.
   name no org. The
   support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
 
+- **An org can invite someone who already has an account, and they accept
+  while signed in (t-1006, #1199).** New: `POST /api/v1/invitations/accept`
+  (`{ token, email }`, a browser session signed in as the invited, verified
+  address) and `POST /api/v1/invitations/decline` (token only), with their
+  rules in `lib/tenancy/accept-invitation.ts`.
+  `GET /api/v1/invitations/metadata` also returns `orgName` and
+  `accountExists`. The `invitation` email props gain optional `orgName` and
+  `hasAccount`. A fork that overrides that template should use `hasAccount` to
+  ask an existing account to sign in rather than set a password.
+  `checkInvitationInto()` now returns the org instead of `void`.
+
+### Changed
+
+- **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`
+  for an address with an account (t-1006, #1199).** It stores and sends the
+  invitation, and answers the same whether or not the account exists. An
+  existing member of the org gets `409 ALREADY_MEMBER`. A pending invitation
+  into another org no longer refuses it. A pending platform invitation, or one
+  that cannot be read, still does. A fork client that branched on
+  `EMAIL_TAKEN` from this route should drop that branch.
+- **Pending invitations are kept one per (email, org)** under the same
+  `invitation:<email>` identifier (no migration). `validateInvitationToken()`
+  and `getInvitationMetadata()` match the token's own row rather than the
+  newest. `updateInvitationToken()` replaces only the same org's row, and
+  takes an optional `replacingId`. Acceptance, by password or OAuth, deletes
+  only the row it redeemed. `deleteInvitationToken()` still deletes every row
+  for the address. New helpers: `findInvitationByToken()`,
+  `consumeInvitation()`, `deleteInvitationByToken()` and
+  `pendingInvitationsFor()`. `InvitationRecord` gains an optional `id`.
+  `POST /api/auth/accept-invite` answers `409 EMAIL_TAKEN` for an address that
+  already has an account, instead of a 500 from the failed sign-up.
+
 ### Fixed
 
 - **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`

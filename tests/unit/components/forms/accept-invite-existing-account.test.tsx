@@ -1,0 +1,132 @@
+// @vitest-environment happy-dom
+
+/**
+ * Tests: AcceptInviteExistingAccount and DeclineInvitationButton (#1199,
+ * t-1006) — the accept page for an address that already has an account.
+ *
+ * The three session states each show their own step, and only the one signed
+ * in as the invited address can accept. The server enforces the same rule
+ * (`accept-invitation.test.ts`); these prove the page does not offer a step
+ * that would only be refused, and sends the right request when it does.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+vi.mock('@/lib/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/client')>()),
+  apiClient: { get: vi.fn(), post: vi.fn() },
+}));
+
+const mockPush = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: vi.fn(() => ({ push: mockPush, replace: vi.fn(), refresh: vi.fn() })),
+}));
+
+const mockUseSession = vi.fn();
+const mockSignOut = vi.fn();
+vi.mock('@/lib/auth/client', () => ({
+  authClient: {
+    useSession: () => mockUseSession(),
+    signOut: (...args: unknown[]) => mockSignOut(...args),
+  },
+}));
+
+import { AcceptInviteExistingAccount } from '@/components/forms/accept-invite-existing-account';
+import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
+
+const props = { token: 'tok-123', email: 'pat@example.com', orgName: 'Acme' };
+const returnTo = '/accept-invite?token=tok-123&email=pat%40example.com';
+
+function signedInAs(email: string | null) {
+  mockUseSession.mockReturnValue({
+    data: email ? { user: { email } } : null,
+    isPending: false,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('AcceptInviteExistingAccount', () => {
+  it('signed out: offers sign-in that returns to this invitation, and no accept', async () => {
+    signedInAs(null);
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    expect(screen.queryByRole('button', { name: /join acme/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /sign in to accept/i }));
+
+    expect(mockPush).toHaveBeenCalledWith(`/login?callbackUrl=${encodeURIComponent(returnTo)}`);
+  });
+
+  it('signed in as someone else: names both addresses and offers sign-out, not accept', async () => {
+    signedInAs('other@example.com');
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    expect(screen.getByText('other@example.com')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /join acme/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('signed in as the invited address (any case): accepts, then switches to the org', async () => {
+    signedInAs('Pat@Example.com');
+    vi.mocked(apiClient.post).mockImplementation((url: string) =>
+      Promise.resolve(
+        url === API.INVITATIONS.ACCEPT ? { membership: { orgId: 'org-a', role: 'MEMBER' } } : {}
+      )
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /join acme/i }));
+
+    await waitFor(() => expect(screen.getByText(/you have joined acme/i)).toBeInTheDocument());
+    expect(apiClient.post).toHaveBeenNthCalledWith(1, API.INVITATIONS.ACCEPT, {
+      body: { token: 'tok-123', email: 'pat@example.com' },
+    });
+    expect(apiClient.post).toHaveBeenNthCalledWith(2, API.ORGS.SWITCH, {
+      body: { orgId: 'org-a' },
+    });
+  });
+
+  it('shows the server’s refusal beside the button', async () => {
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError(
+        'Verify your email address before accepting this invitation.',
+        'EMAIL_NOT_VERIFIED',
+        403
+      )
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /join acme/i }));
+
+    expect(await screen.findByText(/verify your email address/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you have joined/i)).not.toBeInTheDocument();
+  });
+
+  it('declines after confirming, with the token, signed out', async () => {
+    signedInAs(null);
+    vi.mocked(apiClient.post).mockResolvedValue({});
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /decline invitation/i }));
+    expect(apiClient.post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /^decline$/i }));
+
+    expect(await screen.findByText(/invitation declined/i)).toBeInTheDocument();
+    expect(apiClient.post).toHaveBeenCalledWith(API.INVITATIONS.DECLINE, {
+      body: { token: 'tok-123', email: 'pat@example.com' },
+    });
+  });
+});
