@@ -164,8 +164,9 @@ it. Nullable and indexed with `createdAt`, no FK.
      route's `support.enter` names, which is the org entered.
   3. **Otherwise the org the call stack runs in**, the org every tenant-owned
      write in it lands in. A system scope names none, and so do the direct
-     writers (erasure). With no context at all, the org the data layer would
-     use: the install org at `single`, none at `multi`.
+     writers (erasure). With no context at all, the install org: at `single`
+     that is what the data layer reads, and at `multi` the only caller with
+     none is an unbound admin API key, which acts as the install org.
 
   **A platform-tier route is not treated differently.** Most of them change
   the entered org's own rows (clearing its conversations, force-failing its
@@ -200,9 +201,13 @@ entityTypes? })` (`lib/orchestration/audit/org-audit-log.ts`) is the only
   not a data subject. A person on those rows is erased through `eraseUser()`,
   which nulls `userId`.
 - **Rows written before this column.** Support rows were backfilled from
-  `supportOrgId`, which was stamped from the same context, so an org's earlier
-  support activity is in its history. Every other earlier row names no org and
-  is in no org's history: nothing on it says reliably where it was made.
+  `supportOrgId`, which was stamped from the same context. On an install with
+  one org (every `single` install) every earlier row was backfilled to it.
+  With more than one org, a member's earlier row cannot be placed (people
+  span orgs), so it names no org and is in no org's history.
+- **The `support` mark is this org's only.** A row is shown as support when
+  its `supportOrgId` is the org being read, so a row filed here explicitly
+  while its actor was in another org's session never shows that org's grant.
 
 ## Logger library
 

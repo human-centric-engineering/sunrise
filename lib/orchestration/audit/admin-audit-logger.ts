@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { getTenantContext } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -168,8 +168,10 @@ function supportStampFromContext(): AuditSupportStamp | null {
  * 2. the support stamp's org: a support session's, or the one `support.enter`
  *    names, which is the org entered;
  * 3. the org the call stack runs in — the org every tenant-owned write in it
- *    lands in. A system scope names none. With no context at all, the org the
- *    data layer would use: the install org at `single`, none at `multi`.
+ *    lands in. A system scope names none. With no context at all, the install
+ *    org: at `single` that is what the data layer reads, and at `multi` the
+ *    only caller with none is an unbound admin API key, which acts as the
+ *    install org (owner ruling, 2026-10-02; see `withAdminAuth`).
  *
  * A route whose surface is platform-tier is not treated differently: most of
  * them change the entered org's own rows (clearing its conversations,
@@ -183,8 +185,7 @@ function actingOrgFor(entry: AdminAuditEntry, support: AuditSupportStamp | null)
   if (entry.actingOrgId !== undefined) return entry.actingOrgId;
   if (support) return support.orgId;
   const context = getTenantContext();
-  if (context) return context.orgId;
-  return isMultiTenant() ? null : INSTALL_ORG_ID;
+  return context ? context.orgId : INSTALL_ORG_ID;
 }
 
 /**

@@ -104,8 +104,10 @@ export async function listOrgAuditLog(
     ...row,
     actor: user,
     // `supportOrgId` is what marks a support row: the grant is nulled when an
-    // org is erased, the org id is not.
-    support: supportOrgId ? { grantId: supportGrantId } : null,
+    // org is erased, the org id is not. Only THIS org's support session: a row
+    // filed here explicitly while its actor was in another org's session would
+    // otherwise show that org's grant id.
+    support: supportOrgId === orgId ? { grantId: supportGrantId } : null,
   }));
   return { entries, total };
 }

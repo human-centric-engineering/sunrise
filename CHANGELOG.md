@@ -24,8 +24,8 @@ release process.
   optional `actingOrgId` on the entry, which a route passes when it changes
   an org it may be outside of (`/api/v1/admin/orgs/[id]` quotas and
   providers, the support-grant routes, backup export and import); then from
-  the support stamp; then from the tenant context (the install org at
-  `single` when there is none). A fork route that changes an org other than
+  the support stamp; then from the tenant context (the install org when there
+  is none, as an unbound admin API key acts). A fork route that changes an org other than
   the one it runs in passes `actingOrgId`; no other fork route needs a
   change. The new
   `GET /api/v1/orgs/[id]/audit-log` and its reader
@@ -36,7 +36,9 @@ release process.
   `listOrgAuditLog()`, not a `runAsSystem` query. The model stays a system
   model: the column is deliberately not `orgId`, which would put it under row
   isolation. Erasing an org keeps the column (no FK). Earlier support rows
-  are backfilled from `supportOrgId`; other earlier rows name no org. The
+  are backfilled from `supportOrgId`, and on an install with one org every
+  earlier row is backfilled to it; with more than one org, other earlier rows
+  name no org. The
   support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
 
 ### Fixed

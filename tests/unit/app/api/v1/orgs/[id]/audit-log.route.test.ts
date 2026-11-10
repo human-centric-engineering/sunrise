@@ -199,6 +199,24 @@ describe('GET — an org’s own admin history', () => {
     expect(byId).toEqual({ a1: null, a2: { grantId: GRANT }, a3: { grantId: null } });
   });
 
+  it('does not mark a row as this org’s support when its support session was another org’s', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG_A));
+    memberOf(ORG_OWNER_ROLE);
+    // Filed under A explicitly while its actor was in B's support session.
+    TABLE.push(
+      row('a4', ORG_A, 100, { supportGrantId: 'cmgrant000000000000000bb', supportOrgId: ORG_B })
+    );
+    try {
+      const json = await body(await get(ORG_A));
+      const a4 = json.data.find((e: { id: string }) => e.id === 'a4');
+      expect(a4).toBeDefined();
+      expect(a4.support).toBeNull();
+      expect(JSON.stringify(json)).not.toContain('cmgrant000000000000000bb');
+    } finally {
+      TABLE.pop();
+    }
+  });
+
   it('never returns the client IP, which every row in the table carries', async () => {
     mockGetSession.mockResolvedValue(session('USER', ORG_A));
     memberOf(ORG_OWNER_ROLE);

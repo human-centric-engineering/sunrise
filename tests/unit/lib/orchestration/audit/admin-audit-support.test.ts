@@ -197,13 +197,9 @@ describe('logAdminAction’s acting org (t-1005)', () => {
     expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
   });
 
-  it('names no org outside any tenant context, or in a system scope', async () => {
-    logAdminAction(entry);
-    expect(db.aiAdminAuditLog.create.mock.calls[0][0].data.actingOrgId).toBeNull();
-
+  it('names no org in a system scope', async () => {
     await runAsSystem('test: a system-scope write', async () => logAdminAction(entry));
-    expect(db.aiAdminAuditLog.create).toHaveBeenCalledTimes(2);
-    expect(db.aiAdminAuditLog.create.mock.calls[1][0].data.actingOrgId).toBeNull();
+    expect(writtenRow()).toMatchObject({ actingOrgId: null });
   });
 
   it('names the org an explicit support stamp entered, not the caller’s own org', async () => {
@@ -266,11 +262,14 @@ describe('logAdminAction’s acting org: the org whose data changed (t-1005 revi
     expect(writtenRow()).toMatchObject({ actingOrgId: null });
   });
 
-  it('with no context at all names the install org at single, as the data layer does', () => {
-    mockEnv.TENANCY_MODE = 'single';
-    logAdminAction(entry);
-    expect(writtenRow()).toMatchObject({ actingOrgId: INSTALL_ORG_ID });
-  });
+  it.each(['single', 'multi'])(
+    'with no context at all names the install org at %s: an unbound admin API key acts as it',
+    (mode) => {
+      mockEnv.TENANCY_MODE = mode;
+      logAdminAction(entry);
+      expect(writtenRow()).toMatchObject({ actingOrgId: INSTALL_ORG_ID });
+    }
+  );
 });
 
 describe('a real admin route files its row under the org it changed (t-1005 review)', () => {
