@@ -77,6 +77,7 @@ interface TenantContext {
     | 'job'
     | 'implicit';
   role?: OrgRole | null; // the caller's role in orgId, when the entering code looked it up
+  support?: SupportEntry; // the grant a 'support' entry was admitted under (§121)
 }
 ```
 

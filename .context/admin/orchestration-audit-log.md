@@ -107,7 +107,7 @@ Admin-guarded (`withAdminAuth`) and rate-limited via `adminLimiter`. Returns a p
 | `support`        | `only` \| `none` | —       | Rows with `supportOrgId` set, or rows without. Anything else is a 400.               |
 | `supportGrantId` | cuid             | —       | One grant's rows.                                                                    |
 
-Response data rows include `user: { id, name, email }`, `supportOrgId`, and `supportGrant: { id, level, org: { id, name } } | null`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
+Response data rows include `user: { id, name, email }`, `actingOrgId`, `supportOrgId`, and `supportGrant: { id, level, org: { id, name } } | null`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
 
 ## Support rows
 
@@ -122,7 +122,8 @@ did support change while they were in?":
 | `supportOrgId`   | The org the action was made in (no FK) | Kept, so the row still reads as support |
 
 Both are null on every other row. `userId` is still the individual, never the
-org's own user.
+org's own user. Every row made in an org, support or not, also names it in
+`actingOrgId` ([below](#the-org-a-row-was-made-in)).
 
 - **Stamped by the logger, not the caller.** `logAdminAction()` reads the
   tenant context when it is called and stamps the row when the context's
@@ -144,6 +145,69 @@ org's own user.
 - **The org's view.** The org reads its own rows on its Support access page,
   through `GET /api/v1/orgs/[id]/support-grants/activity`. That read requires
   the grant to be the org's, so naming another org's grant returns nothing.
+
+## The org a row was made in
+
+`actingOrgId` (t-1005, #1181) names the org whose history a row belongs to:
+the org whose data the action changed. An org is shown its own history from
+it. Nullable and indexed with `createdAt`, no FK.
+
+- **The rule, in order** (`actingOrgFor` in the logger, read when the action
+  is logged):
+  1. **An explicit `actingOrgId`** on the entry. A route that changes an org
+     it may be outside of passes it: `PATCH /api/v1/admin/orgs/[id]` (quotas),
+     `PUT …/providers`, the support-grant create, replace and revoke, and
+     backup export and import (the scope's org). So a platform admin changing
+     org B from the install org, or with an admin API key, files the row under
+     B. `null` means no org's history.
+  2. **The support stamp's org.** A support session's, or the one the switch
+     route's `support.enter` names, which is the org entered.
+  3. **Otherwise the org the call stack runs in**, the org every tenant-owned
+     write in it lands in. A system scope names none, and so do the direct
+     writers (erasure). With no context at all, the install org: at `single`
+     that is what the data layer reads, and at `multi` the only caller with
+     none is an unbound admin API key, which acts as the install org.
+
+  **A platform-tier route is not treated differently.** Most of them change
+  the entered org's own rows (clearing its conversations, force-failing its
+  run, its hooks), and those belong in its history. The ones that change
+  shared settings are refused outside the install org (t-751), so they land in
+  the vendor's own history. A route that changes something that is neither the
+  entered org's nor shared, from inside a customer org, passes `actingOrgId`.
+
+- **Not `orgId`, on purpose.** A scalar named `orgId` makes a model
+  tenant-owned (`lib/tenancy/classification.ts`): row isolation, write
+  injection, and the enable script's backfill. That would confine this page,
+  the vendor's view of every org, to one org. The model stays a system model.
+- **One reader per org.** `listOrgAuditLog(orgId, { page, limit, userId?,
+entityTypes? })` (`lib/orchestration/audit/org-audit-log.ts`) is the only
+  per-org read, and its `actingOrgId` filter is what bounds it, because row
+  isolation does not. The filters only narrow. It serves
+  `GET /api/v1/orgs/[id]/audit-log`
+  ([org endpoints](../api/org-endpoints.md#the-orgs-admin-history)): the org's
+  OWNER/ADMIN acting in it, or a platform admin, browser session only.
+- **A fork's own view reads through it.** A fork showing an org part of its
+  history, say who changed its designs, calls `listOrgAuditLog` from its own
+  org-tier route after its own admission, with `entityTypes` for the area and
+  `userId` for the person, and joins its own names onto `actor.id`. It does
+  not query the table under `runAsSystem`. Its routes' rows are already the
+  org's by rule 3.
+- **What the org gets.** Action, entity, when, the actor's id and name, the
+  `changes` diff (secrets redacted at write) and `metadata`, and `support`
+  (`{ grantId }` on a support row). It does not get the IP address or the
+  actor's email: those are the person's, and the vendor's log keeps them.
+- **When the org is erased** the rows stay and keep naming it, as
+  `supportOrgId` does: no FK, and `eraseOrg` writes nothing here. The org is
+  not a data subject. A person on those rows is erased through `eraseUser()`,
+  which nulls `userId`.
+- **Rows written before this column.** Support rows were backfilled from
+  `supportOrgId`, which was stamped from the same context. On an install with
+  one org (every `single` install) every earlier row was backfilled to it.
+  With more than one org, a member's earlier row cannot be placed (people
+  span orgs), so it names no org and is in no org's history.
+- **The `support` mark is this org's only.** A row is shown as support when
+  its `supportOrgId` is the org being read, so a row filed here explicitly
+  while its actor was in another org's session never shows that org's grant.
 
 ## Logger library
 
@@ -170,6 +234,7 @@ interface AdminAuditEntry {
   metadata?: Record<string, unknown> | null;
   clientIp?: string | null;
   support?: { grantId: string; orgId: string }; // leave out: read from the tenant context
+  actingOrgId?: string | null; // only for a route changing an org it may be outside of
 }
 ```
 

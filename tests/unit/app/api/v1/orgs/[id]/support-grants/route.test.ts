@@ -168,6 +168,7 @@ describe('POST — granting', () => {
         action: 'support_grant.create',
         entityType: 'support_grant',
         entityId: GRANT,
+        actingOrgId: ORG,
         entityName: 'Acme',
         metadata: expect.objectContaining({ orgId: ORG, reason: 'Ticket 42' }),
       })
@@ -184,9 +185,11 @@ describe('POST — granting', () => {
 
     expect(res.status).toBe(201);
     expect((await body(res)).data.replacedGrantIds).toEqual(['cmgrant0000000000000older']);
-    expect(mockAudit.mock.calls.map(([entry]) => [entry.action, entry.entityId])).toEqual([
-      ['support_grant.replace', 'cmgrant0000000000000older'],
-      ['support_grant.create', GRANT],
+    expect(
+      mockAudit.mock.calls.map(([entry]) => [entry.action, entry.entityId, entry.actingOrgId])
+    ).toEqual([
+      ['support_grant.replace', 'cmgrant0000000000000older', ORG],
+      ['support_grant.create', GRANT, ORG],
     ]);
   });
 
@@ -345,6 +348,10 @@ describe('DELETE — revoking', () => {
     mockDb.orgSupportGrant.findFirst.mockResolvedValue(grantRow({ revokedAt: new Date() }));
 
     expect((await del()).status).toBe(200);
+    // Revoked from the install org, so the row names the org it changed (t-1005).
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'support_grant.revoke', actingOrgId: ORG })
+    );
   });
 
   it('answers an already-ended grant without writing or auditing', async () => {

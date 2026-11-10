@@ -370,3 +370,27 @@ export const listSupportActivityQuerySchema = paginationQuerySchema.extend({
   limit: z.coerce.number().int().positive().max(100).default(50),
   grantId: cuidSchema.optional(),
 });
+
+/**
+ * `GET /api/v1/orgs/[id]/audit-log` query (t-1005): the org's own admin
+ * history, newest first.
+ */
+export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  /** One person's actions. */
+  userId: z.string().trim().min(1).max(100).optional(),
+  /** Comma-separated entity types, e.g. `agent,workflow`; at most 20. */
+  entityType: z
+    .string()
+    .max(1000)
+    .transform((value) =>
+      value
+        .split(',')
+        .map((type) => type.trim())
+        .filter((type) => type.length > 0)
+    )
+    .pipe(z.array(z.string().max(100)).max(20))
+    // `?entityType=` (an empty selection) is no filter, not an empty one.
+    .transform((types) => (types.length > 0 ? types : undefined))
+    .optional(),
+});

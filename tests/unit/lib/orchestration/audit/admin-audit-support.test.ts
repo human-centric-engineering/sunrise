@@ -40,7 +40,9 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { DELETE } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-tokens/[tokenId]/route';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { withAdminAuth } from '@/lib/auth/guards';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const CUSTOMER = 'cmorg00000000000customer1';
 const GRANT_ID = 'cmgrant000000000000grant1';
@@ -120,6 +122,7 @@ describe('a real admin handler inside a support session', () => {
       action: 'agent.invite_token_revoke',
       supportGrantId: GRANT_ID,
       supportOrgId: CUSTOMER,
+      actingOrgId: CUSTOMER,
     });
   });
 
@@ -139,6 +142,8 @@ describe('a real admin handler inside a support session', () => {
       action: 'agent.invite_token_revoke',
       supportGrantId: null,
       supportOrgId: null,
+      // …but it still names the org it was made in (t-1005).
+      actingOrgId: CUSTOMER,
     });
     expect(db.orgSupportGrant.findFirst).not.toHaveBeenCalled();
   });
@@ -171,5 +176,131 @@ describe('logAdminAction’s support stamp', () => {
   it('takes an explicit stamp from a caller acting on a session from outside it', () => {
     logAdminAction({ ...entry, support: { grantId: GRANT_ID, orgId: CUSTOMER } });
     expect(writtenRow()).toMatchObject({ supportGrantId: GRANT_ID, supportOrgId: CUSTOMER });
+  });
+});
+
+describe('logAdminAction’s acting org (t-1005)', () => {
+  const entry = { userId: 'user_1', action: 'agent.update', entityType: 'agent' };
+
+  it('names the org of an ordinary org context', async () => {
+    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), { source: 'session' });
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER, supportOrgId: null });
+  });
+
+  it('is read when the action is logged, so a write settling after the scope still carries it', async () => {
+    let settle: (v: unknown) => void = () => {};
+    db.aiAdminAuditLog.create.mockReturnValue(new Promise((r) => (settle = r)));
+
+    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), { source: 'session' });
+    settle({});
+
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  });
+
+  it('names no org in a system scope', async () => {
+    await runAsSystem('test: a system-scope write', async () => logAdminAction(entry));
+    expect(writtenRow()).toMatchObject({ actingOrgId: null });
+  });
+
+  it('names the org an explicit support stamp entered, not the caller’s own org', async () => {
+    // The switch route's `support.enter`: logged from the support person's own
+    // org, about the org they are entering.
+    await runAsOrg(
+      INSTALL_ORG_ID,
+      async () => logAdminAction({ ...entry, support: { grantId: GRANT_ID, orgId: CUSTOMER } }),
+      { source: 'session' }
+    );
+    expect(writtenRow()).toMatchObject({
+      actingOrgId: CUSTOMER,
+      supportGrantId: GRANT_ID,
+      supportOrgId: CUSTOMER,
+    });
+  });
+
+  it('at TENANCY_MODE=single names the install org and writes the row otherwise unchanged', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    await runAsOrg(INSTALL_ORG_ID, async () => logAdminAction(entry), { source: 'session' });
+    expect(writtenRow()).toEqual({
+      userId: 'user_1',
+      action: 'agent.update',
+      entityType: 'agent',
+      entityId: null,
+      entityName: null,
+      changes: expect.anything(),
+      metadata: expect.anything(),
+      clientIp: null,
+      supportGrantId: null,
+      supportOrgId: null,
+      actingOrgId: INSTALL_ORG_ID,
+    });
+  });
+});
+
+describe('logAdminAction’s acting org: the org whose data changed (t-1005 review)', () => {
+  const entry = { userId: 'user_1', action: 'org.quotas.update', entityType: 'org' };
+
+  it('takes an explicit org over the context, for a route acting on an org from outside it', async () => {
+    await runAsOrg(
+      INSTALL_ORG_ID,
+      async () => logAdminAction({ ...entry, actingOrgId: CUSTOMER }),
+      {
+        source: 'session',
+      }
+    );
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER, supportOrgId: null });
+  });
+
+  it('takes an explicit org with no context at all: an admin API key', () => {
+    logAdminAction({ ...entry, actingOrgId: CUSTOMER });
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  });
+
+  it('takes an explicit null as “no org’s history”, even inside an org', async () => {
+    await runAsOrg(CUSTOMER, async () => logAdminAction({ ...entry, actingOrgId: null }), {
+      source: 'session',
+    });
+    expect(writtenRow()).toMatchObject({ actingOrgId: null });
+  });
+
+  it.each(['single', 'multi'])(
+    'with no context at all names the install org at %s: an unbound admin API key acts as it',
+    (mode) => {
+      mockEnv.TENANCY_MODE = mode;
+      logAdminAction(entry);
+      expect(writtenRow()).toMatchObject({ actingOrgId: INSTALL_ORG_ID });
+    }
+  );
+});
+
+describe('a real admin route files its row under the org it changed (t-1005 review)', () => {
+  // A platform admin who is also an ADMIN member of the customer org, acting
+  // in it. The same body behind a platform-tier route and an org-tier one: a
+  // platform-tier route (clearing conversations, force-failing a run) changes
+  // the entered org's own rows, so both are that org's history.
+  const body = () => {
+    logAdminAction({ userId: 'user_1', action: 'execution.force_failed', entityType: 'execution' });
+    return new Response(null, { status: 204 });
+  };
+  const platformRoute = withAdminAuth(async () => body());
+  const orgRoute = withAdminAuth(async () => body(), { tier: 'org' });
+  const call = (route: typeof platformRoute) =>
+    route(new NextRequest('http://localhost:3000/api/v1/admin/x', { method: 'POST' }));
+
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN'));
+    db.orgMembership.findUnique.mockResolvedValue({
+      role: ORG_ADMIN_ROLE,
+      org: { status: 'ACTIVE' },
+    });
+  });
+
+  it('on a platform-tier route', async () => {
+    expect((await call(platformRoute)).status).toBe(204);
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  });
+
+  it('on an org-tier route', async () => {
+    expect((await call(orgRoute)).status).toBe(204);
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
   });
 });

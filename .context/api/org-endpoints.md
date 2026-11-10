@@ -30,6 +30,7 @@ the per-admin export sub-cap noted below.
 | `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
 | `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
 | `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `GET /api/v1/orgs/[id]/audit-log`           | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
 | `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
 | `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
@@ -301,6 +302,48 @@ standing, and an OWNER may remove themselves only while another OWNER stands.
 **Error Responses**: `403 OWNER_STANDING` · `400 LAST_OWNER` ·
 `400 INSTALL_ORG_MEMBERSHIP` (a user leaves the install org by having their
 account deleted) · `404 NOT_A_MEMBER`.
+
+### The org's admin history
+
+```
+GET /api/v1/orgs/[id]/audit-log?page=&limit=&userId=&entityType=
+```
+
+The admin audit rows belonging to this org, newest first (t-1005): its
+members' actions, support's, and the vendor's changes to the org. `limit`
+defaults to 50, max 100. `userId` narrows to one person; `entityType` is a
+comma-separated list (at most 20) narrowing to those entity types. Which rows
+belong to the org, what each holds, what it leaves out and why, is in
+[the audit log guide](../admin/orchestration-audit-log.md#the-org-a-row-was-made-in).
+
+**Response** (200 OK, paginated):
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "cm…",
+      "action": "agent.update",
+      "entityType": "agent",
+      "entityId": "cm…",
+      "entityName": "Support bot",
+      "changes": { "name": { "from": "Old", "to": "New" } },
+      "metadata": null,
+      "createdAt": "…",
+      "actor": { "id": "cm…", "name": "Jane" },
+      "support": null
+    }
+  ],
+  "meta": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 }
+}
+```
+
+`support` is `{ grantId }` on a row made in a support session (`grantId` is
+null once the grant has gone), and `null` otherwise.
+
+**Error Responses**: `403` for an API key, a MEMBER, a caller acting in another
+org, or no such org.
 
 ## Platform view
 

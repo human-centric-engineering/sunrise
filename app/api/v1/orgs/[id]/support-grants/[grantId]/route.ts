@@ -58,6 +58,8 @@ export const DELETE = withAuth<{ id: string; grantId: string }>(
         action: 'support_grant.revoke',
         entityType: 'support_grant',
         entityId: grantId,
+        // The org changed, which a platform admin may do from outside it (t-1005).
+        actingOrgId: id,
         entityName: org?.name ?? null,
         metadata: { orgId: id },
         clientIp: getClientIP(request),

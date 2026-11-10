@@ -205,6 +205,13 @@ does not enter the org. The full rules, including what is not stamped, are in
 - **After the org is erased** the grant goes and `supportGrantId` with it.
   `supportOrgId` stays, so the vendor's own log still says which rows were
   support, and where.
+- **In the org's whole history too** (t-1005). Support rows also carry
+  `actingOrgId`, like every row made in the org, so they appear, marked as
+  support, in `GET /api/v1/orgs/[id]/audit-log` beside the members' own
+  actions, `support.enter` included. Granting, replacing and revoking a grant
+  are the org's too, even when a platform admin revokes from outside it. That
+  read returns the diff; the support activity list does not. See
+  [the audit log guide](../admin/orchestration-audit-log.md#the-org-a-row-was-made-in).
 
 ## Privacy
 

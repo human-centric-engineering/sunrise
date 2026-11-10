@@ -16,6 +16,31 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **An org can be shown its own admin history (t-1005, #1181).**
+  `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed: the org whose
+  data each action changed. `logAdminAction()` sets it, in order, from a new
+  optional `actingOrgId` on the entry, which a route passes when it changes
+  an org it may be outside of (`/api/v1/admin/orgs/[id]` quotas and
+  providers, the support-grant routes, backup export and import); then from
+  the support stamp; then from the tenant context (the install org when there
+  is none, as an unbound admin API key acts). A fork route that changes an org other than
+  the one it runs in passes `actingOrgId`; no other fork route needs a
+  change. The new
+  `GET /api/v1/orgs/[id]/audit-log` and its reader
+  `listOrgAuditLog(orgId, { page, limit, userId?, entityTypes? })`
+  (`lib/orchestration/audit/org-audit-log.ts`) return that org's rows,
+  without the IP, to its OWNER/ADMIN or a platform admin, browser session
+  only. A fork's own org-tier view reads an org's history through
+  `listOrgAuditLog()`, not a `runAsSystem` query. The model stays a system
+  model: the column is deliberately not `orgId`, which would put it under row
+  isolation. Erasing an org keeps the column (no FK). Earlier support rows
+  are backfilled from `supportOrgId`, and on an install with one org every
+  earlier row is backfilled to it; with more than one org, other earlier rows
+  name no org. The
+  support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
+
 ### Fixed
 
 - **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`

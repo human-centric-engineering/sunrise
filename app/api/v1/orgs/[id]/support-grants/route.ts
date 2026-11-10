@@ -88,6 +88,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       action: 'support_grant.replace',
       entityType: 'support_grant',
       entityId: replacedGrantId,
+      actingOrgId: id,
       entityName: org?.name ?? null,
       metadata: { orgId: id, replacedBy: grant.id },
       clientIp,
@@ -98,6 +99,8 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     action: 'support_grant.create',
     entityType: 'support_grant',
     entityId: grant.id,
+    // The org's own consent; named explicitly, as the revoke does (t-1005).
+    actingOrgId: id,
     entityName: org?.name ?? null,
     metadata: {
       orgId: id,

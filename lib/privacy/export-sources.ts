@@ -270,8 +270,10 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // say where the subject's own act happened and nothing of the org's. They
     // stay on erasure for the same reason the row does: once `userId` is
     // null they name no one, and the org reads its support history by them.
+    // `actingOrgId` (t-1005) is the org every act was made in, support or
+    // not, kept on erasure for the same reason.
     description:
-      'Admin configuration changes the subject made, including the IP address recorded and, for a change made while working in a customer organisation as support, which organisation and grant.',
+      'Admin configuration changes the subject made, including the IP address recorded, which organisation each change was made in and, for a change made while working in a customer organisation as support, which grant.',
     fetch: ({ userId }) =>
       prisma.aiAdminAuditLog.findMany({ where: { userId }, orderBy: byCreatedAt }),
   },
