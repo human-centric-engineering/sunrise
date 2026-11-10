@@ -28,7 +28,8 @@ release process.
   model stays a system model: the column is deliberately not `orgId`, which
   would put it under row isolation. Read an org's history through
   `listOrgAuditLog()`, not a `runAsSystem` query of your own. Erasing an org
-  keeps the column (no FK). Rows written before the migration name no org.
+  keeps the column (no FK). Earlier support rows are backfilled from
+  `supportOrgId`; other earlier rows name no org.
   The support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
 
 ### Fixed

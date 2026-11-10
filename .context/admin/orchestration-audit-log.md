@@ -179,9 +179,10 @@ FK.
   `supportOrgId` does: no FK, and `eraseOrg` writes nothing here. The org is
   not a data subject. A person on those rows is erased through `eraseUser()`,
   which nulls `userId`.
-- **Rows written before this column** name no org and are not in any org's
-  history. Nothing backfills them: an old row cannot reliably say which org it
-  was made in.
+- **Rows written before this column.** Support rows were backfilled from
+  `supportOrgId`, which was stamped from the same context, so an org's earlier
+  support activity is in its history. Every other earlier row names no org and
+  is in no org's history: nothing on it says reliably where it was made.
 
 ## Logger library
 
