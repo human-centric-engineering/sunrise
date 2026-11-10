@@ -57,9 +57,18 @@ vi.mock('@/components/forms/accept-invite-existing-account', () => ({
 }));
 
 vi.mock('@/components/forms/decline-invitation-button', () => ({
-  DeclineInvitationButton: vi.fn(({ token, email }) => (
-    <div data-testid="decline-button" data-token={token} data-email={email} />
+  DeclineInvitationButton: vi.fn(({ token, email, onDeclined }) => (
+    <button
+      type="button"
+      data-testid="decline-button"
+      data-token={token}
+      data-email={email}
+      onClick={onDeclined}
+    >
+      stub decline
+    </button>
   )),
+  InvitationDeclined: () => <p data-testid="invitation-declined">declined</p>,
 }));
 
 vi.mock('@/components/forms/password-strength', () => ({
@@ -949,6 +958,20 @@ describe('components/forms/accept-invite-form', () => {
       expect(button).toHaveAttribute('data-token', 'abc123');
       expect(button).toHaveAttribute('data-email', 'test@example.com');
       expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    });
+
+    it('should replace the whole form once the invitation is declined', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AcceptInviteForm />);
+      await screen.findByLabelText(/^password$/i);
+
+      await user.click(screen.getByTestId('decline-button'));
+
+      // Found by looking (t-1006): the password form stayed after a decline,
+      // offering an activation that could only fail.
+      expect(screen.getByTestId('invitation-declined')).toBeInTheDocument();
+      expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /activate account/i })).not.toBeInTheDocument();
     });
 
     it('should stop offering decline once the account is activated', async () => {

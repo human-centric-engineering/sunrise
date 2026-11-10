@@ -10,6 +10,12 @@ import { SaveError } from '@/components/forms/form-error';
 interface DeclineInvitationButtonProps {
   token: string;
   email: string;
+  /**
+   * Called once the invitation is gone. The page must then stop offering the
+   * steps above this button (accept, set a password, sign in), which would
+   * only fail now.
+   */
+  onDeclined: () => void;
 }
 
 /**
@@ -18,10 +24,13 @@ interface DeclineInvitationButtonProps {
  * not, for a new account or an existing one. Asks once before deleting the
  * invitation, because a declined invitation has to be sent again to be used.
  */
-export function DeclineInvitationButton({ token, email }: DeclineInvitationButtonProps) {
+export function DeclineInvitationButton({
+  token,
+  email,
+  onDeclined,
+}: DeclineInvitationButtonProps) {
   const [confirming, setConfirming] = useState(false);
   const [isDeclining, setIsDeclining] = useState(false);
-  const [declined, setDeclined] = useState(false);
   const save = useSaveFailure({ fallback: 'Failed to decline invitation. Please try again.' });
 
   const decline = async () => {
@@ -29,21 +38,12 @@ export function DeclineInvitationButton({ token, email }: DeclineInvitationButto
     setIsDeclining(true);
     try {
       await apiClient.post(API.INVITATIONS.DECLINE, { body: { token, email } });
-      setDeclined(true);
+      onDeclined();
     } catch (err) {
       save.report(err);
-    } finally {
       setIsDeclining(false);
     }
   };
-
-  if (declined) {
-    return (
-      <p className="text-muted-foreground text-center text-sm" role="status">
-        Invitation declined. This link no longer works.
-      </p>
-    );
-  }
 
   if (!confirming) {
     return (
@@ -73,5 +73,14 @@ export function DeclineInvitationButton({ token, email }: DeclineInvitationButto
         </Button>
       </div>
     </div>
+  );
+}
+
+/** What the accept page shows in place of everything once the invitation is declined. */
+export function InvitationDeclined() {
+  return (
+    <p className="text-muted-foreground text-center text-sm" role="status">
+      Invitation declined. This link no longer works.
+    </p>
   );
 }

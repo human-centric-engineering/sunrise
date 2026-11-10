@@ -128,5 +128,36 @@ describe('AcceptInviteExistingAccount', () => {
     expect(apiClient.post).toHaveBeenCalledWith(API.INVITATIONS.DECLINE, {
       body: { token: 'tok-123', email: 'pat@example.com' },
     });
+    // Found by looking (t-1006): the step above the button stayed on screen
+    // after a decline, offering an action that could only fail.
+    expect(screen.queryByRole('button', { name: /sign in to accept/i })).not.toBeInTheDocument();
+  });
+
+  it('a decline signed in as the invited account removes the Join button with it', async () => {
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockResolvedValue({});
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /decline invitation/i }));
+    await user.click(screen.getByRole('button', { name: /^decline$/i }));
+
+    expect(await screen.findByText(/invitation declined/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /join acme/i })).not.toBeInTheDocument();
+  });
+
+  it('a failed decline keeps the page and shows why', async () => {
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockRejectedValue(
+      new APIClientError('Invitation not found', 'NOT_FOUND', 404)
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /decline invitation/i }));
+    await user.click(screen.getByRole('button', { name: /^decline$/i }));
+
+    expect(await screen.findByText(/invitation not found/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /join acme/i })).toBeInTheDocument();
   });
 });

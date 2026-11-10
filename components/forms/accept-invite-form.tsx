@@ -22,7 +22,10 @@ import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { AcceptInviteExistingAccount } from '@/components/forms/accept-invite-existing-account';
-import { DeclineInvitationButton } from '@/components/forms/decline-invitation-button';
+import {
+  DeclineInvitationButton,
+  InvitationDeclined,
+} from '@/components/forms/decline-invitation-button';
 
 /** Server path → the field that shows it: every field here renders its message. */
 // No `email`: its input is read-only (the invitation's address), so a message
@@ -104,6 +107,7 @@ export function AcceptInviteForm() {
   // Build error callback URL to return here with token/email preserved
   const errorCallbackUrl = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`;
   const [success, setSuccess] = useState(false);
+  const [declined, setDeclined] = useState(false);
   const [invitationName, setInvitationName] = useState<string>('');
   // The address already has an account: it signs in and accepts, with no
   // password to set (#1199).
@@ -301,6 +305,9 @@ export function AcceptInviteForm() {
     );
   }
 
+  // Declined from the form below: nothing on it can succeed any more.
+  if (declined) return <InvitationDeclined />;
+
   // Valid invitation for an address that already has an account: sign in
   // and accept, rather than set a password.
   if (existingAccount) {
@@ -428,7 +435,11 @@ export function AcceptInviteForm() {
 
       {!success && (
         <div className="mt-2">
-          <DeclineInvitationButton token={token} email={emailFromUrl} />
+          <DeclineInvitationButton
+            token={token}
+            email={emailFromUrl}
+            onDeclined={() => setDeclined(true)}
+          />
         </div>
       )}
     </>

@@ -10,7 +10,10 @@ import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { Button } from '@/components/ui/button';
 import { SaveError } from '@/components/forms/form-error';
-import { DeclineInvitationButton } from '@/components/forms/decline-invitation-button';
+import {
+  DeclineInvitationButton,
+  InvitationDeclined,
+} from '@/components/forms/decline-invitation-button';
 
 interface AcceptInviteExistingAccountProps {
   token: string;
@@ -40,6 +43,7 @@ export function AcceptInviteExistingAccount({
   const [isAccepting, setIsAccepting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [accepted, setAccepted] = useState(false);
+  const [declined, setDeclined] = useState(false);
   const save = useSaveFailure({ fallback: 'Failed to accept invitation. Please try again.' });
 
   const joining = orgName ?? 'the organisation';
@@ -98,6 +102,8 @@ export function AcceptInviteExistingAccount({
     );
   }
 
+  if (declined) return <InvitationDeclined />;
+
   if (accepted) {
     return (
       <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
@@ -153,7 +159,7 @@ export function AcceptInviteExistingAccount({
         </>
       )}
 
-      <DeclineInvitationButton token={token} email={email} />
+      <DeclineInvitationButton token={token} email={email} onDeclined={() => setDeclined(true)} />
     </div>
   );
 }
