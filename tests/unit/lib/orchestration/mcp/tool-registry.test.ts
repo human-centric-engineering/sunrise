@@ -179,6 +179,39 @@ describe('listMcpTools', () => {
     });
   });
 
+  it('returns tools in slug code-unit order whatever order the rows arrive in', async () => {
+    // An MCP client heads its model requests with this list, so a reorder
+    // changes its prompt-cache prefix. `Zeta_tool` sorts before `alpha_tool`
+    // by code unit but after it under `localeCompare`, which pins the
+    // comparison as collation-independent.
+    const tool = (id: string, slug: string) =>
+      makeExposedTool({
+        id,
+        capability: makeCapability({
+          slug,
+          functionDefinition: { name: slug, description: slug, parameters: {} },
+        }),
+      });
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
+      tool('t-1', 'search_knowledge'),
+      tool('t-2', 'alpha_tool'),
+      tool('t-3', 'Zeta_tool'),
+      tool('t-4', 'call_api'),
+    ] as never);
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+
+    const result = await listMcpTools();
+
+    expect(result.map((t) => t.slug)).toEqual([
+      'Zeta_tool',
+      'alpha_tool',
+      'call_api',
+      'search_knowledge',
+    ]);
+  });
+
   it('uses customName when provided', async () => {
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
       makeExposedTool({ customName: 'kb_search' }),

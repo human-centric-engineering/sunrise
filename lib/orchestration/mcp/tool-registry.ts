@@ -110,6 +110,13 @@ async function loadGlobalTools(): Promise<McpToolDefinition[]> {
     });
   }
 
+  // Pin the order (t-1007). The query has no ORDER BY, so Postgres may return
+  // rows in any order, and an MCP client puts this list at the head of its own
+  // model requests: a reorder changes that client's prompt-cache prefix. Sort
+  // by code unit on the unique slug, so the order does not depend on the
+  // database's collation.
+  tools.sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+
   cachedTools = tools;
   cachedAt = Date.now();
   return tools;

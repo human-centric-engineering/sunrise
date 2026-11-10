@@ -390,6 +390,47 @@ describe('getCapabilityDefinitions', () => {
     ]);
   });
 
+  it('orders by code unit, not by locale collation', async () => {
+    // `Zorder` sorts before `aorder` by code unit and after it under
+    // `localeCompare` / an ICU collation, so swapping the comparator for a
+    // locale-aware one — which would make the order vary by install — fails here.
+    const upper = makeAppCap('Zorder');
+    const lower = makeAppCap('aorder');
+    registerAppCapability(upper);
+    registerAppCapability(lower);
+    registerBuiltInCapabilities();
+
+    const row = (slug: string) => ({
+      id: `aac-${slug}`,
+      agentId: 'agent-1',
+      capabilityId: `cap-${slug}`,
+      isEnabled: true,
+      customRateLimit: null,
+      capability: {
+        id: `cap-${slug}`,
+        slug,
+        name: slug,
+        category: 'other',
+        isActive: true,
+        requiresApproval: false,
+        rateLimit: null,
+        functionDefinition: {
+          name: slug,
+          description: slug,
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    });
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      row(lower.slug),
+      row(upper.slug),
+    ]);
+
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(defs.map((d) => d.name)).toEqual(['test_app_cap_Zorder', 'test_app_cap_aorder']);
+  });
+
   it('returns an empty list when the agent has no pivot rows', async () => {
     (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const defs = await getCapabilityDefinitions('agent-empty');
