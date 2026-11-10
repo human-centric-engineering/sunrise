@@ -5,7 +5,7 @@
  * and `checkInvitationInto`, with Prisma mocked at the delegates. The token
  * store, mailer and invite limiter are mocked at the module edge.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
@@ -307,8 +307,14 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     mockGetSession.mockResolvedValue(session('USER', ORG));
     memberOf(ORG_ADMIN_ROLE);
   });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('gives an existing account the same 201 body as a new address, and flags the email', async () => {
+    // One instant for both requests: the bodies carry `invitedAt` and
+    // `expiresAt`, and two real clock reads can differ by a millisecond.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-10T12:00:00.000Z') });
     // New address first
     const fresh = await post(invitee);
     const freshBody = await json(fresh);
@@ -328,6 +334,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     // The inviter cannot tell the two apart...
     expect(existing.status).toBe(201);
     expect(fresh.status).toBe(201);
+    vi.useRealTimers();
     expect(existingBody).toEqual(freshBody);
     // ...but the invitee's email can.
     expect(freshProps).not.toHaveProperty('hasAccount');
