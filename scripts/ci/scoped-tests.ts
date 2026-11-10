@@ -120,6 +120,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'an edit that removes a crossing changes no import this test follows.',
   },
   {
+    path: 'tests/unit/lib/privacy/erase-org.test.ts',
+    reason:
+      'parses `prisma/schema/orchestration-ops.prisma` to prove `AiAdminAuditLog.actingOrgId` ' +
+      'carries no relation, so erasing an org keeps its audit rows naming it (t-1005). ' +
+      'A schema-only edit adding that FK reaches this test through no import.',
+  },
+  {
     path: 'tests/unit/lib/privacy/export-sources.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails until every model with a ' +
