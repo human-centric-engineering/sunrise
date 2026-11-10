@@ -306,12 +306,14 @@ account deleted) · `404 NOT_A_MEMBER`.
 ### The org's admin history
 
 ```
-GET /api/v1/orgs/[id]/audit-log?page=&limit=
+GET /api/v1/orgs/[id]/audit-log?page=&limit=&userId=&entityType=
 ```
 
-The admin audit rows made in this org, newest first (t-1005): its members'
-actions and support's alike. `limit` defaults to 50, max 100. What each row
-holds, what it leaves out and why, is in
+The admin audit rows belonging to this org, newest first (t-1005): its
+members' actions, support's, and the vendor's changes to the org. `limit`
+defaults to 50, max 100. `userId` narrows to one person; `entityType` is a
+comma-separated list (at most 20) narrowing to those entity types. Which rows
+belong to the org, what each holds, what it leaves out and why, is in
 [the audit log guide](../admin/orchestration-audit-log.md#the-org-a-row-was-made-in).
 
 **Response** (200 OK, paginated):

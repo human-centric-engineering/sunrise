@@ -40,6 +40,7 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { DELETE } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-tokens/[tokenId]/route';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -236,5 +237,88 @@ describe('logAdminAction’s acting org (t-1005)', () => {
       supportOrgId: null,
       actingOrgId: INSTALL_ORG_ID,
     });
+  });
+});
+
+describe('logAdminAction’s acting org: the org whose data changed (t-1005 review)', () => {
+  const entry = { userId: 'user_1', action: 'org.quotas.update', entityType: 'org' };
+
+  it('takes an explicit org over the context, for a route acting on an org from outside it', async () => {
+    await runAsOrg(
+      INSTALL_ORG_ID,
+      async () => logAdminAction({ ...entry, actingOrgId: CUSTOMER }),
+      {
+        source: 'session',
+      }
+    );
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER, supportOrgId: null });
+  });
+
+  it('takes an explicit org with no context at all: an admin API key', () => {
+    logAdminAction({ ...entry, actingOrgId: CUSTOMER });
+    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  });
+
+  it('takes an explicit null as “no org’s history”, even inside an org', async () => {
+    await runAsOrg(CUSTOMER, async () => logAdminAction({ ...entry, actingOrgId: null }), {
+      source: 'session',
+    });
+    expect(writtenRow()).toMatchObject({ actingOrgId: null });
+  });
+
+  it('names no org on a platform-tier surface, though the admin is in a customer org', async () => {
+    await runAsOrg(CUSTOMER, async () => logAdminAction(entry), {
+      source: 'session',
+      surface: 'platform',
+    });
+    expect(writtenRow()).toMatchObject({ actingOrgId: null, supportOrgId: null });
+  });
+
+  it('still takes an explicit org on a platform-tier surface', async () => {
+    await runAsOrg(
+      CUSTOMER,
+      async () => logAdminAction({ ...entry, actingOrgId: 'cmorg0000000000000target1' }),
+      {
+        source: 'session',
+        surface: 'platform',
+      }
+    );
+    expect(writtenRow()).toMatchObject({ actingOrgId: 'cmorg0000000000000target1' });
+  });
+});
+
+describe('withAdminAuth marks a platform-tier surface, so its rows name no org (t-1005 review)', () => {
+  // A platform admin who is also an ADMIN member of the customer org, acting
+  // in it. The same handler body, behind a platform-tier route and an
+  // org-tier one: only the tier differs.
+  const body = () => {
+    logAdminAction({ userId: 'user_1', action: 'user.update', entityType: 'user' });
+    return new Response(null, { status: 204 });
+  };
+  const platformRoute = withAdminAuth(async () => body());
+  const orgRoute = withAdminAuth(async () => body(), { tier: 'org' });
+  const call = (route: typeof platformRoute) =>
+    route(new NextRequest('http://localhost:3000/api/v1/admin/users/x', { method: 'PATCH' }), {
+      params: Promise.resolve({}),
+    });
+
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN'));
+    db.orgMembership.findUnique.mockResolvedValue({
+      role: ORG_ADMIN_ROLE,
+      org: { status: 'ACTIVE' },
+    });
+  });
+
+  it('a platform-tier route writes no org, though the request entered the customer org', async () => {
+    const res = await call(platformRoute);
+    expect(res.status).toBe(204);
+    expect(writtenRow()).toMatchObject({ action: 'user.update', actingOrgId: null });
+  });
+
+  it('an org-tier route writes the customer org', async () => {
+    const res = await call(orgRoute);
+    expect(res.status).toBe(204);
+    expect(writtenRow()).toMatchObject({ action: 'user.update', actingOrgId: CUSTOMER });
   });
 });

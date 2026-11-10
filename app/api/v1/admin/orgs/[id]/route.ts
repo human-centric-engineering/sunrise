@@ -192,6 +192,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       action: 'org.quotas.update',
       entityType: 'org',
       entityId: id,
+      // The org changed, which a platform admin may do from outside it (t-1005).
+      actingOrgId: id,
       entityName: org.name,
       changes: {
         quotas: {

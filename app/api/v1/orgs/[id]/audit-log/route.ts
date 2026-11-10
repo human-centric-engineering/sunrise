@@ -1,10 +1,11 @@
 /**
  * An org's own admin history (t-1005, #1181)
  *
- * GET /api/v1/orgs/[id]/audit-log?page=&limit= — the admin audit rows made in
- *     this org, newest first: its members' actions and support's alike. Each
- *     names the action, what it touched, who did it, the diff, and whether it
- *     was made in a support session.
+ * GET /api/v1/orgs/[id]/audit-log?page=&limit=&userId=&entityType=a,b — the
+ *     admin audit rows belonging to this org, newest first: its members'
+ *     actions, support's, and the vendor's changes to the org. Each names the
+ *     action, what it touched, who did it, the diff, and whether it was made
+ *     in a support session. `userId` and `entityType` only narrow.
  *
  * The same admission as the member list: the org's OWNER/ADMIN acting in it,
  * or a platform admin (the policy's org arm, `resolveOrgResource`). The rows
@@ -34,12 +35,17 @@ export const GET = withAuth<{ id: string }>(
     }
 
     const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
-    const { page, limit } = validateQueryParams(
+    const { page, limit, userId, entityType } = validateQueryParams(
       new URL(request.url).searchParams,
       listOrgAuditLogQuerySchema
     );
 
-    const { entries, total } = await listOrgAuditLog(id, { page, limit });
+    const { entries, total } = await listOrgAuditLog(id, {
+      page,
+      limit,
+      userId,
+      entityTypes: entityType,
+    });
     return paginatedResponse(entries, { page, limit, total });
   },
   {

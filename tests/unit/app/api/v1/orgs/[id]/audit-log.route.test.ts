@@ -84,7 +84,10 @@ function row(id: string, actingOrgId: string | null, at: number, extra: Partial<
 
 /** A's members, support in A, B's member, and a system-scope write made in no org. */
 const TABLE: Row[] = [
-  row('a1', ORG_A, 3_000),
+  row('a1', ORG_A, 3_000, {
+    entityType: 'app_page_design',
+    user: { id: 'cmagency0000000000person1', name: 'Agency Person' },
+  }),
   row('a2', ORG_A, 1_000, { supportGrantId: GRANT, supportOrgId: ORG_A }),
   // Support row whose grant went when its org was erased: still support.
   row('a3', ORG_A, 500, { supportGrantId: null, supportOrgId: ORG_A }),
@@ -92,11 +95,20 @@ const TABLE: Row[] = [
   row('s1', null, 4_000, { user: null }),
 ];
 
-type Where = { actingOrgId?: string | null };
+type Where = {
+  actingOrgId?: string | null;
+  userId?: string;
+  entityType?: { in: string[] };
+};
 
-/** Answers the delegate's `where` the way Postgres would, for the key the read uses. */
+/** Answers the delegate's `where` the way Postgres would, for the keys the read may use. */
 function matching(where: Where): Row[] {
-  return TABLE.filter((r) => !('actingOrgId' in where) || r.actingOrgId === where.actingOrgId);
+  return TABLE.filter(
+    (r) =>
+      (!('actingOrgId' in where) || r.actingOrgId === where.actingOrgId) &&
+      (where.userId === undefined || r.user?.id === where.userId) &&
+      (where.entityType === undefined || where.entityType.in.includes(r.entityType))
+  );
 }
 
 /** Applies a Prisma `select` to a row, so a field the read did not ask for is absent. */
@@ -164,13 +176,13 @@ describe('GET — an org’s own admin history', () => {
     expect(json.data[0]).toEqual({
       id: 'a1',
       action: 'agent.update',
-      entityType: 'agent',
+      entityType: 'app_page_design',
       entityId: 'cmagent00000000000agent01',
       entityName: 'Agent a1',
       changes: { name: { from: 'Old', to: 'New' } },
       metadata: null,
       createdAt: new Date(3_000).toISOString(),
-      actor: { id: 'cmmember0000000000person1', name: 'Member Person' },
+      actor: { id: 'cmagency0000000000person1', name: 'Agency Person' },
       support: null,
     });
   });
@@ -244,6 +256,40 @@ describe('GET — an org’s own admin history', () => {
 
     // No enumeration: the members route answers the same way.
     expect(res.status).toBe(403);
+    expect(mockDb.aiAdminAuditLog.findMany).not.toHaveBeenCalled();
+  });
+
+  it('narrows to one person, and to a set of entity types, within the org only', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG_A));
+    memberOf(ORG_OWNER_ROLE);
+    // B holds a row of the same type: the filter must not reach it.
+    expect(TABLE.some((r) => r.actingOrgId === ORG_B && r.entityType === 'agent')).toBe(true);
+
+    const byPerson = await body(await get(ORG_A, 'userId=cmagency0000000000person1'));
+    const byType = await body(await get(ORG_A, 'entityType=agent,%20app_media_asset'));
+    const both = await body(await get(ORG_A, 'userId=cmagency0000000000person1&entityType=agent'));
+
+    expect(byPerson.data.map((e: { id: string }) => e.id)).toEqual(['a1']);
+    expect(byType.data.map((e: { id: string }) => e.id)).toEqual(['a2', 'a3']);
+    expect(both.data).toEqual([]);
+    expect(mockDb.aiAdminAuditLog.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          actingOrgId: ORG_A,
+          userId: 'cmagency0000000000person1',
+          entityType: { in: ['agent'] },
+        },
+      })
+    );
+  });
+
+  it('rejects an empty or oversized entity-type list', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG_A));
+    memberOf(ORG_OWNER_ROLE);
+    const tooMany = Array.from({ length: 21 }, (_, i) => `t${i}`).join(',');
+
+    expect((await get(ORG_A, 'entityType=,')).status).toBe(400);
+    expect((await get(ORG_A, `entityType=${tooMany}`)).status).toBe(400);
     expect(mockDb.aiAdminAuditLog.findMany).not.toHaveBeenCalled();
   });
 

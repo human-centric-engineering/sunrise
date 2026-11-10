@@ -31,6 +31,14 @@ export interface AdminAuditEntry {
    * route's `support.enter`, which does not enter the org it switches to.
    */
   support?: AuditSupportStamp;
+  /**
+   * The org whose data this action changed, when the route acts on an org it
+   * is not inside (t-1005): a platform admin changing an org's caps from the
+   * install org, or with an admin API key. `null` says the action belongs to
+   * no org's history. Leave it out everywhere else: {@link logAdminAction}
+   * takes the org from the tenant context.
+   */
+  actingOrgId?: string | null;
 }
 
 /** The grant an audit row was made under, and the org it was made in. */
@@ -151,22 +159,43 @@ function supportStampFromContext(): AuditSupportStamp | null {
 }
 
 /**
+ * The org whose history a row belongs to (t-1005): the org whose data the
+ * action changed. In order —
+ *
+ * 1. the caller's explicit `actingOrgId`, for a route acting on an org from
+ *    outside it;
+ * 2. the support stamp's org: a support session's, or the one `support.enter`
+ *    names, which is the org entered;
+ * 3. nothing, on a platform-tier admin surface (`surface: 'platform'`): that
+ *    is the vendor's work, not the org's, even when the admin's active org is
+ *    a customer's;
+ * 4. otherwise the org the call stack runs in, and nothing in a system scope
+ *    or outside any.
+ *
+ * Read synchronously when the action is logged, as the support stamp is.
+ */
+function actingOrgFor(entry: AdminAuditEntry, support: AuditSupportStamp | null): string | null {
+  if (entry.actingOrgId !== undefined) return entry.actingOrgId;
+  if (support) return support.orgId;
+  const context = getTenantContext();
+  if (context?.surface === 'platform') return null;
+  return context?.orgId ?? null;
+}
+
+/**
  * Log an admin action. Fire-and-forget — never throws to the caller.
  *
- * Every row written inside an org names that org (`actingOrgId`, t-1005), so
- * an org can be shown its own admin history (`listOrgAuditLog`). A
- * system-scope write names none.
+ * Each row names the org whose history it belongs to (`actingOrgId`, t-1005;
+ * the rule is `actingOrgFor`), so an org can be shown its own admin history
+ * (`listOrgAuditLog`).
  *
  * Inside a support session (§121 t-825) the row is also stamped with the grant
  * and the org from the tenant context, so every caller's row names the support
- * actor's grant without the caller knowing a support session exists. A caller
- * passing the stamp explicitly acts on that org from outside it, so the row is
- * that org's too: `support.enter` belongs in the history of the org entered.
+ * actor's grant without the caller knowing a support session exists.
  */
 export function logAdminAction(entry: AdminAuditEntry): void {
   const support = entry.support ?? supportStampFromContext();
-  // Read synchronously, as the support stamp is — see supportStampFromContext.
-  const actingOrgId = support?.orgId ?? getTenantContext()?.orgId ?? null;
+  const actingOrgId = actingOrgFor(entry, support);
   void prisma.aiAdminAuditLog
     .create({
       data: {

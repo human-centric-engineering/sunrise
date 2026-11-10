@@ -46,18 +46,37 @@ export interface OrgAuditRecord {
   support: { grantId: string | null } | null;
 }
 
+/** Narrowing an org's history. Every filter only narrows; none can widen past the org. */
+export interface OrgAuditLogOptions {
+  page: number;
+  limit: number;
+  /** One person's actions. */
+  userId?: string;
+  /**
+   * Rows about these entity types only — a fork's "area" (its design
+   * entities, say) is a set of them. An empty list matches nothing.
+   */
+  entityTypes?: readonly string[];
+}
+
 /**
- * The admin audit rows made in `orgId`, newest first.
+ * The admin audit rows made in `orgId`, newest first. Public: a fork's own
+ * org-tier route reads an org's history through this, after its own
+ * admission, rather than querying the table under `runAsSystem`.
  *
- * Bounded by `actingOrgId` alone, in the one query: there is no other filter
- * a caller can pass that widens it.
+ * Bounded by `actingOrgId` in the one query, and every option is ANDed onto
+ * it: nothing a caller passes can widen the read past the org.
  */
 export async function listOrgAuditLog(
   orgId: string,
-  options: { page: number; limit: number },
+  options: OrgAuditLogOptions,
   db: Pick<PrismaClient, 'aiAdminAuditLog'> = prisma
 ): Promise<{ entries: OrgAuditRecord[]; total: number }> {
-  const where: Prisma.AiAdminAuditLogWhereInput = { actingOrgId: orgId };
+  const where: Prisma.AiAdminAuditLogWhereInput = {
+    actingOrgId: orgId,
+    ...(options.userId !== undefined ? { userId: options.userId } : {}),
+    ...(options.entityTypes !== undefined ? { entityType: { in: [...options.entityTypes] } } : {}),
+  };
   const [rows, total] = await Promise.all([
     db.aiAdminAuditLog.findMany({
       where,

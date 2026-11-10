@@ -204,6 +204,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
         action: 'org.providers.replace',
         entityType: 'org',
         entityId: OTHER,
+        actingOrgId: OTHER,
         changes: {
           providers: { from: { approved: ['id-anthropic'] }, to: { approved: ['id-openai'] } },
         },

@@ -208,8 +208,9 @@ does not enter the org. The full rules, including what is not stamped, are in
 - **In the org's whole history too** (t-1005). Support rows also carry
   `actingOrgId`, like every row made in the org, so they appear, marked as
   support, in `GET /api/v1/orgs/[id]/audit-log` beside the members' own
-  actions, `support.enter` included. That read returns the diff; the support
-  activity list does not. See
+  actions, `support.enter` included. Granting, replacing and revoking a grant
+  are the org's too, even when a platform admin revokes from outside it. That
+  read returns the diff; the support activity list does not. See
   [the audit log guide](../admin/orchestration-audit-log.md#the-org-a-row-was-made-in).
 
 ## Privacy

@@ -377,4 +377,18 @@ export const listSupportActivityQuerySchema = paginationQuerySchema.extend({
  */
 export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
   limit: z.coerce.number().int().positive().max(100).default(50),
+  /** One person's actions. */
+  userId: z.string().trim().min(1).max(100).optional(),
+  /** Comma-separated entity types, e.g. `agent,workflow`; at most 20. */
+  entityType: z
+    .string()
+    .max(1000)
+    .transform((value) =>
+      value
+        .split(',')
+        .map((type) => type.trim())
+        .filter((type) => type.length > 0)
+    )
+    .pipe(z.array(z.string().max(100)).min(1).max(20))
+    .optional(),
 });

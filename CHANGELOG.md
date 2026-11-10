@@ -19,18 +19,24 @@ release process.
 ### Added
 
 - **An org can be shown its own admin history (t-1005, #1181).**
-  `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed, naming the org
-  each row was made in. `logAdminAction()` stamps it from the tenant context
-  on every row made inside an org, support or not. The new
-  `GET /api/v1/orgs/[id]/audit-log` and its reader `listOrgAuditLog()`
-  (`lib/orchestration/audit/org-audit-log.ts`) return that org's rows to its
-  OWNER/ADMIN or a platform admin, browser session only, without the IP. The
-  model stays a system model: the column is deliberately not `orgId`, which
-  would put it under row isolation. Read an org's history through
-  `listOrgAuditLog()`, not a `runAsSystem` query of your own. Erasing an org
-  keeps the column (no FK). Earlier support rows are backfilled from
-  `supportOrgId`; other earlier rows name no org.
-  The support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
+  `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed: the org whose
+  data each action changed. `logAdminAction()` sets it, in order, from a new
+  optional `actingOrgId` on the entry, which a route passes when it changes
+  an org it may be outside of (`/api/v1/admin/orgs/[id]` quotas and
+  providers, and the support-grant routes); then from the support stamp; then
+  from the tenant context, except on a platform-tier `withAdminAuth` route,
+  which names no org. `TenantContext` gains an optional `surface: 'platform'`
+  for that. A fork's org-tier and named-tier routes need no change. The new
+  `GET /api/v1/orgs/[id]/audit-log` and its reader
+  `listOrgAuditLog(orgId, { page, limit, userId?, entityTypes? })`
+  (`lib/orchestration/audit/org-audit-log.ts`) return that org's rows,
+  without the IP, to its OWNER/ADMIN or a platform admin, browser session
+  only. A fork's own org-tier view reads an org's history through
+  `listOrgAuditLog()`, not a `runAsSystem` query. The model stays a system
+  model: the column is deliberately not `orgId`, which would put it under row
+  isolation. Erasing an org keeps the column (no FK). Earlier support rows
+  are backfilled from `supportOrgId`; other earlier rows name no org. The
+  support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
 
 ### Fixed
 

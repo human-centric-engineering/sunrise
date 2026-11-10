@@ -239,6 +239,8 @@ describe('PATCH /api/v1/admin/orgs/[id] — settings.quotas at multi', () => {
         action: 'org.quotas.update',
         entityType: 'org',
         entityId: CUSTOMER,
+        // Made from the install org, about the customer: the customer's history (t-1005).
+        actingOrgId: CUSTOMER,
         changes: {
           quotas: { from: { monthlyBudgetUsd: 100 }, to: { monthlyBudgetUsd: 500 } },
         },

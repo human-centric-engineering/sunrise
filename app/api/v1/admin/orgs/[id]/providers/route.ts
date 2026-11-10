@@ -169,6 +169,8 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     action: 'org.providers.replace',
     entityType: 'org',
     entityId: id,
+    // The org changed, which a platform admin may do from outside it (t-1005).
+    actingOrgId: id,
     changes: { providers: { from: written.previous, to: written.stored } },
     // The ids in `changes` are what was stored; the slugs are what a reader
     // of the log recognises.

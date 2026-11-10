@@ -148,29 +148,48 @@ org's own user. Every row made in an org, support or not, also names it in
 
 ## The org a row was made in
 
-`actingOrgId` (t-1005, #1181) names the org every row was made in, so an org
-can be shown its own admin history. Nullable and indexed with `createdAt`, no
-FK.
+`actingOrgId` (t-1005, #1181) names the org whose history a row belongs to:
+the org whose data the action changed. An org is shown its own history from
+it. Nullable and indexed with `createdAt`, no FK.
 
-- **Stamped by the logger.** `logAdminAction()` reads it from the tenant
-  context when it is called, as it reads the support stamp: the support org
-  when there is a support stamp, otherwise the context's org. So the switch
-  route's `support.enter` names the org entered, not the support person's own,
-  and belongs to the entered org's history. A system-scope write names none,
-  and so do the direct writers (erasure). At `TENANCY_MODE=single` every row
-  names the install org and nothing else about it changes.
+- **The rule, in order** (`actingOrgFor` in the logger, read when the action
+  is logged):
+  1. **An explicit `actingOrgId`** on the entry. A route that changes an org
+     it may be outside of passes it: `PATCH /api/v1/admin/orgs/[id]` (quotas),
+     `PUT …/providers`, and the support-grant create, replace and revoke. So a
+     platform admin changing org B from the install org, or with an admin API
+     key, files the row under B. `null` means no org's history.
+  2. **The support stamp's org.** A support session's, or the one the switch
+     route's `support.enter` names, which is the org entered.
+  3. **No org on a platform-tier admin surface.** `withAdminAuth` with no org
+     tier in effect marks the tenant context `surface: 'platform'`. What the
+     vendor does there (users, shared settings, another org) is not the org's
+     history, even when the admin's active org is a customer's.
+  4. **Otherwise the org the call stack runs in.** Every org-tier admin route
+     (a fork's named tiers included), the `/api/v1/orgs/[id]/*` routes, jobs.
+     A system scope, or no context, names none, and so do the direct writers
+     (erasure).
+
+  At `TENANCY_MODE=single` the org-tier rows name the install org and the
+  platform-tier ones none; nothing else about a row changes.
+
 - **Not `orgId`, on purpose.** A scalar named `orgId` makes a model
   tenant-owned (`lib/tenancy/classification.ts`): row isolation, write
   injection, and the enable script's backfill. That would confine this page,
   the vendor's view of every org, to one org. The model stays a system model.
-- **One reader per org.** `listOrgAuditLog(orgId)`
-  (`lib/orchestration/audit/org-audit-log.ts`) is the only per-org read, and
-  its `actingOrgId` filter is what bounds it, because row isolation does not.
-  It serves `GET /api/v1/orgs/[id]/audit-log`
+- **One reader per org.** `listOrgAuditLog(orgId, { page, limit, userId?,
+entityTypes? })` (`lib/orchestration/audit/org-audit-log.ts`) is the only
+  per-org read, and its `actingOrgId` filter is what bounds it, because row
+  isolation does not. The filters only narrow. It serves
+  `GET /api/v1/orgs/[id]/audit-log`
   ([org endpoints](../api/org-endpoints.md#the-orgs-admin-history)): the org's
-  OWNER/ADMIN acting in it, or a platform admin, browser session only. A fork
-  showing an org its history reads through it, not through its own
-  `runAsSystem` query.
+  OWNER/ADMIN acting in it, or a platform admin, browser session only.
+- **A fork's own view reads through it.** A fork showing an org part of its
+  history, say who changed its designs, calls `listOrgAuditLog` from its own
+  org-tier route after its own admission, with `entityTypes` for the area and
+  `userId` for the person, and joins its own names onto `actor.id`. It does
+  not query the table under `runAsSystem`. Its routes' rows are already the
+  org's by rule 4, provided they declare an org or named tier.
 - **What the org gets.** Action, entity, when, the actor's id and name, the
   `changes` diff (secrets redacted at write) and `metadata`, and `support`
   (`{ grantId }` on a support row). It does not get the IP address or the
@@ -209,7 +228,7 @@ interface AdminAuditEntry {
   metadata?: Record<string, unknown> | null;
   clientIp?: string | null;
   support?: { grantId: string; orgId: string }; // leave out: read from the tenant context
-  // (no actingOrgId field: the logger reads it from the tenant context)
+  actingOrgId?: string | null; // only for a route changing an org it may be outside of
 }
 ```
 
