@@ -32,12 +32,13 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   generateInvitationToken: vi.fn(async () => 'raw-token'),
   updateInvitationToken: vi.fn(async () => 'raw-token'),
   pendingInvitationsFor: vi.fn(async () => ({ readable: [], unreadable: 0 })),
-  invitationOrgSlot: (orgId: string | null | undefined) =>
-    orgId && orgId !== 'install' ? orgId : null,
 }));
 
 vi.mock('@/lib/email/send', () => ({
@@ -246,7 +247,8 @@ describe('POST /api/v1/users/invite — org axis', () => {
       createdAt: new Date(),
     });
 
-    const res = await POST(request({ ...invitee }));
+    // The org is named: an address holds one invitation per org (#1199).
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
     const body = JSON.parse(await res.text());
 
     expect(res.status).toBe(200);
@@ -294,10 +296,13 @@ describe('POST /api/v1/users/invite — org axis', () => {
     }
     const rewritten = () => vi.mocked(updateInvitationToken).mock.calls[0]?.[1];
 
-    it('keeps the pending org keys when the body names none', async () => {
+    it('re-sends the row the admin table names, keeping its org keys', async () => {
+      // The table's Resend posts the row's orgId and orgRole (#1199).
       pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
 
-      const res = await POST(request({ ...invitee, role: 'USER' }, '?resend=true'));
+      const res = await POST(
+        request({ ...invitee, role: 'USER', orgId: OTHER_ORG, orgRole: 'ADMIN' }, '?resend=true')
+      );
 
       expect(res.status).toBe(201);
       expect(rewritten()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
@@ -436,10 +441,46 @@ describe('POST /api/v1/users/invite — org axis', () => {
         status: 'SUSPENDED',
       } as never);
 
-      const res = await POST(request({ ...invitee }, '?resend=true'));
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
 
       expect(res.status).toBe(400);
       expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('a body naming no org does not adopt a lone org invitation (code review, t-1006)', async () => {
+      // Naming no org means the install org. With only OTHER_ORG's invitation
+      // pending, that is a new platform invitation beside an org one, which is
+      // refused: the platform one could never be redeemed once the org one
+      // creates the account.
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+
+      const res = await POST(request({ ...invitee, role: 'ADMIN' }, '?resend=true'));
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('re-sends a pending platform invitation even with an org invitation beside it', async () => {
+      const base = {
+        email: invitee.email,
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+      };
+      const meta = { name: 'Jane Doe', role: 'ADMIN', invitedBy: 'a', invitedAt: '2026-09-17' };
+      vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+        readable: [
+          { ...base, id: 'row-org', metadata: { ...meta, role: 'USER', orgId: OTHER_ORG } },
+          { ...base, id: 'row-install', metadata: meta },
+        ],
+        unreadable: 0,
+      });
+
+      const res = await POST(request({ ...invitee, role: 'ADMIN' }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(updateInvitationToken).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -76,7 +76,8 @@ export const DELETE = withAdminAuth<{ email: string }>(async (request, session, 
       throw new ValidationError('Invalid organisation id', { orgId: ['Must be an org id'] });
     }
     const count = await deleteInvitationsInOrg(decodedEmail, orgId.data);
-    if (count === 0) throw new NotFoundError('Invitation not found or already expired');
+    // Expired rows go too: revoking one is a cleanup, not a refusal.
+    if (count === 0) throw new NotFoundError('Invitation not found');
     log.info('Admin deleted one org invitation', {
       email: decodedEmail,
       orgId: orgId.data,

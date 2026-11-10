@@ -27,6 +27,7 @@ import {
   deleteInvitationByToken,
   pendingInvitationsFor,
   invitationOrgSlot,
+  isPlatformInvitation,
   deleteInvitationsInOrg,
 } from '@/lib/utils/invitation-token';
 
@@ -1725,5 +1726,18 @@ describe('deleteInvitationsInOrg()', () => {
     expect(count).toBe(0);
     expect(prisma.verification.deleteMany).not.toHaveBeenCalled();
     expect(logger.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('isPlatformInvitation (#1199)', () => {
+  it.each([
+    ['a platform role into a named org', { role: 'ADMIN', orgId: 'org-a' }, true],
+    ['no org', { role: 'USER' }, true],
+    ['the install org named', { role: 'USER', orgId: 'install' }, true],
+    // Code review finding (t-1006): the page and the accept route disagreed here.
+    ['an empty org id', { role: 'USER', orgId: '' }, true],
+    ['a USER invitation into a named org', { role: 'USER', orgId: 'org-a' }, false],
+  ])('%s → %s', (_label, metadata, expected) => {
+    expect(isPlatformInvitation(metadata)).toBe(expected);
   });
 });

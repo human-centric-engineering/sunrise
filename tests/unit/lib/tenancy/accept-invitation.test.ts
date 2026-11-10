@@ -236,6 +236,7 @@ describe('acceptInvitationAsExistingUser', () => {
     ['grants a platform role', { orgId: ORG_A, role: PLATFORM_ADMIN_ROLE }],
     ['names no org', {}],
     ['names the install org', { orgId: INSTALL_ORG_ID }],
+    ['names an empty org id', { orgId: '' }],
   ])('refuses a platform invitation that %s, leaving it', async (_label, metadata) => {
     invite('tok-a', metadata);
 

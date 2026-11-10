@@ -62,6 +62,14 @@ describe('AcceptInviteExistingAccount', () => {
     expect(mockPush).toHaveBeenCalledWith(`/login?callbackUrl=${encodeURIComponent(returnTo)}`);
   });
 
+  it('signed out with an unverified account: says to verify on sign-in first', () => {
+    signedInAs(null);
+    render(<AcceptInviteExistingAccount {...props} accountVerified={false} />);
+
+    expect(screen.getByText(/has not been verified yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign in to accept/i })).toBeInTheDocument();
+  });
+
   it('signed in as someone else: names both addresses and offers sign-out, not accept', async () => {
     signedInAs('other@example.com');
     const user = userEvent.setup();

@@ -37,12 +37,10 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
-import { getInvitationMetadata } from '@/lib/utils/invitation-token';
+import { getInvitationMetadata, isPlatformInvitation } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
 import { prisma } from '@/lib/db/client';
 import { emailSchema } from '@/lib/validations/auth';
-import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
-import { invitationOrgSlot } from '@/lib/utils/invitation-token';
 
 /**
  * Query parameter validation schema
@@ -116,19 +114,24 @@ export async function GET(request: NextRequest): Promise<Response> {
       result.metadata.orgId
         ? prisma.org.findUnique({ where: { id: result.metadata.orgId }, select: { name: true } })
         : null,
-      prisma.user.findUnique({ where: { email: validated.email }, select: { id: true } }),
+      prisma.user.findUnique({
+        where: { email: validated.email },
+        select: { emailVerified: true },
+      }),
     ]);
     return successResponse({
       name: result.metadata.name,
       role: result.metadata.role,
       orgName: org?.name ?? null,
       accountExists: account !== null,
+      // Accepting as an existing account needs a verified address. An
+      // unverified one is told to verify on sign-in first (the sign-in page
+      // offers the email), rather than finding out at the last step.
+      accountVerified: account?.emailVerified ?? false,
       // A platform invitation (a platform role, or the install org) can only
       // create an account. With one already there, the page says so instead
       // of offering a sign-in that the accept route would refuse.
-      newAccountOnly:
-        result.metadata.role !== DEFAULT_USER_ROLE ||
-        invitationOrgSlot(result.metadata.orgId) === null,
+      newAccountOnly: isPlatformInvitation(result.metadata),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

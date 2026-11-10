@@ -58,9 +58,8 @@ import {
   resolveOrgResource,
   membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
-import { pendingInvitationsFor } from '@/lib/utils/invitation-token';
+import { isPlatformInvitation, pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -120,13 +119,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   // cannot see.
   const pending = await pendingInvitationsFor(body.email);
   const notOurs =
-    pending.unreadable > 0 ||
-    pending.readable.some(
-      (inv) =>
-        inv.metadata.role !== DEFAULT_USER_ROLE ||
-        inv.metadata.orgId === undefined ||
-        inv.metadata.orgId === INSTALL_ORG_ID
-    );
+    pending.unreadable > 0 || pending.readable.some((inv) => isPlatformInvitation(inv.metadata));
   if (notOurs) {
     log.info('Invitation refused: a platform invitation is pending for this email', {
       orgId: id,

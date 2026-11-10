@@ -28,6 +28,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseInvitationMetadata, type InvitationMetadata } from '@/lib/validations/admin';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * Token Configuration
@@ -325,6 +326,19 @@ export function invitationOrgSlot(orgId: string | null | undefined): string | nu
   return orgId && orgId !== INSTALL_ORG_ID ? orgId : null;
 }
 
+/**
+ * A platform invitation: one granting a platform role, or into the install
+ * org (named, absent or empty). It exists to create an account, so an
+ * existing account cannot redeem it, and an org's own invitation route does
+ * not write beside it (#1199). The one statement of the rule, for the routes
+ * and the accept page alike.
+ */
+export function isPlatformInvitation(
+  metadata: Pick<InvitationMetadata, 'role' | 'orgId'>
+): boolean {
+  return metadata.role !== DEFAULT_USER_ROLE || invitationOrgSlot(metadata.orgId) === null;
+}
+
 /** Every unexpired invitation for an address, as {@link pendingInvitationsFor} reads them. */
 export interface PendingInvitations {
   /** Readable rows, newest first. */
@@ -379,27 +393,14 @@ export async function updateInvitationToken(
   email: string,
   metadata: InvitationMetadata
 ): Promise<string> {
-  const rows = await prisma.verification.findMany({
-    where: { identifier: `${IDENTIFIER_PREFIX}${email}` },
-    select: { id: true, metadata: true },
-  });
-  const slot = invitationOrgSlot(metadata.orgId);
-  const sameOrg = rows
-    .filter((row) => {
-      const parsed = parseInvitationMetadata(row.metadata);
-      return parsed !== null && invitationOrgSlot(parsed.orgId) === slot;
-    })
-    .map((row) => row.id);
-  if (sameOrg.length > 0) {
-    await prisma.verification.deleteMany({ where: { id: { in: sameOrg } } });
-  }
+  const replaced = await deleteInvitationsInOrg(email, metadata.orgId ?? null);
 
   const token = await generateInvitationToken(email, metadata);
 
   logger.info('Invitation token updated (regenerated)', {
     email,
     orgId: metadata.orgId ?? null,
-    replaced: sameOrg.length,
+    replaced,
   });
 
   return token;

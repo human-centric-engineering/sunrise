@@ -25,10 +25,11 @@ import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
  */
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   getInvitationMetadata: vi.fn(),
-  // Same rule as the real helper: null for no org and for the install org
-  invitationOrgSlot: (orgId?: string | null) => (orgId && orgId !== 'install' ? orgId : null),
 }));
 
 // Mock the database: org name and account existence are looked up by the route
@@ -67,6 +68,7 @@ interface SuccessResponse {
     role: string;
     orgName: string | null;
     accountExists: boolean;
+    accountVerified: boolean;
     newAccountOnly: boolean;
   };
 }
@@ -171,6 +173,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         newAccountOnly: true,
       });
 
@@ -187,7 +190,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         createValidResult({ name: 'Member', role: 'USER', orgId: 'org-a' })
       );
       vi.mocked(prisma.org.findUnique).mockResolvedValue({ name: 'Acme Org' } as never);
-      vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'u1' } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
 
       // Act
       const response = await GET(createMockRequest({ token: 'tok', email }));
@@ -200,6 +203,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: 'Acme Org',
         accountExists: true,
+        accountVerified: true,
         // a USER invitation into a named org can be taken by an existing account
         newAccountOnly: false,
       });
@@ -209,7 +213,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       });
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email },
-        select: { id: true },
+        select: { emailVerified: true },
       });
     });
 
@@ -218,7 +222,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       vi.mocked(getInvitationMetadata).mockResolvedValue(
         createValidResult({ name: 'Mixed', role: 'USER', orgId: 'org-a' })
       );
-      vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'u1' } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
 
       // Act
       const response = await GET(
@@ -231,7 +235,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(getInvitationMetadata).toHaveBeenCalledWith('mixed.case@example.com', 'tok');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: 'mixed.case@example.com' },
-        select: { id: true },
+        select: { emailVerified: true },
       });
       expect(data.data.accountExists).toBe(true);
     });
@@ -261,6 +265,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'ADMIN',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         newAccountOnly: true,
       });
     });
@@ -547,6 +552,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         newAccountOnly: true,
       });
     });
@@ -576,6 +582,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         newAccountOnly: true,
       });
     });

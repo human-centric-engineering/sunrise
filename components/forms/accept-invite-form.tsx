@@ -111,7 +111,10 @@ export function AcceptInviteForm() {
   const [invitationName, setInvitationName] = useState<string>('');
   // The address already has an account: it signs in and accepts, with no
   // password to set (#1199).
-  const [existingAccount, setExistingAccount] = useState<{ orgName: string | null } | null>(null);
+  const [existingAccount, setExistingAccount] = useState<{
+    orgName: string | null;
+    verified: boolean;
+  } | null>(null);
 
   const {
     register,
@@ -157,6 +160,7 @@ export function AcceptInviteForm() {
           role: string;
           orgName?: string | null;
           accountExists?: boolean;
+          accountVerified?: boolean;
           newAccountOnly?: boolean;
         }>(
           `${API.INVITATIONS.METADATA}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
@@ -174,7 +178,11 @@ export function AcceptInviteForm() {
 
         // Store invitation name and mark as valid
         setInvitationName(response.name);
-        setExistingAccount(response.accountExists ? { orgName: response.orgName ?? null } : null);
+        setExistingAccount(
+          response.accountExists
+            ? { orgName: response.orgName ?? null, verified: response.accountVerified ?? true }
+            : null
+        );
         setInvitationStatus('valid');
         // Don't clear error if it came from OAuth redirect (preserve URL error)
         if (!oauthError) {
@@ -327,6 +335,7 @@ export function AcceptInviteForm() {
         token={token}
         email={emailFromUrl}
         orgName={existingAccount.orgName}
+        accountVerified={existingAccount.verified}
       />
     );
   }

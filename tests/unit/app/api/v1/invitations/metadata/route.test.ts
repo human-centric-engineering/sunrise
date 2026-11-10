@@ -24,10 +24,11 @@ import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
  */
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   getInvitationMetadata: vi.fn(),
-  // Same rule as the real helper: null for no org and for the install org
-  invitationOrgSlot: (orgId?: string | null) => (orgId && orgId !== 'install' ? orgId : null),
 }));
 
 // Mock the database: org name and account existence are looked up by the route
@@ -66,6 +67,7 @@ interface SuccessResponse {
     role: string;
     orgName: string | null;
     accountExists: boolean;
+    accountVerified: boolean;
     newAccountOnly: boolean;
   };
 }
@@ -172,6 +174,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         // no org named: a platform invitation, which only creates an account
         newAccountOnly: true,
       });
@@ -235,6 +238,7 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        accountVerified: false,
         // no org named: a platform invitation, which only creates an account
         newAccountOnly: true,
       });
@@ -287,11 +291,26 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data.orgName).toBeNull();
     });
 
+    it('should report an existing but unverified account as accountVerified false', async () => {
+      // Code review finding (t-1006): accepting needs a verified address, so
+      // the page must tell an unverified one to verify first.
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER' })
+      );
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: false } as never);
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.accountExists).toBe(true);
+      expect(data.data.accountVerified).toBe(false);
+    });
+
     it('should report accountExists true when the address already has an account', async () => {
       vi.mocked(getInvitationMetadata).mockResolvedValue(
         createValidResult({ name: 'Jane', role: 'USER' })
       );
-      vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'u1' } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ emailVerified: true } as never);
 
       const response = await GET(createMockRequest({ token: 'tok', email: 'jane@example.com' }));
       const data = await parseResponse<SuccessResponse>(response);
@@ -299,7 +318,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.data.accountExists).toBe(true);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: 'jane@example.com' },
-        select: { id: true },
+        select: { emailVerified: true },
       });
     });
 
@@ -366,7 +385,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(getInvitationMetadata).toHaveBeenCalledWith('jane.doe@example.com', 'tok');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: 'jane.doe@example.com' },
-        select: { id: true },
+        select: { emailVerified: true },
       });
       expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata requested', {
         email: 'jane.doe@example.com',

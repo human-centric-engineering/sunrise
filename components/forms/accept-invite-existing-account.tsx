@@ -20,6 +20,11 @@ interface AcceptInviteExistingAccountProps {
   email: string;
   /** The org the invitation joins, when it names one. */
   orgName: string | null;
+  /**
+   * Whether the account's address is verified. Accepting needs it; an
+   * unverified one is told to verify on sign-in first. Default true.
+   */
+  accountVerified?: boolean;
 }
 
 /**
@@ -36,6 +41,7 @@ export function AcceptInviteExistingAccount({
   token,
   email,
   orgName,
+  accountVerified = true,
 }: AcceptInviteExistingAccountProps) {
   const router = useRouter();
   const schedule = useTimeout();
@@ -127,7 +133,9 @@ export function AcceptInviteExistingAccount({
       {signedInAs === null && (
         <>
           <p className="text-muted-foreground text-sm">
-            Sign in as {email}, and you will come back here to accept.
+            {accountVerified
+              ? `Sign in as ${email}, and you will come back here to accept.`
+              : `Your account's email address has not been verified yet. When you sign in as ${email}, you will be offered a verification email. Verify your address, then open this invitation link again to accept.`}
           </p>
           <Button
             className="w-full"

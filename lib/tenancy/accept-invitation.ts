@@ -24,10 +24,8 @@
  */
 
 import { APIError, ErrorCodes, NotFoundError } from '@/lib/api/errors';
-import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { logger } from '@/lib/logging';
 import { addMember, type MembershipActor, type MembershipRecord } from '@/lib/tenancy/lifecycle';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { membershipForNewUser } from '@/lib/tenancy/membership';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import {
@@ -35,6 +33,7 @@ import {
   deleteInvitationByToken,
   findInvitationByToken,
   getInvitationMetadata,
+  isPlatformInvitation,
 } from '@/lib/utils/invitation-token';
 
 /** Error codes this module answers with, beyond the shared ones. */
@@ -127,7 +126,7 @@ export async function acceptInvitationAsExistingUser(
   if (!metadata) throw new NotFoundError('Invitation not found');
 
   const orgId = metadata.orgId;
-  if (metadata.role !== DEFAULT_USER_ROLE || orgId === undefined || orgId === INSTALL_ORG_ID) {
+  if (isPlatformInvitation(metadata) || orgId === undefined) {
     logger.warn('Invitation acceptance refused: a platform invitation needs a new account', {
       userId: accepter.id,
     });

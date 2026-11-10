@@ -53,7 +53,11 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { inviteUserSchema } from '@/lib/validations/user';
-import { invitationOrgSlot, pendingInvitationsFor } from '@/lib/utils/invitation-token';
+import {
+  invitationOrgSlot,
+  isPlatformInvitation,
+  pendingInvitationsFor,
+} from '@/lib/utils/invitation-token';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -147,18 +151,13 @@ export const POST = withAdminAuth(async (request, session) => {
   // 6. The pending invitation this request is about. An address holds one
   // per org (#1199), so it is the one in the org the body names, never just
   // the newest: that could be another org's, and re-sending it would replace
-  // that org's invitation. A body naming no org means the one pending
-  // invitation when there is only one (the admin table's Resend posts no org
-  // for a row written before the table sent it), else the install org's.
+  // that org's invitation. A body naming no org means the install org's: the
+  // admin table's Resend names the row's org, so an org invitation is never
+  // reached by naming none.
   const pending = await pendingInvitationsFor(body.email);
+  const targetSlot = invitationOrgSlot(body.orgId);
   const existingInvitation =
-    body.orgId !== undefined
-      ? (pending.readable.find(
-          (inv) => invitationOrgSlot(inv.metadata.orgId) === invitationOrgSlot(body.orgId)
-        ) ?? null)
-      : pending.readable.length === 1
-        ? pending.readable[0]
-        : (pending.readable.find((inv) => invitationOrgSlot(inv.metadata.orgId) === null) ?? null);
+    pending.readable.find((inv) => invitationOrgSlot(inv.metadata.orgId) === targetSlot) ?? null;
 
   if (existingInvitation && !resend) {
     // Return existing invitation details WITHOUT a link (can't generate valid one)
@@ -212,11 +211,9 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // 6b. Which org this invitation joins, and as what (§106). The body's org
   // keys when it sends either of them; else, on a resend, the pending row's —
-  // a resend re-sends THIS invitation, and the
-  // admin table's Resend button posts only `{ name, email, role }`, so
-  // without the carry-over a bounced invitation into an org would be
-  // silently re-targeted to the install org. The platform `role` has always
-  // come from the body on a resend; that is unchanged.
+  // a resend re-sends THIS invitation, so its org role carries over. The
+  // platform `role` has always come from the body on a resend; that is
+  // unchanged.
   const bodyNamesTarget = body.orgId !== undefined || body.orgRole !== undefined;
   const named = bodyNamesTarget
     ? { orgId: body.orgId, orgRole: body.orgRole }
@@ -230,6 +227,27 @@ export const POST = withAdminAuth(async (request, session) => {
   // platform role (#871).
   const intoInstall = !named.orgId || named.orgId === INSTALL_ORG_ID;
   const target = intoInstall ? { orgId: named.orgId, orgRole: undefined } : named;
+
+  // A new platform invitation (a platform role, or the install org) is not
+  // written beside a pending org invitation (#1199). Whichever is accepted
+  // first creates the account, and an existing account cannot redeem a
+  // platform invitation, so the platform one would be stranded. The org route
+  // refuses the reverse order the same way. Revoke the org's invitation from
+  // the pending list first. A resend of the platform invitation already
+  // pending is not new.
+  if (
+    !existingInvitation &&
+    isPlatformInvitation({ role: body.role || DEFAULT_USER_ROLE, orgId: target.orgId }) &&
+    pending.readable.some((inv) => !isPlatformInvitation(inv.metadata))
+  ) {
+    log.info('Platform invitation refused: an org invitation is pending for this email', {
+      adminId: session.user.id,
+    });
+    return errorResponse(
+      'An invitation into an organisation is already pending for this email address. Delete it from the pending invitations first.',
+      { code: ErrorCodes.CONFLICT, status: 409 }
+    );
+  }
 
   // The org is in the body (or the pending row), so this cannot be a
   // `resource` resolver on the guard (a resolver runs before the body is

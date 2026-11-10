@@ -30,7 +30,10 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/utils/invitation-token', () => ({
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  // The real rules (invitationOrgSlot, isPlatformInvitation); only the
+  // store calls are mocked.
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
   generateInvitationToken: vi.fn(),
   updateInvitationToken: vi.fn(),
   pendingInvitationsFor: vi.fn(),

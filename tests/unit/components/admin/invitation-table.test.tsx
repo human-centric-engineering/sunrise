@@ -858,6 +858,22 @@ describe('components/admin/invitation-table', () => {
       });
     });
 
+    it('should mark only the row being resent as resending, not the same address in another org', async () => {
+      // Code review finding (t-1006): the resending state was keyed by email.
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+      render(<InvitationTable initialInvitations={rows} initialMeta={meta} />);
+
+      await openMenuFor(user, 0);
+      await user.click(screen.getByRole('menuitem', { name: /resend/i }));
+      await openMenuFor(user, 1);
+
+      const item = screen.getByRole('menuitem', { name: /resend/i });
+      expect(item).toHaveTextContent(/^Resend$/);
+      expect(item).not.toHaveAttribute('data-disabled');
+    });
+
     it('should resend an org row with no org role without an orgRole key', async () => {
       const user = userEvent.setup({ delay: null });
       const { apiClient } = await import('@/lib/api/client');
