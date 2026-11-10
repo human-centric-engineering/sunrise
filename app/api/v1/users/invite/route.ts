@@ -39,7 +39,8 @@
  * 6a. Check the org: it must exist and be active, and the policy must let
  *    this caller administer it (`canAdminister` on an org resource — the
  *    seam §106 t-671 makes org-aware; today it answers as the admin guard
- *    did). Asked before anything answers about the address
+ *    did). Asked before anything answers about the address's membership of
+ *    that org
  * 6b. If the address already has an account: a platform invitation (a
  *    platform role, or the install org) is a 409 EMAIL_TAKEN; someone
  *    already in the target org is a 409 ALREADY_MEMBER; an org invitation
@@ -191,9 +192,10 @@ export const POST = withAdminAuth(async (request, session) => {
   // admin-scoped keys) only — so nothing widens today; t-671 is what teaches
   // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
   // pending org must still exist, be active, and be one this caller may
-  // invite into. Asked before anything below answers about the address, so
-  // a caller refused for an org learns nothing about the address's
-  // membership of it.
+  // invite into. Asked before anything below answers about the address's
+  // membership of that org, so a caller refused for it learns nothing of it.
+  // (An install-org invitation asks no org question, and its EMAIL_TAKEN
+  // answer is the guard's to gate, as it always was.)
   // The org the email names (#1199): an invitation into an org reads "join
   // <org>" from either route that writes it. The install org's names the app.
   let orgName: string | undefined;
@@ -339,12 +341,11 @@ export const POST = withAdminAuth(async (request, session) => {
     existingInvitation !== null &&
     isPlatformInvitation(existingInvitation.metadata) === writesPlatform;
   const others = pending.readable.filter((inv) => inv !== existingInvitation);
-  // An org invitation is refused beside a row it cannot read too, which
-  // could be a platform one, as the org route refuses it.
+  // An org invitation, new or re-sent, is refused beside a row it cannot
+  // read too, which could be a platform one, as the org route refuses it.
   if (
-    !keepsKind &&
-    ((!writesPlatform && pending.unreadable > 0) ||
-      others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform))
+    (!writesPlatform && pending.unreadable > 0) ||
+    (!keepsKind && others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform))
   ) {
     log.info('Invitation refused: it would sit beside the other kind of pending invitation', {
       adminId: session.user.id,

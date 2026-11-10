@@ -325,7 +325,8 @@ and is refused with `409 EMAIL_TAKEN`.
 1. Find the pending invitation in the named org, and resolve the target org —
    the body's, else the pending invitation's
 2. Check the org exists, is active, and the policy allows this caller to
-   invite into it — before anything answers about the address
+   invite into it — before anything answers about the address's membership
+   of it
 3. If the address has an account: a platform invitation is a 409
    `EMAIL_TAKEN`, a member of the target org a 409 `ALREADY_MEMBER`; an org
    invitation goes on, its email asking them to sign in. Then check if an

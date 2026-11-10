@@ -943,6 +943,20 @@ describe('POST /api/v1/users/invite — an address that already has an account (
     });
   });
 
+  it('refuses re-sending an org invitation while another pending one cannot be read', async () => {
+    accountExists();
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' })],
+      unreadable: 1,
+    });
+
+    const res = await resendOrgRow();
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
   it('lets a platform invitation through beside a row it cannot read, as before', async () => {
     vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({ readable: [], unreadable: 1 });
 
