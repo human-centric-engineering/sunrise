@@ -11,7 +11,10 @@
  *
  * POST Request Body:
  *   - name: User's full name (required)
- *   - email: User's email address (required, must be unique)
+ *   - email: User's email address (required). An address that already has an
+ *     account may be invited into an org other than the install org at the
+ *     default role, as the org route allows (#1199, t-1008); any other
+ *     invitation to it is a 409 EMAIL_TAKEN
  *   - role: User's role (optional, defaults to USER)
  *   - orgId: The org the invitee joins on acceptance (optional; defaults to
  *     the install org) — must exist and be ACTIVE (§106)
@@ -30,15 +33,19 @@
  * 2. Authorize user (require ADMIN role)
  * 3. Validate request body
  * 4. Parse resend query parameter
- * 5. Check if user account already exists (409 error if exists)
- * 6. Check if invitation already exists:
+ * 5. Find the pending invitation in the target org, and resolve that org
+ *    (§106): the body's, else on a resend the pending invitation's
+ * 6. If the address already has an account: a platform invitation (a
+ *    platform role, or the install org) is a 409 EMAIL_TAKEN; someone
+ *    already in the target org is a 409 ALREADY_MEMBER; an org invitation
+ *    goes on, and its email asks them to sign in (t-1008)
+ * 6b. Check if invitation already exists:
  *    - If exists and resend=false: Return 200 with 'pending' status (NO link)
  *    - If exists and resend=true: Delete old, create new token, send email
  *    - If not exists: Create new invitation
- * 6b. Resolve the org (§106): the body's, else on a resend the pending
- *     invitation's; it must exist and be active, and the policy must let this
- *     caller administer it (`canAdminister` on an org resource — the seam
- *     §106 t-671 makes org-aware; today it answers as the admin guard did)
+ *    The org must exist and be active, and the policy must let this
+ *    caller administer it (`canAdminister` on an org resource — the seam
+ *    §106 t-671 makes org-aware; today it answers as the admin guard did)
  * 7. Generate/regenerate invitation token
  * 8. Send invitation email
  * 9. Return invitation details (NOT user object)
@@ -64,6 +71,7 @@ import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limi
 import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE, isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 
 /**
  * POST /api/v1/users/invite
@@ -83,7 +91,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  * @throws ValidationError if invalid request body
- * @throws ConflictError if user already exists
+ * @throws ConflictError if the address has an account and this is a platform invitation
  */
 export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
@@ -136,19 +144,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const url = new URL(request.url);
   const resend = url.searchParams.get('resend') === 'true';
 
-  // 5. Check if user account already exists (409 error)
-  const existingUser = await prisma.user.findUnique({
-    where: { email: body.email },
-  });
-
-  if (existingUser) {
-    return errorResponse('User already exists with this email', {
-      code: ErrorCodes.EMAIL_TAKEN,
-      status: 409,
-    });
-  }
-
-  // 6. The pending invitation this request is about. An address holds one
+  // 5. The pending invitation this request is about. An address holds one
   // per org (#1199), so it is the one in the org the body names, never just
   // the newest: that could be another org's, and re-sending it would replace
   // that org's invitation. A body naming no org means the install org's: the
@@ -158,6 +154,57 @@ export const POST = withAdminAuth(async (request, session) => {
   const targetSlot = invitationOrgSlot(body.orgId);
   const existingInvitation =
     pending.readable.find((inv) => invitationOrgSlot(inv.metadata.orgId) === targetSlot) ?? null;
+
+  // 6. Which org this invitation joins, and as what (§106). The body's org
+  // keys when it sends either of them; else, on a resend, the pending row's —
+  // a resend re-sends THIS invitation, so its org role carries over. The
+  // platform `role` has always come from the body on a resend; that is
+  // unchanged.
+  const bodyNamesTarget = body.orgId !== undefined || body.orgRole !== undefined;
+  const named = bodyNamesTarget
+    ? { orgId: body.orgId, orgRole: body.orgRole }
+    : {
+        orgId: existingInvitation?.metadata.orgId,
+        orgRole: existingInvitation?.metadata.orgRole,
+      };
+
+  // A resend can carry an install-org `orgRole` from an invitation written
+  // before the body check above refused one; drop it, so the role follows the
+  // platform role (#871).
+  const intoInstall = !named.orgId || named.orgId === INSTALL_ORG_ID;
+  const target = intoInstall ? { orgId: named.orgId, orgRole: undefined } : named;
+  const writesPlatform = isPlatformInvitation({
+    role: body.role || DEFAULT_USER_ROLE,
+    orgId: target.orgId,
+  });
+
+  // 6a. An address that already has an account (#1199, t-1008). A platform
+  // invitation (a platform role, or the install org) creates the account, so
+  // an existing one cannot redeem it: refused, as it always was. An
+  // invitation into another org at the default role is what the org route
+  // sends to an existing account, and it is sent here the same way: the email
+  // asks them to sign in and accept, and the answer below does not depend on
+  // whether the account exists. Someone already in that org is refused as the
+  // org route refuses them; a platform admin can read every roster anyway.
+  const existingUser = await prisma.user.findUnique({
+    where: { email: body.email },
+    select: {
+      id: true,
+      orgMemberships: target.orgId
+        ? { where: { orgId: target.orgId }, select: { id: true } }
+        : { take: 0, select: { id: true } },
+    },
+  });
+
+  if (existingUser && writesPlatform) {
+    return errorResponse('User already exists with this email', {
+      code: ErrorCodes.EMAIL_TAKEN,
+      status: 409,
+    });
+  }
+  if (existingUser && existingUser.orgMemberships.length > 0) {
+    throw new OrgLifecycleError('ALREADY_MEMBER', 'That person is already a member');
+  }
 
   if (existingInvitation && !resend) {
     // Return existing invitation details WITHOUT a link (can't generate valid one)
@@ -209,25 +256,6 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // 6b. Which org this invitation joins, and as what (§106). The body's org
-  // keys when it sends either of them; else, on a resend, the pending row's —
-  // a resend re-sends THIS invitation, so its org role carries over. The
-  // platform `role` has always come from the body on a resend; that is
-  // unchanged.
-  const bodyNamesTarget = body.orgId !== undefined || body.orgRole !== undefined;
-  const named = bodyNamesTarget
-    ? { orgId: body.orgId, orgRole: body.orgRole }
-    : {
-        orgId: existingInvitation?.metadata.orgId,
-        orgRole: existingInvitation?.metadata.orgRole,
-      };
-
-  // A resend can carry an install-org `orgRole` from an invitation written
-  // before the body check above refused one; drop it, so the role follows the
-  // platform role (#871).
-  const intoInstall = !named.orgId || named.orgId === INSTALL_ORG_ID;
-  const target = intoInstall ? { orgId: named.orgId, orgRole: undefined } : named;
-
   // A platform invitation (a platform role, or the install org) and an org
   // invitation are not written side by side for one address (#1199).
   // Whichever is accepted first creates the account, and an existing account
@@ -235,10 +263,6 @@ export const POST = withAdminAuth(async (request, session) => {
   // both directions, for a new invitation and for a resend that changes the
   // pending one's kind. A resend of the same kind writes no new pair. The org
   // route refuses the same way.
-  const writesPlatform = isPlatformInvitation({
-    role: body.role || DEFAULT_USER_ROLE,
-    orgId: target.orgId,
-  });
   const keepsKind =
     existingInvitation !== null &&
     isPlatformInvitation(existingInvitation.metadata) === writesPlatform;
@@ -322,6 +346,9 @@ export const POST = withAdminAuth(async (request, session) => {
     isResend: !!existingInvitation,
     inviterName: session.user.name || 'Administrator',
     ...(orgName !== undefined ? { orgName } : {}),
+    // Only an org invitation reaches here with an account (6a). The answer
+    // below is the same either way; only the email differs.
+    hasAccount: !!existingUser,
     log,
   });
 
