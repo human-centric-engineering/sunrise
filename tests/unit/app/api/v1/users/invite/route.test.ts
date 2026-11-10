@@ -267,6 +267,7 @@ describe('POST /api/v1/users/invite — org axis', () => {
     // the pending row's org keys must survive a resend that does not name one.
     function pending(metadata: Record<string, unknown>) {
       vi.mocked(getValidInvitation).mockResolvedValueOnce({
+        id: 'row-pending',
         email: invitee.email,
         metadata: {
           name: 'Jane Doe',
@@ -296,6 +297,34 @@ describe('POST /api/v1/users/invite — org axis', () => {
       expect(prisma.org.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OTHER_ORG } })
       );
+    });
+
+    it('hands the pending row id on, so a re-target to another org replaces that row', async () => {
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+      const another = 'cmorg00000000000000another';
+      vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+        id: another,
+        status: 'ACTIVE',
+      } as never);
+
+      const res = await POST(request({ ...invitee, orgId: another }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      // The row read above is replaced even though the body moves it to a different org
+      expect(updateInvitationToken).toHaveBeenCalledWith(
+        invitee.email,
+        expect.objectContaining({ orgId: another }),
+        'row-pending'
+      );
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('passes no replacing id when there is no pending invitation to re-send', async () => {
+      const res = await POST(request({ ...invitee }));
+
+      expect(res.status).toBe(201);
+      expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+      expect(updateInvitationToken).not.toHaveBeenCalled();
     });
 
     it('drops an install-org orgRole a pending invitation carries from before #871', async () => {

@@ -41,16 +41,18 @@ vi.mock('@/lib/db/client', () => ({
     },
     user: {
       update: vi.fn(),
+      findUnique: vi.fn(),
     },
   },
 }));
 
 vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
   validateInvitationToken: vi.fn(),
-  deleteInvitationToken: vi.fn(),
+  consumeInvitation: vi.fn(),
   // The real hash: the route matches the row by the token presented (#1136).
   hashInvitationToken: (await importOriginal<typeof import('@/lib/utils/invitation-token')>())
     .hashInvitationToken,
+  INVITATION_IDENTIFIER_PREFIX: 'invitation:',
 }));
 
 vi.mock('@/lib/auth/config', () => ({
@@ -101,7 +103,7 @@ vi.mock('@/lib/security/ip', () => ({
 // Import mocked modules after mocking
 import { POST } from '@/app/api/auth/accept-invite/route';
 import { prisma } from '@/lib/db/client';
-import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
+import { validateInvitationToken, consumeInvitation } from '@/lib/utils/invitation-token';
 import { auth } from '@/lib/auth/config';
 import { runInvitedSignup } from '@/lib/auth/signup-mode';
 
@@ -145,7 +147,8 @@ describe('POST /api/auth/accept-invite', () => {
       updatedAt: new Date('2024-01-01'),
       metadata: mockInvitationMetadata,
     });
-    vi.mocked(deleteInvitationToken).mockResolvedValue();
+    vi.mocked(consumeInvitation).mockResolvedValue(true);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
     // Default auth.api mocks
     vi.mocked(auth.api.signUpEmail).mockResolvedValue({
@@ -233,7 +236,8 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Verify invitation token was deleted
-      expect(deleteInvitationToken).toHaveBeenCalledWith(validInvitationData.email);
+      // Only the redeemed row goes, by id: other orgs' invitations stay pending
+      expect(consumeInvitation).toHaveBeenCalledWith('verification-id');
 
       // Verify sign-in was called to create session
       expect(vi.mocked(auth.api.signInEmail)).toHaveBeenCalledWith({
@@ -320,6 +324,84 @@ describe('POST /api/auth/accept-invite', () => {
           role: 'ADMIN',
         },
       });
+    });
+  });
+
+  describe('existing account', () => {
+    it('answers 409 EMAIL_TAKEN pointing at sign-in, and attempts no signup', async () => {
+      // Arrange: a valid token for an address that already has an account
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'existing-user' } as never);
+
+      // Act
+      const response = await POST(createMockRequest(validInvitationData));
+      const data = await response.json();
+
+      // Assert
+      expect(response.status).toBe(409);
+      expect(data.error.code).toBe('EMAIL_TAKEN');
+      expect(data.error.message).toMatch(/sign in/i);
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: validInvitationData.email },
+        select: { id: true },
+      });
+      expect(runInvitedSignup).not.toHaveBeenCalled();
+      expect(auth.api.signUpEmail).not.toHaveBeenCalled();
+      expect(auth.api.signInEmail).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      // The invitation stays pending so the signed-in accept route can redeem it
+      expect(consumeInvitation).not.toHaveBeenCalled();
+    });
+
+    it('does not look for an account when the token is invalid', async () => {
+      vi.mocked(validateInvitationToken).mockResolvedValue(false);
+
+      const response = await POST(createMockRequest(validInvitationData));
+
+      expect(response.status).toBe(400);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('only the redeemed invitation is consumed', () => {
+    it('consumes the row matched by this token, not every row for the address', async () => {
+      // Arrange: the token's row has id "row-for-this-org"
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
+        id: 'row-for-this-org',
+        identifier: 'invitation:user@example.com',
+        value: 'hashed-token',
+        expiresAt: new Date('2024-12-31'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+        metadata: { ...mockInvitationMetadata, orgId: 'org-a' },
+      });
+
+      // Act
+      const response = await POST(createMockRequest(validInvitationData));
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(consumeInvitation).toHaveBeenCalledTimes(1);
+      expect(consumeInvitation).toHaveBeenCalledWith('row-for-this-org');
+    });
+
+    it('consumes the row only after the user exists, and before the session is made', async () => {
+      const order: string[] = [];
+      vi.mocked(prisma.user.update).mockImplementation((async () => {
+        order.push('update');
+        return { id: mockUserId };
+      }) as never);
+      vi.mocked(consumeInvitation).mockImplementation(async () => {
+        order.push('consume');
+        return true;
+      });
+      vi.mocked(auth.api.signInEmail).mockImplementation((async () => {
+        order.push('signin');
+        return { ok: true, status: 200, headers: { getSetCookie: () => [] } };
+      }) as never);
+
+      await POST(createMockRequest(validInvitationData));
+
+      expect(order).toEqual(['update', 'consume', 'signin']);
     });
   });
 
@@ -591,7 +673,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Verify we didn't update user or delete token
       expect(prisma.user.update).not.toHaveBeenCalled();
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
+      expect(consumeInvitation).not.toHaveBeenCalled();
     });
 
     it('should handle signup failure without error message', async () => {
@@ -645,7 +727,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Verify user was created and email verified
       expect(prisma.user.update).toHaveBeenCalled();
-      expect(deleteInvitationToken).toHaveBeenCalled();
+      expect(consumeInvitation).toHaveBeenCalledWith('verification-id');
     });
 
     it('should handle sign-in failure without error message', async () => {
@@ -774,7 +856,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(data.error.code).toBe('INTERNAL_ERROR');
     });
 
-    it('should handle error when deleting invitation token', async () => {
+    it('should handle error when consuming the invitation', async () => {
       // Arrange: Token deletion fails
       vi.mocked(auth.api.signUpEmail).mockResolvedValue({
         user: { id: mockUserId },
@@ -787,7 +869,7 @@ describe('POST /api/auth/accept-invite', () => {
         headers: { getSetCookie: () => [] },
       } as any);
 
-      vi.mocked(deleteInvitationToken).mockRejectedValue(new Error('Delete failed'));
+      vi.mocked(consumeInvitation).mockRejectedValue(new Error('Delete failed'));
 
       const request = createMockRequest(validInvitationData);
 

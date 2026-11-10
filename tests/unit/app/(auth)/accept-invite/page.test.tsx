@@ -118,7 +118,7 @@ describe('AcceptInvitePage', () => {
       render(<AcceptInvitePage />);
 
       // Assert: Description is displayed
-      const description = screen.getByText('Set your password to activate your account');
+      const description = screen.getByText('Accept your invitation, or decline it');
       expect(description).toBeInTheDocument();
     });
 
@@ -155,7 +155,7 @@ describe('AcceptInvitePage', () => {
 
       // Assert: Both title and description are in the header
       const title = screen.getByText('Accept Invitation');
-      const description = screen.getByText('Set your password to activate your account');
+      const description = screen.getByText('Accept your invitation, or decline it');
 
       expect(title).toBeInTheDocument();
       expect(description).toBeInTheDocument();
@@ -267,7 +267,7 @@ describe('AcceptInvitePage', () => {
       render(<AcceptInvitePage />);
 
       // Assert: Description explains what user needs to do
-      const description = screen.getByText('Set your password to activate your account');
+      const description = screen.getByText('Accept your invitation, or decline it');
       expect(description).toBeInTheDocument();
     });
   });

@@ -60,8 +60,7 @@ function post(body: unknown, headers: Record<string, string> = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
-    }) as unknown as NextRequest,
-    { params: Promise.resolve({}) }
+    }) as unknown as NextRequest
   );
 }
 

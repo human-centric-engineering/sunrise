@@ -514,6 +514,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Mock existing invitation
       const existingInvitation = {
+        id: 'existing-row-id',
         email: 'resend@example.com',
         metadata: {
           name: 'Resend User',
@@ -558,7 +559,9 @@ describe('POST /api/v1/users/invite', () => {
           name: 'Resend User',
           role: 'USER',
           invitedBy: adminSession.user.id,
-        })
+        }),
+        // The pending row read is the one replaced
+        'existing-row-id'
       );
       expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 

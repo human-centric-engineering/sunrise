@@ -48,6 +48,20 @@ vi.mock('@/components/forms/oauth-buttons', () => ({
   ),
 }));
 
+// The existing-account step and the decline button have their own tests; here
+// only what the form hands them (and when) is under test.
+vi.mock('@/components/forms/accept-invite-existing-account', () => ({
+  AcceptInviteExistingAccount: vi.fn(({ token, email, orgName }) => (
+    <div data-testid="existing-account" data-token={token} data-email={email} data-org={orgName} />
+  )),
+}));
+
+vi.mock('@/components/forms/decline-invitation-button', () => ({
+  DeclineInvitationButton: vi.fn(({ token, email }) => (
+    <div data-testid="decline-button" data-token={token} data-email={email} />
+  )),
+}));
+
 vi.mock('@/components/forms/password-strength', () => ({
   PasswordStrength: vi.fn(({ password }) => (
     <div data-testid="password-strength">{password ? `Strength: ${password.length}` : ''}</div>
@@ -838,6 +852,116 @@ describe('components/forms/accept-invite-form', () => {
         const errorCallbackUrl = screen.getByTestId('error-callback-url');
         expect(errorCallbackUrl.textContent).toContain('token=abc123');
         expect(errorCallbackUrl.textContent).toContain('email=test%40example.com');
+      });
+    });
+  });
+
+  describe('existing account (#1199)', () => {
+    beforeEach(async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('token=abc123&email=test@example.com') as unknown as ReturnType<
+          typeof useSearchParams
+        >
+      );
+    });
+
+    it('should hand the token, email and org name to the sign-in step, with no password form', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'USER',
+        orgName: 'Acme Org',
+        accountExists: true,
+      });
+
+      // Act
+      render(<AcceptInviteForm />);
+
+      // Assert
+      const step = await screen.findByTestId('existing-account');
+      expect(step).toHaveAttribute('data-token', 'abc123');
+      expect(step).toHaveAttribute('data-email', 'test@example.com');
+      expect(step).toHaveAttribute('data-org', 'Acme Org');
+      expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('oauth-buttons')).not.toBeInTheDocument();
+    });
+
+    it('should pass a null org name when the invitation names no org', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'USER',
+        accountExists: true,
+      });
+
+      render(<AcceptInviteForm />);
+
+      const step = await screen.findByTestId('existing-account');
+      expect(step).not.toHaveAttribute('data-org');
+    });
+
+    it('should show the password form, not the sign-in step, for a new address', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'USER',
+        orgName: null,
+        accountExists: false,
+      });
+
+      render(<AcceptInviteForm />);
+
+      expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+      expect(screen.queryByTestId('existing-account')).not.toBeInTheDocument();
+    });
+
+    it('should not show the sign-in step for an invalid invitation', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const { APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockRejectedValue(new APIClientError('Not found', 'NOT_FOUND'));
+
+      render(<AcceptInviteForm />);
+
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalled();
+      });
+      expect(screen.queryByTestId('existing-account')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('decline-button')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('decline button (#1199)', () => {
+    beforeEach(async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('token=abc123&email=test@example.com') as unknown as ReturnType<
+          typeof useSearchParams
+        >
+      );
+    });
+
+    it('should offer decline under the password form, for the same token and email', async () => {
+      render(<AcceptInviteForm />);
+
+      const button = await screen.findByTestId('decline-button');
+      expect(button).toHaveAttribute('data-token', 'abc123');
+      expect(button).toHaveAttribute('data-email', 'test@example.com');
+      expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    });
+
+    it('should stop offering decline once the account is activated', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AcceptInviteForm />);
+      await screen.findByLabelText(/^password$/i);
+
+      await user.type(screen.getByLabelText(/^password$/i), 'ValidPass123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'ValidPass123!');
+      await user.click(screen.getByRole('button', { name: /activate account/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('decline-button')).not.toBeInTheDocument();
       });
     });
   });
