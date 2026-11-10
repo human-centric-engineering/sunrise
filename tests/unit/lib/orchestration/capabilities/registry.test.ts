@@ -345,6 +345,92 @@ describe('getCapabilityDefinitions', () => {
     expect(defs[0]?.name).toBe('search_knowledge_base');
   });
 
+  it('returns definitions in slug order whatever order the rows arrive in', async () => {
+    // Tool definitions head an Anthropic request, ahead of the first cache
+    // breakpoint, so a reorder changes the cached prefix and every
+    // conversation misses the cache. Rows here arrive deliberately shuffled.
+    const row = (slug: string) => ({
+      id: `aac-${slug}`,
+      agentId: 'agent-1',
+      capabilityId: `cap-${slug}`,
+      isEnabled: true,
+      customRateLimit: null,
+      capability: {
+        id: `cap-${slug}`,
+        slug,
+        name: slug,
+        category: 'other',
+        isActive: true,
+        requiresApproval: false,
+        rateLimit: null,
+        functionDefinition: {
+          name: slug,
+          description: slug,
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    });
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      row('search_knowledge_base'),
+      row('call_external_api'),
+      row('run_workflow'),
+      row('escalate_to_human'),
+    ]);
+
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(prisma.aiAgentCapability.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { capability: { slug: 'asc' } } })
+    );
+    expect(defs.map((d) => d.name)).toEqual([
+      'call_external_api',
+      'escalate_to_human',
+      'run_workflow',
+      'search_knowledge_base',
+    ]);
+  });
+
+  it('orders by code unit, not by locale collation', async () => {
+    // `Zorder` sorts before `aorder` by code unit and after it under
+    // `localeCompare` / an ICU collation, so swapping the comparator for a
+    // locale-aware one — which would make the order vary by install — fails here.
+    const upper = makeAppCap('Zorder');
+    const lower = makeAppCap('aorder');
+    registerAppCapability(upper);
+    registerAppCapability(lower);
+    registerBuiltInCapabilities();
+
+    const row = (slug: string) => ({
+      id: `aac-${slug}`,
+      agentId: 'agent-1',
+      capabilityId: `cap-${slug}`,
+      isEnabled: true,
+      customRateLimit: null,
+      capability: {
+        id: `cap-${slug}`,
+        slug,
+        name: slug,
+        category: 'other',
+        isActive: true,
+        requiresApproval: false,
+        rateLimit: null,
+        functionDefinition: {
+          name: slug,
+          description: slug,
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    });
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      row(lower.slug),
+      row(upper.slug),
+    ]);
+
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(defs.map((d) => d.name)).toEqual(['test_app_cap_Zorder', 'test_app_cap_aorder']);
+  });
+
   it('returns an empty list when the agent has no pivot rows', async () => {
     (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const defs = await getCapabilityDefinitions('agent-empty');
