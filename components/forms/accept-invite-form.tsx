@@ -157,9 +157,20 @@ export function AcceptInviteForm() {
           role: string;
           orgName?: string | null;
           accountExists?: boolean;
+          newAccountOnly?: boolean;
         }>(
           `${API.INVITATIONS.METADATA}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
         );
+
+        // An invitation that only creates an account, for an address that
+        // already has one: nothing on this page can redeem it (#1199).
+        if (response.accountExists && response.newAccountOnly) {
+          setInvitationStatus('invalid');
+          setLoadError(
+            'You already have an account with this address, so this invitation cannot be used. Sign in to your account, or ask the person who invited you to send an invitation to your existing account.'
+          );
+          return;
+        }
 
         // Store invitation name and mark as valid
         setInvitationName(response.name);

@@ -308,22 +308,27 @@ export async function userCreateBeforeHook(
         const isValidToken = await validateInvitationToken(invitationEmail, invitationToken);
 
         if (isValidToken) {
-          // Record the authorisation itself, not just its side effects. A valid
-          // token with no parseable invitation record falls through to the
-          // bootstrap below, and the invite_only gate must still treat that
-          // account as invited.
-          oauthInvitationAccepted = true;
-
           // This token's own row: the address may hold invitations into
           // several orgs (#1199), so neither the newest row nor all of them.
           const found = await findInvitationByToken(invitationEmail, invitationToken);
 
           // Delete token NOW to prevent race: token must be consumed before user
           // creation, so a concurrent OAuth signup cannot reuse the same single-use token.
-          // Only the call that deleted the row applies what it grants.
+          // Only the call that deleted the row is authorised by it: a signup
+          // that lost the race is not invited, and the invite_only gate below
+          // treats it as such.
           const consumed = found ? await consumeInvitation(found.id) : false;
+
+          // Record the authorisation itself, not just its side effects. A
+          // consumed token with no parseable invitation record falls through
+          // to the bootstrap below, and the invite_only gate must still treat
+          // that account as invited.
+          oauthInvitationAccepted = consumed;
           const invitation = consumed && found?.metadata ? { metadata: found.metadata } : null;
-          logger.info('OAuth invitation token consumed', { email: invitationEmail });
+          logger.info('OAuth invitation token consumed', {
+            email: invitationEmail,
+            consumed,
+          });
 
           // When a valid invitation record exists, honour its explicit role
           // (defaulting to USER) and return immediately. This is an invited

@@ -436,6 +436,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mocks.consumeInvitation).toHaveBeenCalledWith('row-admin');
       expect(mocks.logger.info).toHaveBeenCalledWith('OAuth invitation token consumed', {
         email: 'admin@example.com',
+        consumed: true,
       });
       expect(mocks.logger.info).toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',

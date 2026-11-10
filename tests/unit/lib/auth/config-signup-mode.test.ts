@@ -248,6 +248,27 @@ describe('userCreateBeforeHook — invite_only creation gate', () => {
     expect(result.data.role).toBe('USER');
   });
 
+  it('refuses an invited OAuth signup that lost the race for its token', async () => {
+    // Code review finding (t-1006): a concurrent signup that consumed nothing
+    // was still treated as invited and passed the invite_only gate.
+    vi.mocked(isInviteOnly).mockReturnValue(true);
+    mockGetOAuthState.mockResolvedValue({
+      invitationEmail: 'invited@example.com',
+      invitationToken: 'token-abc',
+    });
+    mockValidateInvitationToken.mockResolvedValue(true);
+    mockFindInvitationByToken.mockResolvedValue({
+      id: 'row-1',
+      metadata: { name: 'I', role: 'USER', invitedBy: 'x', invitedAt: '2026-01-01' },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockConsumeInvitation.mockResolvedValue(false);
+
+    await expect(
+      userCreateBeforeHook(oauthUser('invited@example.com'), OAUTH_CTX)
+    ).rejects.toMatchObject({ status: 'FORBIDDEN' });
+  });
+
   it('admits a valid token whose invitation record does not parse', async () => {
     // A valid token with no usable record falls through to the bootstrap block.
     // The gate keys off the authorisation itself, not the record, so this

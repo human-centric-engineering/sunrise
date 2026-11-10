@@ -402,8 +402,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     expect(res.status).toBe(201);
     expect(updateInvitationToken).toHaveBeenCalledWith(
       'jane@example.com',
-      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE }),
-      undefined
+      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE })
     );
     expect(generateInvitationToken).not.toHaveBeenCalled();
   });
@@ -472,8 +471,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     expect(res.status).toBe(201);
     expect(updateInvitationToken).toHaveBeenCalledWith(
       'jane@example.com',
-      expect.objectContaining({ role: 'USER', orgId: ORG }),
-      undefined
+      expect.objectContaining({ role: 'USER', orgId: ORG })
     );
     expect(generateInvitationToken).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain('tok-re');
@@ -488,8 +486,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     expect(res.status).toBe(201);
     expect(updateInvitationToken).toHaveBeenCalledWith(
       'jane@example.com',
-      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE }),
-      undefined
+      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE })
     );
     expect((await json(res)).data.invitation.orgRole).toBe(ORG_ADMIN_ROLE);
   });
@@ -517,8 +514,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     expect(res.status).toBe(201);
     expect(updateInvitationToken).toHaveBeenCalledWith(
       'jane@example.com',
-      expect.objectContaining({ orgRole: ORG_OWNER_ROLE }),
-      undefined
+      expect.objectContaining({ orgRole: ORG_OWNER_ROLE })
     );
   });
 });

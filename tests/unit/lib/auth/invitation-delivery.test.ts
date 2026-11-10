@@ -31,7 +31,7 @@ const metadata = {
 
 function run(
   isResend: boolean,
-  extra: { replacingId?: string; orgName?: string; hasAccount?: boolean } = {},
+  extra: { orgName?: string; hasAccount?: boolean } = {},
   email = 'jane+x@example.com'
 ) {
   return deliverInvitation({
@@ -63,25 +63,12 @@ describe('deliverInvitation', () => {
     );
   });
 
-  it('replaces the token when resending, handing over the row being replaced', async () => {
-    const res = await run(true, { replacingId: 'row-9' });
+  it('replaces the token when resending', async () => {
+    const res = await run(true);
 
-    expect(updateInvitationToken).toHaveBeenCalledWith('jane+x@example.com', metadata, 'row-9');
+    expect(updateInvitationToken).toHaveBeenCalledWith('jane+x@example.com', metadata);
     expect(generateInvitationToken).not.toHaveBeenCalled();
     expect(res.link).toContain('token=re-token');
-  });
-
-  it('passes an undefined replacingId through when resending without one', async () => {
-    await run(true);
-
-    expect(updateInvitationToken).toHaveBeenCalledWith('jane+x@example.com', metadata, undefined);
-  });
-
-  it('does not pass replacingId to a first-time invitation', async () => {
-    await run(false, { replacingId: 'row-9' });
-
-    expect(generateInvitationToken).toHaveBeenCalledWith('jane+x@example.com', metadata);
-    expect(updateInvitationToken).not.toHaveBeenCalled();
   });
 
   it('names the org in the subject and the template props', async () => {

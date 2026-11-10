@@ -49,10 +49,8 @@ import { acceptInvitationSchema } from '@/lib/validations/user';
 import {
   validateInvitationToken,
   consumeInvitation,
-  hashInvitationToken,
-  INVITATION_IDENTIFIER_PREFIX,
+  findInvitationByToken,
 } from '@/lib/utils/invitation-token';
-import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { getRouteLogger } from '@/lib/api/context';
 import { auth } from '@/lib/auth/config';
@@ -123,16 +121,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     // metadata decides the membership and is reported to the user-created
     // seam as the invitation redeemed (#1136).
     // (The address may hold invitations into several orgs, #1199; the token
-    // picks out its own.)
-    const invitation = await prisma.verification.findFirst({
-      where: {
-        identifier: `${INVITATION_IDENTIFIER_PREFIX}${email}`,
-        value: hashInvitationToken(token),
-        expiresAt: { gt: new Date() },
-      },
-    });
+    // picks out its own — `findInvitationByToken`, the one statement of that
+    // match.)
+    const invitation = await findInvitationByToken(email, token);
 
-    if (!invitation || !invitation.metadata) {
+    if (!invitation) {
       log.warn('Invitation not found', { email });
       return errorResponse('Invitation not found', {
         code: ErrorCodes.NOT_FOUND,
@@ -140,7 +133,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     }
 
-    const metadata = parseInvitationMetadata(invitation.metadata);
+    const metadata = invitation.metadata;
 
     if (!metadata) {
       log.warn('Invalid invitation metadata', { email });

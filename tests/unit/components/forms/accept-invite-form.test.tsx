@@ -911,6 +911,65 @@ describe('components/forms/accept-invite-form', () => {
       expect(step).not.toHaveAttribute('data-org');
     });
 
+    it('should show the invalid state with an explanation, and no form, for a platform invitation to an existing account', async () => {
+      // Arrange: the address has an account and the invitation can only create one
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'ADMIN',
+        orgName: null,
+        accountExists: true,
+        newAccountOnly: true,
+      });
+
+      // Act
+      render(<AcceptInviteForm />);
+
+      // Assert
+      expect(await screen.findByText('Invalid Invitation')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'You already have an account with this address, so this invitation cannot be used. Sign in to your account, or ask the person who invited you to send an invitation to your existing account.'
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('existing-account')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('oauth-buttons')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('decline-button')).not.toBeInTheDocument();
+    });
+
+    it('should still hand an org invitation to the sign-in step when newAccountOnly is false', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'USER',
+        orgName: 'Acme Org',
+        accountExists: true,
+        newAccountOnly: false,
+      });
+
+      render(<AcceptInviteForm />);
+
+      expect(await screen.findByTestId('existing-account')).toBeInTheDocument();
+      expect(screen.queryByText('Invalid Invitation')).not.toBeInTheDocument();
+    });
+
+    it('should show the password form for a new address even when newAccountOnly is true', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        name: 'Test User',
+        role: 'ADMIN',
+        orgName: null,
+        accountExists: false,
+        newAccountOnly: true,
+      });
+
+      render(<AcceptInviteForm />);
+
+      expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+      expect(screen.queryByText('Invalid Invitation')).not.toBeInTheDocument();
+    });
+
     it('should show the password form, not the sign-in step, for a new address', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue({

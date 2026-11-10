@@ -26,6 +26,8 @@ import {
   consumeInvitation,
   deleteInvitationByToken,
   pendingInvitationsFor,
+  invitationOrgSlot,
+  deleteInvitationsInOrg,
 } from '@/lib/utils/invitation-token';
 
 /**
@@ -808,22 +810,23 @@ describe('updateInvitationToken()', () => {
       });
     });
 
-    it('should also delete replacingId even when it sits in a different org', async () => {
-      // Arrange: a platform route re-targeting a pending row into org-b
+    it('should count the install org named and absent as one org', async () => {
+      // Arrange: one install-org row written without orgId, one naming it
       const email = 'user@example.com';
       vi.mocked(prisma.verification.findMany).mockResolvedValue([
+        { id: 'row-absent', metadata: createMockMetadata() },
+        { id: 'row-named', metadata: { ...createMockMetadata(), orgId: 'install' } },
         { id: 'row-a', metadata: { ...createMockMetadata(), orgId: 'org-a' } },
-        { id: 'row-c', metadata: { ...createMockMetadata(), orgId: 'org-c' } },
       ] as never);
-      vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 2 });
       mockCreate();
 
       // Act
-      await updateInvitationToken(email, { ...createMockMetadata(), orgId: 'org-b' }, 'row-a');
+      await updateInvitationToken(email, { ...createMockMetadata(), orgId: 'install' });
 
-      // Assert
+      // Assert: both install-org rows replaced, org-a's left
       expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
-        where: { id: { in: ['row-a'] } },
+        where: { id: { in: ['row-absent', 'row-named'] } },
       });
     });
 
@@ -1219,6 +1222,32 @@ describe('getAllPendingInvitations()', () => {
       });
     });
 
+    it('should carry the org slot and org role on each item', async () => {
+      // Arrange: one org row with a role, one install-org row named, one with no org
+      const base = {
+        name: 'N',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedAt: '2024-01-01T00:00:00Z',
+      };
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([
+        makeVerification('a@example.com', { ...base, orgId: 'org-a', orgRole: 'ADMIN' }),
+        makeVerification('b@example.com', { ...base, orgId: 'install' }),
+        makeVerification('c@example.com', base),
+      ]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(3);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Act
+      const result = await getAllPendingInvitations();
+
+      // Assert: raw metadata is turned into the slot (null = install org) and a nullable role
+      const byEmail = Object.fromEntries(result.invitations.map((i) => [i.email, i]));
+      expect(byEmail['a@example.com']).toMatchObject({ orgId: 'org-a', orgRole: 'ADMIN' });
+      expect(byEmail['b@example.com']).toMatchObject({ orgId: null, orgRole: null });
+      expect(byEmail['c@example.com']).toMatchObject({ orgId: null, orgRole: null });
+    });
+
     it('should return empty list when no pending invitations exist', async () => {
       // Arrange
       vi.mocked(prisma.verification.findMany).mockResolvedValue([]);
@@ -1591,5 +1620,110 @@ describe('pendingInvitationsFor()', () => {
     vi.mocked(prisma.verification.findMany).mockRejectedValue(new Error('db down'));
 
     await expect(pendingInvitationsFor('user@example.com')).rejects.toThrow('db down');
+  });
+});
+
+describe('invitationOrgSlot()', () => {
+  it.each([
+    ['org-a', 'org-a'],
+    ['install', null],
+    [null, null],
+    [undefined, null],
+    ['', null],
+  ])('maps %j to %j', (orgId, expected) => {
+    expect(invitationOrgSlot(orgId)).toBe(expected);
+  });
+});
+
+describe('deleteInvitationsInOrg()', () => {
+  const email = 'user@example.com';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should look rows up by the address and delete only the named org rows by id', async () => {
+    // Arrange
+    vi.mocked(prisma.verification.findMany).mockResolvedValue([
+      { id: 'row-a', metadata: { ...createMockMetadata(), orgId: 'org-a' } },
+      { id: 'row-b', metadata: { ...createMockMetadata(), orgId: 'org-b' } },
+      { id: 'row-none', metadata: createMockMetadata() },
+    ] as never);
+    vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 1 });
+
+    // Act
+    const count = await deleteInvitationsInOrg(email, 'org-a');
+
+    // Assert
+    expect(count).toBe(1);
+    expect(prisma.verification.findMany).toHaveBeenCalledWith({
+      where: { identifier: `invitation:${email}` },
+      select: { id: true, metadata: true },
+    });
+    expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['row-a'] } },
+    });
+    expect(logger.info).toHaveBeenCalledWith('Invitations deleted for one org', {
+      email,
+      orgId: 'org-a',
+      count: 1,
+    });
+  });
+
+  it('should delete both absent and "install" rows when the org is null, and leave named orgs', async () => {
+    vi.mocked(prisma.verification.findMany).mockResolvedValue([
+      { id: 'row-absent', metadata: createMockMetadata() },
+      { id: 'row-named', metadata: { ...createMockMetadata(), orgId: 'install' } },
+      { id: 'row-a', metadata: { ...createMockMetadata(), orgId: 'org-a' } },
+    ] as never);
+    vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 2 });
+
+    const count = await deleteInvitationsInOrg(email, null);
+
+    expect(count).toBe(2);
+    expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['row-absent', 'row-named'] } },
+    });
+  });
+
+  it('should treat the string "install" as the install org', async () => {
+    vi.mocked(prisma.verification.findMany).mockResolvedValue([
+      { id: 'row-absent', metadata: createMockMetadata() },
+      { id: 'row-a', metadata: { ...createMockMetadata(), orgId: 'org-a' } },
+    ] as never);
+    vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 1 });
+
+    await deleteInvitationsInOrg(email, 'install');
+
+    expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['row-absent'] } },
+    });
+  });
+
+  it('should leave a row whose metadata cannot be read', async () => {
+    vi.mocked(prisma.verification.findMany).mockResolvedValue([
+      { id: 'row-corrupt', metadata: { corrupt: true } },
+      { id: 'row-null', metadata: null },
+      { id: 'row-a', metadata: { ...createMockMetadata(), orgId: 'org-a' } },
+    ] as never);
+    vi.mocked(prisma.verification.deleteMany).mockResolvedValue({ count: 1 });
+
+    await deleteInvitationsInOrg(email, 'org-a');
+
+    expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['row-a'] } },
+    });
+  });
+
+  it('should answer 0 without calling deleteMany when no row is in that org', async () => {
+    vi.mocked(prisma.verification.findMany).mockResolvedValue([
+      { id: 'row-b', metadata: { ...createMockMetadata(), orgId: 'org-b' } },
+    ] as never);
+
+    const count = await deleteInvitationsInOrg(email, 'org-a');
+
+    expect(count).toBe(0);
+    expect(prisma.verification.deleteMany).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });

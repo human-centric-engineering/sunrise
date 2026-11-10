@@ -53,7 +53,7 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { inviteUserSchema } from '@/lib/validations/user';
-import { getValidInvitation } from '@/lib/utils/invitation-token';
+import { invitationOrgSlot, pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -144,8 +144,21 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  // 6. Check if valid (non-expired) invitation already exists
-  const existingInvitation = await getValidInvitation(body.email);
+  // 6. The pending invitation this request is about. An address holds one
+  // per org (#1199), so it is the one in the org the body names, never just
+  // the newest: that could be another org's, and re-sending it would replace
+  // that org's invitation. A body naming no org means the one pending
+  // invitation when there is only one (the admin table's Resend posts no org
+  // for a row written before the table sent it), else the install org's.
+  const pending = await pendingInvitationsFor(body.email);
+  const existingInvitation =
+    body.orgId !== undefined
+      ? (pending.readable.find(
+          (inv) => invitationOrgSlot(inv.metadata.orgId) === invitationOrgSlot(body.orgId)
+        ) ?? null)
+      : pending.readable.length === 1
+        ? pending.readable[0]
+        : (pending.readable.find((inv) => invitationOrgSlot(inv.metadata.orgId) === null) ?? null);
 
   if (existingInvitation && !resend) {
     // Return existing invitation details WITHOUT a link (can't generate valid one)
@@ -178,17 +191,19 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // The same floor for the invitation a resend replaces: re-sending a pending
-  // platform-role invitation rewrites its role and org, so it is a platform
+  // The same floor for a pending platform-role invitation: re-sending one
+  // rewrites its role and org, and writing another beside it would leave it
+  // unredeemable once the address has an account, so either is a platform
   // admin's to do (t-833), as the org invitations route refuses it outright.
-  if (
-    existingInvitation &&
-    existingInvitation.metadata.role !== DEFAULT_USER_ROLE &&
-    !isPlatformAdmin(session.principal)
-  ) {
+  // Any of the address's pending invitations counts, not just the one this
+  // request re-sends (#1199).
+  const pendingPlatformRole = pending.readable.find(
+    (inv) => inv.metadata.role !== DEFAULT_USER_ROLE
+  );
+  if (pendingPlatformRole && !isPlatformAdmin(session.principal)) {
     log.warn('Resend of a platform-role invitation refused: caller is not a platform admin', {
       adminId: session.user.id,
-      pendingRole: existingInvitation.metadata.role,
+      pendingRole: pendingPlatformRole.metadata.role,
     });
     throw new ForbiddenError(
       'Only a platform administrator can re-send an invitation that grants a platform role'
@@ -272,11 +287,9 @@ export const POST = withAdminAuth(async (request, session) => {
     email: body.email,
     name: body.name,
     metadata: invitationMetadata,
+    // Replaces the pending invitation in the target org only; the address's
+    // invitations into other orgs stay (#1199).
     isResend: !!existingInvitation,
-    // The row read above is the one re-sent, even when the body moves it to
-    // another org; the target org's own pending row goes too. Invitations for
-    // the address into other orgs stay (#1199).
-    replacingId: existingInvitation?.id,
     inviterName: session.user.name || 'Administrator',
     log,
   });

@@ -33,9 +33,6 @@ import type { NextRequest } from 'next/server';
 // Mock Prisma client
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    verification: {
-      findFirst: vi.fn(),
-    },
     user: {
       update: vi.fn(),
       findUnique: vi.fn(),
@@ -47,13 +44,11 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 // Mock invitation token utilities
-vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+vi.mock('@/lib/utils/invitation-token', () => ({
   validateInvitationToken: vi.fn(),
   consumeInvitation: vi.fn(),
-  // The real hash: the route matches the row by the token presented (#1136).
-  hashInvitationToken: (await importOriginal<typeof import('@/lib/utils/invitation-token')>())
-    .hashInvitationToken,
-  INVITATION_IDENTIFIER_PREFIX: 'invitation:',
+  // The route finds the token's own row through this one helper (#1136, #1199).
+  findInvitationByToken: vi.fn(),
 }));
 
 // Note: getRouteLogger is mocked globally in tests/setup.ts
@@ -106,7 +101,11 @@ vi.mock('@/lib/security/ip', () => ({
 
 // Import mocked modules
 import { prisma } from '@/lib/db/client';
-import { validateInvitationToken, consumeInvitation } from '@/lib/utils/invitation-token';
+import {
+  validateInvitationToken,
+  consumeInvitation,
+  findInvitationByToken,
+} from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
 import { sendEmail } from '@/lib/email/send';
 import { auth } from '@/lib/auth/config';
@@ -122,6 +121,17 @@ function createMockRequest(body: unknown): NextRequest {
       searchParams: new URLSearchParams(),
     },
   } as unknown as NextRequest;
+}
+
+/**
+ * The shape `findInvitationByToken` answers with, from a verification-row fixture
+ */
+function toLookup(row: {
+  id: string;
+  expiresAt: Date;
+  metadata: NonNullable<Awaited<ReturnType<typeof findInvitationByToken>>>['metadata'];
+}): NonNullable<Awaited<ReturnType<typeof findInvitationByToken>>> {
+  return { id: row.id, metadata: row.metadata, expiresAt: row.expiresAt };
 }
 
 /**
@@ -197,7 +207,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Mock better-auth signup and sign-in responses
       const createdUserId = 'user-id-123';
@@ -269,13 +279,10 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Invitation metadata was fetched from the row the token was
       // validated against, matched by that token (#1136)
-      expect(vi.mocked(prisma.verification.findFirst)).toHaveBeenCalledWith({
-        where: {
-          identifier: 'invitation:john@example.com',
-          value: expect.stringMatching(/^[0-9a-f]{64}$/),
-          expiresAt: { gt: expect.any(Date) },
-        },
-      });
+      expect(vi.mocked(findInvitationByToken)).toHaveBeenCalledWith(
+        'john@example.com',
+        'valid-token-123'
+      );
 
       // Assert: User was created via better-auth signup (FIRST TIME)
       expect(vi.mocked(auth.api.signUpEmail)).toHaveBeenCalledWith({
@@ -332,7 +339,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Mock better-auth signup response (creates USER by default)
       const createdUserId = 'admin-id-123';
@@ -426,7 +433,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       const createdUserId = 'user-id-cookies';
       const sessionCookies = [
@@ -504,7 +511,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       const createdUserId = 'user-id-no-cookies';
       vi.mocked(auth.api.signUpEmail).mockResolvedValue({
@@ -581,7 +588,7 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Assert: No invitation metadata lookup was performed
-      expect(vi.mocked(prisma.verification.findFirst)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(findInvitationByToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Warning logged
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -621,7 +628,7 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
       // Mock invitation not found
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(findInvitationByToken).mockResolvedValue(null);
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -649,7 +656,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
-    it('should return 404 when invitation has no metadata', async () => {
+    it('should return 500 INTERNAL_ERROR when the invitation row has unreadable metadata', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
@@ -663,7 +670,7 @@ describe('POST /api/auth/accept-invite', () => {
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
         metadata: null, // Missing metadata
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -675,15 +682,15 @@ describe('POST /api/auth/accept-invite', () => {
       const response = await POST(request);
       const body = await parseResponse<ErrorResponse>(response);
 
-      // Assert: Invitation not found error
-      expect(response.status).toBe(404);
+      // Assert: the row exists but is corrupt: a server error, not a missing invitation
+      expect(response.status).toBe(500);
       expect(body.success).toBe(false);
-      expect(body.error.code).toBe('NOT_FOUND');
-      expect(body.error.message).toBe('Invitation not found');
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      expect(body.error.message).toBe('Invalid invitation data');
 
       // Assert: Warning logged
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
-      expect(mockLogger.warn).toHaveBeenCalledWith('Invitation not found', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invalid invitation metadata', {
         email: 'corrupted@example.com',
       });
 
@@ -808,7 +815,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Mock better-auth signup failure - auth.api throws on error
       vi.mocked(auth.api.signUpEmail).mockRejectedValue(new Error('Email already exists'));
@@ -866,9 +873,7 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
       // Mock database error when fetching invitation
-      vi.mocked(prisma.verification.findFirst).mockRejectedValue(
-        new Error('Database connection failed')
-      );
+      vi.mocked(findInvitationByToken).mockRejectedValue(new Error('Database connection failed'));
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -911,7 +916,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Mock better-auth signup response
       const createdUserId = 'user-role-error';
@@ -979,7 +984,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       const createdUserId = 'user-signin-error';
       // Signup succeeds
@@ -1055,7 +1060,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       // Mock better-auth signup failure (email exists) - auth.api throws on error
       vi.mocked(auth.api.signUpEmail).mockRejectedValue(
@@ -1099,13 +1104,8 @@ describe('POST /api/auth/accept-invite', () => {
     it('should answer 409 EMAIL_TAKEN for an address that already has an account, without signing up or consuming the invitation', async () => {
       // Arrange: valid token and invitation, but the account exists
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
+      vi.mocked(findInvitationByToken).mockResolvedValue({
         id: 'invitation-id-existing',
-        identifier: 'invitation:existing@example.com',
-        value: 'valid-token',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
         metadata: {
           name: 'Existing User',
           role: 'USER',
@@ -1113,6 +1113,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
           orgId: 'org-a',
         },
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
       vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'existing-user' } as any);
 
@@ -1153,7 +1154,7 @@ describe('POST /api/auth/accept-invite', () => {
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation);
+      vi.mocked(findInvitationByToken).mockResolvedValue(toLookup(mockInvitation));
 
       const createdUserId = 'user-deletion-test';
       vi.mocked(auth.api.signUpEmail).mockResolvedValue({

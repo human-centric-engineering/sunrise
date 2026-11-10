@@ -44,6 +44,7 @@ vi.mock('@/lib/utils/invitation-token', () => ({
   getAllPendingInvitations: vi.fn(),
   getValidInvitation: vi.fn(),
   deleteInvitationToken: vi.fn(),
+  deleteInvitationsInOrg: vi.fn(),
 }));
 
 // Note: getRouteLogger is mocked globally in tests/setup.ts
@@ -59,6 +60,7 @@ import {
   getAllPendingInvitations,
   getValidInvitation,
   deleteInvitationToken,
+  deleteInvitationsInOrg,
 } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
 
@@ -582,6 +584,119 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(getValidInvitation).toHaveBeenCalledWith('user+test@example.com');
       expect(deleteInvitationToken).toHaveBeenCalledWith('user+test@example.com');
       expect(body.data.message).toContain('user+test@example.com');
+    });
+  });
+
+  describe('deleting one org invitation (?orgId=)', () => {
+    it('should delete only the named org invitation, not every invitation for the address', async () => {
+      // Arrange
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
+      vi.mocked(deleteInvitationsInOrg).mockResolvedValue(1);
+
+      // Act
+      const response = await DELETE(
+        createMockRequest({ orgId: 'org-a' }),
+        createRouteContext('Alice@Example.com')
+      );
+      const body = await parseResponse<SuccessDeleteResponse>(response);
+
+      // Assert: the address is lowercased and the org is passed through
+      expect(response.status).toBe(200);
+      expect(body.data.message).toBe('Invitation for alice@example.com has been deleted');
+      expect(deleteInvitationsInOrg).toHaveBeenCalledWith('alice@example.com', 'org-a');
+      // The delete-all path is not taken
+      expect(deleteInvitationToken).not.toHaveBeenCalled();
+      expect(getValidInvitation).not.toHaveBeenCalled();
+
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Admin deleted one org invitation',
+        expect.objectContaining({
+          email: 'alice@example.com',
+          orgId: 'org-a',
+          deletedBy: adminSession.user.id,
+        })
+      );
+    });
+
+    it('should pass "install" through so the install org invitation is the one deleted', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(deleteInvitationsInOrg).mockResolvedValue(1);
+
+      const response = await DELETE(
+        createMockRequest({ orgId: 'install' }),
+        createRouteContext('alice@example.com')
+      );
+
+      expect(response.status).toBe(200);
+      expect(deleteInvitationsInOrg).toHaveBeenCalledWith('alice@example.com', 'install');
+      expect(deleteInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when no invitation for that org was deleted', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(deleteInvitationsInOrg).mockResolvedValue(0);
+
+      const response = await DELETE(
+        createMockRequest({ orgId: 'org-b' }),
+        createRouteContext('alice@example.com')
+      );
+      const body = await parseResponse<ErrorResponse>(response);
+
+      expect(response.status).toBe(404);
+      expect(body.error.code).toBe('NOT_FOUND');
+      expect(deleteInvitationsInOrg).toHaveBeenCalledWith('alice@example.com', 'org-b');
+      expect(deleteInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 for an empty orgId, without deleting anything', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await DELETE(
+        createMockRequest({ orgId: '' }),
+        createRouteContext('alice@example.com')
+      );
+      const body = await parseResponse<ErrorResponse>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(deleteInvitationsInOrg).not.toHaveBeenCalled();
+      expect(deleteInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 for an over-long orgId, without deleting anything', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await DELETE(
+        createMockRequest({ orgId: 'x'.repeat(65) }),
+        createRouteContext('alice@example.com')
+      );
+
+      expect(response.status).toBe(400);
+      expect(deleteInvitationsInOrg).not.toHaveBeenCalled();
+    });
+
+    it('should still delete every invitation for the address when orgId is absent', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getValidInvitation).mockResolvedValue({
+        email: 'alice@example.com',
+        metadata: {
+          name: 'Alice',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+        },
+        expiresAt: new Date(),
+        createdAt: new Date(),
+      });
+      vi.mocked(deleteInvitationToken).mockResolvedValue(undefined);
+
+      const response = await DELETE(createMockRequest(), createRouteContext('alice@example.com'));
+
+      expect(response.status).toBe(200);
+      expect(deleteInvitationToken).toHaveBeenCalledWith('alice@example.com');
+      expect(deleteInvitationsInOrg).not.toHaveBeenCalled();
     });
   });
 

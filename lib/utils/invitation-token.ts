@@ -27,6 +27,7 @@ import { randomBytes, createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseInvitationMetadata, type InvitationMetadata } from '@/lib/validations/admin';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
  * Token Configuration
@@ -229,6 +230,29 @@ export async function deleteInvitationToken(email: string): Promise<void> {
 }
 
 /**
+ * Delete the address's invitations into one org — `orgId` `null` for the
+ * install org — and no other org's (#1199). A platform admin's revoke of one
+ * row in the pending list. Answers how many went.
+ */
+export async function deleteInvitationsInOrg(email: string, orgId: string | null): Promise<number> {
+  const rows = await prisma.verification.findMany({
+    where: { identifier: `${IDENTIFIER_PREFIX}${email}` },
+    select: { id: true, metadata: true },
+  });
+  const slot = invitationOrgSlot(orgId);
+  const ids = rows
+    .filter((row) => {
+      const parsed = parseInvitationMetadata(row.metadata);
+      return parsed !== null && invitationOrgSlot(parsed.orgId) === slot;
+    })
+    .map((row) => row.id);
+  if (ids.length === 0) return 0;
+  const { count } = await prisma.verification.deleteMany({ where: { id: { in: ids } } });
+  logger.info('Invitations deleted for one org', { email, orgId: slot, count });
+  return count;
+}
+
+/**
  * Invitation record returned by getValidInvitation
  */
 export type InvitationRecord = {
@@ -293,6 +317,14 @@ export async function getValidInvitation(email: string): Promise<InvitationRecor
   }
 }
 
+/**
+ * The org an invitation occupies, for keeping one per (email, org): its
+ * `orgId`, or `null` for the install org, whether named or absent (#1199).
+ */
+export function invitationOrgSlot(orgId: string | null | undefined): string | null {
+  return orgId && orgId !== INSTALL_ORG_ID ? orgId : null;
+}
+
 /** Every unexpired invitation for an address, as {@link pendingInvitationsFor} reads them. */
 export interface PendingInvitations {
   /** Readable rows, newest first. */
@@ -334,31 +366,28 @@ export async function pendingInvitationsFor(email: string): Promise<PendingInvit
 /**
  * Update (regenerate) an invitation token for an email
  *
- * Replaces the pending invitation in the same org as `metadata` — the rows
- * whose `orgId` matches it (absent matching absent) — plus `replacingId`
- * when given, and creates a new one. An invitation for the same address into
- * another org is left alone, as is a row whose metadata cannot be read.
+ * Replaces the pending invitation in the same org as `metadata`
+ * ({@link invitationOrgSlot}: the install org named or absent counts as one)
+ * and creates a new one. An invitation for the same address into another org
+ * is left alone, as is a row whose metadata cannot be read.
  *
  * @param email - The email address to update the invitation for
  * @param metadata - Updated invitation metadata
- * @param replacingId - The pending row being re-sent, when it may sit in a
- *   different org from `metadata` (the platform route can re-target one)
  * @returns The new unhashed token string
  */
 export async function updateInvitationToken(
   email: string,
-  metadata: InvitationMetadata,
-  replacingId?: string
+  metadata: InvitationMetadata
 ): Promise<string> {
   const rows = await prisma.verification.findMany({
     where: { identifier: `${IDENTIFIER_PREFIX}${email}` },
     select: { id: true, metadata: true },
   });
+  const slot = invitationOrgSlot(metadata.orgId);
   const sameOrg = rows
     .filter((row) => {
-      if (row.id === replacingId) return true;
       const parsed = parseInvitationMetadata(row.metadata);
-      return parsed !== null && (parsed.orgId ?? null) === (metadata.orgId ?? null);
+      return parsed !== null && invitationOrgSlot(parsed.orgId) === slot;
     })
     .map((row) => row.id);
   if (sameOrg.length > 0) {
@@ -480,6 +509,14 @@ export interface GetAllPendingInvitationsOptions {
  */
 export interface PendingInvitationItem {
   email: string;
+  /**
+   * The org it joins, `null` for the install org (#1199). An address can have
+   * one row per org, so `(email, orgId)` names a row; email alone does not.
+   * Optional so a hand-built item still type-checks.
+   */
+  orgId?: string | null;
+  /** The org role it grants, when it names one. */
+  orgRole?: string | null;
   name: string;
   role: string;
   invitedBy: string;
@@ -532,7 +569,7 @@ export async function getAllPendingInvitations(
     // Transform verification records to invitation items with metadata
     // Skip records with invalid/corrupt metadata
     const allItems = await Promise.all(
-      verifications.map(async (v) => {
+      verifications.map(async (v): Promise<PendingInvitationItem | null> => {
         const metadata = parseInvitationMetadata(v.metadata);
         if (!metadata) return null;
 
@@ -550,6 +587,8 @@ export async function getAllPendingInvitations(
 
         return {
           email,
+          orgId: invitationOrgSlot(metadata.orgId),
+          orgRole: metadata.orgRole ?? null,
           name: metadata.name,
           role: metadata.role,
           invitedBy: metadata.invitedBy,

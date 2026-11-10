@@ -19,7 +19,9 @@
  * a new account sets a password (`POST /api/auth/accept-invite`), an
  * existing one signs in and accepts (`POST /api/v1/invitations/accept`,
  * #1199). It is answered only to a caller holding a valid token, who was
- * sent the invitation email that already says so.
+ * sent the invitation email that already says so. `newAccountOnly` marks a
+ * platform invitation, which only creates an account: an existing account
+ * cannot redeem it.
  *
  * Response Error Codes:
  *   - VALIDATION_ERROR: Invalid query parameters or invalid token
@@ -38,13 +40,18 @@ import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
 import { prisma } from '@/lib/db/client';
+import { emailSchema } from '@/lib/validations/auth';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { invitationOrgSlot } from '@/lib/utils/invitation-token';
 
 /**
  * Query parameter validation schema
  */
 const querySchema = z.object({
   token: z.string().min(1, 'Token is required'),
-  email: z.string().email('Valid email is required'),
+  // The shared schema (trimmed, lowercased), as every invitation is stored
+  // and as accept and decline read it, so one link answers the same on all.
+  email: emailSchema,
 });
 
 /**
@@ -116,6 +123,12 @@ export async function GET(request: NextRequest): Promise<Response> {
       role: result.metadata.role,
       orgName: org?.name ?? null,
       accountExists: account !== null,
+      // A platform invitation (a platform role, or the install org) can only
+      // create an account. With one already there, the page says so instead
+      // of offering a sign-in that the accept route would refuse.
+      newAccountOnly:
+        result.metadata.role !== DEFAULT_USER_ROLE ||
+        invitationOrgSlot(result.metadata.orgId) === null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

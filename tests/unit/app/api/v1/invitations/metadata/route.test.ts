@@ -26,6 +26,8 @@ import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
 // Mock invitation token utilities
 vi.mock('@/lib/utils/invitation-token', () => ({
   getInvitationMetadata: vi.fn(),
+  // Same rule as the real helper: null for no org and for the install org
+  invitationOrgSlot: (orgId?: string | null) => (orgId && orgId !== 'install' ? orgId : null),
 }));
 
 // Mock the database: org name and account existence are looked up by the route
@@ -64,6 +66,7 @@ interface SuccessResponse {
     role: string;
     orgName: string | null;
     accountExists: boolean;
+    newAccountOnly: boolean;
   };
 }
 
@@ -169,6 +172,8 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        // no org named: a platform invitation, which only creates an account
+        newAccountOnly: true,
       });
     });
 
@@ -230,6 +235,8 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'USER',
         orgName: null,
         accountExists: false,
+        // no org named: a platform invitation, which only creates an account
+        newAccountOnly: true,
       });
       expect(data.data).not.toHaveProperty('invitedBy');
       expect(data.data).not.toHaveProperty('invitedAt');
@@ -303,6 +310,67 @@ describe('GET /api/v1/invitations/metadata', () => {
 
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should report newAccountOnly true for a platform-role invitation, even into a named org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Ada', role: 'ADMIN', orgId: 'org-a' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'ada@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly true for a USER invitation that names no org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Una', role: 'USER' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'una@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly true for a USER invitation into the install org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Ines', role: 'USER', orgId: 'install' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'ines@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(true);
+    });
+
+    it('should report newAccountOnly false for a USER invitation into a named org', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Olly', role: 'USER', orgId: 'org-a' })
+      );
+
+      const response = await GET(createMockRequest({ token: 'tok', email: 'olly@example.com' }));
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(data.data.newAccountOnly).toBe(false);
+    });
+
+    it('should look the address up lowercased and trimmed when the query is mixed case', async () => {
+      vi.mocked(getInvitationMetadata).mockResolvedValue(
+        createValidResult({ name: 'Jane', role: 'USER', orgId: 'org-a' })
+      );
+
+      await GET(createMockRequest({ token: 'tok', email: 'Jane.Doe@Example.COM' }));
+
+      expect(getInvitationMetadata).toHaveBeenCalledWith('jane.doe@example.com', 'tok');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'jane.doe@example.com' },
+        select: { id: true },
+      });
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata requested', {
+        email: 'jane.doe@example.com',
+      });
     });
 
     it('should handle ADMIN role metadata', async () => {

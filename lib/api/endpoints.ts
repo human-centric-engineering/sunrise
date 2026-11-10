@@ -82,9 +82,13 @@ export const API = {
     orgExport: (id: string): string => `/api/v1/admin/orgs/${id}/export`,
     /** An org's approved providers and jurisdictions (§120) */
     orgProviders: (id: string): string => `/api/v1/admin/orgs/${id}/providers`,
-    /** Delete invitation by email */
-    invitationByEmail: (email: string): string =>
-      `/api/v1/admin/invitations/${encodeURIComponent(email)}`,
+    /**
+     * Delete invitation by email. With `orgId` (`null` for the install org)
+     * only that org's invitation goes; without it, every org's (#1199).
+     */
+    invitationByEmail: (email: string, orgId?: string | null): string =>
+      `/api/v1/admin/invitations/${encodeURIComponent(email)}` +
+      (orgId === undefined ? '' : `?orgId=${encodeURIComponent(orgId ?? 'install')}`),
     FEATURE_FLAGS: '/api/v1/admin/feature-flags',
     /** Feature flag by ID */
     featureFlag: (id: string): string => `/api/v1/admin/feature-flags/${id}`,

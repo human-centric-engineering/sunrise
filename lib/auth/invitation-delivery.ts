@@ -29,12 +29,6 @@ export interface DeliverInvitationInput {
   metadata: InvitationMetadata;
   /** A pending invitation exists for this email and is being re-sent. */
   isResend: boolean;
-  /**
-   * The pending row a resend replaces, when it may sit in a different org
-   * from `metadata` (the platform route can re-target one). A resend always
-   * replaces the pending invitation in `metadata`'s own org.
-   */
-  replacingId?: string;
   inviterName: string;
   /** The org the invitation joins, named in the email. Absent ⇒ the email names the app. */
   orgName?: string;
@@ -59,7 +53,6 @@ export async function deliverInvitation({
   name,
   metadata,
   isResend,
-  replacingId,
   inviterName,
   orgName,
   hasAccount = false,
@@ -67,7 +60,7 @@ export async function deliverInvitation({
 }: DeliverInvitationInput): Promise<DeliveredInvitation> {
   // A resend deletes the old token (that org's only) and creates a new one.
   const token = isResend
-    ? await updateInvitationToken(email, metadata, replacingId)
+    ? await updateInvitationToken(email, metadata)
     : await generateInvitationToken(email, metadata);
 
   const appUrl = env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3000';

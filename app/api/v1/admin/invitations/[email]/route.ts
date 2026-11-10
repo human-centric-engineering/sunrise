@@ -2,6 +2,11 @@
  * Admin Single Invitation Endpoint
  *
  * DELETE /api/v1/admin/invitations/:email - Delete a pending invitation
+ * DELETE /api/v1/admin/invitations/:email?orgId=<id|install> - Delete only that
+ *   org's invitation for the address (#1199). An address can hold one pending
+ *   invitation per org; the admin table names the row it shows, so revoking
+ *   one does not take the address's other orgs' with it. Without `orgId`,
+ *   every invitation for the address goes, as before.
  *
  * Authentication: Required (Admin role only)
  */
@@ -11,7 +16,12 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validatePathParam } from '@/lib/api/validation';
 import { emailSchema } from '@/lib/validations/auth';
 import { withAdminAuth } from '@/lib/auth/guards';
-import { deleteInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
+import {
+  deleteInvitationToken,
+  deleteInvitationsInOrg,
+  getValidInvitation,
+} from '@/lib/utils/invitation-token';
+import { z } from 'zod';
 import { getRouteLogger } from '@/lib/api/context';
 
 /**
@@ -56,6 +66,24 @@ export const DELETE = withAdminAuth<{ email: string }>(async (request, session, 
   });
 
   log.info('Deleting invitation', { email: decodedEmail });
+
+  // One org's invitation, when the caller names it ('install' for the install
+  // org); the address's others are left.
+  const orgParam = request.nextUrl.searchParams.get('orgId');
+  if (orgParam !== null) {
+    const orgId = z.string().min(1).max(64).safeParse(orgParam);
+    if (!orgId.success) {
+      throw new ValidationError('Invalid organisation id', { orgId: ['Must be an org id'] });
+    }
+    const count = await deleteInvitationsInOrg(decodedEmail, orgId.data);
+    if (count === 0) throw new NotFoundError('Invitation not found or already expired');
+    log.info('Admin deleted one org invitation', {
+      email: decodedEmail,
+      orgId: orgId.data,
+      deletedBy: session.user.id,
+    });
+    return successResponse({ message: `Invitation for ${decodedEmail} has been deleted` });
+  }
 
   // Check if invitation exists
   const invitation = await getValidInvitation(decodedEmail);
