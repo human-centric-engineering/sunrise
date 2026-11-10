@@ -39,14 +39,15 @@
  * 6a. Check the org: it must exist and be active, and the policy must let
  *    this caller administer it (`canAdminister` on an org resource — the
  *    seam §106 t-671 makes org-aware; today it answers as the admin guard
- *    did). Asked before anything answers about the address. An OWNER org
- *    invitation, or a resend of one, needs owner standing too
+ *    did). Asked before anything answers about the address
  * 6b. If the address already has an account: a platform invitation (a
  *    platform role, or the install org) is a 409 EMAIL_TAKEN; someone
  *    already in the target org is a 409 ALREADY_MEMBER; an org invitation
  *    goes on, and its email asks them to sign in (t-1008)
  * 6c. Check if invitation already exists:
  *    - If exists and resend=false: Return 200 with 'pending' status (NO link)
+ *    - Else an OWNER org invitation, or a resend of one, needs a platform
+ *      admin (owner standing in the body's org cannot be read here)
  *    - If exists and resend=true: Delete old, create new token, send email
  *    - If not exists: Create new invitation
  * 7. Generate/regenerate invitation token
@@ -74,7 +75,7 @@ import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limi
 import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE, isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { checkInvitationInto, membershipActorOf, OrgLifecycleError } from '@/lib/tenancy/lifecycle';
+import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /**
@@ -191,7 +192,8 @@ export const POST = withAdminAuth(async (request, session) => {
   // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
   // pending org must still exist, be active, and be one this caller may
   // invite into. Asked before anything below answers about the address, so
-  // a caller refused here learns nothing about its account or memberships.
+  // a caller refused for an org learns nothing about the address's
+  // membership of it.
   // The org the email names (#1199): an invitation into an org reads "join
   // <org>" from either route that writes it. The install org's names the app.
   let orgName: string | undefined;
@@ -224,17 +226,6 @@ export const POST = withAdminAuth(async (request, session) => {
         orgId: org.id,
       });
       throw new ForbiddenError('You cannot invite users into that organisation');
-    }
-
-    // Inviting someone as an OWNER, or replacing a pending OWNER invitation,
-    // needs owner standing, as on the org route: accepting one writes the
-    // membership on the strength of the check made here (t-1008). A platform
-    // admin has it.
-    if (
-      !intoInstall &&
-      (target.orgRole === ORG_OWNER_ROLE || existingInvitation?.metadata.orgRole === ORG_OWNER_ROLE)
-    ) {
-      await checkInvitationInto(org.id, ORG_OWNER_ROLE, membershipActorOf(session));
     }
   }
 
@@ -298,6 +289,26 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
+  // Inviting someone as an OWNER, or replacing a pending OWNER invitation,
+  // needs owner standing, as on the org route: accepting one writes the
+  // membership on the strength of the check made here (t-1008). The org
+  // route reads standing in the org its URL names; here the org is the
+  // body's, and the caller's org role is for the org their session entered,
+  // so only a platform admin has it. Read from the principal, so a support
+  // session is refused, as by the platform-role floor above.
+  if (
+    !intoInstall &&
+    (target.orgRole === ORG_OWNER_ROLE ||
+      existingInvitation?.metadata.orgRole === ORG_OWNER_ROLE) &&
+    !isPlatformAdmin(session.principal)
+  ) {
+    log.warn('OWNER org invitation refused: caller is not a platform admin', {
+      adminId: session.user.id,
+      orgId: target.orgId,
+    });
+    throw new OrgLifecycleError('OWNER_STANDING', 'Only an owner may invite someone as an owner');
+  }
+
   // The same floor for a pending platform-role invitation: re-sending one
   // rewrites its role and org, and writing another beside it would leave it
   // unredeemable once the address has an account, so either is a platform
@@ -328,11 +339,11 @@ export const POST = withAdminAuth(async (request, session) => {
     existingInvitation !== null &&
     isPlatformInvitation(existingInvitation.metadata) === writesPlatform;
   const others = pending.readable.filter((inv) => inv !== existingInvitation);
-  // A row it cannot read could be either kind, so it refuses too, as the org
-  // route does.
+  // An org invitation is refused beside a row it cannot read too, which
+  // could be a platform one, as the org route refuses it.
   if (
     !keepsKind &&
-    (pending.unreadable > 0 ||
+    ((!writesPlatform && pending.unreadable > 0) ||
       others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform))
   ) {
     log.info('Invitation refused: it would sit beside the other kind of pending invitation', {

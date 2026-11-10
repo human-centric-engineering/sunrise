@@ -89,9 +89,9 @@ release process.
   `409 ALREADY_MEMBER`. A platform invitation (a platform role, or the
   install org) to an address with an account is still `409 EMAIL_TAKEN`.
   The org and the policy are checked before anything about the address is
-  answered. An `OWNER` org invitation, or a resend of one, needs owner
-  standing (`403 OWNER_STANDING`), and a pending invitation the route cannot
-  read refuses a new one of either kind (`409 CONFLICT`), as on the org route.
+  answered. An `OWNER` org invitation, or a resend of one, needs a platform
+  admin (`403 OWNER_STANDING`), and a pending invitation the route cannot
+  read refuses a new org invitation (`409 CONFLICT`), as on the org route.
 
 ### Fixed
 

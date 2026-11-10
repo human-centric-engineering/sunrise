@@ -919,6 +919,17 @@ describe('POST /api/v1/users/invite — an address that already has an account (
       expect(updateInvitationToken).not.toHaveBeenCalled();
     });
 
+    it('still answers "already pending" for a pending OWNER invitation without a resend', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+      mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(await res.text()).data.emailStatus).toBe('pending');
+    });
+
     it('lets a platform admin invite an existing account as OWNER', async () => {
       accountExists();
 
@@ -930,6 +941,14 @@ describe('POST /api/v1/users/invite — an address that already has an account (
         orgRole: 'OWNER',
       });
     });
+  });
+
+  it('lets a platform invitation through beside a row it cannot read, as before', async () => {
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({ readable: [], unreadable: 1 });
+
+    const res = await POST(request({ ...invitee }));
+
+    expect(res.status).toBe(201);
   });
 
   it('refuses a new invitation while a pending one cannot be read, as the org route does', async () => {

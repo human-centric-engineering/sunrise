@@ -314,10 +314,11 @@ and is refused with `409 EMAIL_TAKEN`.
 - **409 Conflict** (`ALREADY_MEMBER`): The address's account is already a
   member of the named org
 - **403 Forbidden** (`OWNER_STANDING`): An `OWNER` org invitation, or a
-  resend of one, from a caller without owner standing (a platform admin has
-  it), as on the org route
+  resend of one, from a caller who is not a platform admin (owner standing in
+  the body's org cannot be read here; the org route checks it in its URL's)
 - **409 Conflict** (`CONFLICT`): The other kind of invitation (platform or
-  org) is pending for the address, or a pending one cannot be read
+  org) is pending for the address, or, for an org invitation, a pending one
+  cannot be read
 
 **Flow**:
 
