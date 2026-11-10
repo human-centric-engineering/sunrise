@@ -345,6 +345,51 @@ describe('getCapabilityDefinitions', () => {
     expect(defs[0]?.name).toBe('search_knowledge_base');
   });
 
+  it('returns definitions in slug order whatever order the rows arrive in', async () => {
+    // Tool definitions head an Anthropic request, ahead of the first cache
+    // breakpoint, so a reorder changes the cached prefix and every
+    // conversation misses the cache. Rows here arrive deliberately shuffled.
+    const row = (slug: string) => ({
+      id: `aac-${slug}`,
+      agentId: 'agent-1',
+      capabilityId: `cap-${slug}`,
+      isEnabled: true,
+      customRateLimit: null,
+      capability: {
+        id: `cap-${slug}`,
+        slug,
+        name: slug,
+        category: 'other',
+        isActive: true,
+        requiresApproval: false,
+        rateLimit: null,
+        functionDefinition: {
+          name: slug,
+          description: slug,
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    });
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      row('search_knowledge_base'),
+      row('call_external_api'),
+      row('run_workflow'),
+      row('escalate_to_human'),
+    ]);
+
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(prisma.aiAgentCapability.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { capability: { slug: 'asc' } } })
+    );
+    expect(defs.map((d) => d.name)).toEqual([
+      'call_external_api',
+      'escalate_to_human',
+      'run_workflow',
+      'search_knowledge_base',
+    ]);
+  });
+
   it('returns an empty list when the agent has no pivot rows', async () => {
     (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const defs = await getCapabilityDefinitions('agent-empty');

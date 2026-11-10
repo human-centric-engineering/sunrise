@@ -396,6 +396,21 @@ export async function getCapabilityDefinitions(
       capability: { isActive: true },
     },
     include: { capability: true },
+    orderBy: { capability: { slug: 'asc' } },
+  });
+
+  // Tool definitions are the first thing in an Anthropic request, ahead of the
+  // system prompt that carries the first cache breakpoint. Without an ORDER BY
+  // Postgres may return these rows in any order (an UPDATE moves a tuple, a
+  // plan change reorders a scan), and any reorder changes the cached prefix:
+  // every conversation with the agent misses the cache and pays the write
+  // again, silently. The `orderBy` asks the database; the sort below makes the
+  // order independent of the database's collation, so it is the same
+  // byte-for-byte on every install. Slug is unique and is the advertised name.
+  rows.sort((a, b) => {
+    const x = a.capability?.slug ?? '';
+    const y = b.capability?.slug ?? '';
+    return x < y ? -1 : x > y ? 1 : 0;
   });
 
   const definitions: CapabilityFunctionDefinition[] = [];
