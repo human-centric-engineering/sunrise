@@ -205,7 +205,7 @@ export const POST = withAdminAuth(async (request, session) => {
       pendingRole: pendingPlatformRole.metadata.role,
     });
     throw new ForbiddenError(
-      'Only a platform administrator can re-send an invitation that grants a platform role'
+      'Only a platform administrator can invite this address while an invitation granting a platform role is pending for it'
     );
   }
 
@@ -228,23 +228,30 @@ export const POST = withAdminAuth(async (request, session) => {
   const intoInstall = !named.orgId || named.orgId === INSTALL_ORG_ID;
   const target = intoInstall ? { orgId: named.orgId, orgRole: undefined } : named;
 
-  // A new platform invitation (a platform role, or the install org) is not
-  // written beside a pending org invitation (#1199). Whichever is accepted
-  // first creates the account, and an existing account cannot redeem a
-  // platform invitation, so the platform one would be stranded. The org route
-  // refuses the reverse order the same way. Revoke the org's invitation from
-  // the pending list first. A resend of the platform invitation already
-  // pending is not new.
-  if (
-    !existingInvitation &&
-    isPlatformInvitation({ role: body.role || DEFAULT_USER_ROLE, orgId: target.orgId }) &&
-    pending.readable.some((inv) => !isPlatformInvitation(inv.metadata))
-  ) {
-    log.info('Platform invitation refused: an org invitation is pending for this email', {
+  // A platform invitation (a platform role, or the install org) and an org
+  // invitation are not written side by side for one address (#1199).
+  // Whichever is accepted first creates the account, and an existing account
+  // cannot redeem a platform invitation, so it would be stranded. Checked in
+  // both directions, for a new invitation and for a resend that changes the
+  // pending one's kind. A resend of the same kind writes no new pair. The org
+  // route refuses the same way.
+  const writesPlatform = isPlatformInvitation({
+    role: body.role || DEFAULT_USER_ROLE,
+    orgId: target.orgId,
+  });
+  const keepsKind =
+    existingInvitation !== null &&
+    isPlatformInvitation(existingInvitation.metadata) === writesPlatform;
+  const others = pending.readable.filter((inv) => inv !== existingInvitation);
+  if (!keepsKind && others.some((inv) => isPlatformInvitation(inv.metadata) !== writesPlatform)) {
+    log.info('Invitation refused: it would sit beside the other kind of pending invitation', {
       adminId: session.user.id,
+      writesPlatform,
     });
     return errorResponse(
-      'An invitation into an organisation is already pending for this email address. Delete it from the pending invitations first.',
+      writesPlatform
+        ? 'An invitation into an organisation is already pending for this email address. Delete it from the pending invitations first.'
+        : 'An invitation to the platform is already pending for this email address. Delete it from the pending invitations first.',
       { code: ErrorCodes.CONFLICT, status: 409 }
     );
   }
@@ -258,10 +265,13 @@ export const POST = withAdminAuth(async (request, session) => {
   // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
   // pending org must still exist, be active, and be one this caller may
   // invite into.
+  // The org the email names (#1199): an invitation into an org reads "join
+  // <org>" from either route that writes it. The install org's names the app.
+  let orgName: string | undefined;
   if (target.orgId) {
     const org = await prisma.org.findUnique({
       where: { id: target.orgId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, name: true },
     });
 
     if (!org || org.status !== 'ACTIVE') {
@@ -273,6 +283,8 @@ export const POST = withAdminAuth(async (request, session) => {
         status: 400,
       });
     }
+
+    if (!intoInstall) orgName = org.name;
 
     const mayInvite = await canAdminister(session.principal, {
       kind: 'org',
@@ -309,6 +321,7 @@ export const POST = withAdminAuth(async (request, session) => {
     // invitations into other orgs stay (#1199).
     isResend: !!existingInvitation,
     inviterName: session.user.name || 'Administrator',
+    ...(orgName !== undefined ? { orgName } : {}),
     log,
   });
 

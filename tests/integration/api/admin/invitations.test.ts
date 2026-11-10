@@ -42,7 +42,7 @@ vi.mock('@/lib/auth/config', () => ({
 // Mock getAllPendingInvitations utility
 vi.mock('@/lib/utils/invitation-token', () => ({
   getAllPendingInvitations: vi.fn(),
-  getValidInvitation: vi.fn(),
+  pendingInvitationsFor: vi.fn(),
   deleteInvitationToken: vi.fn(),
   deleteInvitationsInOrg: vi.fn(),
 }));
@@ -58,11 +58,19 @@ vi.mock('next/headers', () => ({
 import { auth } from '@/lib/auth/config';
 import {
   getAllPendingInvitations,
-  getValidInvitation,
+  pendingInvitationsFor,
   deleteInvitationToken,
   deleteInvitationsInOrg,
 } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
+
+/** The address's pending invitations, as the route reads them (#1199). */
+function mockPending(inv: import('@/lib/utils/invitation-token').InvitationRecord | null) {
+  vi.mocked(pendingInvitationsFor).mockResolvedValue({
+    readable: inv ? [inv] : [],
+    unreadable: 0,
+  });
+}
 
 /**
  * Helper function to create a mock NextRequest
@@ -506,7 +514,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
       // Mock existing invitation
-      vi.mocked(getValidInvitation).mockResolvedValue({
+      mockPending({
         email: 'alice@example.com',
         metadata: {
           name: 'Alice Johnson',
@@ -532,7 +540,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(body.data.message).toBe('Invitation for alice@example.com has been deleted');
 
       // Assert: Should check if invitation exists
-      expect(getValidInvitation).toHaveBeenCalledWith('alice@example.com');
+      expect(pendingInvitationsFor).toHaveBeenCalledWith('alice@example.com');
 
       // Assert: Should delete the invitation
       expect(deleteInvitationToken).toHaveBeenCalledWith('alice@example.com');
@@ -559,7 +567,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
-      vi.mocked(getValidInvitation).mockResolvedValue({
+      mockPending({
         email: 'user+test@example.com',
         metadata: {
           name: 'Test User',
@@ -581,7 +589,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
 
       // Assert: Should decode email correctly
       expect(response.status).toBe(200);
-      expect(getValidInvitation).toHaveBeenCalledWith('user+test@example.com');
+      expect(pendingInvitationsFor).toHaveBeenCalledWith('user+test@example.com');
       expect(deleteInvitationToken).toHaveBeenCalledWith('user+test@example.com');
       expect(body.data.message).toContain('user+test@example.com');
     });
@@ -607,7 +615,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(deleteInvitationsInOrg).toHaveBeenCalledWith('alice@example.com', 'org-a');
       // The delete-all path is not taken
       expect(deleteInvitationToken).not.toHaveBeenCalled();
-      expect(getValidInvitation).not.toHaveBeenCalled();
+      expect(pendingInvitationsFor).not.toHaveBeenCalled();
 
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
       expect(mockLogger.info).toHaveBeenCalledWith(
@@ -679,7 +687,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
 
     it('should still delete every invitation for the address when orgId is absent', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(getValidInvitation).mockResolvedValue({
+      mockPending({
         email: 'alice@example.com',
         metadata: {
           name: 'Alice',
@@ -715,7 +723,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(response.status).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(pendingInvitationsFor).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
@@ -735,7 +743,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
       expect(body.error.message).toBe('Admin access required');
-      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(pendingInvitationsFor).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
@@ -754,29 +762,40 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
 
       expect(response.status).toBe(400);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(pendingInvitationsFor).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('lowercases the address, as invitations are stored', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null);
 
       const response = await DELETE(createMockRequest(), createRouteContext('Alice@Example.com'));
 
       expect(response.status).toBe(404);
-      expect(getValidInvitation).toHaveBeenCalledWith('alice@example.com');
+      expect(pendingInvitationsFor).toHaveBeenCalledWith('alice@example.com');
     });
   });
 
   describe('error cases', () => {
+    it('deletes when the only live invitation has unreadable metadata (code review, t-1006)', async () => {
+      // The newest-row test answered 404 here and deleted nothing.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(pendingInvitationsFor).mockResolvedValue({ readable: [], unreadable: 1 });
+
+      const response = await DELETE(createMockRequest(), createRouteContext('alice@example.com'));
+
+      expect(response.status).toBe(200);
+      expect(deleteInvitationToken).toHaveBeenCalledWith('alice@example.com');
+    });
+
     it('should return 404 when invitation not found', async () => {
       // Arrange
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
       // Mock invitation not found
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      mockPending(null);
 
       // Act
       const request = createMockRequest();
@@ -799,8 +818,8 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
-      // Mock expired invitation (getValidInvitation returns null for expired)
-      vi.mocked(getValidInvitation).mockResolvedValue(null);
+      // Mock expired invitation (pendingInvitationsFor reads unexpired rows only)
+      mockPending(null);
 
       // Act
       const request = createMockRequest();
@@ -819,7 +838,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
-      vi.mocked(getValidInvitation).mockResolvedValue({
+      mockPending({
         email: 'alice@example.com',
         metadata: {
           name: 'Alice',
@@ -856,7 +875,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
 
       const specialEmail = 'user.name+tag@sub-domain.co.uk';
-      vi.mocked(getValidInvitation).mockResolvedValue({
+      mockPending({
         email: specialEmail,
         metadata: {
           name: 'Test User',
@@ -878,7 +897,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      expect(getValidInvitation).toHaveBeenCalledWith(specialEmail);
+      expect(pendingInvitationsFor).toHaveBeenCalledWith(specialEmail);
       expect(deleteInvitationToken).toHaveBeenCalledWith(specialEmail);
     });
   });

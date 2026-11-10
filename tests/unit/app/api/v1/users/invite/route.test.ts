@@ -76,6 +76,7 @@ import {
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
+import { sendEmail } from '@/lib/email/send';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -168,6 +169,36 @@ describe('POST /api/v1/users/invite — org axis', () => {
     expect(writtenMetadata()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
     expect(prisma.org.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: OTHER_ORG } })
+    );
+  });
+
+  it('names the org in the email, as the org route does (code review, t-1006)', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+      id: OTHER_ORG,
+      status: 'ACTIVE',
+      name: 'Acme',
+    } as never);
+
+    await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: "You've been invited to join Acme" })
+    );
+  });
+
+  it('names the app, not the org, for an invitation into the install org', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+      id: 'install',
+      status: 'ACTIVE',
+      name: 'Default organisation',
+    } as never);
+
+    await POST(request({ ...invitee, orgId: 'install' }));
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.not.stringContaining('Default organisation'),
+      })
     );
   });
 
@@ -605,11 +636,49 @@ describe('POST /api/v1/users/invite — platform role floor', () => {
   it('still lets that caller re-send a pending default-role invitation', async () => {
     registerWideningPolicy();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
-    mockPending(pendingInvitation('USER'));
+    // Pending in the org it re-sends: one invitation per (email, org) (#1199).
+    const row = pendingInvitation('USER');
+    mockPending({ ...row, metadata: { ...row.metadata, orgId: OTHER_ORG } });
 
     const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
 
     expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an org invitation beside a pending platform invitation (code review, t-1006)', async () => {
+    // The mirror of the org route: accepting the org one first would strand
+    // the platform one.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    mockPending(pendingInvitation('USER')); // install org: a platform invitation
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(409);
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('refuses a resend that turns an org invitation into a platform one beside another org’s', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const base = pendingInvitation('USER');
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [
+        { ...base, id: 'row-x', metadata: { ...base.metadata, orgId: OTHER_ORG } },
+        {
+          ...base,
+          id: 'row-y',
+          metadata: { ...base.metadata, orgId: 'cmorg00000000000000000orgy' },
+        },
+      ],
+      unreadable: 0,
+    });
+
+    const res = await POST(
+      request({ ...invitee, role: 'ADMIN', orgId: OTHER_ORG }, '?resend=true')
+    );
+
+    expect(res.status).toBe(409);
+    expect(updateInvitationToken).not.toHaveBeenCalled();
   });
 
   it('lets a platform admin set the ADMIN role', async () => {

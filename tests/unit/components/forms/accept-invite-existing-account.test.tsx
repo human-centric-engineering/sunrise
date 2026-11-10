@@ -70,6 +70,14 @@ describe('AcceptInviteExistingAccount', () => {
     expect(screen.getByRole('button', { name: /sign in to accept/i })).toBeInTheDocument();
   });
 
+  it('signed in as the invited but unverified account: no Join, says to verify (code review, t-1006)', () => {
+    signedInAs('pat@example.com');
+    render(<AcceptInviteExistingAccount {...props} accountVerified={false} />);
+
+    expect(screen.queryByRole('button', { name: /join acme/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/accepting needs a\s+verified address/i)).toBeInTheDocument();
+  });
+
   it('signed in as someone else: names both addresses and offers sign-out, not accept', async () => {
     signedInAs('other@example.com');
     const user = userEvent.setup();

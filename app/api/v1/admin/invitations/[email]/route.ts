@@ -19,7 +19,7 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import {
   deleteInvitationToken,
   deleteInvitationsInOrg,
-  getValidInvitation,
+  pendingInvitationsFor,
 } from '@/lib/utils/invitation-token';
 import { z } from 'zod';
 import { getRouteLogger } from '@/lib/api/context';
@@ -87,8 +87,10 @@ export const DELETE = withAdminAuth<{ email: string }>(async (request, session, 
   }
 
   // Check if invitation exists
-  const invitation = await getValidInvitation(decodedEmail);
-  if (!invitation) {
+  // Any unexpired invitation for the address, in any org (#1199): the newest
+  // row alone is no test once an address holds one per org.
+  const pending = await pendingInvitationsFor(decodedEmail);
+  if (pending.readable.length === 0 && pending.unreadable === 0) {
     throw new NotFoundError('Invitation not found or already expired');
   }
 

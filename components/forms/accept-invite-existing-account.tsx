@@ -158,7 +158,15 @@ export function AcceptInviteExistingAccount({
         </>
       )}
 
-      {isInvitedAccount && (
+      {isInvitedAccount && !accountVerified && (
+        <p className="text-muted-foreground text-sm">
+          Your account&apos;s email address has not been verified yet, and accepting needs a
+          verified address. Use the verification email (sign out and sign in again to have one
+          sent), then open this invitation link again.
+        </p>
+      )}
+
+      {isInvitedAccount && accountVerified && (
         <>
           <SaveError failure={save.failure} />
           <Button className="w-full" onClick={() => void accept()} disabled={isAccepting}>
