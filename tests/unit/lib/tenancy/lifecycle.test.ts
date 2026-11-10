@@ -866,7 +866,8 @@ describe('checkInvitationInto (§111 t-813)', () => {
   ])('lets %s invite an OWNER into an active org', async (_label, actor) => {
     db.org.findUnique.mockResolvedValue(orgRow());
 
-    await expect(checkInvitationInto(ORG, ORG_OWNER_ROLE, actor)).resolves.toBeUndefined();
+    // Answers the org it checked, so the route can name it in the email (#1199).
+    await expect(checkInvitationInto(ORG, ORG_OWNER_ROLE, actor)).resolves.toEqual(orgRow());
 
     expect(db.org.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: ORG } }));
   });
@@ -909,7 +910,10 @@ describe('checkInvitationInto (§111 t-813)', () => {
     'lets an org ADMIN invite role %s into an active org',
     async (role) => {
       db.org.findUnique.mockResolvedValue(orgRow());
-      await expect(checkInvitationInto(ORG, role, AS_ADMIN)).resolves.toBeUndefined();
+      await expect(checkInvitationInto(ORG, role, AS_ADMIN)).resolves.toMatchObject({
+        id: ORG,
+        status: 'ACTIVE',
+      });
     }
   );
 });
