@@ -107,7 +107,7 @@ Admin-guarded (`withAdminAuth`) and rate-limited via `adminLimiter`. Returns a p
 | `support`        | `only` \| `none` | —       | Rows with `supportOrgId` set, or rows without. Anything else is a 400.               |
 | `supportGrantId` | cuid             | —       | One grant's rows.                                                                    |
 
-Response data rows include `user: { id, name, email }`, `supportOrgId`, and `supportGrant: { id, level, org: { id, name } } | null`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
+Response data rows include `user: { id, name, email }`, `actingOrgId`, `supportOrgId`, and `supportGrant: { id, level, org: { id, name } } | null`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
 
 ## Support rows
 
@@ -122,7 +122,8 @@ did support change while they were in?":
 | `supportOrgId`   | The org the action was made in (no FK) | Kept, so the row still reads as support |
 
 Both are null on every other row. `userId` is still the individual, never the
-org's own user.
+org's own user. Every row made in an org, support or not, also names it in
+`actingOrgId` ([below](#the-org-a-row-was-made-in)).
 
 - **Stamped by the logger, not the caller.** `logAdminAction()` reads the
   tenant context when it is called and stamps the row when the context's
@@ -144,6 +145,43 @@ org's own user.
 - **The org's view.** The org reads its own rows on its Support access page,
   through `GET /api/v1/orgs/[id]/support-grants/activity`. That read requires
   the grant to be the org's, so naming another org's grant returns nothing.
+
+## The org a row was made in
+
+`actingOrgId` (t-1005, #1181) names the org every row was made in, so an org
+can be shown its own admin history. Nullable and indexed with `createdAt`, no
+FK.
+
+- **Stamped by the logger.** `logAdminAction()` reads it from the tenant
+  context when it is called, as it reads the support stamp: the support org
+  when there is a support stamp, otherwise the context's org. So the switch
+  route's `support.enter` names the org entered, not the support person's own,
+  and belongs to the entered org's history. A system-scope write names none,
+  and so do the direct writers (erasure). At `TENANCY_MODE=single` every row
+  names the install org and nothing else about it changes.
+- **Not `orgId`, on purpose.** A scalar named `orgId` makes a model
+  tenant-owned (`lib/tenancy/classification.ts`): row isolation, write
+  injection, and the enable script's backfill. That would confine this page,
+  the vendor's view of every org, to one org. The model stays a system model.
+- **One reader per org.** `listOrgAuditLog(orgId)`
+  (`lib/orchestration/audit/org-audit-log.ts`) is the only per-org read, and
+  its `actingOrgId` filter is what bounds it, because row isolation does not.
+  It serves `GET /api/v1/orgs/[id]/audit-log`
+  ([org endpoints](../api/org-endpoints.md#the-orgs-admin-history)): the org's
+  OWNER/ADMIN acting in it, or a platform admin, browser session only. A fork
+  showing an org its history reads through it, not through its own
+  `runAsSystem` query.
+- **What the org gets.** Action, entity, when, the actor's id and name, the
+  `changes` diff (secrets redacted at write) and `metadata`, and `support`
+  (`{ grantId }` on a support row). It does not get the IP address or the
+  actor's email: those are the person's, and the vendor's log keeps them.
+- **When the org is erased** the rows stay and keep naming it, as
+  `supportOrgId` does: no FK, and `eraseOrg` writes nothing here. The org is
+  not a data subject. A person on those rows is erased through `eraseUser()`,
+  which nulls `userId`.
+- **Rows written before this column** name no org and are not in any org's
+  history. Nothing backfills them: an old row cannot reliably say which org it
+  was made in.
 
 ## Logger library
 
@@ -170,6 +208,7 @@ interface AdminAuditEntry {
   metadata?: Record<string, unknown> | null;
   clientIp?: string | null;
   support?: { grantId: string; orgId: string }; // leave out: read from the tenant context
+  // (no actingOrgId field: the logger reads it from the tenant context)
 }
 ```
 

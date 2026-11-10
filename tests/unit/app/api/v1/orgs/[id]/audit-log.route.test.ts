@@ -257,22 +257,22 @@ describe('GET — an org’s own admin history', () => {
     expect(json.meta).toEqual(expect.objectContaining({ total: 3, page: 2, limit: 2 }));
   });
 
-  it('refuses a non-admin API key minted by an org owner', async () => {
+  it('refuses an admin-scoped API key, which the policy alone would admit', async () => {
     mockDb.aiApiKey.findFirst.mockResolvedValue({
       id: 'cmkey000000000000000key1',
       userId: USER_ID,
-      scopes: ['chat'],
+      scopes: ['admin'],
       rateLimitRpm: null,
       expiresAt: null,
       createdAt: new Date(),
-      orgId: ORG_A,
+      orgId: null,
       user: {
         id: USER_ID,
         name: 'Key Owner',
         email: 'owner@example.com',
         emailVerified: true,
         image: null,
-        role: 'USER',
+        role: PLATFORM_ADMIN_ROLE,
         accountType: 'HUMAN',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -286,6 +286,10 @@ describe('GET — an org’s own admin history', () => {
 
     expect(res.status).toBe(403);
     expect(mockDb.aiAdminAuditLog.findMany).not.toHaveBeenCalled();
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      'Rejected API-key attempt to read an org audit log',
+      expect.anything()
+    );
   });
 });
 

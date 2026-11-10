@@ -16,6 +16,21 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **An org can be shown its own admin history (t-1005, #1181).**
+  `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed, naming the org
+  each row was made in. `logAdminAction()` stamps it from the tenant context
+  on every row made inside an org, support or not. The new
+  `GET /api/v1/orgs/[id]/audit-log` and its reader `listOrgAuditLog()`
+  (`lib/orchestration/audit/org-audit-log.ts`) return that org's rows to its
+  OWNER/ADMIN or a platform admin, browser session only, without the IP. The
+  model stays a system model: the column is deliberately not `orgId`, which
+  would put it under row isolation. Read an org's history through
+  `listOrgAuditLog()`, not a `runAsSystem` query of your own. Erasing an org
+  keeps the column (no FK). Rows written before the migration name no org.
+  The support stamp (`supportGrantId`, `supportOrgId`) is unchanged.
+
 ### Fixed
 
 - **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`

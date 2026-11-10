@@ -117,6 +117,14 @@ than an omission:
   sign-in. Deleting the account is `eraseUser()`, on their own request or an
   admin's, with a receipt.
 
+**The admin audit rows made in the org stay, still naming it** (t-1005).
+`AiAdminAuditLog.actingOrgId` has no FK, like `supportOrgId`, so the org delete
+neither removes them nor nulls the column, and `eraseOrg` writes nothing to
+them. The log is the vendor's (a system model), not the org's data. The people
+on those rows are erased through `eraseUser()`, which nulls `userId`.
+`erase-org.test.ts` asserts both halves: no write, and no relation on the
+column.
+
 **The install org is refused** (ruling b). It is the one row that always
 exists; `eraseOrg` throws `INSTALL_ORG_IMMUTABLE` before opening a
 transaction, and the endpoint answers 400 with that code.

@@ -10,9 +10,15 @@
  * or a platform admin (the policy's org arm, `resolveOrgResource`). The rows
  * are system-model rows, so the read itself is bounded to this org
  * (`listOrgAuditLog`), not row isolation.
+ *
+ * A browser session only, as on the member list and support activity beside
+ * it: every row names a person and what they did.
  */
 
 import { withAuth } from '@/lib/auth/guards';
+import { isApiKeySession } from '@/lib/auth/api-keys';
+import { ForbiddenError } from '@/lib/api/errors';
+import { getRouteLogger } from '@/lib/api/context';
 import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams } from '@/lib/api/validation';
 import { listOrgAuditLogQuerySchema, orgIdParamSchema } from '@/lib/validations/tenancy';
@@ -20,7 +26,13 @@ import { resolveOrgResource } from '@/lib/tenancy/lifecycle';
 import { listOrgAuditLog } from '@/lib/orchestration/audit/org-audit-log';
 
 export const GET = withAuth<{ id: string }>(
-  async (request, _session, { params }) => {
+  async (request, session, { params }) => {
+    if (isApiKeySession(session)) {
+      const log = await getRouteLogger(request);
+      log.warn('Rejected API-key attempt to read an org audit log', { userId: session.user.id });
+      throw new ForbiddenError('Reading the audit log requires a browser session');
+    }
+
     const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
     const { page, limit } = validateQueryParams(
       new URL(request.url).searchParams,
