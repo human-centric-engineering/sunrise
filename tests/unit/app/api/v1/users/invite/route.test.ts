@@ -844,6 +844,43 @@ describe('POST /api/v1/users/invite — an address that already has an account (
     expect(updateInvitationToken).not.toHaveBeenCalled();
   });
 
+  describe('the org and the policy are checked before anything about the address', () => {
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    it('a caller the policy refuses for the org gets 403, not whether they are a member', async () => {
+      accountExists(true);
+      const canAdminister = vi.fn(async () => false);
+      registerAuthorizationPolicy({ ...DEFAULT_AUTHORIZATION_POLICY, canAdminister });
+      // Let the guard's own canAdminister(principal, null) pass.
+      canAdminister.mockImplementationOnce(async () => true);
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).not.toBe('ALREADY_MEMBER');
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('a member of a suspended org gets the same 400 as anyone else', async () => {
+      accountExists(true);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({
+        id: OTHER_ORG,
+        status: 'SUSPENDED',
+        name: 'Other Org',
+      } as never);
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(400);
+      expect(JSON.parse(await res.text()).error.message).toBe(
+        'Cannot invite into that organisation'
+      );
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a platform invitation to an existing account is still refused', () => {
     it('an install-org invitation (no org named)', async () => {
       accountExists();

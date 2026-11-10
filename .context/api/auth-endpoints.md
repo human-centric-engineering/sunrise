@@ -318,12 +318,12 @@ and is refused with `409 EMAIL_TAKEN`.
 
 1. Find the pending invitation in the named org, and resolve the target org —
    the body's, else the pending invitation's
-2. If the address has an account: a platform invitation is a 409
+2. Check the org exists, is active, and the policy allows this caller to
+   invite into it — before anything answers about the address
+3. If the address has an account: a platform invitation is a 409
    `EMAIL_TAKEN`, a member of the target org a 409 `ALREADY_MEMBER`; an org
-   invitation goes on, its email asking them to sign in
-3. Check if invitation already sent (return existing if valid, unless
-   resending), then check the org exists, is active, and the policy allows
-   this caller to invite into it
+   invitation goes on, its email asking them to sign in. Then check if an
+   invitation was already sent (return existing if valid, unless resending)
 4. Generate secure token (SHA-256 hashed)
 5. Store invitation in `Verification` table with metadata
 6. Send invitation email

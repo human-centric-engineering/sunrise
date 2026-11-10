@@ -35,17 +35,18 @@
  * 4. Parse resend query parameter
  * 5. Find the pending invitation in the target org, and resolve that org
  *    (§106): the body's, else on a resend the pending invitation's
- * 6. If the address already has an account: a platform invitation (a
+ * 6. Check the org: it must exist and be active, and the policy must let
+ *    this caller administer it (`canAdminister` on an org resource — the
+ *    seam §106 t-671 makes org-aware; today it answers as the admin guard
+ *    did). Asked before anything answers about the address.
+ * 6b. If the address already has an account: a platform invitation (a
  *    platform role, or the install org) is a 409 EMAIL_TAKEN; someone
  *    already in the target org is a 409 ALREADY_MEMBER; an org invitation
  *    goes on, and its email asks them to sign in (t-1008)
- * 6b. Check if invitation already exists:
+ * 6c. Check if invitation already exists:
  *    - If exists and resend=false: Return 200 with 'pending' status (NO link)
  *    - If exists and resend=true: Delete old, create new token, send email
  *    - If not exists: Create new invitation
- *    The org must exist and be active, and the policy must let this
- *    caller administer it (`canAdminister` on an org resource — the seam
- *    §106 t-671 makes org-aware; today it answers as the admin guard did)
  * 7. Generate/regenerate invitation token
  * 8. Send invitation email
  * 9. Return invitation details (NOT user object)
@@ -178,21 +179,68 @@ export const POST = withAdminAuth(async (request, session) => {
     orgId: target.orgId,
   });
 
-  // 6a. An address that already has an account (#1199, t-1008). A platform
+  // 6a. The org is in the body (or the pending row), so this cannot be a
+  // `resource` resolver on the guard (a resolver runs before the body is
+  // read); the same question is asked here instead, of the same policy.
+  // Under Sunrise's default policy `canAdminister` answers for an org
+  // resource exactly as it did for the guard's `null` — platform admins (and
+  // admin-scoped keys) only — so nothing widens today; t-671 is what teaches
+  // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
+  // pending org must still exist, be active, and be one this caller may
+  // invite into. Asked before anything below answers about the address, so
+  // a caller refused here learns nothing about its account or memberships.
+  // The org the email names (#1199): an invitation into an org reads "join
+  // <org>" from either route that writes it. The install org's names the app.
+  let orgName: string | undefined;
+  if (target.orgId) {
+    const org = await prisma.org.findUnique({
+      where: { id: target.orgId },
+      select: { id: true, status: true, name: true },
+    });
+
+    if (!org || org.status !== 'ACTIVE') {
+      // One answer for "no such org" and "suspended": an inviter who may
+      // administer the org can see its status elsewhere; nobody else should
+      // learn it from this endpoint.
+      return errorResponse('Cannot invite into that organisation', {
+        code: ErrorCodes.VALIDATION_ERROR,
+        status: 400,
+      });
+    }
+
+    if (!intoInstall) orgName = org.name;
+
+    const mayInvite = await canAdminister(session.principal, {
+      kind: 'org',
+      id: org.id,
+      orgId: org.id,
+    });
+    if (!mayInvite) {
+      log.warn('Invitation into org refused by the authorization policy', {
+        adminId: session.user.id,
+        orgId: org.id,
+      });
+      throw new ForbiddenError('You cannot invite users into that organisation');
+    }
+  }
+
+  // 6b. An address that already has an account (#1199, t-1008). A platform
   // invitation (a platform role, or the install org) creates the account, so
   // an existing one cannot redeem it: refused, as it always was. An
   // invitation into another org at the default role is what the org route
   // sends to an existing account, and it is sent here the same way: the email
   // asks them to sign in and accept, and the answer below does not depend on
   // whether the account exists. Someone already in that org is refused as the
-  // org route refuses them; a platform admin can read every roster anyway.
+  // org route refuses them, once the caller is known to administer it (6a).
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
     select: {
       id: true,
-      orgMemberships: target.orgId
-        ? { where: { orgId: target.orgId }, select: { id: true } }
-        : { take: 0, select: { id: true } },
+      // A platform invitation is refused on the account alone, and only an
+      // org invitation has a target org to look in.
+      ...(writesPlatform || !target.orgId
+        ? {}
+        : { orgMemberships: { where: { orgId: target.orgId }, select: { id: true } } }),
     },
   });
 
@@ -202,7 +250,7 @@ export const POST = withAdminAuth(async (request, session) => {
       status: 409,
     });
   }
-  if (existingUser && existingUser.orgMemberships.length > 0) {
+  if (existingUser && (existingUser.orgMemberships?.length ?? 0) > 0) {
     throw new OrgLifecycleError('ALREADY_MEMBER', 'That person is already a member');
   }
 
@@ -280,50 +328,6 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // The org is in the body (or the pending row), so this cannot be a
-  // `resource` resolver on the guard (a resolver runs before the body is
-  // read); the same question is asked here instead, of the same policy.
-  // Under Sunrise's default policy `canAdminister` answers for an org
-  // resource exactly as it did for the guard's `null` — platform admins (and
-  // admin-scoped keys) only — so nothing widens today; t-671 is what teaches
-  // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
-  // pending org must still exist, be active, and be one this caller may
-  // invite into.
-  // The org the email names (#1199): an invitation into an org reads "join
-  // <org>" from either route that writes it. The install org's names the app.
-  let orgName: string | undefined;
-  if (target.orgId) {
-    const org = await prisma.org.findUnique({
-      where: { id: target.orgId },
-      select: { id: true, status: true, name: true },
-    });
-
-    if (!org || org.status !== 'ACTIVE') {
-      // One answer for "no such org" and "suspended": an inviter who may
-      // administer the org can see its status elsewhere; nobody else should
-      // learn it from this endpoint.
-      return errorResponse('Cannot invite into that organisation', {
-        code: ErrorCodes.VALIDATION_ERROR,
-        status: 400,
-      });
-    }
-
-    if (!intoInstall) orgName = org.name;
-
-    const mayInvite = await canAdminister(session.principal, {
-      kind: 'org',
-      id: org.id,
-      orgId: org.id,
-    });
-    if (!mayInvite) {
-      log.warn('Invitation into org refused by the authorization policy', {
-        adminId: session.user.id,
-        orgId: org.id,
-      });
-      throw new ForbiddenError('You cannot invite users into that organisation');
-    }
-  }
-
   // 7. Generate or regenerate invitation token
   const invitationMetadata = {
     name: body.name,
@@ -346,7 +350,7 @@ export const POST = withAdminAuth(async (request, session) => {
     isResend: !!existingInvitation,
     inviterName: session.user.name || 'Administrator',
     ...(orgName !== undefined ? { orgName } : {}),
-    // Only an org invitation reaches here with an account (6a). The answer
+    // Only an org invitation reaches here with an account (6b). The answer
     // below is the same either way; only the email differs.
     hasAccount: !!existingUser,
     log,
