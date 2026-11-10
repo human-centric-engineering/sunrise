@@ -96,6 +96,64 @@ describe('AcceptInviteExistingAccount', () => {
     });
   });
 
+  it('shows a loading state while the session is being read, and no action', () => {
+    mockUseSession.mockReturnValue({ data: null, isPending: true });
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    expect(screen.getByText(/checking your sign-in/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('wrong account: signing out returns to this invitation', async () => {
+    signedInAs('other@example.com');
+    const location = { href: '' };
+    vi.stubGlobal('location', location);
+    mockSignOut.mockImplementation(
+      ({ fetchOptions }: { fetchOptions: { onSuccess: () => void } }) => {
+        fetchOptions.onSuccess();
+        return Promise.resolve();
+      }
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+
+    expect(location.href).toBe(returnTo);
+    vi.unstubAllGlobals();
+  });
+
+  it('wrong account: a failed sign-out lets them try again', async () => {
+    signedInAs('other@example.com');
+    mockSignOut.mockImplementation(
+      ({ fetchOptions }: { fetchOptions: { onError: () => void } }) => {
+        fetchOptions.onError();
+        return Promise.resolve();
+      }
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+
+    expect(screen.getByRole('button', { name: /^sign out$/i })).toBeEnabled();
+  });
+
+  it('a failed switch after accepting still reports the invitation accepted', async () => {
+    signedInAs('pat@example.com');
+    vi.mocked(apiClient.post).mockImplementation((url: string) =>
+      url === API.INVITATIONS.ACCEPT
+        ? Promise.resolve({ membership: { orgId: 'org-a', role: 'MEMBER' } })
+        : Promise.reject(new Error('switch failed'))
+    );
+    const user = userEvent.setup();
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /join acme/i }));
+
+    expect(await screen.findByText(/you have joined acme/i)).toBeInTheDocument();
+  });
+
   it('shows the server’s refusal beside the button', async () => {
     signedInAs('pat@example.com');
     vi.mocked(apiClient.post).mockRejectedValue(
