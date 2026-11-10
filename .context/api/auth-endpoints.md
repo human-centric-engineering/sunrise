@@ -341,6 +341,7 @@ GET /api/v1/invitations/metadata?token={token}&email={email}
     "role": "USER",
     "orgName": "Acme",
     "accountExists": false,
+    "accountVerified": false,
     "newAccountOnly": false
   }
 }
@@ -353,7 +354,9 @@ password here; `true`, sign in and accept through
 [org endpoints](./org-endpoints.md#accept-or-decline-an-invitation)).
 `newAccountOnly` marks a platform invitation (a platform role, or the install
 org), which only creates an account; with `accountExists` the page says it
-cannot be used. The `email` is trimmed and lowercased, as stored.
+cannot be used. `accountVerified` is whether that account's address is
+verified; accepting needs it, so an unverified one is told to verify on sign-in
+first. The `email` is trimmed and lowercased, as stored.
 
 **Error Responses**:
 
