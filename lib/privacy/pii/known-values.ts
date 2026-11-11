@@ -24,7 +24,7 @@ import {
   type KnownValue,
   type PrivacyDetector,
 } from '@/lib/privacy/adapters/types';
-import { COMMON_WORDS, ORG_SUFFIXES } from '@/lib/privacy/pii/lexicon';
+import { COMMON_WORDS, isFirstName, ORG_SUFFIXES } from '@/lib/privacy/pii/lexicon';
 import { phoneCandidates, toE164 } from '@/lib/privacy/pii/phones';
 import { allMatches, escapeRegExp, span } from '@/lib/privacy/pii/text';
 
@@ -84,6 +84,14 @@ function personVariants(value: string): Variant[] {
       confidence: VARIANT_CONFIDENCE,
     },
     {
+      // "Zhang Wei" for "Wei Zhang": surname first, as many names are written.
+      pattern: new RegExp(
+        `(?<![\\p{L}\\p{N}])${surname}\\s+${escapeRegExp(first)}(?![\\p{L}\\p{N}])`,
+        'giu'
+      ),
+      confidence: VARIANT_CONFIDENCE,
+    },
+    {
       // "Hart, James"
       pattern: new RegExp(
         `(?<![\\p{L}\\p{N}])${surname},\\s*${escapeRegExp(first)}(?![\\p{L}\\p{N}])`,
@@ -95,7 +103,11 @@ function personVariants(value: string): Variant[] {
   return out;
 }
 
-/** A company with and without its legal suffix ("Halden Logistics Ltd" → "Halden Logistics"). */
+/**
+ * A company with and without its legal suffix, and by its first word
+ * ("Halden Logistics Ltd" → "Halden Logistics", "Halden"). The first word is
+ * matched capitalised only, and not when it is a common word or a first name.
+ */
 function orgVariants(value: string): Variant[] {
   const out: Variant[] = [{ pattern: wordPattern(value), confidence: KNOWN_VALUE_CONFIDENCE }];
   const parts = value
@@ -103,11 +115,20 @@ function orgVariants(value: string): Variant[] {
     .replace(/[.,]+$/, '')
     .split(/\s+/);
   const lastPart = parts[parts.length - 1].replace(/\./g, '').toLowerCase();
-  if (parts.length > 1 && ORG_SUFFIXES.has(lastPart)) {
-    const base = parts.slice(0, -1).join(' ');
-    if (base.length >= MIN_LENGTH) {
-      out.push({ pattern: wordPattern(base), confidence: VARIANT_CONFIDENCE });
-    }
+  const hasSuffix = parts.length > 1 && ORG_SUFFIXES.has(lastPart);
+  const nameParts = hasSuffix ? parts.slice(0, -1) : parts;
+  if (hasSuffix && nameParts.join(' ').length >= MIN_LENGTH) {
+    out.push({ pattern: wordPattern(nameParts.join(' ')), confidence: VARIANT_CONFIDENCE });
+  }
+  const head = nameParts[0];
+  const headLower = head.toLowerCase();
+  if (
+    nameParts.length > 1 &&
+    head.length >= 4 &&
+    !COMMON_WORDS.has(headLower) &&
+    !isFirstName(headLower)
+  ) {
+    out.push({ pattern: wordPattern(head, true), confidence: VARIANT_CONFIDENCE });
   }
   return out;
 }
@@ -162,9 +183,10 @@ export function knownValuesDetector(): PrivacyDetector {
     id: KNOWN_VALUES_DETECTOR_ID,
     egress: 'in_process',
     entityTypes: CORE_ENTITY_TYPES,
-    detect: ({ text }, ctx) => {
-      ctx.signal.throwIfAborted();
-      return Promise.resolve(findKnownValueSpans(text, ctx.knownValues));
-    },
+    detect: ({ text }, ctx) =>
+      Promise.resolve().then(() => {
+        ctx.signal.throwIfAborted();
+        return findKnownValueSpans(text, ctx.knownValues);
+      }),
   };
 }

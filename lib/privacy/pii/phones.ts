@@ -23,8 +23,11 @@ export interface PhoneCandidate {
   valid: boolean;
 }
 
-/** A run of digits, spaces, brackets and dashes, optionally after a `+`. */
-const PHONE_SHAPED = /(?<![\d+])\+?\d[\d ()-]{7,18}\d(?!\d)/g;
+/**
+ * A run of digits, spaces, brackets and dashes, optionally after a `+` or an
+ * opening bracket ("(07700) 900184").
+ */
+const PHONE_SHAPED = /(?<![\d+(])(?:\+|\()?\d[\d ()-]{7,18}\d(?!\d)/g;
 
 /** Every phone number in `text`, valid ones first. */
 export function phoneCandidates(text: string): PhoneCandidate[] {

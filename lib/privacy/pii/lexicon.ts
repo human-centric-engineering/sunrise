@@ -20,6 +20,27 @@ export const FIRST_NAMES: ReadonlySet<string> = new Set(firstNameData.names);
 export const SURNAMES: ReadonlySet<string> = new Set(surnameData.names);
 
 /**
+ * Whether a lower-case word is in a name list. The Census lists drop
+ * apostrophes ("OBRIEN"), so a name is also tried without them; a
+ * double-barrelled name ("smith-jones") counts when each part does.
+ */
+function inList(list: ReadonlySet<string>, lower: string): boolean {
+  if (list.has(lower)) return true;
+  const bare = lower.replace(/['’]/g, '');
+  if (bare !== lower && list.has(bare)) return true;
+  const parts = bare.split('-');
+  return parts.length > 1 && parts.every((p) => p !== '' && list.has(p));
+}
+
+export function isFirstName(lower: string): boolean {
+  return inList(FIRST_NAMES, lower);
+}
+
+export function isSurname(lower: string): boolean {
+  return inList(SURNAMES, lower);
+}
+
+/**
  * Names that are also ordinary words, months or days. A token here is never
  * taken for a name on its own; it still counts as part of a full name ("Will
  * Hart") or after a title ("Mrs May").
@@ -359,7 +380,29 @@ export const COMMON_WORDS: ReadonlySet<string> = new Set([
   'van',
   'von',
   'we',
-  // Months and days
+  // Months and days, and their abbreviations
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'sept',
+  'oct',
+  'nov',
+  'dec',
+  'mon',
+  'tue',
+  'tues',
+  'wed',
+  'thu',
+  'thur',
+  'thurs',
+  'fri',
+  'sat',
+  'sun',
   'january',
   'february',
   'april',

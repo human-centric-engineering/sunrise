@@ -29,12 +29,12 @@ import type {
 import {
   ALLOWLIST,
   COMMON_WORDS,
-  FIRST_NAMES,
+  isFirstName,
+  isSurname,
   ORG_CONNECTORS,
   ORG_SUFFIXES,
   PLACES,
   STREET_SUFFIXES,
-  SURNAMES,
   TITLES,
 } from '@/lib/privacy/pii/lexicon';
 import { allMatches, escapeRegExp, overlapsAny, span } from '@/lib/privacy/pii/text';
@@ -211,10 +211,23 @@ function joined(text: string, a: Token, b: Token): boolean {
   return /^[ \t]+$/.test(text.slice(a.end, b.start));
 }
 
+/** "I've", "We'll", "Don't": capitalised, apostrophised, never a name. */
+const CONTRACTION = /['’](?:ve|ll|re|d|m|t)$/i;
+
+/**
+ * Two to four capitals ("NINO", "BG"): an acronym, not a name. One capital is
+ * an initial ("J. Hart").
+ */
+function acronym(t: Token): boolean {
+  return t.text.length >= 2 && t.text.length <= 4 && t.text === t.text.toUpperCase();
+}
+
 /** A capitalised word that could be part of a name. */
 function nameLike(t: Token): boolean {
   return (
     NAME_LIKE.test(t.text) &&
+    !CONTRACTION.test(t.text) &&
+    !acronym(t) &&
     !STREET_SUFFIXES.has(t.lower) &&
     !ORG_SUFFIXES.has(t.lower) &&
     !ALLOWLIST.has(t.lower) &&
@@ -280,7 +293,9 @@ function companies(text: string, tokens: Token[], found: Found): void {
     const nameTokens = tokens.slice(first, i);
     const base = text.slice(nameTokens[0].start, nameTokens[nameTokens.length - 1].end);
     if (ALLOWLIST.has(base.toLowerCase()) || ALLOWLIST.has(nameTokens[0].lower)) continue;
-    const end = text[suffix.end] === '.' ? suffix.end + 1 : suffix.end;
+    // "Ltd." and "Inc." are abbreviations; "LLP." is a sentence ending.
+    const abbreviated = /^(?:ltd|inc|corp|co)$/.test(suffix.lower);
+    const end = abbreviated && text[suffix.end] === '.' ? suffix.end + 1 : suffix.end;
     found.spans.push(span('ORG', nameTokens[0].start, end, LIST_CONFIDENCE.orgWithSuffix));
     if (base.length >= 3) found.orgForms.set(base, LIST_CONFIDENCE.orgShortForm);
     const head = nameTokens[0];
@@ -289,7 +304,7 @@ function companies(text: string, tokens: Token[], found: Found): void {
       head.text.length >= 4 &&
       head.capitalised &&
       !neverAlone(head.lower) &&
-      !FIRST_NAMES.has(head.lower)
+      !isFirstName(head.lower)
     ) {
       if (!found.orgForms.has(head.text)) found.orgForms.set(head.text, LIST_CONFIDENCE.orgHead);
     }
@@ -438,7 +453,7 @@ function people(text: string, tokens: Token[], found: Found): void {
     if (!nameLike(t)) continue;
 
     // A full name: a known first name and one to three more name words.
-    if (FIRST_NAMES.has(t.lower)) {
+    if (isFirstName(t.lower)) {
       const end = nameRun(text, tokens, i, 4);
       if (end - i >= 2) {
         const last = tokens[end - 1];
@@ -451,7 +466,7 @@ function people(text: string, tokens: Token[], found: Found): void {
         // A first name that is also a word ("Grace") needs a known surname, or
         // must be mid-sentence before a capitalised word that is not a word.
         const plausible =
-          SURNAMES.has(last.lower) ||
+          isSurname(last.lower) ||
           !neverAlone(t.lower) ||
           (!sentenceInitial(text, t) && !neverAlone(last.lower));
         if (!partOfSomethingElse && plausible) {
@@ -464,15 +479,15 @@ function people(text: string, tokens: Token[], found: Found): void {
 
     // A cue before it: "Dear Siobhan", "spoke to Priya".
     const before = text.slice(Math.max(0, t.start - CUE_WINDOW), t.start);
-    const isFirstName = FIRST_NAMES.has(t.lower);
+    const knownFirst = isFirstName(t.lower);
     if (!neverAlone(t.lower)) {
       const strong = STRONG_CUE.test(before);
       // A weak cue needs a first name: the surname list is full of words
       // ("from Sales", "with Rivers").
-      if (strong || (isFirstName && WEAK_CUE.test(before))) {
+      if (strong || (knownFirst && WEAK_CUE.test(before))) {
         const end = nameRun(text, tokens, i, 3);
         const confidence =
-          isFirstName || SURNAMES.has(t.lower)
+          knownFirst || isSurname(t.lower)
             ? LIST_CONFIDENCE.cuedName
             : LIST_CONFIDENCE.cuedUnknownName;
         addPerson(found, tokens, i, end, confidence);
@@ -483,15 +498,14 @@ function people(text: string, tokens: Token[], found: Found): void {
 
     // A first name alone. The weakest guess; the stoplists keep "May" and
     // "Reading" out of it.
-    if (FIRST_NAMES.has(t.lower) && t.text.length >= 3 && !neverAlone(t.lower)) {
+    if (isFirstName(t.lower) && t.text.length >= 3 && !neverAlone(t.lower)) {
       const next = tokens[i + 1];
       const nextIsSuffix =
         next !== undefined &&
         joined(text, t, next) &&
         (STREET_SUFFIXES.has(next.lower) || ORG_SUFFIXES.has(next.lower));
-      // An all-capitals short word is more likely an acronym than a name.
-      const acronym = t.text.length <= 4 && t.text === t.text.toUpperCase();
-      if (!nextIsSuffix && !acronym) {
+      // (An acronym never gets here: nameLike() turned it away.)
+      if (!nextIsSuffix) {
         found.spans.push(span('PERSON', t.start, t.end, LIST_CONFIDENCE.loneFirstName));
       }
     }
@@ -513,7 +527,7 @@ function signatures(text: string, found: Found): void {
         // "The Support Team" signs off too: a signature needs a word from a
         // name list, and nothing that cannot be part of a name.
         const isName =
-          lowers.some((p) => FIRST_NAMES.has(p) || SURNAMES.has(p)) &&
+          lowers.some((p) => isFirstName(p) || isSurname(p)) &&
           !lowers.some((p) => STARTERS.has(p) || ALLOWLIST.has(p) || p === 'team');
         if (isName) {
           found.spans.push(span('PERSON', start, start + name.length, LIST_CONFIDENCE.signature));
@@ -528,15 +542,22 @@ function signatures(text: string, found: Found): void {
   }
 }
 
-/** Mark every other occurrence of what was learned: short forms and name parts. */
+/**
+ * Mark every other occurrence of what was learned: short forms and name
+ * parts. An occurrence inside something already found (the full name it was
+ * learned from) adds nothing, so it is skipped.
+ */
 function learned(text: string, found: Found): void {
+  const existing = [...found.spans];
   const mark = (literal: string, type: EntityType, confidence: number) => {
     const pattern = new RegExp(
       `(?<![\\p{L}\\p{N}])${escapeRegExp(literal)}(?![\\p{L}\\p{N}])`,
       'gu'
     );
     for (const m of allMatches(pattern, text)) {
-      found.spans.push(span(type, m.index, m.index + m[0].length, confidence));
+      const end = m.index + m[0].length;
+      if (existing.some((e) => e.start <= m.index && end <= e.end)) continue;
+      found.spans.push(span(type, m.index, end, confidence));
     }
   };
   for (const [form, confidence] of found.orgForms) mark(form, 'ORG', confidence);
@@ -568,9 +589,10 @@ export function listsDetector(): PrivacyDetector {
     egress: 'in_process',
     entityTypes: LISTS_ENTITY_TYPES,
     languages: ['en'],
-    detect: ({ text }, ctx) => {
-      ctx.signal.throwIfAborted();
-      return Promise.resolve(findListSpans(text, ctx.priorSpans));
-    },
+    detect: ({ text }, ctx) =>
+      Promise.resolve().then(() => {
+        ctx.signal.throwIfAborted();
+        return findListSpans(text, ctx.priorSpans);
+      }),
   };
 }

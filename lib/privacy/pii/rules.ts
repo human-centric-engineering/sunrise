@@ -373,6 +373,13 @@ const PREFIXED_SECRETS: readonly RegExp[] = [
 const ASSIGNED_SECRET =
   /\b(?:password|passwd|pwd|passcode|pin|secret|api[_ -]?key|access[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|token)\s*(?:is\s*|[:=]\s*)["']?([^\s"'`,;]{6,})/gi;
 const BEARER = /\bBearer\s+([A-Za-z0-9._~+/-]{20,}=*)/g;
+/**
+ * "using the password Tr0ub4dor&3": no separator, so the value must look like
+ * a credential — a letter and a digit or symbol — or "password reset" would
+ * mask "reset".
+ */
+const UNSEPARATED_PASSWORD =
+  /\b(?:password|passwd|passcode)\s+((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[\d!@#$%^&*])[^\s"'`,;]{6,})/gi;
 
 function secrets(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
@@ -381,7 +388,7 @@ function secrets(text: string): DetectedSpan[] {
       out.push(span('SECRET', m.index, m.index + m[0].length, 1));
     }
   }
-  for (const pattern of [ASSIGNED_SECRET, BEARER]) {
+  for (const pattern of [ASSIGNED_SECRET, BEARER, UNSEPARATED_PASSWORD]) {
     for (const m of allMatches(pattern, text)) {
       // The capture is the match's tail, so its start is measured from the end.
       const start = m.index + m[0].length - m[1].length;
@@ -446,14 +453,16 @@ export function rulesDetector(): PrivacyDetector {
     id: RULES_DETECTOR_ID,
     egress: 'in_process',
     entityTypes: RULES_ENTITY_TYPES,
-    detect: ({ text }, ctx) => {
-      const out: DetectedSpan[] = [];
-      for (const recognise of RECOGNISERS) {
-        ctx.signal.throwIfAborted();
-        out.push(...recognise(text));
-      }
-      return Promise.resolve(out);
-    },
+    // Inside a promise, so an aborted signal rejects rather than throws.
+    detect: ({ text }, ctx) =>
+      Promise.resolve().then(() => {
+        const out: DetectedSpan[] = [];
+        for (const recognise of RECOGNISERS) {
+          ctx.signal.throwIfAborted();
+          out.push(...recognise(text));
+        }
+        return out;
+      }),
   };
 }
 
