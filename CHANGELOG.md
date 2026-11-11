@@ -24,8 +24,8 @@ release process.
   `privacyProtectLocalProviders`. An existing install reads `off`, so
   nothing changes until an operator turns it on in the orchestration
   settings; a new install starts in `detect`. In `detect`, every `chat`,
-  `chatStream`, `embed` and `embedMany` call through `getProvider` is
-  scanned locally and sent unchanged. Per-type counts, never values, are
+  `chatStream`, `embed` and `embedMany` call through `getProvider` to a
+  provider not marked local is scanned locally and sent unchanged. Per-type counts, never values, are
   recorded on the turn's assistant message (`metadata.privacy`) and on each
   workflow step's trace entry (`privacy`), and shown on both traces. The
   stage refuses a call with `PrivacyRefusedError` (code `privacy_refused`, a
