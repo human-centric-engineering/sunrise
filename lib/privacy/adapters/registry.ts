@@ -17,7 +17,8 @@
  * `appInitFailure`; the privacy stage then refuses EVERY call, whatever the
  * mode, because a rolled-back resolver may have been what raised it from
  * `off`. A core adapter that fails to install is reported as `coreFailure`,
- * and refuses every call whose mode is not `off`.
+ * and refuses every call for the same reason: the install stops at the
+ * first throw, so core's own policy resolvers may be among what is missing.
  *
  * @see .context/privacy/llm-privacy-layer.md — the binding spec
  */
@@ -68,11 +69,21 @@ export interface DetectorRegistrationOptions {
 /** A registered detector, as the registry holds it. Frozen. */
 export interface DetectorRegistration {
   readonly detector: PrivacyDetector;
+  /**
+   * The detector's `id`, `egress`, `jurisdiction` and `entityTypes` as they
+   * were when validated, copied and frozen. The layer reads these, never the
+   * detector object's own fields, which a getter or a later assignment could
+   * change after validation.
+   */
+  readonly id: string;
+  readonly egress: AdapterEgress;
+  readonly jurisdiction: string | undefined;
+  readonly entityTypes: readonly EntityType[];
   readonly required: boolean;
   readonly timeoutMs: number;
   readonly core: boolean;
-  /** The detector's declared entity types, copied and frozen at registration. */
-  readonly entityTypes: readonly EntityType[];
+  /** Replaces a core detector, so it runs and ranks in that detector's place. */
+  readonly replacesCore: string | undefined;
 }
 
 /** How a policy resolver is registered. */
@@ -110,7 +121,8 @@ export interface PrivacyAdapterSnapshot {
   appInitFailure: string | null;
   /**
    * Set when one of Sunrise's own adapters failed to install. The stage
-   * refuses every call whose mode is not `off`. Kept apart from
+   * refuses every call, mode `off` included: the install stops at the first
+   * throw, so core's own policy resolvers may be missing. Kept apart from
    * `appInitFailure` so neither message hides the other.
    */
   coreFailure: string | null;
@@ -190,7 +202,9 @@ const appInit = createAppInitGate<Snapshot>({
 
 function ensureLoaded(): void {
   installCoreOnce();
-  appInit.ensure();
+  // Cleared here as well as in the gate's hooks: whatever path the gate took,
+  // once ensure() has settled the init is no longer on the stack.
+  if (appInit.ensure() !== 'running') initRunning = false;
 }
 
 /** Put Sunrise's own adapters in, once, before anything else reads or registers. */
@@ -249,20 +263,29 @@ function addDetector(
   const kind = 'privacy detector';
   const id = checkId(kind, detector.id, core);
   if (detectors.has(id)) throw new Error(`${kind} ${id}: already registered`);
-  if (!isEgress(detector.egress)) {
+  // Each field is read ONCE, and the value checked is the value kept.
+  const egress: unknown = detector.egress;
+  if (!isEgress(egress)) {
     throw new Error(`${kind} ${id}: egress must be one of ${ADAPTER_EGRESS_VALUES.join(', ')}`);
   }
-  if (detector.jurisdiction !== undefined && typeof detector.jurisdiction !== 'string') {
+  const jurisdiction: unknown = detector.jurisdiction;
+  if (jurisdiction !== undefined && typeof jurisdiction !== 'string') {
     throw new Error(`${kind} ${id}: jurisdiction must be a string`);
   }
-  const types: unknown = detector.entityTypes;
-  if (!Array.isArray(types) || types.length === 0) {
+  const declared: unknown = detector.entityTypes;
+  if (!Array.isArray(declared) || declared.length === 0) {
     throw new Error(`${kind} ${id}: entityTypes must list at least one type`);
   }
-  for (const type of types) {
+  const entityTypes: EntityType[] = [];
+  for (const type of declared) {
     if (typeof type !== 'string' || !ENTITY_TYPE_PATTERN.test(type)) {
       throw new Error(`${kind} ${id}: entity type ${String(type)} is not a valid name`);
     }
+    entityTypes.push(type);
+  }
+  const required: unknown = options.required;
+  if (required !== undefined && typeof required !== 'boolean') {
+    throw new Error(`${kind} ${id}: required must be true or false`);
   }
   checkFunction(kind, id, 'detect', typeof detector.detect === 'function');
   if (detector.health !== undefined)
@@ -277,24 +300,37 @@ function addDetector(
         `${kind} ${id}: replace names ${options.replace}, which is not a registered core detector`
       );
     }
-    detectors.delete(options.replace);
-    replacedCore.set(options.replace, id);
-    // Inside the init, onSuccess logs it once the init can no longer roll back.
-    if (!initRunning) logReplacedCoreDetector(options.replace, id);
   }
 
-  detectors.set(
+  const registration: DetectorRegistration = Object.freeze({
+    detector,
     id,
-    Object.freeze({
-      detector,
-      // A replacement stands in for a core detector, and core's are required,
-      // so it is required unless the app says otherwise.
-      required: core || (options.required ?? options.replace !== undefined),
-      timeoutMs,
-      core,
-      entityTypes: Object.freeze([...detector.entityTypes]),
-    })
-  );
+    egress,
+    jurisdiction,
+    entityTypes: Object.freeze(entityTypes),
+    // A replacement stands in for a core detector, and core's are required,
+    // so it is required unless the app says otherwise.
+    required: core || (required ?? options.replace !== undefined),
+    timeoutMs,
+    core,
+    replacesCore: options.replace,
+  });
+
+  if (options.replace === undefined) {
+    detectors.set(id, registration);
+    return;
+  }
+  // In the replaced detector's place, so it runs where that one ran (its
+  // spans reach the same later detectors) and wins the same tie-breaks.
+  const entries = [...detectors];
+  detectors.clear();
+  for (const [key, value] of entries) {
+    if (key === options.replace) detectors.set(id, registration);
+    else detectors.set(key, value);
+  }
+  replacedCore.set(options.replace, id);
+  // Inside the init, onSuccess logs it once the init can no longer roll back.
+  if (!initRunning) logReplacedCoreDetector(options.replace, id);
 }
 
 function checkTimeout(kind: string, id: string, requested: number | undefined): number {
@@ -409,13 +445,13 @@ const EGRESS_ORDER: Record<AdapterEgress, number> = { in_process: 0, self_hosted
 /** Everything the privacy layer runs. Loads core and the app's init on first call. */
 export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
   ensureLoaded();
+  const ranksAsCore = (r: DetectorRegistration) => r.core || r.replacesCore !== undefined;
   const ordered = [...detectors.values()]
     .map((registration, index) => ({ registration, index }))
     .sort(
       (a, b) =>
-        EGRESS_ORDER[a.registration.detector.egress] -
-          EGRESS_ORDER[b.registration.detector.egress] ||
-        Number(b.registration.core) - Number(a.registration.core) ||
+        EGRESS_ORDER[a.registration.egress] - EGRESS_ORDER[b.registration.egress] ||
+        Number(ranksAsCore(b.registration)) - Number(ranksAsCore(a.registration)) ||
         a.index - b.index
     )
     .map(({ registration }) => registration);

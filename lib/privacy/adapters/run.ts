@@ -68,8 +68,13 @@ class AdapterTimeoutError extends Error {
  * and settle as soon as either happens — an adapter that ignores its signal
  * cannot hold the call past its timeout. A late result is discarded, and a late
  * rejection is swallowed so it never becomes an unhandled rejection.
+ *
+ * Not `withTimeout()` from `lib/utils/with-timeout.ts`, deliberately. That one
+ * keeps waiting after its cancel signal aborts, lets a synchronous throw
+ * escape, and rejects with a plain `Error` a caller could only classify by its
+ * message. Changing those would change the email sends that use it.
  */
-async function withTimeout<T>(
+async function raceAdapter<T>(
   fn: (signal: AbortSignal) => T | Promise<T>,
   timeoutMs: number,
   outer: AbortSignal | undefined
@@ -128,7 +133,7 @@ export async function runPrivacyDetectors(
   ctx: DetectionCallContext
 ): Promise<DetectionResult> {
   const { detectors } = getPrivacyAdapters();
-  const rank = new Map(detectors.map((r, i) => [r.detector.id, i]));
+  const rank = new Map(detectors.map((r, i) => [r.id, i]));
   const found: AttributedSpan[] = [];
   const failures: AdapterFailure[] = [];
   const { signal: outer, ignoredEntityTypes = [], ...rest } = ctx;
@@ -140,25 +145,25 @@ export async function runPrivacyDetectors(
   };
 
   for (const registration of detectors) {
-    const { detector, required, timeoutMs, entityTypes } = registration;
+    const { detector, id, required, timeoutMs, entityTypes } = registration;
     if (outer?.aborted) {
-      failures.push({ adapterId: detector.id, required, reason: 'aborted' });
+      failures.push({ adapterId: id, required, reason: 'aborted' });
       continue;
     }
     try {
       // The spans are frozen by validateSpans; the array is frozen here.
       const priorSpans = Object.freeze([...found]);
-      const result = await withTimeout(
+      const result = await raceAdapter(
         (signal) => detector.detect({ text }, { ...callCtx, signal, priorSpans }),
         timeoutMs,
         outer
       );
-      found.push(...validateSpans(result, text, detector.id, new Set(entityTypes)));
+      found.push(...validateSpans(result, text, id, new Set(entityTypes)));
     } catch (err) {
       const reason = classify(err, outer);
-      failures.push({ adapterId: detector.id, required, reason });
+      failures.push({ adapterId: id, required, reason });
       logger.warn('privacy-adapters: detector failed', {
-        adapterId: detector.id,
+        adapterId: id,
         required,
         reason,
         errorName: errorName(err),
@@ -205,7 +210,7 @@ export async function resolvePrivacyPolicy(
         ...policy,
         ignoredEntityTypes: Object.freeze([...policy.ignoredEntityTypes]),
       });
-      const patch: unknown = await withTimeout(
+      const patch: unknown = await raceAdapter(
         (adapterSignal) => resolver.resolve(frozenInput, current, { signal: adapterSignal }),
         timeoutMs,
         signal

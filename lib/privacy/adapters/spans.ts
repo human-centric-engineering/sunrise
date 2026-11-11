@@ -8,6 +8,7 @@
  *
  * @see .context/privacy/llm-privacy-layer.md — *Spans* and *Overlaps*
  */
+import { isRecord } from '@/lib/utils';
 import {
   ENTITY_TYPE_PATTERN,
   type AttributedSpan,
@@ -23,10 +24,6 @@ export class MalformedSpansError extends Error {
     super(`privacy detector ${adapterId} returned a malformed result: ${reason}`);
     this.name = 'MalformedSpansError';
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

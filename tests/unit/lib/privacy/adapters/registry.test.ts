@@ -260,6 +260,33 @@ describe('what readers are given', () => {
   });
 });
 
+describe('what is checked is what is kept', () => {
+  it('reads the validated id, egress and types, not the detector object it was handed', () => {
+    const live = {
+      id: 'acme.x',
+      egress: 'in_process' as AdapterEgress,
+      entityTypes: ['EMAIL'],
+      detect: () => Promise.resolve([]),
+    };
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(live);
+      registerPrivacyDetector(detector('acme.local'));
+    });
+    getPrivacyAdapters();
+
+    // Changed after validation: none of it may reach the registry's view.
+    live.id = 'core.rules';
+    live.egress = 'external';
+    live.entityTypes.push('IBAN');
+    const [first] = getPrivacyAdapters().detectors;
+
+    expect(first.id).toBe('acme.x');
+    expect(first.egress).toBe('in_process');
+    expect(first.entityTypes).toEqual(['EMAIL']);
+    expect(getPrivacyAdapters().detectors.map((r) => r.id)).toEqual(['acme.x', 'acme.local']);
+  });
+});
+
 describe('a core adapter that fails to install', () => {
   it('is reported as a failure rather than silently missing', () => {
     core.adapters.mockReturnValue({
@@ -340,6 +367,28 @@ describe('replacing a core detector', () => {
     expect(adapters.detectors.map((r) => r.detector.id)).toEqual(['core.rules', 'core.lists']);
   });
 
+  it('puts the replacement in the replaced detector\u2019s place, so it runs and ranks where that one did', () => {
+    core.adapters.mockReturnValue({
+      ...emptyCore(),
+      detectors: [
+        { detector: detector('core.a') },
+        { detector: detector('core.b') },
+        { detector: detector('core.c') },
+      ],
+    });
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.extra'));
+      registerPrivacyDetector(detector('acme.a'), { replace: 'core.a' });
+    });
+
+    expect(getPrivacyAdapters().detectors.map((r) => r.id)).toEqual([
+      'acme.a',
+      'core.b',
+      'core.c',
+      'acme.extra',
+    ]);
+  });
+
   it('refuses a replace that names another app detector', () => {
     seam.init.mockImplementation(() => {
       registerPrivacyDetector(detector('acme.first'));
@@ -396,6 +445,12 @@ describe('validation of what an app registers', () => {
           detector('acme.x', { detect: 'nope' as unknown as PrivacyDetector['detect'] })
         ),
       /detect is not a function/,
+    ],
+    [
+      'a required flag that is not a boolean',
+      () =>
+        registerPrivacyDetector(detector('acme.x'), { required: 'false' as unknown as boolean }),
+      /required must be true or false/,
     ],
     [
       'a zero timeout',

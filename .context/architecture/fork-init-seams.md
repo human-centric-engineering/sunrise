@@ -157,9 +157,10 @@ and the privacy stage refuses **every** call until the init is fixed, mode
 `off` included: a rolled-back resolver may have been the thing raising the
 mode from `off`, so nothing is known to be safe to send. Only a fork that
 filled the seam can trip this. A core adapter that fails to install is
-reported separately, as `coreFailure`, and refuses only calls whose mode is
-not `off`, so a core bug cannot take down an install that never turned the
-layer on.
+reported separately, as `coreFailure`, and refuses every call too: the
+install stops at the first throw, so core's own policy resolvers may be among
+what is missing. Core's list is fixed code, so that failure surfaces in CI
+rather than first in production.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

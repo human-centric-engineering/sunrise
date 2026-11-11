@@ -146,8 +146,9 @@ been what raised the mode from `off`. This is the opposite of the degrade-style
 seams on purpose: falling back to core alone would leave an app's required
 detector, or its stricter resolver, missing with nothing saying so. A core
 adapter that fails to install is reported separately as `coreFailure` and
-refuses every call whose mode is not `off`; keeping the two apart means neither
-message hides the other. See `fork-init-seams.md` § "The seams that do more
+refuses every call too, because the install stops at the first throw and core's
+own policy resolvers may be among what is missing. Keeping the two apart means
+neither message hides the other. See `fork-init-seams.md` § "The seams that do more
 than degrade".
 
 ### Combining
@@ -157,9 +158,9 @@ than degrade".
 - **Replace**: `registerPrivacyDetector(d, { replace: 'core.<id>' })` turns one
   core detector off. It is the only way to, so it cannot happen by accident. The
   replacement is required unless it says `required: false`, because the core
-  detector it stands in for was. A
-  `replace` naming no registered core detector throws. The admin page shows
-  replaced core detectors (`replacedCoreDetectors`).
+  detector it stands in for was, and it runs and wins tie-breaks in that
+  detector's place. A `replace` naming no registered core detector throws. The
+  admin page shows replaced core detectors (`replacedCoreDetectors`).
 - **Token strategy**: registering one displaces core's. A second app strategy
   throws.
 - **Order**: `in_process`, then `self_hosted`, then `external`; registration
@@ -265,7 +266,7 @@ the adapter ignores the signal.
 | A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                     |
 | An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                  |
 | The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                 |
-| A core adapter failed to install                            | `coreFailure`                          | Refuses every call whose mode is not `off`                              |
+| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                 |
 | A bug throws inside the stage                               | —                                      | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose  |
 | The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted        |
 
