@@ -18,7 +18,7 @@ has merged; this table says what exists.
 | Part                                                                                   | Task   | State     |
 | -------------------------------------------------------------------------------------- | ------ | --------- |
 | Adapter contracts, registry, span validation, overlaps, runner, `lib/app/` seam        | t-988  | **Built** |
-| Local detection tiers A–C, synthetic UK corpus and its precision/recall gate           | t-989  | Planned   |
+| Local detection tiers A–C, synthetic UK corpus and its precision/recall gate           | t-989  | **Built** |
 | Placeholders: stateless token strategy, mask and restore, streams, tool-call arguments | t-990  | Planned   |
 | The Proxy stage in `detect` mode, the privacy scope, global settings, per-type counts  | t-991  | Planned   |
 | `pseudonymise`, `redact` and `block`; embeddings policy; output-guard change           | t-992  | Planned   |
@@ -120,12 +120,12 @@ interfaces it exposes**: Sunrise's local implementation of each is registered
 as a default adapter through the registry an app uses. If an app cannot do
 something through an adapter, neither can core.
 
-| Slot                    | Does                                               | Many or one          | Core default (task)                        |
-| ----------------------- | -------------------------------------------------- | -------------------- | ------------------------------------------ |
-| `PrivacyDetector`       | finds spans in text                                | many; results merged | tiers A–C (t-989)                          |
-| `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)         |
-| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | settings, agent, org floor (t-991, t-1010) |
-| `PrivacyObserver`       | receives counts and ids per call                   | many                 | message and execution metadata (t-991)     |
+| Slot                    | Does                                               | Many or one          | Core default (task)                             |
+| ----------------------- | -------------------------------------------------- | -------------------- | ----------------------------------------------- |
+| `PrivacyDetector`       | finds spans in text                                | many; results merged | `core.rules`, `core.known-values`, `core.lists` |
+| `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)              |
+| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | settings, agent, org floor (t-991, t-1010)      |
+| `PrivacyObserver`       | receives counts and ids per call                   | many                 | message and execution metadata (t-991)          |
 
 Two more slots arrive with the features that use them: `SensitivityClassifier`
 (sensitive-content routing) and `MediaProcessor` (attachments). They are not
@@ -317,21 +317,134 @@ and written through `lib/tenancy/org-settings.ts`, like the provider policy and
 quotas. Every field gets a `<FieldHelp>`; the agent field goes through the core
 field registry (`lib/orchestration/agents/agent-field-registry.ts`).
 
-## Detection (t-989)
+## Detection
 
-Tiers A–C are core and add a few milliseconds per call. All are default
-detector adapters, reached only through the registry.
+Three core detectors, all `in_process` and required, registered in
+`lib/privacy/adapters/core-defaults.ts` and reached only through the registry.
+They run in this order, and each is handed what the earlier ones found.
 
-| Tier              | Finds                                                                                                                                                                      | How                                                                                                           |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| A. Rules          | NI, NHS, postcode, sort code and account, IBAN, card, UTR, VAT, passport and driving licence (with context words), email, phone, IP, secrets, date of birth (with context) | Patterns plus checksums (NHS mod-11, IBAN mod-97, Luhn, NINO prefixes); `libphonenumber-js`                   |
-| B. Known values   | the user's own details, memory values, inbound sender, the org's protected terms                                                                                           | Exact and variant matching (case, initials, first or last name alone)                                         |
-| C. Lists and cues | other people's names, street addresses, companies with legal suffixes                                                                                                      | Bundled name lists, cue phrases, street patterns, suffixes; an allowlist of public bodies and common products |
+| Id                  | Tier              | Finds                                                                                       | File                              |
+| ------------------- | ----------------- | ------------------------------------------------------------------------------------------- | --------------------------------- |
+| `core.rules`        | A. Rules          | identifiers with a fixed shape: the table below                                             | `lib/privacy/pii/rules.ts`        |
+| `core.known-values` | B. Known values   | what the stage passes in `ctx.knownValues`, and the variants people write                   | `lib/privacy/pii/known-values.ts` |
+| `core.lists`        | C. Lists and cues | other people's names, street addresses, companies with a legal suffix; English, capitalised | `lib/privacy/pii/lists.ts`        |
 
-A company found with its suffix ("Halden Logistics Ltd") teaches the call its
-short form ("Halden"). Bundled lists record their licences here when added. The
-synthetic corpus records per-type precision and recall in the repo, and a change
-that lowers recall for any type fails CI.
+An app replaces one by id: `registerPrivacyDetector(mine, { replace: 'core.lists' })`.
+
+### Tier A
+
+| Type                 | Reported when                                                                                | Confidence |
+| -------------------- | -------------------------------------------------------------------------------------------- | ---------- |
+| `EMAIL`              | address shape                                                                                | 1          |
+| `CARD_NUMBER`        | a scheme's prefix and length, and Luhn                                                       | 1          |
+| `IBAN`               | ISO 13616 mod 97, and the country's length where known                                       | 1          |
+| `NHS_NUMBER`         | mod 11, and printed 3-3-4 or with a health word before it                                    | 1          |
+| `UK_VAT`             | HMRC mod 97 / 9755; without `GB`, only with "VAT" before it                                  | 1          |
+| `UK_NINO`            | HMRC's letter rules and a suffix; without the suffix, or in lower case, only with context    | 1 / 0.9    |
+| `SECRET`             | a published key prefix, a JWT or a PEM private key; an assigned value (`password: …`)        | 1 / 0.9    |
+| `UK_DRIVING_LICENCE` | DVLA shape with a possible encoded date; certain with a licence word                         | 0.95 / 1   |
+| `POSTCODE`           | Royal Mail position rules; the space is required unless written in capitals                  | 0.95       |
+| `SORT_CODE`          | with a banking word, or an account number beside it                                          | 0.95       |
+| `BANK_ACCOUNT`       | eight digits with an account word, or a sort code beside it                                  | 0.95       |
+| `UK_UTR`             | ten digits with a tax word                                                                   | 0.95       |
+| `UK_PASSPORT`        | nine digits with "passport"                                                                  | 0.95       |
+| `IP_ADDRESS`         | IPv4 octets, or IPv6 the URL parser accepts; not after "version" or "v"                      | 0.95       |
+| `PHONE`              | `libphonenumber-js` (full metadata) calls it valid; or possible, with a phone word before it | 0.9 / 0.85 |
+| `DATE_OF_BIRTH`      | a date with a birth word just before it; other dates are left alone                          | 0.9        |
+
+National phone numbers are read as UK. Phones sit low on purpose: the library
+finds a number in many digit runs, so a UTR or NHS number overlapping one
+names the span. A `SECRET` assigned to a name covers the value only, so the
+model still sees that a password was there.
+
+### Tier B
+
+Exact matches report 0.98; a variant 0.9. Variants: for `PERSON`, the first or
+last name alone (three letters or more; a part that is also a word, such as
+Will, only capitalised), an initial and surname, surname first with or without
+a comma; for `ORG`, the name without its legal suffix and its first word
+(capitalised, not a common word or first name); for `PHONE`, any spelling of
+the same E.164 number. Every other type matches exactly, ignoring case and
+spacing. Values under three characters are skipped, and so is a known value of
+a type tier B does not declare (every core type): an undeclared type would
+make the registry reject the whole result, and a required core detector
+failing refuses the call. Gathering the values is the stage's job (t-991,
+t-1010), not this tier's.
+
+### Tier C
+
+Confidence by how the guess was made: a company with a legal suffix 0.85, its
+short form 0.75 and first word 0.7; a street address 0.8; a name after a title
+0.8; a full name, or a name after a closing line, 0.75; a learned name part or
+a name after a cue 0.7 (0.6 when no list has it); a known first name alone 0.5.
+
+What it learns, it learns from one `detect` input and forgets after: a company
+found with its suffix marks its short form elsewhere in that text, and a full
+name marks its parts (matched capitalised). **The stage should therefore pass
+a call's messages as one input**, or a name learned in one message will not
+mark the next.
+
+Stoplists keep names that are also words (May, Will, Grace), places (Reading,
+Chelsea), nationalities, days and months out of the lone-name rule, and an
+allowlist of public bodies, banks, brands and products (NHS, HMRC, Barclays,
+Microsoft, Claude) out of every rule. A fork with names of its own to leave
+visible replaces `core.lists`.
+
+### Bundled lists
+
+Generated once and committed as `lib/privacy/pii/data/*.generated.json`
+(Prettier-ignored); lower case, letters with internal apostrophes or hyphens.
+
+| List        | Source                                                                  | Filter                      | Size   | Licence                                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------- | --------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First names | ONS, _Baby names in England and Wales: 2024_, Table 6, boys and girls   | count ≥ 5                   | 11,914 | Open Government Licence v3.0. Attribution: "Source: Office for National Statistics licensed under the Open Government Licence v3.0." © Crown copyright 2025 |
+| First names | US Census Bureau, 1990 census `dist.male.first` and `dist.female.first` | all (merged with the above) |        | Public domain (a US Government work, 17 U.S.C. §105)                                                                                                        |
+| Surnames    | US Census Bureau, 2010 census surnames (`Names_2010Census.csv`)         | rank ≤ 15,000               | 15,001 | Public domain (a US Government work, 17 U.S.C. §105)                                                                                                        |
+
+The Census lists drop apostrophes ("OBRIEN"), so lookups also try a name
+without them, and a double-barrelled name counts when each part does
+(`isFirstName()`, `isSurname()` in `lexicon.ts`). `lexicon.test.ts` pins the
+sizes above, so a regeneration has to update this table too.
+
+### Measured
+
+`tests/unit/lib/privacy/pii/corpus.test.ts` runs the labelled corpus in
+`tests/fixtures/privacy/pii-corpus/` through `runPrivacyDetectors()` and fails
+when any type's recall or precision drops below
+`tests/fixtures/privacy/pii-corpus/baseline.json`, or the corpus changes
+without the baseline being re-recorded. Recall counts a value as found only
+when every character is masked, by a span of any type; precision counts a
+span as right when it overlaps a labelled value.
+
+Two sets, recorded separately:
+
+- **Development** (109 cases, 296 values): written alongside the detectors,
+  across support, HR, health, finance and B2B, plus templates and an
+  adversarial set. Every type is at recall 1 except `PERSON` (0.98), and
+  every type at precision 1. These figures say the designed cases work; they
+  do not say how the tiers do on text nobody tuned them for.
+- **Held-out** (46 cases, 216 values): written by an author who never saw the
+  detector code. The closer estimate: `PERSON` recall 0.76, precision 0.97;
+  `ORG` recall 0.68; `ADDRESS` recall 0.86; `PHONE` recall 0.94, precision
+  0.88; `IP_ADDRESS` precision 0.8; every other type 1. Seven defects it
+  exposed were fixed before these were recorded: a phone written
+  `(07700) 900184`; a known name written surname first; a known company by
+  its first word; a password with no separator; contractions ("I've") and
+  short acronyms ("NINO") taken for names; day abbreviations ("Thu") taken
+  for names. Nothing else was changed in response to it.
+
+What it misses, by design or not yet:
+
+- **Names in lower case** ("hi its sarah") and names no list has (many South
+  Asian and West African first names are absent from both sources): tier C
+  needs a capital or a list. Tier B still catches a known name in any case.
+- **Nicknames** of a known person ("Gwil" for Gwilym).
+- **Companies without a legal suffix** ("Brightwater Dental Group") unless
+  they are known values.
+- **A protected term written differently from its value** ("Kittiwake" for
+  "Project Kittiwake"): t-1010 should store the form people write.
+- **Two-letter names** ("Jo"): below the variant length, to keep ordinary
+  words out.
 
 ## Placeholders (t-990)
 
@@ -392,12 +505,16 @@ spend caps; it also exempts it from this layer.
 - Detection and mask/restore are pure: unit and property tests
   (`restore(mask(x)) = x`; a stream split at every character position).
 - A labelled synthetic UK corpus is the precision/recall gate; there are no live
-  conversations to tune on.
+  conversations to tune on. See _Detection — Measured_.
+- `tests/unit/lib/privacy/pii/registry-only.test.ts` fails if any module but
+  `core-defaults.ts` imports a detector, or anything but the runner calls
+  `detect`.
 - The stage is tested with a fake provider (`registerProviderInstance`),
   asserting on the exact request body, and a leak smoke test records the body
   and asserts no seeded value appears.
 - The registry and runner tests (`tests/unit/lib/privacy/adapters/`) mock both
-  the app seam and core's defaults, because core ships no adapters until t-989.
+  the app seam and core's defaults: their subject is the registry and the
+  runner, not core's detectors, which have their own tests.
 
 ## Not in this feature
 
