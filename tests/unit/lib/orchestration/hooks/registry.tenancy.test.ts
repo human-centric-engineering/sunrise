@@ -37,6 +37,8 @@ vi.mock('@/lib/db/client', () => ({
     aiEventHookDelivery: {
       create: vi.fn().mockResolvedValue({ id: 'del-1', createdAt: new Date() }),
       update: vi.fn().mockResolvedValue({ id: 'del-1' }),
+      // The first attempt claims the lease its row was written with (#834).
+      updateManyAndReturn: vi.fn().mockResolvedValue([{ id: 'del-1', createdAt: new Date() }]),
     },
   },
 }));
@@ -54,7 +56,11 @@ vi.stubGlobal('fetch', mockFetch);
 
 // ─── Imports ────────────────────────────────────────────────────────────
 
-import { emitHookEvent, invalidateHookCache } from '@/lib/orchestration/hooks/registry';
+import {
+  emitHookEvent,
+  emitHookEventDurably,
+  invalidateHookCache,
+} from '@/lib/orchestration/hooks/registry';
 import { requireTenantContext, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import {
   SIGNATURE_HEADER,
@@ -204,6 +210,18 @@ describe('the hook cache at multi', () => {
     );
     expect(mockFindMany).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a durable emit from the system scope, so an outbox drainer leaves its row (#834)', async () => {
+    // A tick job that drains an outbox without entering each row's org. A
+    // resolve here would have it mark every row sent with nothing queued.
+    await expect(
+      runAsSystem('test: a drainer that forgot to enter an org', () =>
+        emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
+      )
+    ).rejects.toThrow('runs as the system scope');
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
   });
 
   it('forgets a partition the TTL has expired, rather than holding its secrets for ever', async () => {

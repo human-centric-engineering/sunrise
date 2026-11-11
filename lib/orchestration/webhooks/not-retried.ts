@@ -42,7 +42,15 @@ export const RECIPIENT_ERASED = 'recipient erased';
  * (§109 t-739, t-783); every place that asks "is this still going out?" reads
  * it from here, so a new retry status cannot be added to one and not the rest.
  */
-export const AWAITING_RETRY_STATUSES: readonly string[] = ['pending', 'failed'];
+export const AWAITING_RETRY_STATUSES: readonly AwaitingStatus[] = ['pending', 'failed'];
+
+/** A status that still awaits a send. */
+export type AwaitingStatus = 'pending' | 'failed';
+
+/** Whether `status` still awaits a send. */
+export function isAwaitingStatus(status: string): status is AwaitingStatus {
+  return (AWAITING_RETRY_STATUSES as readonly string[]).includes(status);
+}
 
 /**
  * Whether an in-process retry timer's row is still the retry it was armed
@@ -120,17 +128,23 @@ export const DISPATCH_TIMEOUT_MS = {
  * like a future `nextRetryAt`, and then both send: accepted, and documented in
  * data-erasure.md step 6. The attempt's own outcome write replaces the lease
  * with the real next retry time, or clears it.
+ *
+ * `status` is the one the sender read. An event hook's row is born `pending`
+ * holding a lease (#834), so its first attempt, and the tick recovering a row
+ * whose first attempt never ran, claim a `pending` row; a retry claims a
+ * `failed` one.
  */
 export function claimArmedRetry(
   id: string,
   armedFor: Date,
-  now: Date = new Date()
+  now: Date = new Date(),
+  status: AwaitingStatus = 'failed'
 ): {
-  where: { id: string; status: 'failed'; nextRetryAt: Date };
+  where: { id: string; status: AwaitingStatus; nextRetryAt: Date };
   data: { nextRetryAt: Date };
 } {
   return {
-    where: { id, status: 'failed', nextRetryAt: armedFor },
+    where: { id, status, nextRetryAt: armedFor },
     data: { nextRetryAt: new Date(now.getTime() + RETRY_CLAIM_LEASE_MS) },
   };
 }

@@ -89,6 +89,7 @@ import {
   processPendingHookRetries,
 } from '@/lib/orchestration/hooks/registry';
 import { describeDestination } from '@/lib/orchestration/webhooks/destination';
+import { RETRY_CLAIM_LEASE_MS } from '@/lib/orchestration/webhooks/not-retried';
 import { findErasedSubjects } from '@/lib/privacy/erased-subjects';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
@@ -413,11 +414,32 @@ describe('emitHookEvent', () => {
 });
 
 describe('emitHookEventDurably (#834)', () => {
-  it('resolves once every delivery row is written, without waiting on the attempts', async () => {
-    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
-      makeHook({ id: 'hook-1' }),
-      makeHook({ id: 'hook-2', action: { type: 'webhook', url: 'https://example.com/two' } }),
-    ] as never);
+  const twoHooks = () => [
+    makeHook({ id: 'hook-1' }),
+    makeHook({ id: 'hook-2', action: { type: 'webhook', url: 'https://example.com/two' } }),
+  ];
+
+  it('writes each row pending, holding a claim lease the tick honours', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+    const before = Date.now();
+
+    await emitHookEventDurably('conversation.started', { conversationId: 'conv-1' });
+
+    const written = vi.mocked(prisma.aiEventHookDelivery.create).mock.calls[0]?.[0] as {
+      data: { status: string; nextRetryAt: Date };
+    };
+    expect(written.data.status).toBe('pending');
+    // Not due before the lease runs out, so a live first attempt is never raced.
+    expect(written.data.nextRetryAt.getTime()).toBeGreaterThanOrEqual(
+      before + RETRY_CLAIM_LEASE_MS
+    );
+    expect(written.data.nextRetryAt.getTime()).toBeLessThanOrEqual(
+      Date.now() + RETRY_CLAIM_LEASE_MS
+    );
+  });
+
+  it('resolves once every row is written, without waiting on the attempts', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue(twoHooks());
     let writeSecond!: (value: unknown) => void;
     vi.mocked(prisma.aiEventHookDelivery.create)
       .mockResolvedValueOnce(makeDelivery({ id: 'del-1', hookId: 'hook-1' }))
@@ -426,19 +448,17 @@ describe('emitHookEventDurably (#834)', () => {
           writeSecond = resolve;
         }) as never
       );
-    // The first attempt never answers within the test.
+    // No attempt answers within the test.
     mockFetch.mockReturnValue(new Promise(() => {}));
 
     const queued = emitHookEventDurably('conversation.started', { conversationId: 'conv-1' });
 
-    await vi.waitFor(() => expect(prisma.aiEventHookDelivery.create).toHaveBeenCalledTimes(2));
-    // One row is still being written.
+    // The first hook's attempt goes out on its own row, not after the slower write.
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
     expect(await settledYet(queued)).toBe(false);
-    expect(mockFetch).not.toHaveBeenCalled();
 
     writeSecond(makeDelivery({ id: 'del-2', hookId: 'hook-2' }));
     await queued;
-    // Both attempts go out, and neither has answered.
     await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
     const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
     expect(await settledYet(handed)).toBe(false);
@@ -453,32 +473,27 @@ describe('emitHookEventDurably (#834)', () => {
     expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
   });
 
-  it('resolves, and logs, when the hooks cannot be loaded', async () => {
+  it('rejects, and logs, when the hooks cannot be loaded', async () => {
     vi.mocked(prisma.aiEventHook.findMany).mockRejectedValue(new Error('db down'));
 
     await expect(
       emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
-    ).resolves.toBeUndefined();
-    await vi.waitFor(() =>
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Hook dispatch error',
-        expect.objectContaining({ eventType: 'conversation.started', error: 'db down' })
-      )
+    ).rejects.toThrow('db down');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Hook dispatch error',
+      expect.objectContaining({ eventType: 'conversation.started', error: 'db down' })
     );
   });
 
-  it('resolves when a row cannot be written, and still attempts the rows that were', async () => {
-    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
-      makeHook({ id: 'hook-1' }),
-      makeHook({ id: 'hook-2', action: { type: 'webhook', url: 'https://example.com/two' } }),
-    ] as never);
+  it('rejects when a row cannot be written, and still attempts the row that was', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue(twoHooks());
     vi.mocked(prisma.aiEventHookDelivery.create)
       .mockRejectedValueOnce(new Error('insert failed'))
       .mockResolvedValueOnce(makeDelivery({ id: 'del-2', hookId: 'hook-2' }));
 
     await expect(
       emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow('1 of 2 delivery rows could not be written');
 
     expect(logger.warn).toHaveBeenCalledWith(
       'Hook webhook dispatch setup failed',
@@ -486,6 +501,40 @@ describe('emitHookEventDurably (#834)', () => {
     );
     await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
     expect(mockFetch).toHaveBeenCalledWith('https://example.com/two', expect.anything());
+  });
+
+  it('sends nothing from a first attempt whose row the tick has already taken', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+    // The claim misses: the process was held up past the lease, and the tick
+    // claimed and sent the row meanwhile.
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([]);
+
+    await emitHookEventDurably('conversation.started', { conversationId: 'conv-1' });
+
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    await handed;
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'del-1', status: 'pending', nextRetryAt: expect.any(Date) },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      'Hook first attempt skipped: the row was taken by another sender',
+      { deliveryId: 'del-1', hookId: 'hook-1' }
+    );
+  });
+
+  it('leaves emitHookEvent quiet when the dispatch fails: logged, not an unhandled rejection', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockRejectedValue(new Error('db down'));
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    await expect(handed).resolves.toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Hook dispatch error',
+      expect.objectContaining({ error: 'db down' })
+    );
   });
 });
 
@@ -576,7 +625,8 @@ describe('retryHookDelivery', () => {
           status: 'pending',
           attempts: 0,
           lastError: null,
-          nextRetryAt: null,
+          // The retry holds a lease, so the tick sends it if the process ends (#834).
+          nextRetryAt: expect.any(Date),
         }),
       })
     );
@@ -878,7 +928,11 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
         action: { type: 'webhook', url: webhookUrl },
       }),
     })) as never);
-    // The claim returns the row as the erasure left it: this is what is sent.
+    // The first attempt's claim of its row's lease (#834).
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ id: deliveryId, status: 'pending' }),
+    ] as never);
+    // The timer's claim returns the row as the erasure left it: this is what is sent.
     vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
       makeDelivery({
         id: deliveryId,
@@ -914,9 +968,15 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — the retry fired, second fetch was called, and delivery flipped to delivered
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
-    // The timer claimed the row before sending it
-    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledTimes(1);
-    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith({
+    // The first attempt claimed its row's lease, then the timer claimed the
+    // armed retry, each before sending (#834, t-793).
+    const claims = vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mock.calls;
+    expect(claims).toHaveLength(2);
+    expect(claims[0]?.[0]).toEqual({
+      where: { id: deliveryId, status: 'pending', nextRetryAt: expect.any(Date) },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenLastCalledWith({
       where: { id: deliveryId, status: 'failed', nextRetryAt: expect.any(Date) },
       data: { nextRetryAt: expect.any(Date) },
     });
@@ -1172,6 +1232,36 @@ describe('processPendingHookRetries', () => {
     }
   });
 
+  it('recovers a row whose first attempt never ran, once its lease has run out (#834)', async () => {
+    const leaseRanOut = new Date(Date.now() - 1_000);
+    vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({ id: 'del-1', status: 'pending', attempts: 0, nextRetryAt: leaseRanOut }),
+        hook: makeHook(),
+      },
+    ] as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ id: 'del-1', status: 'pending', attempts: 0 }),
+    ] as never);
+
+    const count = await processPendingHookRetries();
+
+    expect(count).toBe(1);
+    // Claimed as the pending row it read, so a first attempt that wakes late
+    // misses the claim and does not send it as well.
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'del-1', status: 'pending', nextRetryAt: leaseRanOut },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-1', status: AWAITING_STATUS },
+        data: expect.objectContaining({ status: 'delivered', attempts: { increment: 1 } }),
+      })
+    );
+  });
+
   it('sends nothing for a row a timer claimed first (t-793)', async () => {
     const due = new Date(Date.now() - 1_000);
     vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
@@ -1243,7 +1333,7 @@ describe('processPendingHookRetries', () => {
     );
   });
 
-  it('queries for failed deliveries past their nextRetryAt with attempts < MAX', async () => {
+  it('queries for pending and failed deliveries past their nextRetryAt with attempts < MAX', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([]);
 
     await processPendingHookRetries();
@@ -1251,7 +1341,8 @@ describe('processPendingHookRetries', () => {
     expect(prisma.aiEventHookDelivery.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: 'failed',
+          // `pending`: a first attempt that never ran, its lease run out (#834).
+          status: { in: ['pending', 'failed'] },
           nextRetryAt: { lte: expect.any(Date) },
           attempts: { lt: 3 },
         }),
@@ -1441,7 +1532,7 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
         status: 'pending',
         attempts: 0,
         lastError: null,
-        nextRetryAt: null,
+        nextRetryAt: expect.any(Date),
       }),
     });
 

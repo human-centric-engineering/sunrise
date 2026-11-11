@@ -202,17 +202,27 @@ emitHookEvent('workflow.completed', {
 
 ### Waiting until the event is queued
 
-`emitHookEventDurably(eventType, data)` dispatches the same way and returns a promise that resolves once every matching hook's `AiEventHookDelivery` row has been written (#834). Use it when the caller has to know the event is queued before it moves on:
-
-- **An outbox drainer.** Mark the outbox row sent only after the promise resolves. Marking it first leaves a window in which the process ends with the row marked sent and no delivery row, and nothing retries the event.
-- **Work that must outlive the response on its own terms**, such as a job that ends as soon as its last `await` settles.
+`emitHookEventDurably(eventType, data)` dispatches the same way and returns a promise that resolves once every matching hook's `AiEventHookDelivery` row has been written (#834). Use it when the caller has to know the event is queued before it moves on. The case it was built for is an **outbox drainer**: a fork writes its event to its own table in the same transaction as the change, then hands each row to the hook system. Mark the outbox row sent only after the promise resolves:
 
 ```ts
-await emitHookEventDurably('app.lead.captured', { leadId });
-await prisma.appOutboxEvent.update({ where: { id }, data: { dispatchedAt: new Date() } });
+// One row of a fork's outbox, inside the org it belongs to.
+await runAsOrg(row.orgId, () =>
+  emitHookEventDurably('app.lead.captured', { outboxId: row.id, leadId })
+);
+await prisma.appLeadGenEvent.update({ where: { id: row.id }, data: { dispatchedAt: new Date() } });
 ```
 
-Once the rows exist the event cannot be lost: a delivery the process does not live to make is sent by the tick (`processPendingHookRetries`). The promise does not wait on the first delivery attempt, and it never rejects. A failure to load the hooks or write a row is logged, as it is for `emitHookEvent`, and the promise still resolves. So a resolve means the dispatch is past the point of writing rows, not that every row was written. `emitHookEvent` stays `void` on purpose: returning the promise from it would trip `no-floating-promises` at every bare call, in core and in forks.
+- **Resolves** when every matching hook's row is written, or when no hook matches. It does not wait on any delivery attempt.
+- **Rejects** when the event was not queued for every matching hook: the hooks could not be loaded, a row could not be written, or the call ran outside an org scope (a tick job must enter each row's org with `runAsOrg`). Leave the outbox row for the next pass.
+- **Delivery is at least once.** A pass that retries after a rejection sends again to any hook whose row was written the first time. Put an id in `data`, such as the outbox row's, so a receiver can drop a repeat.
+
+`emitHookEvent` stays `void` and logs a failure instead: returning the promise from it would trip `no-floating-promises` at every bare call, in core and in forks.
+
+### A row is never left unsent
+
+Every row awaiting a send carries a `nextRetryAt`, a new one included. A row is written `pending` holding a claim lease (`RETRY_CLAIM_LEASE_MS`, 5 minutes), which its first attempt claims before it posts. If the process ends first (a serverless instance frozen or recycled, a restart), the lease runs out and `processPendingHookRetries` on the maintenance tick claims and sends it. If the first attempt wakes after the tick has claimed the row, its claim misses and it does not send. A manual retry's reset takes a lease the same way. Before #834 a new row had no `nextRetryAt`, and one whose first attempt never ran was never sent: the tick only read rows that had failed once. Rows written before then are not swept up, since an event sent weeks late is worse than one not sent.
+
+A recovered row goes out within the lease plus however long the tick's idle gate is skipping, at most `MAINTENANCE_IDLE_MAX_SKIP_MS` (30 minutes by default), the same bound a retry whose process died has always had.
 
 ## Webhook Action
 
@@ -232,7 +242,7 @@ Dispatch behaviour (`dispatchWebhook`):
 - Body is the full `HookEventPayload`
 - 10-second timeout (`DISPATCH_TIMEOUT_MS.hook` in `lib/orchestration/webhooks/not-retried.ts`, kept below the retry claim lease by a test, t-808)
 - **Optional HMAC-SHA256 signing** when the hook has a `secret` — see [Signing](#signing) below
-- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
+- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick, as it does a first attempt that never ran ([A row is never left unsent](#a-row-is-never-left-unsent)).
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)
 
 ## Signing
