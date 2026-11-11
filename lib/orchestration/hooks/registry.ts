@@ -16,6 +16,7 @@
  *
  * Dispatch is fire-and-forget — failures are logged and persisted to the
  * delivery table but never propagate to the caller.
+ * `emitHookEventDurably` lets a caller wait until the delivery rows exist (#834).
  *
  * Tenancy posture: org-keyed — `hookCacheByOrg`, because `eventType` is a
  * label two orgs share (lib/tenancy/process-state.ts).
@@ -236,6 +237,32 @@ function matchesFilter(filter: HookFilter | null, payload: HookEventPayload): bo
  * @param data - Event-specific payload data
  */
 export function emitHookEvent(eventType: HookEventType, data: Record<string, unknown>): void {
+  void emitHookEventDurably(eventType, data);
+}
+
+/**
+ * Emit a hook event, as {@link emitHookEvent} does, and resolve once every
+ * matching hook's `AiEventHookDelivery` row has been written (#834). From then
+ * on the event cannot be lost: a delivery the process does not live to finish
+ * is sent by the tick (`processPendingHookRetries`).
+ *
+ * For a caller that must know the event is queued before it moves on: an
+ * outbox drainer marking a row sent, or work under `after()` that would
+ * otherwise end before the rows exist. Everyone else calls `emitHookEvent`.
+ *
+ * Does not wait on the first delivery attempt, which stays held past the
+ * response as `emitHookEvent`'s is. Never rejects: a failure to load the hooks
+ * or write a row is logged, and the promise resolves anyway, so a resolve says
+ * the dispatch is past the point of writing rows, not that every row was
+ * written.
+ *
+ * @param eventType - The event type to emit
+ * @param data - Event-specific payload data
+ */
+export function emitHookEventDurably(
+  eventType: HookEventType,
+  data: Record<string, unknown>
+): Promise<void> {
   // The moment the event's copy was taken, which an erasure may overtake
   // before a delivery goes (t-886). `data` was built just before this call,
   // which COPY_CLOCK_SKEW_MS covers.
@@ -246,19 +273,38 @@ export function emitHookEvent(eventType: HookEventType, data: Record<string, unk
     data,
   };
 
+  let markQueued!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    markQueued = resolve;
+  });
+
   keepRunningAfterResponse(
-    dispatchToHooks(payload, takenAt).catch((err: unknown) => {
-      logger.warn('Hook dispatch error', {
-        eventType,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }),
+    dispatchToHooks(payload, takenAt, markQueued)
+      .catch((err: unknown) => {
+        logger.warn('Hook dispatch error', {
+          eventType,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      })
+      // A dispatch that failed before it wrote anything still resolves.
+      .finally(markQueued),
     'Hook dispatch',
     { eventType }
   );
+
+  return queued;
 }
 
-async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promise<void> {
+/**
+ * Write a delivery row for every matching hook, call `onQueued`, then make
+ * each one's first attempt. `onQueued` is not called when the dispatch throws;
+ * the caller covers that.
+ */
+async function dispatchToHooks(
+  payload: HookEventPayload,
+  takenAt: Date,
+  onQueued: () => void
+): Promise<void> {
   const byType = await loadHooks();
   const hooks = byType.get(payload.eventType) ?? [];
 
@@ -266,7 +312,10 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
     (hook): hook is CachedHook & { action: WebhookAction } =>
       matchesFilter(hook.filter, payload) && hook.action.type === 'webhook'
   );
-  if (matched.length === 0) return;
+  if (matched.length === 0) {
+    onQueued();
+    return;
+  }
   // Who the payload names, once for every hook (t-926); a retry resolves it
   // from the row it claimed.
   const subjects = resolveFanOutSubjects(
@@ -274,29 +323,44 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
     payload as unknown as Prisma.JsonValue,
     'Hook'
   );
+  // Every row is written (or has failed to be) before any attempt starts, so
+  // `onQueued` marks the point after which the tick owns the event.
+  const deliveries = await Promise.all(
+    matched.map((hook) => createDeliveryRow(hook.id, hook.action, payload))
+  );
+  onQueued();
   // Settles once every first attempt has, so the hold `emitHookEvent` takes
   // covers the deliveries too. Retries run on their own timers, and the tick
   // picks them up if the process is gone (`processPendingHookRetries`).
   await Promise.allSettled(
-    matched.map((hook) =>
-      dispatchWebhook(hook.id, hook.action, hook.secret, payload, takenAt, subjects)
-    )
+    matched.map((hook, i) => {
+      const delivery = deliveries[i];
+      return delivery
+        ? attemptFirstDelivery(
+            hook.id,
+            delivery,
+            hook.action,
+            hook.secret,
+            payload,
+            takenAt,
+            subjects
+          )
+        : Promise.resolve();
+    })
   );
   // Settled within the dispatch even when every create failed and nothing
   // awaited it.
   await subjects;
 }
 
-async function dispatchWebhook(
+/** Write a hook's delivery row; `null`, logged, when the write fails. */
+async function createDeliveryRow(
   hookId: string,
   action: WebhookAction,
-  secret: string | null,
-  payload: HookEventPayload,
-  takenAt: Date,
-  subjects: Promise<PayloadSubjects | undefined>
-): Promise<void> {
+  payload: HookEventPayload
+): Promise<AttemptRecord | null> {
   try {
-    const delivery = await prisma.aiEventHookDelivery.create({
+    return await prisma.aiEventHookDelivery.create({
       data: {
         hookId,
         eventType: payload.eventType,
@@ -305,6 +369,22 @@ async function dispatchWebhook(
         ...describeDestination('webhook', action.url),
       },
     });
+  } catch (err: unknown) {
+    logDispatchSetupFailure(hookId, action, err);
+    return null;
+  }
+}
+
+async function attemptFirstDelivery(
+  hookId: string,
+  delivery: AttemptRecord,
+  action: WebhookAction,
+  secret: string | null,
+  payload: HookEventPayload,
+  takenAt: Date,
+  subjects: Promise<PayloadSubjects | undefined>
+): Promise<void> {
+  try {
     await attemptDelivery(
       delivery,
       action.url,
@@ -315,12 +395,16 @@ async function dispatchWebhook(
       await subjects
     );
   } catch (err: unknown) {
-    logger.warn('Hook webhook dispatch setup failed', {
-      hookId,
-      url: loggableUrl(action.url),
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logDispatchSetupFailure(hookId, action, err);
   }
+}
+
+function logDispatchSetupFailure(hookId: string, action: WebhookAction, err: unknown): void {
+  logger.warn('Hook webhook dispatch setup failed', {
+    hookId,
+    url: loggableUrl(action.url),
+    error: err instanceof Error ? err.message : String(err),
+  });
 }
 
 /**

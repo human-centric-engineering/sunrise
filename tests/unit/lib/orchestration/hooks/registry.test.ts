@@ -83,6 +83,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
   emitHookEvent,
+  emitHookEventDurably,
   invalidateHookCache,
   retryHookDelivery,
   processPendingHookRetries,
@@ -408,6 +409,83 @@ describe('emitHookEvent', () => {
         })
       );
     });
+  });
+});
+
+describe('emitHookEventDurably (#834)', () => {
+  it('resolves once every delivery row is written, without waiting on the attempts', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ id: 'hook-1' }),
+      makeHook({ id: 'hook-2', action: { type: 'webhook', url: 'https://example.com/two' } }),
+    ] as never);
+    let writeSecond!: (value: unknown) => void;
+    vi.mocked(prisma.aiEventHookDelivery.create)
+      .mockResolvedValueOnce(makeDelivery({ id: 'del-1', hookId: 'hook-1' }))
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          writeSecond = resolve;
+        }) as never
+      );
+    // The first attempt never answers within the test.
+    mockFetch.mockReturnValue(new Promise(() => {}));
+
+    const queued = emitHookEventDurably('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => expect(prisma.aiEventHookDelivery.create).toHaveBeenCalledTimes(2));
+    // One row is still being written.
+    expect(await settledYet(queued)).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    writeSecond(makeDelivery({ id: 'del-2', hookId: 'hook-2' }));
+    await queued;
+    // Both attempts go out, and neither has answered.
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    const handed = mockAfter.mock.calls[0]?.[0] as Promise<unknown>;
+    expect(await settledYet(handed)).toBe(false);
+  });
+
+  it('resolves when no hook matches', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([]);
+
+    await expect(
+      emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
+    ).resolves.toBeUndefined();
+    expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
+  });
+
+  it('resolves, and logs, when the hooks cannot be loaded', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockRejectedValue(new Error('db down'));
+
+    await expect(
+      emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
+    ).resolves.toBeUndefined();
+    await vi.waitFor(() =>
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Hook dispatch error',
+        expect.objectContaining({ eventType: 'conversation.started', error: 'db down' })
+      )
+    );
+  });
+
+  it('resolves when a row cannot be written, and still attempts the rows that were', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ id: 'hook-1' }),
+      makeHook({ id: 'hook-2', action: { type: 'webhook', url: 'https://example.com/two' } }),
+    ] as never);
+    vi.mocked(prisma.aiEventHookDelivery.create)
+      .mockRejectedValueOnce(new Error('insert failed'))
+      .mockResolvedValueOnce(makeDelivery({ id: 'del-2', hookId: 'hook-2' }));
+
+    await expect(
+      emitHookEventDurably('conversation.started', { conversationId: 'conv-1' })
+    ).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Hook webhook dispatch setup failed',
+      expect.objectContaining({ hookId: 'hook-1', error: 'insert failed' })
+    );
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+    expect(mockFetch).toHaveBeenCalledWith('https://example.com/two', expect.anything());
   });
 });
 

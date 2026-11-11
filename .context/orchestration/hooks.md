@@ -200,6 +200,20 @@ emitHookEvent('workflow.completed', {
 
 `emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch. The dispatch, and each hook's first delivery attempt, is still held past the response by Next's `after()` (`keepRunningAfterResponse`, t-903), so on a serverless host it is not frozen part-way. Outside a request it runs on the process as before.
 
+### Waiting until the event is queued
+
+`emitHookEventDurably(eventType, data)` dispatches the same way and returns a promise that resolves once every matching hook's `AiEventHookDelivery` row has been written (#834). Use it when the caller has to know the event is queued before it moves on:
+
+- **An outbox drainer.** Mark the outbox row sent only after the promise resolves. Marking it first leaves a window in which the process ends with the row marked sent and no delivery row, and nothing retries the event.
+- **Work that must outlive the response on its own terms**, such as a job that ends as soon as its last `await` settles.
+
+```ts
+await emitHookEventDurably('app.lead.captured', { leadId });
+await prisma.appOutboxEvent.update({ where: { id }, data: { dispatchedAt: new Date() } });
+```
+
+Once the rows exist the event cannot be lost: a delivery the process does not live to make is sent by the tick (`processPendingHookRetries`). The promise does not wait on the first delivery attempt, and it never rejects. A failure to load the hooks or write a row is logged, as it is for `emitHookEvent`, and the promise still resolves. So a resolve means the dispatch is past the point of writing rows, not that every row was written. `emitHookEvent` stays `void` on purpose: returning the promise from it would trip `no-floating-promises` at every bare call, in core and in forks.
+
 ## Webhook Action
 
 ```ts

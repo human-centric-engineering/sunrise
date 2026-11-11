@@ -49,6 +49,16 @@ release process.
   a service that counts code points must convert. See
   `.context/privacy/llm-privacy-layer.md`.
 
+- **`emitHookEventDurably()` in `lib/orchestration/hooks/registry.ts`
+  (t-1012, #834).** It emits a hook event as `emitHookEvent()` does, and
+  returns a promise that resolves once every matching hook's
+  `AiEventHookDelivery` row has been written. It does not wait on the first
+  delivery attempt, and it never rejects: failures are logged as before. An
+  outbox drainer can now mark a row sent only once the event is queued,
+  closing the window in which a process ended between the two and the event
+  was lost with nothing to retry it. `emitHookEvent()` is unchanged and stays
+  `void`. See `.context/orchestration/hooks.md`.
+
 - **Fork zones for back-relations on `Org` and `User` (t-1009, #859).**
   `Org` (`prisma/schema/tenancy.prisma`) and `User`
   (`prisma/schema/auth.prisma`) now end with two fixed markers, a framework
