@@ -16,6 +16,21 @@ vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() } },
 }));
 
+// The privacy stage reads the install's privacy settings on every chat and
+// embedding call (§127), and refuses a call when it cannot. This file's
+// database mock has no settings row, so the settings read is stubbed: mode
+// `off`, no global budget. The stage itself runs, and makes no change in
+// `off`; it has its own tests (`privacy-stage.test.ts`).
+vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
+  getOrchestrationSettings: vi.fn(async () => ({
+    globalMonthlyBudgetUsd: null,
+    privacyMode: 'off',
+    privacyIgnoredEntityTypes: [],
+    privacyProtectLocalProviders: false,
+  })),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

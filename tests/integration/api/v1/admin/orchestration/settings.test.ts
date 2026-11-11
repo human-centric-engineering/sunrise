@@ -536,6 +536,9 @@ describe('Admin Orchestration — /settings', () => {
         embedAllowedOrigins: { value: ['https://example.com'] },
         defaultMaxCostPerExecutionUsd: { value: 1 },
         defaultMaxCostPerTurnUsd: { value: 1 },
+        privacyMode: { value: 'detect' },
+        privacyIgnoredEntityTypes: { value: ['DATE'] },
+        privacyProtectLocalProviders: { value: true },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.

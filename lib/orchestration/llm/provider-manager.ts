@@ -47,6 +47,7 @@ import {
   type ProviderEligibilityContext,
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
+import { applyPrivacyStage, type PrivacyCoverage } from '@/lib/orchestration/llm/privacy-stage';
 import {
   assertWithinSpendCaps,
   spendCapRefusal,
@@ -386,6 +387,40 @@ const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
 };
 
 /**
+ * What the LLM privacy stage does to each method (§127), on the same
+ * allowlist footing as {@link METHOD_DISPOSITION}: a method added to
+ * `LlmProvider` is a type error here until someone decides whether its input
+ * is scanned. Embeddings are counted and never altered; transcription is not
+ * covered (audio cannot be masked); the admin metadata calls send no user
+ * content. See `privacy-stage.ts`.
+ */
+const PRIVACY_COVERAGE: Record<ProviderMethodName, PrivacyCoverage> = {
+  chat: 'full',
+  chatStream: 'full',
+  embed: 'count',
+  embedMany: 'count',
+  transcribe: 'none',
+  transcribeStream: 'none',
+  listModels: 'none',
+  testConnection: 'none',
+};
+
+/**
+ * Run the privacy stage on a call and return the arguments to send. A method
+ * the stage does not cover is sent as it is.
+ */
+async function privacyStage(
+  slug: string,
+  isLocal: boolean,
+  prop: ProviderMethodName,
+  args: unknown[]
+): Promise<unknown[]> {
+  const coverage = PRIVACY_COVERAGE[prop];
+  if (coverage === 'none') return args;
+  return [...(await applyPrivacyStage({ providerSlug: slug, isLocal, coverage, args }))];
+}
+
+/**
  * Method names that every object carries and no vendor ever sees.
  *
  * Written out rather than tested with `prop in Object.prototype`, which was the
@@ -521,19 +556,24 @@ function withInFlightTracking(
       // cache TTL. A refusal is thrown before `track` counts anything.
       switch (dispositionOf(prop)) {
         case 'track': {
-          const task = taskOfMethod(prop as ProviderMethodName);
+          const method = prop as ProviderMethodName;
+          const task = taskOfMethod(method);
           return async (...args: unknown[]): Promise<unknown> => {
             await assertProviderCallPermitted(slug, context, task);
             await assertWithinSpendCaps(slug, target.isLocal === true);
-            return track(stateKey, () => fn.apply(target, args) as Promise<unknown>);
+            // After both gates, so a refused call is never scanned (§127).
+            const sent = await privacyStage(slug, target.isLocal === true, method, args);
+            return track(stateKey, () => fn.apply(target, sent) as Promise<unknown>);
           };
         }
         case 'trackStream': {
-          const task = taskOfMethod(prop as ProviderMethodName);
+          const method = prop as ProviderMethodName;
+          const task = taskOfMethod(method);
           return (...args: unknown[]): AsyncIterable<unknown> =>
-            gatedStream(slug, context, task, target.isLocal === true, () =>
-              trackStream(stateKey, () => fn.apply(target, args) as AsyncIterable<unknown>)
-            );
+            gatedStream(slug, context, task, target.isLocal === true, async () => {
+              const sent = await privacyStage(slug, target.isLocal === true, method, args);
+              return trackStream(stateKey, () => fn.apply(target, sent) as AsyncIterable<unknown>);
+            });
         }
         case 'passthrough':
           // Forwarded bound to the original instance so `this` resolution
@@ -574,18 +614,19 @@ function withInFlightTracking(
 /**
  * A stream that asks the gates before the first chunk. The vendor stream is not
  * even created until both permit it, so a refused call opens no connection and
- * the in-flight counter never sees it.
+ * the in-flight counter never sees it. The privacy stage runs inside `open`,
+ * after both gates, for the same reason.
  */
 async function* gatedStream(
   slug: string,
   context: CallOrigin,
   task: TaskType,
   isLocal: boolean,
-  open: () => AsyncIterable<unknown>
+  open: () => Promise<AsyncIterable<unknown>>
 ): AsyncGenerator<unknown> {
   await assertProviderCallPermitted(slug, context, task);
   await assertWithinSpendCaps(slug, isLocal);
-  yield* open();
+  yield* await open();
 }
 
 /**
