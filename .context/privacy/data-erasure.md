@@ -1268,11 +1268,36 @@ does.
 ## App / Fork Tables Relating to `User`
 
 An app built on Sunrise (or an external fork) keeps its own models in its own
-schema file and relates them to the Sunrise `User`. It **cannot** add a Prisma
-`@relation` to `User` — that needs a reverse field _on_ `User`, a core edit to
-the most central, most merge-prone model. So the canonical pattern is a **plain
-`String` FK with no `@relation`**, and the referential action is written by hand
-in the migration:
+schema file and relates them to the Sunrise `User`. **Use a Prisma
+`@relation`** with an explicit `onDelete`, and put its reverse field in `User`'s
+**app zone**: the marked lines at the end of the model that Sunrise never edits,
+so the line merges cleanly on every sync and is not a divergence (#859;
+CUSTOMIZATION.md §5,
+"[Relating your models to `Org` and `User`](../../CUSTOMIZATION.md#relating-your-models-to-org-and-user)").
+A framework fork uses the framework zone above it. The relation is reviewed by
+the schema-level `onDelete` guard
+([Adding a new `User` relation](#adding-a-new-user-relation-required-step)), and
+Prisma keeps the foreign key:
+
+```prisma
+// app-owned schema file
+model AppHubUserProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // …app fields…
+}
+
+// prisma/schema/auth.prisma, model User, below the app zone marker
+  appHubUserProfile AppHubUserProfile?
+```
+
+### The plain-FK pattern (models built before the zones)
+
+Before the zones, a relation meant editing `User`, so forks were told to use a
+**plain `String` FK with no `@relation`** and write the referential action by
+hand in the migration. Existing models built that way keep working. The rules
+below apply to them:
 
 ```prisma
 // app-owned schema file — a satellite profile/extension table

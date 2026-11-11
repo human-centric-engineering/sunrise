@@ -1168,19 +1168,76 @@ upgrade rather than only new ones.
 > a versioned, reviewable migration. See
 > [`.context/database/migrations.md`](./.context/database/migrations.md).
 
+### Relating your models to `Org` and `User`
+
+Prisma relations are two-sided: a model of yours with an `org` relation (every
+tenant-owned model needs one) or a `user` relation needs a back-relation line
+on `Org` or `User`, which are core models. Both end with two zones for those
+lines (#859):
+
+```prisma
+model Org {
+  // …core's fields and back-relations…
+
+  // ── Framework zone: back-relations to framework-*.prisma models. Sunrise never edits below here. ──
+  modules FrameworkModule[]        // a framework fork (e.g. Daybreak) writes here
+
+  // ── App zone: back-relations to app.prisma / app-*.prisma models. Sunrise never edits below here. ──
+  widgets AppWidget[]              // a leaf app writes here
+
+  @@map("org")
+}
+```
+
+- **Write below your own tier's marker.** A leaf app writes in the app zone.
+  `prisma format` does that for you, since it appends a missing back-relation at
+  the end of the model. A framework fork writes in the framework zone by hand.
+- **It is not a divergence.** Sunrise never edits below the first marker, so
+  your lines and core's never touch, and a sync merges cleanly. Filling the zone
+  needs no [ledger](#the-divergence-ledger) row.
+- **Don't reword or move the markers.** They are the unchanged lines the
+  merge relies on. `tests/unit/prisma/back-relation-zones.test.ts` fails on a
+  core line below a marker, a fork line outside its zone, or a marker that
+  changed. The tier comes from the file the model is in: `framework-*.prisma`,
+  `app.prisma` / `app-*.prisma`, or core.
+- **Adopting the zones** (a fork that carried a block in `Org` or `User` before
+  them): the sync that brings them in conflicts once where your block sits. Keep
+  both markers and move your block below your tier's marker. Then retire your
+  ledger row for it. The test above names every line still in core's list.
+
 **Adding user-related data — use a satellite table, don't edit `User`:**
 
 Resist adding columns to the core `User` model. It's the most central, most
 merge-prone platform model (better-auth and Sunrise both evolve it) — editing it
 is exactly the fork-and-edit trap that turns every upstream merge into a fight.
 Keep app-specific user data in **its own satellite table** in
-`prisma/schema/app.prisma`, linked by a plain `String` FK to `User.id`:
+`prisma/schema/app.prisma`, related to `User` with a Prisma `@relation`. Its
+back-relation goes in `User`'s app zone, as above:
 
 ```prisma
 // prisma/schema/app.prisma
 model AppUserProfile {
   id     String @id @default(cuid())
-  userId String @unique // FK to User.id — no @relation (that needs a field ON User)
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade) // personal data; SetNull (nullable FK) for retained config/audit
+  // …your app fields…
+}
+```
+
+The `onDelete` is reviewed by the schema-level guard, and Prisma writes and
+keeps the foreign key, so there is nothing to add to the migration by hand.
+
+**The plain-FK pattern still works.** Before the zones, adding a relation
+meant editing `User`, so forks were told to use a plain `String` FK with no
+`@relation` instead. Models already built that way need no change. A new one
+should use the relation above. For an existing one, the plain FK and its
+drift probe look like this:
+
+```prisma
+// prisma/schema/app.prisma
+model AppUserProfile {
+  id     String @id @default(cuid())
+  userId String @unique // FK to User.id — no @relation
   // …your app fields…
 
   @@index([userId])
@@ -1671,8 +1728,9 @@ framework's ledger belongs to the framework, and arrives in your tree with it.
 core `lib/`, `app/api/v1/`, core `components/`, `proxy.ts`, platform tests,
 root config, Sunrise's docs, a deleted platform page. **What does not:**
 filling a `lib/app/*` scaffold your upstream shipped empty, adding a model to
-`prisma/schema/app.prisma`, or any new file of your own. Those ship empty to
-be filled, and merge cleanly. **On a leaf built on a framework, a scaffold the
+`prisma/schema/app.prisma`, a back-relation line in your tier's zone at the
+end of `Org` or `User` ([§5](#relating-your-models-to-org-and-user)), or any
+new file of your own. Those ship empty to be filled, and merge cleanly. **On a leaf built on a framework, a scaffold the
 framework has filled is the framework's file**: fill the hook it gives you
 (Daybreak's are the `lib/app/leaf-*` files), and an edit to the framework's
 copy is a row. Also left out are the edits every fork makes that this guide

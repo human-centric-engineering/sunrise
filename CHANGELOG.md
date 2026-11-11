@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **Fork zones for back-relations on `Org` and `User` (t-1009, #859).**
+  `Org` (`prisma/schema/tenancy.prisma`) and `User`
+  (`prisma/schema/auth.prisma`) now end with two fixed markers, a framework
+  zone and an app zone, empty in Sunrise. A fork's back-relation lines go
+  below its own tier's marker, and Sunrise never edits below the first one.
+  Core's edits and a fork's are always separated by unchanged lines, so a
+  sync merges without a conflict, and filling a zone is not a
+  divergence-ledger row. `prisma format` already places a leaf's missing
+  back-relations in the app zone. The new
+  `tests/unit/prisma/back-relation-zones.test.ts` fails on a core line below
+  a marker, a fork line outside its zone, or a reworded marker. **On the sync
+  that brings this in**, a fork that carries a block of back-relations
+  resolves one conflict: keep both markers and move its block below its
+  tier's marker (a framework fork's below the framework marker). Then retire
+  the ledger row for it. A fork model can now relate to `User` with a Prisma
+  `@relation`, its line in `User`'s app zone, in place of a plain `userId`
+  with a hand-written foreign key (CUSTOMIZATION.md §5). Existing plain-FK
+  models keep working.
+
 - **An org can be shown its own admin history (t-1005, #1181).**
   `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed: the org whose
   data each action changed. `logAdminAction()` sets it, in order, from a new

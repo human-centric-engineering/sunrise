@@ -73,6 +73,8 @@ model Org {
   //   the four credential relations (see "Credentials") and the 38 the
   //   row-isolation feature added. The relation, not a list, is what lets
   //   eraseOrg() cascade — see "The lifecycle".
+  // Then the framework zone and the app zone, empty in Sunrise: a fork's
+  // back-relations go below its tier's marker (#859).
 }
 
 model OrgMembership {
@@ -656,7 +658,11 @@ merge-impact section promises forks.
   @@index([orgId])
   ```
 
-  plus a back-relation line on `Org`. `Cascade` is the rule for data that is
+  plus a back-relation line on `Org`, in your tier's zone at the end of the
+  model: the framework zone for a framework fork, the app zone for a leaf
+  (`prisma format` puts a leaf's there). Sunrise never edits below the first
+  marker, so the line merges cleanly and is not a divergence (#859; CUSTOMIZATION.md §5,
+  "Relating your models to `Org` and `User`"). `Cascade` is the rule for data that is
   the org's; a retained record (a billing row — `AiCostLog` is the one core
   case) uses `onDelete: SetNull` instead, per the FK rule in `CLAUDE.md`.
   `tests/unit/lib/tenancy/model-classification.test.ts`
