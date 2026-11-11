@@ -95,6 +95,27 @@ describe('runPrivacyDetectors', () => {
     ]);
   });
 
+  it('drops ignored types before merging, so an ignored span cannot carry another out unmasked', async () => {
+    const text = 'I live at 14 Mill Lane, Leeds LS6 2AB.';
+    const address = { type: 'ADDRESS', start: 10, end: 37, confidence: 0.7 };
+    const location = { type: 'LOCATION', start: 24, end: 29, confidence: 0.9 };
+    expect(text.slice(address.start, address.end)).toBe('14 Mill Lane, Leeds LS6 2AB');
+    expect(text.slice(location.start, location.end)).toBe('Leeds');
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(
+        detector('acme.places', returning([address, location]), ['ADDRESS', 'LOCATION'])
+      );
+    });
+
+    // Unfiltered, the merge takes the more confident member's type.
+    const merged = await runPrivacyDetectors(text, CTX);
+    expect(merged.spans).toEqual([{ ...location, start: 10, end: 37, source: 'acme.places' }]);
+
+    // Ignoring LOCATION must still leave the whole address masked.
+    const result = await runPrivacyDetectors(text, { ...CTX, ignoredEntityTypes: ['LOCATION'] });
+    expect(result.spans).toEqual([{ ...address, source: 'acme.places' }]);
+  });
+
   it('hands each detector what earlier ones found, frozen', async () => {
     let seen: DetectContext['priorSpans'] = [];
     seam.init.mockImplementation(() => {

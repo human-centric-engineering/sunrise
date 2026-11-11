@@ -152,7 +152,9 @@ same way. See `fork-init-seams.md` § "The seams that do more than degrade".
 - **Add** (the default): an app's detector runs alongside core's, and the spans
   are merged.
 - **Replace**: `registerPrivacyDetector(d, { replace: 'core.<id>' })` turns one
-  core detector off. It is the only way to, so it cannot happen by accident. A
+  core detector off. It is the only way to, so it cannot happen by accident. The
+  replacement is required unless it says `required: false`, because the core
+  detector it stands in for was. A
   `replace` naming no registered core detector throws. The admin page shows
   replaced core detectors (`replacedCoreDetectors`).
 - **Token strategy**: registering one displaces core's. A second app strategy
@@ -236,6 +238,11 @@ a few characters of context at most. The merged span takes the type of its most
 specific member: highest confidence, then longest, then the earliest-registered
 adapter, then the type name, so the result does not depend on arrival order.
 Touching spans (`a.end === b.start`) stay separate.
+
+**Ignored types are dropped before the merge, never after.** A merged span takes
+one member's type, so filtering afterwards would let an ignored `LOCATION` that
+overlaps an `ADDRESS` carry the whole address out unmasked. Pass the policy's
+`ignoredEntityTypes` to `runPrivacyDetectors()`.
 
 **Confidence doubles as specificity.** A checksum-valid match reports `1`, a
 known value just below, a list guess well below. That is what makes a valid NHS

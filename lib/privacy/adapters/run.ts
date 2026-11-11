@@ -21,6 +21,7 @@ import { MalformedSpansError, resolveOverlaps, validateSpans } from '@/lib/priva
 import type {
   AttributedSpan,
   DetectContext,
+  EntityType,
   PolicyInput,
   PrivacyEvent,
   PrivacyPolicy,
@@ -46,6 +47,13 @@ export interface DetectionResult {
 export type DetectionCallContext = Omit<DetectContext, 'signal' | 'priorSpans'> & {
   /** Aborted when the whole call is abandoned. */
   signal?: AbortSignal;
+  /**
+   * The policy's ignored types. Their spans are dropped BEFORE overlaps are
+   * merged, never after: a merged span takes one member's type, so filtering
+   * afterwards would let an ignored `LOCATION` that overlaps an `ADDRESS`
+   * carry the address out unmasked.
+   */
+  ignoredEntityTypes?: readonly EntityType[];
 };
 
 class AdapterTimeoutError extends Error {
@@ -123,7 +131,7 @@ export async function runPrivacyDetectors(
   const rank = new Map(detectors.map((r, i) => [r.detector.id, i]));
   const found: AttributedSpan[] = [];
   const failures: AdapterFailure[] = [];
-  const { signal: outer, ...rest } = ctx;
+  const { signal: outer, ignoredEntityTypes: _ignored, ...rest } = ctx;
   // Frozen once: every detector sees the same known values, and none can
   // change what a later one (or the caller) reads.
   const callCtx = {
@@ -158,7 +166,9 @@ export async function runPrivacyDetectors(
     }
   }
 
-  return { spans: resolveOverlaps(found, rank), failures };
+  const ignored = new Set(ctx.ignoredEntityTypes ?? []);
+  const acted = found.filter((s) => !ignored.has(s.type));
+  return { spans: resolveOverlaps(acted, rank), failures };
 }
 
 export interface PolicyResult {

@@ -48,8 +48,9 @@ export interface DetectorRegistrationOptions {
   /**
    * A required detector that fails makes the call fail or fall back as the
    * policy says (`onDetectorFailure`); an optional one is skipped and the call
-   * marked degraded. Default `false` for an app's detector. Core's are always
-   * required.
+   * marked degraded. Default `false` for an app's detector, and `true` for one
+   * that replaces a core detector, since it stands in for one that was
+   * required. Core's are always required.
    */
   required?: boolean;
   /** Enforced through the detector's abort signal. Default {@link DEFAULT_DETECTOR_TIMEOUT_MS}. */
@@ -239,7 +240,9 @@ function addDetector(
 
   detectors.set(id, {
     detector,
-    required: core || options.required === true,
+    // A replacement stands in for a core detector, and core's are required,
+    // so it is required unless the app says otherwise.
+    required: core || (options.required ?? options.replace !== undefined),
     timeoutMs,
     core,
     entityTypes: new Set(detector.entityTypes),

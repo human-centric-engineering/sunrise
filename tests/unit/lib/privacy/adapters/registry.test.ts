@@ -225,6 +225,18 @@ describe('replacing a core detector', () => {
     });
   });
 
+  it('makes a replacement required, as the core detector it stands in for was, unless told otherwise', () => {
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.names'), { replace: 'core.lists' });
+      registerPrivacyDetector(detector('acme.rules'), { replace: 'core.rules', required: false });
+    });
+
+    const byId = Object.fromEntries(
+      getPrivacyAdapters().detectors.map((r) => [r.detector.id, r.required])
+    );
+    expect(byId).toEqual({ 'acme.names': true, 'acme.rules': false });
+  });
+
   it('refuses a replace that names no core detector, so a typo cannot leave the app unprotected', () => {
     seam.init.mockImplementation(() =>
       registerPrivacyDetector(detector('acme.names'), { replace: 'core.list' })
