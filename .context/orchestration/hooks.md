@@ -200,6 +200,32 @@ emitHookEvent('workflow.completed', {
 
 `emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch. The dispatch, and each hook's first delivery attempt, is still held past the response by Next's `after()` (`keepRunningAfterResponse`, t-903), so on a serverless host it is not frozen part-way. Outside a request it runs on the process as before.
 
+### Waiting until the event is queued
+
+`emitHookEventDurably(eventType, data)` dispatches the same way and returns a promise that resolves once every matching hook's `AiEventHookDelivery` row has been written (#834). Use it when the caller has to know the event is queued before it moves on. The case it was built for is an **outbox drainer**: a fork writes its event to its own table in the same transaction as the change, then hands each row to the hook system. Mark the outbox row sent only after the promise resolves:
+
+```ts
+// One row of a fork's outbox, inside the org it belongs to.
+await runAsOrg(row.orgId, () =>
+  emitHookEventDurably('app.lead.captured', { outboxId: row.id, leadId })
+);
+await prisma.appLeadGenEvent.update({ where: { id: row.id }, data: { dispatchedAt: new Date() } });
+```
+
+- **Resolves** when every matching hook's row is written, or when no hook matches. It does not wait on any delivery attempt.
+- **Rejects** when the event was not queued for every matching hook: the hooks could not be loaded, a row could not be written, or the call ran outside an org scope (a tick job must enter each row's org with `runAsOrg`). Leave the outbox row for the next pass.
+- **"Every matching hook" is as this instance last read them.** Hooks are cached per org for 60 seconds, so a hook created or re-enabled on another instance in that window does not get the event, as it would not from `emitHookEvent`.
+- **No timeout of its own.** It settles when the hook read and the row writes do. A drainer that must bound a pass races its own timer and leaves the row on a timeout; a write that lands afterwards makes one more repeat, which the receiver's de-duplication absorbs.
+- **Delivery is at least once.** A pass that retries after a rejection sends again to any hook whose row was written the first time. Put an id in `data`, such as the outbox row's, so a receiver can drop a repeat.
+
+`emitHookEvent` stays `void` and logs a failure instead: returning the promise from it would trip `no-floating-promises` at every bare call, in core and in forks.
+
+### A row is never left unsent
+
+Every row awaiting a send carries a `nextRetryAt`, a new one included. A row is written `pending` holding a claim lease (`RETRY_CLAIM_LEASE_MS`, 5 minutes), which its first attempt claims before it posts. If the process ends first (a serverless instance frozen or recycled, a restart), the lease runs out and `processPendingHookRetries` on the maintenance tick claims and sends it. If the first attempt wakes after the tick has claimed the row, its claim misses and it does not send. A manual retry's reset takes a lease the same way. Before #834 a new row had no `nextRetryAt`, and one whose first attempt never ran was never sent: the tick only read rows that had failed once. Rows written before then are not swept up, since an event sent weeks late is worse than one not sent.
+
+A recovered row goes out within the lease plus however long the tick's idle gate is skipping, at most `MAINTENANCE_IDLE_MAX_SKIP_MS` (30 minutes by default), the same bound a retry whose process died has always had.
+
 ## Webhook Action
 
 ```ts
@@ -211,14 +237,15 @@ emitHookEvent('workflow.completed', {
 }
 ```
 
-Dispatch behaviour (`dispatchWebhook`):
+Dispatch behaviour (`dispatchToHooks` → `createDeliveryRow` → `attemptFirstDelivery` in `registry.ts`):
 
-- Creates an `AiEventHookDelivery` record per dispatch (status `pending` → `delivered` / `failed` / `exhausted`)
+- Creates an `AiEventHookDelivery` record per matching hook (status `pending` → `delivered` / `failed` / `exhausted`), holding a claim lease, then claims it and makes the first attempt. Each hook's attempt follows its own row; none waits on another hook's write
+- A hook deleted on another instance since this one cached it fails its row's foreign key; that hook is skipped and the cache dropped, and it does not count as a failed write
 - `POST` with `Content-Type: application/json`, `X-Hook-Event: <eventType>`, plus any user-supplied headers
 - Body is the full `HookEventPayload`
 - 10-second timeout (`DISPATCH_TIMEOUT_MS.hook` in `lib/orchestration/webhooks/not-retried.ts`, kept below the retry claim lease by a test, t-808)
 - **Optional HMAC-SHA256 signing** when the hook has a `secret` — see [Signing](#signing) below
-- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
+- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick, as it does a first attempt that never ran ([A row is never left unsent](#a-row-is-never-left-unsent)).
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)
 
 ## Signing
@@ -318,7 +345,7 @@ Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action
 
 - **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
 - **List across hooks** (`GET /hooks/deliveries`) — the same rows for every hook, and the only route that reaches a delivery whose hook was deleted: `?orphaned=true` selects those, `?hookId` narrows to one hook, `?status` as above. Hooks are admin-global, so there is no owner clause.
-- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
+- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. A `pending` row still holding its lease is being sent now and answers `409`; once its lease has run out (the process sending it ended), a retry sends it, as the tick would. A deleted hook, a disabled one, or a row an erasure stopped also answers `409`.
 
 ## Retention
 

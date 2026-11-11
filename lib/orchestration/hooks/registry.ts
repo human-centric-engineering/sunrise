@@ -16,12 +16,15 @@
  *
  * Dispatch is fire-and-forget — failures are logged and persisted to the
  * delivery table but never propagate to the caller.
+ * `emitHookEventDurably` lets a caller wait until the delivery rows exist (#834).
+ * Every row awaiting a send carries a `nextRetryAt`, a new one included, so
+ * the tick recovers a delivery whose process ended before it was attempted.
  *
  * Tenancy posture: org-keyed — `hookCacheByOrg`, because `eventType` is a
  * label two orgs share (lib/tenancy/process-state.ts).
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
@@ -46,10 +49,12 @@ import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
   AWAITING_RETRY_STATUSES,
   DISPATCH_TIMEOUT_MS,
+  RETRY_CLAIM_LEASE_MS,
   SUBJECT_ERASED,
   checkFailureUncounted,
   claimArmedRetry,
   isArmedRetry,
+  isAwaitingStatus,
   logSettledInFlight,
   notRetried,
 } from '@/lib/orchestration/webhooks/not-retried';
@@ -230,12 +235,44 @@ function matchesFilter(filter: HookFilter | null, payload: HookEventPayload): bo
  * Emit a hook event. All matching enabled hooks are dispatched
  * asynchronously — this function returns immediately. The dispatch, and each
  * hook's first delivery attempt, is kept alive past the response (t-903).
- * In-process retries are not; the tick's `processPendingHookRetries` sends them.
+ * In-process retries are not; the tick's `processPendingHookRetries` sends them,
+ * and sends a first attempt the process did not live to make (#834).
+ *
+ * A failure is logged and goes no further. A caller that has to know the event
+ * was queued calls {@link emitHookEventDurably}.
  *
  * @param eventType - The event type to emit
  * @param data - Event-specific payload data
  */
 export function emitHookEvent(eventType: HookEventType, data: Record<string, unknown>): void {
+  // Already logged by the dispatch.
+  emitHookEventDurably(eventType, data).catch(() => undefined);
+}
+
+/**
+ * Emit a hook event, as {@link emitHookEvent} does, and resolve once every
+ * matching hook's `AiEventHookDelivery` row has been written (#834). Each row
+ * is written holding a lease, so from then on the event is not lost: a first
+ * attempt the process does not live to make is sent by the tick
+ * (`processPendingHookRetries`) once the lease runs out.
+ *
+ * For a caller that must know the event is queued before it moves on, such as
+ * an outbox drainer marking its row sent. Everyone else calls `emitHookEvent`.
+ *
+ * Does not wait on any delivery attempt, which stays held past the response
+ * as `emitHookEvent`'s is. Rejects when the event was not queued for every
+ * matching hook: the hooks could not be loaded (including an emit outside an
+ * org scope), or a row could not be written. A caller retrying after a
+ * rejection may send a hook whose row was written a second time, so put an id
+ * the receiver can de-duplicate on in `data`.
+ *
+ * @param eventType - The event type to emit
+ * @param data - Event-specific payload data
+ */
+export function emitHookEventDurably(
+  eventType: HookEventType,
+  data: Record<string, unknown>
+): Promise<void> {
   // The moment the event's copy was taken, which an erasure may overtake
   // before a delivery goes (t-886). `data` was built just before this call,
   // which COPY_CLOCK_SKEW_MS covers.
@@ -246,19 +283,38 @@ export function emitHookEvent(eventType: HookEventType, data: Record<string, unk
     data,
   };
 
+  // Settled once; a later call is a no-op, as a promise's is.
+  let settleQueued!: (failure: Error | null) => void;
+  const queued = new Promise<void>((resolve, reject) => {
+    settleQueued = (failure) => (failure ? reject(failure) : resolve());
+  });
+
   keepRunningAfterResponse(
-    dispatchToHooks(payload, takenAt).catch((err: unknown) => {
+    dispatchToHooks(payload, takenAt, settleQueued).catch((err: unknown) => {
       logger.warn('Hook dispatch error', {
         eventType,
         error: err instanceof Error ? err.message : String(err),
       });
+      settleQueued(err instanceof Error ? err : new Error(String(err)));
     }),
     'Hook dispatch',
     { eventType }
   );
+
+  return queued;
 }
 
-async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promise<void> {
+/**
+ * Write a delivery row for every matching hook and make each one's first
+ * attempt as soon as its own row exists. `onQueued` is called once every row
+ * has been written, or has failed to be, with the failure if any did. It is
+ * not called when the dispatch throws; the caller covers that.
+ */
+async function dispatchToHooks(
+  payload: HookEventPayload,
+  takenAt: Date,
+  onQueued: (failure: Error | null) => void
+): Promise<void> {
   const byType = await loadHooks();
   const hooks = byType.get(payload.eventType) ?? [];
 
@@ -266,7 +322,10 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
     (hook): hook is CachedHook & { action: WebhookAction } =>
       matchesFilter(hook.filter, payload) && hook.action.type === 'webhook'
   );
-  if (matched.length === 0) return;
+  if (matched.length === 0) {
+    onQueued(null);
+    return;
+  }
   // Who the payload names, once for every hook (t-926); a retry resolves it
   // from the row it claimed.
   const subjects = resolveFanOutSubjects(
@@ -274,21 +333,101 @@ async function dispatchToHooks(payload: HookEventPayload, takenAt: Date): Promis
     payload as unknown as Prisma.JsonValue,
     'Hook'
   );
+  // Never rejects: a failed write is `null`, logged.
+  const rows = matched.map((hook) => createDeliveryRow(hook.id, hook.action, payload));
+  void Promise.all(rows).then((written) => {
+    const failed = written.filter((row) => row === null).length;
+    onQueued(
+      failed === 0
+        ? null
+        : new Error(
+            `Hook event ${payload.eventType} not queued: ${failed} of ${written.length} delivery rows could not be written`
+          )
+    );
+  });
   // Settles once every first attempt has, so the hold `emitHookEvent` takes
   // covers the deliveries too. Retries run on their own timers, and the tick
   // picks them up if the process is gone (`processPendingHookRetries`).
   await Promise.allSettled(
-    matched.map((hook) =>
-      dispatchWebhook(hook.id, hook.action, hook.secret, payload, takenAt, subjects)
-    )
+    matched.map(async (hook, i) => {
+      const row = await rows[i];
+      if (!row || row === 'hook-gone') return;
+      await attemptFirstDelivery(
+        hook.id,
+        row,
+        hook.action,
+        hook.secret,
+        payload,
+        takenAt,
+        subjects
+      );
+    })
   );
   // Settled within the dispatch even when every create failed and nothing
   // awaited it.
   await subjects;
 }
 
-async function dispatchWebhook(
+/**
+ * Write a hook's delivery row. `'hook-gone'` when the hook was deleted since
+ * the cache read it, which is not a failure: there is no one to send to.
+ * `null`, logged, when the write failed for any other reason.
+ *
+ * The row is born `pending` holding a claim lease (#834). The first attempt
+ * claims it before it sends, and a tick that finds the lease run out (the
+ * process ended before the attempt) claims and sends it instead. Without the
+ * lease a row whose first attempt never ran was never sent: the tick only
+ * reads rows with a `nextRetryAt`.
+ */
+async function createDeliveryRow(
   hookId: string,
+  action: WebhookAction,
+  payload: HookEventPayload
+): Promise<LeasedRow | 'hook-gone' | null> {
+  try {
+    const row = await prisma.aiEventHookDelivery.create({
+      data: {
+        hookId,
+        eventType: payload.eventType,
+        payload: payload as unknown as Prisma.InputJsonValue,
+        status: 'pending',
+        nextRetryAt: new Date(Date.now() + RETRY_CLAIM_LEASE_MS),
+        ...describeDestination('webhook', action.url),
+      },
+    });
+    // The lease as the database holds it, which the claim matches on.
+    const lease = row.nextRetryAt;
+    if (!lease) throw new Error('Hook delivery row was written without its lease');
+    return { ...row, nextRetryAt: lease };
+  } catch (err: unknown) {
+    // The hook was deleted on another instance and this one's cache still
+    // matched it (P2003, the hookId foreign key). Counting it as a failure
+    // would have a durable caller retry, resending to every hook that was
+    // written, for as long as the cache holds the deleted one.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+      // This org's partition only: the stale hook is this org's.
+      const { orgId } = requireTenantContext();
+      if (orgId !== null) hookCacheByOrg.delete(orgId);
+      logger.info('Hook delivery skipped: the hook was deleted', { hookId });
+      return 'hook-gone';
+    }
+    logDispatchSetupFailure(hookId, action, err);
+    return null;
+  }
+}
+
+/** A delivery row as written, with the lease its first attempt holds. */
+type LeasedRow = AttemptRecord & { nextRetryAt: Date };
+
+/**
+ * Claim the row's lease and make its first attempt. The claim misses when the
+ * tick has already taken the row: the process was held up past the lease, say
+ * a serverless instance frozen and thawed, and the tick sent it meanwhile. The
+ * row is then the tick's, and this attempt does not send it a second time.
+ */
+async function attemptFirstDelivery(
+  hookId: string,
+  row: LeasedRow,
   action: WebhookAction,
   secret: string | null,
   payload: HookEventPayload,
@@ -296,17 +435,20 @@ async function dispatchWebhook(
   subjects: Promise<PayloadSubjects | undefined>
 ): Promise<void> {
   try {
-    const delivery = await prisma.aiEventHookDelivery.create({
-      data: {
+    const [claimed] = await prisma.aiEventHookDelivery.updateManyAndReturn(
+      claimArmedRetry(row.id, row.nextRetryAt, new Date(), 'pending')
+    );
+    if (!claimed) {
+      logger.info('Hook first attempt skipped: the row was taken by another sender', {
+        deliveryId: row.id,
         hookId,
-        eventType: payload.eventType,
-        payload: payload as unknown as Prisma.InputJsonValue,
-        status: 'pending',
-        ...describeDestination('webhook', action.url),
-      },
-    });
+      });
+      return;
+    }
+    // The claim only decides who sends. The attempt is made as before, from
+    // the row as written and the event's own copy of the payload.
     await attemptDelivery(
-      delivery,
+      row,
       action.url,
       action.headers ?? null,
       secret,
@@ -315,12 +457,19 @@ async function dispatchWebhook(
       await subjects
     );
   } catch (err: unknown) {
-    logger.warn('Hook webhook dispatch setup failed', {
-      hookId,
-      url: loggableUrl(action.url),
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logDispatchSetupFailure(hookId, action, err);
+    // The row is left holding its lease for the tick to send. Without this an
+    // idle gate armed on this instance could hold that off past the lease.
+    noteMaintenanceWork('hook-delivery-retry');
   }
+}
+
+function logDispatchSetupFailure(hookId: string, action: WebhookAction, err: unknown): void {
+  logger.warn('Hook webhook dispatch setup failed', {
+    hookId,
+    url: loggableUrl(action.url),
+    error: err instanceof Error ? err.message : String(err),
+  });
 }
 
 /**
@@ -741,8 +890,10 @@ export async function processPendingHookRetries(): Promise<number> {
   // Before the read: each row and its hook are its attempt's copy (t-886).
   const takenAt = new Date();
   const pending = await prisma.aiEventHookDelivery.findMany({
+    // `pending` too: a row whose first attempt never ran, its lease run out
+    // (#834). A manual retry's reset holds one the same way.
     where: {
-      status: 'failed',
+      status: { in: [...AWAITING_RETRY_STATUSES] },
       nextRetryAt: { lte: new Date() },
       attempts: { lt: MAX_ATTEMPTS },
     },
@@ -772,11 +923,11 @@ export async function processPendingHookRetries(): Promise<number> {
       if (!parsed) return;
       // Claimed, so an in-process timer firing for the same row now does not
       // send it as well (t-793).
-      if (!delivery.nextRetryAt) return;
+      if (!delivery.nextRetryAt || !isAwaitingStatus(delivery.status)) return;
       // The claim returns the row as it wrote it; its payload is the one sent,
       // as an erasure may have redacted the copy read above.
       const [claimed] = await prisma.aiEventHookDelivery.updateManyAndReturn(
-        claimArmedRetry(delivery.id, delivery.nextRetryAt)
+        claimArmedRetry(delivery.id, delivery.nextRetryAt, new Date(), delivery.status)
       );
       if (!claimed) return;
       const payload = await sendablePayload(claimed);
@@ -818,6 +969,16 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
   // Stopped by an erasure: what it would send is about the erased person
   // (t-793). Refused, and left as the record.
   if (delivery.stoppedByErasure) return false;
+  // Pending and still holding its lease: its first attempt (or another
+  // manual retry) is sending it now, and the tick sends it if that process
+  // ends (#834). A second send alongside would reach the receiver twice.
+  if (
+    delivery.status === 'pending' &&
+    delivery.nextRetryAt !== null &&
+    delivery.nextRetryAt.getTime() > Date.now()
+  ) {
+    return false;
+  }
 
   const parsed = await parseDeliveryForDispatch({ ...delivery, hook: delivery.hook });
   if (!parsed) return false;
@@ -838,7 +999,11 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
       status: 'pending',
       attempts: 0,
       lastError: null,
-      nextRetryAt: null,
+      // Held by this attempt, so the tick sends the row if the process ends
+      // before the attempt does (#834). The reset is this attempt's claim: it
+      // matches the row as read, as `claimArmedRetry` does, so a second claim
+      // before sending would close no window this one leaves open.
+      nextRetryAt: new Date(Date.now() + RETRY_CLAIM_LEASE_MS),
       lastAttemptAt: null,
       lastResponseCode: null,
     },

@@ -49,6 +49,19 @@ release process.
   a service that counts code points must convert. See
   `.context/privacy/llm-privacy-layer.md`.
 
+- **`emitHookEventDurably()` in `lib/orchestration/hooks/registry.ts`
+  (t-1012, #834).** It emits a hook event as `emitHookEvent()` does, and
+  returns a promise that resolves once every matching hook's
+  `AiEventHookDelivery` row has been written, without waiting on any delivery
+  attempt. It rejects when the event was not queued for every matching hook:
+  the hooks could not be loaded, a row could not be written, or the call ran
+  outside an org scope. A hook deleted since this instance cached it is
+  skipped, not counted as a failure. An outbox drainer marks its row sent only once the
+  promise resolves, and leaves it for the next pass on a rejection. Delivery is
+  at least once, so put an id in `data` a receiver can de-duplicate on.
+  `emitHookEvent()` is unchanged and stays `void`. See
+  `.context/orchestration/hooks.md`.
+
 - **Fork zones for back-relations on `Org` and `User` (t-1009, #859).**
   `Org` (`prisma/schema/tenancy.prisma`) and `User`
   (`prisma/schema/auth.prisma`) now end with two fixed markers, a framework
@@ -157,6 +170,17 @@ release process.
   read refuses a new org invitation (`409 CONFLICT`), as on the org route.
 
 ### Fixed
+
+- **An event-hook delivery whose process ended before its first attempt is
+  now sent (t-1012, #834).** A new `AiEventHookDelivery` row was written
+  `pending` with no `nextRetryAt`, and `processPendingHookRetries()` read only
+  rows that had failed once, so a serverless instance frozen or recycled
+  between the write and the attempt lost the event for good. A row is now
+  written holding a claim lease (`nextRetryAt` five minutes on), its first
+  attempt claims it before posting, and the tick sends a `pending` row whose
+  lease has run out. A manual retry's reset takes a lease too. A fork that
+  reads `nextRetryAt` as "has failed and will be retried" should check
+  `status` as well. Rows written before this release are not swept up.
 
 - **Schema guards read every subfolder of `prisma/schema` and share one tier
   rule (t-1009).** Prisma loads `.prisma` files from subfolders, but the
