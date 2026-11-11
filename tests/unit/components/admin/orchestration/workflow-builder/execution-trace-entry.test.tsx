@@ -1276,3 +1276,28 @@ describe('ExecutionTraceEntryRow — model parameters on the request line (t-911
     expect(line).not.toHaveTextContent('web search');
   });
 });
+
+describe('ExecutionTraceEntryRow — privacy counts (§127, t-991)', () => {
+  it("shows the step's privacy counts", () => {
+    render(
+      <ExecutionTraceEntryRow
+        {...BASE_PROPS}
+        privacy={{
+          mode: 'detect',
+          calls: 1,
+          counts: { EMAIL: 2 },
+          embeddingCalls: 0,
+          embeddingCounts: {},
+        }}
+      />
+    );
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent(
+      'Privacy (detect): 2 EMAIL in 1 call'
+    );
+  });
+
+  it('shows nothing for a step without counts', () => {
+    render(<ExecutionTraceEntryRow {...BASE_PROPS} />);
+    expect(screen.queryByTestId('privacy-counts')).toBeNull();
+  });
+});
