@@ -1063,7 +1063,7 @@ Empty body. Finds every chunk where `embedding IS NULL` and embeds in batches vi
 curl /api/v1/admin/orchestration/knowledge/embedding-status
 ```
 
-Returns `{ total, embedded, pending, hasActiveProvider }`. `hasActiveProvider` is `true` when the embedding resolver actually resolves a provider (`resolveEmbeddingAvailability()`); `providerState` carries the reason when it does not. A bare `OPENAI_API_KEY` with no provider row no longer counts (t-740). Rate-limited.
+Returns `{ total, embedded, pending, hasActiveProvider, providerState, providerIsLocal }`. `hasActiveProvider` is `true` when the embedding resolver actually resolves a provider (`resolveEmbeddingAvailability()`); `providerState` carries the reason when it does not; `providerIsLocal` is whether that provider is marked local, `null` when none resolves. A bare `OPENAI_API_KEY` with no provider row no longer counts (t-740). Rate-limited.
 
 ### Graph
 

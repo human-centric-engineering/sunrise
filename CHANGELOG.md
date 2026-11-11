@@ -57,7 +57,7 @@ release process.
   settings; a new install starts in `detect`. In `detect`, a `chat`,
   `chatStream`, `embed` or `embedMany` call through `getProvider`, made in a
   chat turn or a workflow run to a provider not marked local, is scanned
-  locally and sent unchanged; a call outside both is scanned only when an observer is registered or the policy blocks on a failed detector. Per-type counts, never values, are recorded on the
+  locally and sent unchanged; in `detect`, a call outside both is scanned only when an observer is registered or the policy blocks on a failed detector. Per-type counts, never values, are recorded on the
   assistant message that ends the turn (`metadata.privacy`) and on each
   workflow step's trace entry (`privacy`), and shown on both traces. The
   stage refuses a call with `PrivacyRefusedError` (code `privacy_refused`, a
@@ -65,8 +65,8 @@ release process.
   what the policy is: while `initAppPrivacyAdapters()` or a core adapter has
   failed (mode `off` included), the stored mode is unreadable, a policy
   resolver fails, or the stage itself throws. It also refuses when the
-  policy says to: a resolver raising a chat call past `detect`, or `block`
-  on a failed detector. A method added to `LlmProvider` must now be
+  policy says `block` on a failed detector. (The stricter modes are t-992's,
+  above.) A method added to `LlmProvider` must now be
   classified in `PRIVACY_COVERAGE` as well as `METHOD_DISPOSITION`. A fork's
   own long-running work can enter a privacy scope with `withPrivacyScope()`
   (`lib/orchestration/privacy/scope.ts`) so its calls are counted together.
