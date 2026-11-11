@@ -37,7 +37,7 @@ import {
   STREET_SUFFIXES,
   TITLES,
 } from '@/lib/privacy/pii/lexicon';
-import { allMatches, escapeRegExp, overlapsAny, span } from '@/lib/privacy/pii/text';
+import { allMatches, escapeRegExp, span } from '@/lib/privacy/pii/text';
 
 export const LISTS_DETECTOR_ID = 'core.lists';
 
@@ -565,21 +565,27 @@ function learned(text: string, found: Found): void {
 }
 
 /**
- * Find names, addresses and companies in `text`. Text already covered by an
- * earlier tier's span is not re-examined.
+ * Find names, addresses and companies in `text`.
+ *
+ * Every word is examined, including words an earlier tier already covered,
+ * because a prior span can cover part of a name that is not the one it
+ * found: with the user's own "James" masked by tier B, skipping it would
+ * leave a colleague's "James Patel" with nothing to start from, and "Patel"
+ * would go out. Only a span lying wholly inside a prior span is dropped
+ * afterwards, as one that adds nothing.
  */
 export function findListSpans(
   text: string,
   priorSpans: readonly Pick<AttributedSpan, 'start' | 'end'>[] = []
 ): DetectedSpan[] {
-  const tokens = tokenise(text).filter((t) => !overlapsAny(t.start, t.end, priorSpans));
+  const tokens = tokenise(text);
   const found: Found = { spans: [], orgForms: new Map(), nameParts: new Set() };
   companies(text, tokens, found);
   addresses(text, tokens, found);
   people(text, tokens, found);
   signatures(text, found);
   learned(text, found);
-  return found.spans;
+  return found.spans.filter((s) => !priorSpans.some((p) => p.start <= s.start && s.end <= p.end));
 }
 
 /** Tier C as a detector adapter. */

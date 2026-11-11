@@ -199,11 +199,21 @@ describe('signatures', () => {
 });
 
 describe('earlier tiers', () => {
-  it('skips text an earlier detector already covered', () => {
+  it('drops what lies wholly inside text an earlier detector already covered', () => {
     const text = 'Email Sarah Jones about it';
     // As if tier B had found "Sarah Jones" already.
     expect(found(text, [{ start: 6, end: 17 }])).toEqual([]);
     expect(found(text)).toEqual([['PERSON', 'Sarah Jones']]);
+  });
+
+  it('still finds a name an earlier span covers only part of', () => {
+    // Tier B masked the user's own first name, "James"; the colleague's
+    // surname must not be left with nothing to start from.
+    const text = 'I met James Patel yesterday.';
+    expect(found(text, [{ start: 6, end: 11 }])).toEqual([['PERSON', 'James Patel']]);
+    // "Anne" of the user's "Anne Smith" inside someone's "Anne-Marie Dubois".
+    const hyphen = 'Write to Anne-Marie Dubois about it';
+    expect(found(hyphen, [{ start: 9, end: 13 }])).toEqual([['PERSON', 'Anne-Marie Dubois']]);
   });
 });
 

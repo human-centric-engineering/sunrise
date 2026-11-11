@@ -393,9 +393,11 @@ function secrets(text: string): DetectedSpan[] {
     for (const m of allMatches(pattern, text)) {
       // The capture is the match's tail, so its start is measured from the end.
       const start = m.index + m[0].length - m[1].length;
-      // Sentence punctuation after a password is not part of it.
-      const value = m[1].replace(/[.,!?)\]}]+$/, '');
-      if (value.length >= 6) out.push(span('SECRET', start, start + value.length, 0.9));
+      // Sentence punctuation after a password is usually not part of it; when
+      // trimming it would leave too little to be a password, it was.
+      const trimmed = m[1].replace(/[.,!?)\]}]+$/, '');
+      const value = trimmed.length >= 6 ? trimmed : m[1];
+      out.push(span('SECRET', start, start + value.length, 0.9));
     }
   }
   return out;

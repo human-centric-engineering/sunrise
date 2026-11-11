@@ -296,6 +296,10 @@ describe('secrets', () => {
     expect(texts(R.secrets, 'api_key="abc123def456"')).toEqual(['abc123def456']);
   });
 
+  it('keeps the punctuation when trimming it would leave too short a password', () => {
+    expect(texts(R.secrets, 'password: Abc12! ok')).toEqual(['Abc12!']);
+  });
+
   it('ignores a value too short to be a credential', () => {
     expect(texts(R.secrets, 'password: abc')).toEqual([]);
     expect(texts(R.secrets, 'my pin is 1234.')).toEqual([]);
