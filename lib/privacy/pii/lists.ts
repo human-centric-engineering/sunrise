@@ -37,7 +37,7 @@ import {
   STREET_SUFFIXES,
   TITLES,
 } from '@/lib/privacy/pii/lexicon';
-import { allMatches, escapeRegExp, span } from '@/lib/privacy/pii/text';
+import { allMatches, coverage, escapeRegExp, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
 
 export const LISTS_DETECTOR_ID = 'core.lists';
 
@@ -228,7 +228,9 @@ function nameLike(t: Token): boolean {
     NAME_LIKE.test(t.text) &&
     !CONTRACTION.test(t.text) &&
     !acronym(t) &&
-    !STREET_SUFFIXES.has(t.lower) &&
+    // A street word that is also a common surname (Green, Hill, Park) can be
+    // part of a name; a numbered or cued street is still found as an address.
+    (!STREET_SUFFIXES.has(t.lower) || isSurname(t.lower)) &&
     !ORG_SUFFIXES.has(t.lower) &&
     !ALLOWLIST.has(t.lower) &&
     !STARTERS.has(t.lower)
@@ -237,8 +239,12 @@ function nameLike(t: Token): boolean {
 
 /** True when `t` starts a sentence or a line, where every word is capitalised. */
 function sentenceInitial(text: string, t: Token): boolean {
-  const before = text.slice(0, t.start).trimEnd();
-  return before === '' || /[.!?:\n"“]$/.test(before) || /\n\s*$/.test(text.slice(0, t.start));
+  // Walk back over spaces to the previous character, rather than slicing the
+  // whole text before the word: that made tier C quadratic in text length.
+  let i = t.start - 1;
+  while (i >= 0 && (text[i] === ' ' || text[i] === '\t')) i--;
+  if (i < 0) return true;
+  return /[.!?:\r\n"“]/.test(text[i]);
 }
 
 /** A word that is never a name on its own. */
@@ -516,7 +522,9 @@ function people(text: string, tokens: Token[], found: Found): void {
 function signatures(text: string, found: Found): void {
   let offset = 0;
   let previous: string | null = null;
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
+    // A CRLF line keeps its \r after the split; the name patterns end at $.
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
     if (previous !== null && CLOSING.test(previous)) {
       const m = SIGNATURE.exec(line);
       if (m) {
@@ -538,7 +546,7 @@ function signatures(text: string, found: Found): void {
       }
     }
     if (line.trim() !== '') previous = line;
-    offset += line.length + 1;
+    offset += raw.length + 1;
   }
 }
 
@@ -548,7 +556,7 @@ function signatures(text: string, found: Found): void {
  * learned from) adds nothing, so it is skipped.
  */
 function learned(text: string, found: Found): void {
-  const existing = [...found.spans];
+  const alreadyFound = coverage(found.spans);
   const mark = (literal: string, type: EntityType, confidence: number) => {
     const pattern = new RegExp(
       `(?<![\\p{L}\\p{N}])${escapeRegExp(literal)}(?![\\p{L}\\p{N}])`,
@@ -556,7 +564,7 @@ function learned(text: string, found: Found): void {
     );
     for (const m of allMatches(pattern, text)) {
       const end = m.index + m[0].length;
-      if (existing.some((e) => e.start <= m.index && end <= e.end)) continue;
+      if (alreadyFound(m.index, end)) continue;
       found.spans.push(span(type, m.index, end, confidence));
     }
   };
@@ -585,7 +593,8 @@ export function findListSpans(
   people(text, tokens, found);
   signatures(text, found);
   learned(text, found);
-  return found.spans.filter((s) => !priorSpans.some((p) => p.start <= s.start && s.end <= p.end));
+  const covered = coverage(priorSpans);
+  return found.spans.filter((s) => !covered(s.start, s.end));
 }
 
 /** Tier C as a detector adapter. */
@@ -595,10 +604,14 @@ export function listsDetector(): PrivacyDetector {
     egress: 'in_process',
     entityTypes: LISTS_ENTITY_TYPES,
     languages: ['en'],
-    detect: ({ text }, ctx) =>
-      Promise.resolve().then(() => {
-        ctx.signal.throwIfAborted();
-        return findListSpans(text, ctx.priorSpans);
-      }),
+    // Synchronous work: the turn given to the event loop after it lets an
+    // expired timeout abort the signal, so an overrun rejects (see text.ts).
+    detect: async ({ text }, ctx) => {
+      ctx.signal.throwIfAborted();
+      const spans = findListSpans(text, ctx.priorSpans);
+      await yieldToEventLoop();
+      ctx.signal.throwIfAborted();
+      return spans;
+    },
   };
 }

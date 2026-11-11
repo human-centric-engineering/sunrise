@@ -51,9 +51,48 @@ export function allMatches(pattern: RegExp, text: string): RegExpExecArray[] {
   return out;
 }
 
+/**
+ * Give the event loop a turn. Detection is synchronous work, and the runner
+ * enforces each detector's timeout with a timer; a timer cannot fire while
+ * synchronous work runs. Awaiting this after each piece of work lets an
+ * expired timeout fire and abort the signal, so the next `throwIfAborted()`
+ * reports the overrun instead of the late result counting as a success.
+ */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Escape a literal for use inside a RegExp. */
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A test for "is [start, end) wholly inside text `spans` cover?", answered in
+ * logarithmic time: the spans are merged into sorted, disjoint intervals
+ * once. Checking every candidate against every span instead is quadratic
+ * when both grow with the text.
+ */
+export function coverage(
+  spans: readonly { start: number; end: number }[]
+): (start: number, end: number) => boolean {
+  const merged: { start: number; end: number }[] = [];
+  for (const s of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && s.start <= last.end) last.end = Math.max(last.end, s.end);
+    else merged.push({ start: s.start, end: s.end });
+  }
+  return (start, end) => {
+    let lo = 0;
+    let hi = merged.length - 1;
+    // The last interval starting at or before `start`.
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (merged[mid].start <= start) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return hi >= 0 && end <= merged[hi].end;
+  };
 }
 
 /** Whether [start, end) overlaps any of `spans`. */

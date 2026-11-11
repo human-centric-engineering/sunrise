@@ -111,6 +111,11 @@ describe('ninos', () => {
     expect(texts(R.ninos, 'code ab123456c')).toEqual([]);
   });
 
+  it('does not take a following lower-case word for the suffix', () => {
+    expect(texts(R.ninos, 'NINO AB123456 a dog')).toEqual(['AB123456']);
+    expect(texts(R.ninos, 'NINO AB123456 A')).toEqual(['AB123456 A']);
+  });
+
   it('refuses prefixes HMRC never issues, even with context', () => {
     expect(texts(R.ninos, 'NI number QQ 12 34 56 C')).toEqual([]);
     expect(texts(R.ninos, 'NI number GB 12 34 56 C')).toEqual([]);
@@ -190,6 +195,11 @@ describe('cards', () => {
     expect(texts(R.cards, 'Card 4111 1111 1111 1111 12 27')).toEqual(['4111 1111 1111 1111']);
   });
 
+  it('finds a card written after a short group of other digits', () => {
+    expect(texts(R.cards, 'Qty 2 4111 1111 1111 1111')).toEqual(['4111 1111 1111 1111']);
+    expect(texts(R.cards, 'Item 12 4111111111111111')).toEqual(['4111111111111111']);
+  });
+
   it('rejects a number that fails Luhn, or is not a card scheme', () => {
     expect(texts(R.cards, 'card 4111 1111 1111 1112')).toEqual([]);
     expect(texts(R.cards, 'ref 1234 5678 1234 5670')).toEqual([]);
@@ -265,6 +275,15 @@ describe('ipAddresses', () => {
     expect(texts(R.ipAddresses, 'bad 256.1.1.1 and 1.2.3.4.5')).toEqual([]);
   });
 
+  it('does not take a short hex word for an IPv6 address', () => {
+    expect(texts(R.ipAddresses, 'Use cafe::1 now, or a:b::c, or dead::beef')).toEqual([]);
+    expect(texts(R.ipAddresses, 'loopback ::1 and fe80::1 and fd12:3456::1')).toEqual([
+      '::1',
+      'fe80::1',
+      'fd12:3456::1',
+    ]);
+  });
+
   it('does not take a time of day for an IPv6 address', () => {
     expect(texts(R.ipAddresses, 'at 12:30:45 sharp')).toEqual([]);
   });
@@ -302,7 +321,17 @@ describe('secrets', () => {
 
   it('ignores a value too short to be a credential', () => {
     expect(texts(R.secrets, 'password: abc')).toEqual([]);
-    expect(texts(R.secrets, 'my pin is 1234.')).toEqual([]);
+  });
+
+  it('masks a PIN, which is shorter than other credentials', () => {
+    expect(found(R.secrets, 'PIN: 1234')).toEqual([['SECRET', '1234', 0.9]]);
+    expect(texts(R.secrets, 'my pin is 4821.')).toEqual(['4821']);
+    expect(texts(R.secrets, 'pin number 12')).toEqual([]);
+  });
+
+  it('after "is", masks only a value that looks like a credential', () => {
+    expect(texts(R.secrets, 'the password is correct, but your token is expired')).toEqual([]);
+    expect(texts(R.secrets, 'the password is Tr0ub4dor&3 for now')).toEqual(['Tr0ub4dor&3']);
   });
 });
 
@@ -313,6 +342,11 @@ describe('datesOfBirth', () => {
       expect(found(R.datesOfBirth, `Born on ${date}.`)).toEqual([['DATE_OF_BIRTH', date, 0.9]]);
     }
   );
+
+  it('accepts "the" and a dash between the birth word and the date', () => {
+    expect(texts(R.datesOfBirth, 'born on the 3rd of May 1980')).toEqual(['3rd of May 1980']);
+    expect(texts(R.datesOfBirth, 'Date of birth - 12/03/1980')).toEqual(['12/03/1980']);
+  });
 
   it('accepts the common birth words', () => {
     for (const cue of ['DOB', 'D.O.B.', 'date of birth:', 'birthday is']) {
@@ -355,6 +389,17 @@ describe('rulesDetector', () => {
       new Set(['EMAIL', 'PHONE', 'UK_NINO', 'POSTCODE'])
     );
     for (const s of spans) expect(RULES_ENTITY_TYPES).toContain(s.type);
+  });
+
+  it('rejects when its timeout expires during the work, rather than resolving late', async () => {
+    // The runner's timeout is a timer. Synchronous work alone would resolve
+    // before that timer could fire; the detector's turns on the event loop let
+    // it fire, and the next signal check rejects.
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('timed out')), 0);
+    await expect(
+      rulesDetector().detect({ text: 'a@example.com' }, { ...ctx(), signal: controller.signal })
+    ).rejects.toThrow('timed out');
   });
 
   it('stops when its signal is aborted', async () => {

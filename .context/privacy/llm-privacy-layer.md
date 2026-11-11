@@ -333,24 +333,24 @@ An app replaces one by id: `registerPrivacyDetector(mine, { replace: 'core.lists
 
 ### Tier A
 
-| Type                 | Reported when                                                                                | Confidence |
-| -------------------- | -------------------------------------------------------------------------------------------- | ---------- |
-| `EMAIL`              | address shape                                                                                | 1          |
-| `CARD_NUMBER`        | a scheme's prefix and length, and Luhn                                                       | 1          |
-| `IBAN`               | ISO 13616 mod 97, and the country's length where known                                       | 1          |
-| `NHS_NUMBER`         | mod 11, and printed 3-3-4 or with a health word before it                                    | 1          |
-| `UK_VAT`             | HMRC mod 97 / 9755; without `GB`, only with "VAT" before it                                  | 1          |
-| `UK_NINO`            | HMRC's letter rules and a suffix; without the suffix, or in lower case, only with context    | 1 / 0.9    |
-| `SECRET`             | a published key prefix, a JWT or a PEM private key; an assigned value (`password: …`)        | 1 / 0.9    |
-| `UK_DRIVING_LICENCE` | DVLA shape with a possible encoded date; certain with a licence word                         | 0.95 / 1   |
-| `POSTCODE`           | Royal Mail position rules; the space is required unless written in capitals                  | 0.95       |
-| `SORT_CODE`          | with a banking word, or an account number beside it                                          | 0.95       |
-| `BANK_ACCOUNT`       | eight digits with an account word, or a sort code beside it                                  | 0.95       |
-| `UK_UTR`             | ten digits with a tax word                                                                   | 0.95       |
-| `UK_PASSPORT`        | nine digits with "passport"                                                                  | 0.95       |
-| `IP_ADDRESS`         | IPv4 octets, or IPv6 the URL parser accepts; not after "version" or "v"                      | 0.95       |
-| `PHONE`              | `libphonenumber-js` (full metadata) calls it valid; or possible, with a phone word before it | 0.9 / 0.85 |
-| `DATE_OF_BIRTH`      | a date with a birth word just before it; other dates are left alone                          | 0.9        |
+| Type                 | Reported when                                                                                                                                               | Confidence |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `EMAIL`              | address shape                                                                                                                                               | 1          |
+| `CARD_NUMBER`        | a scheme's prefix and length, and Luhn                                                                                                                      | 1          |
+| `IBAN`               | ISO 13616 mod 97, and the country's length where known                                                                                                      | 1          |
+| `NHS_NUMBER`         | mod 11, and printed 3-3-4 or with a health word before it                                                                                                   | 1          |
+| `UK_VAT`             | HMRC mod 97 / 9755; without `GB`, only with "VAT" before it                                                                                                 | 1          |
+| `UK_NINO`            | HMRC's letter rules and a suffix; without the suffix, or in lower case, only with context                                                                   | 1 / 0.9    |
+| `SECRET`             | a published key prefix, a JWT or a PEM private key; an assigned value (`password: …`), after "is" only when it looks like a credential; a PIN of 4–8 digits | 1 / 0.9    |
+| `UK_DRIVING_LICENCE` | DVLA shape with a possible encoded date; certain with a licence word                                                                                        | 0.95 / 1   |
+| `POSTCODE`           | Royal Mail position rules; the space is required unless written in capitals                                                                                 | 0.95       |
+| `SORT_CODE`          | with a banking word, or an account number beside it                                                                                                         | 0.95       |
+| `BANK_ACCOUNT`       | eight digits with an account word, or a sort code beside it                                                                                                 | 0.95       |
+| `UK_UTR`             | ten digits with a tax word                                                                                                                                  | 0.95       |
+| `UK_PASSPORT`        | nine digits with "passport"                                                                                                                                 | 0.95       |
+| `IP_ADDRESS`         | IPv4 octets, not after "version" or "v"; IPv6 the URL parser accepts, with four groups or a real prefix (so not `cafe::1`)                                  | 0.95       |
+| `PHONE`              | `libphonenumber-js` (full metadata) calls it valid; or possible, with a phone word before it                                                                | 0.9 / 0.85 |
+| `DATE_OF_BIRTH`      | a date with a birth word just before it ("born on the", "DOB -"); other dates are left alone                                                                | 0.9        |
 
 National phone numbers are read as UK. Phones sit low on purpose: the library
 finds a number in many digit runs, so a UTR or NHS number overlapping one
@@ -384,11 +384,27 @@ name marks its parts (matched capitalised). **The stage should therefore pass
 a call's messages as one input**, or a name learned in one message will not
 mark the next.
 
+A street word that is also a common surname (Green, Hill, Park) counts as part
+of a name; numbered, or after an address cue, the street is still an address,
+and the address names the merged span.
+
 Stoplists keep names that are also words (May, Will, Grace), places (Reading,
 Chelsea), nationalities, days and months out of the lone-name rule, and an
 allowlist of public bodies, banks, brands and products (NHS, HMRC, Barclays,
 Microsoft, Claude) out of every rule. A fork with names of its own to leave
 visible replaces `core.lists`.
+
+### Timing
+
+The detectors are synchronous. Each gives the event loop a turn after each
+piece of work and then checks its signal, so a timeout that expires during a
+piece is reported as a timeout, never accepted late. All three are linear in
+the text: together about 0.3 s for 540 KB (a 128k-token context) on a laptop.
+At around 2 MB, tier A passes its default 1 s timeout, and because core's
+detectors are required, the call is refused. **The stage (t-991) must decide
+what a very large input does**: pass a larger `timeoutMs`, or scan per message.
+A timer cannot interrupt one piece of synchronous work, so a single piece still
+blocks the process for as long as it takes.
 
 ### Bundled lists
 

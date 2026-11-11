@@ -137,6 +137,17 @@ describe('people', () => {
     expect(found('Grace Period ends today.')).toEqual([]);
   });
 
+  it('accepts a surname that is also a street word', () => {
+    expect(found('I met Sarah Green yesterday.')).toEqual([['PERSON', 'Sarah Green']]);
+    expect(found('Ask Dr Green about it')).toEqual([['PERSON', 'Green']]);
+    expect(found('Tom Park signed it')).toEqual([['PERSON', 'Tom Park']]);
+    // Numbered, it is still an address, and the address names the span.
+    expect(found('Send it to 4 Holly Lane, Leeds')).toContainEqual([
+      'ADDRESS',
+      '4 Holly Lane, Leeds',
+    ]);
+  });
+
   it('does not take a street or company for a person', () => {
     expect(found('Visit 10 Jordan Road.')).toEqual([['ADDRESS', '10 Jordan Road']]);
   });
@@ -192,6 +203,13 @@ describe('signatures', () => {
     ).toBe(LIST_CONFIDENCE.signature);
   });
 
+  it('finds the writer in CRLF text', () => {
+    expect(found('Thanks,\r\nMarcus Achterberg\r\n')).toEqual([['PERSON', 'Marcus Achterberg']]);
+    const text = 'Hi,\r\nAll good.\r\nKind regards,\r\nPriya Sharma\r\nSales';
+    const [name] = findListSpans(text).filter((s) => text.slice(s.start, s.end) === 'Priya Sharma');
+    expect(name).toBeDefined();
+  });
+
   it('does not take a team or a product for the writer', () => {
     expect(found('Best,\nThe Support Team')).toEqual([]);
     expect(found('Cheers,\nSlack Bot')).toEqual([]);
@@ -241,6 +259,23 @@ describe('listsDetector', () => {
       }
     );
     expect(skipped.some((s) => s.type === 'PERSON')).toBe(false);
+  });
+
+  it('grows linearly with the text, not quadratically', () => {
+    // Each word used to rescan everything before it to decide whether it
+    // started a sentence. Sixteen times the text now costs about sixteen
+    // times the time; it used to cost about 250 times.
+    const unit = 'and Grace Zqxvb went home. ';
+    const time = (n: number) => {
+      const text = unit.repeat(n);
+      const t0 = performance.now();
+      findListSpans(text);
+      return performance.now() - t0;
+    };
+    time(200); // warm-up
+    const small = Math.max(time(500), 1);
+    const large = time(8000);
+    expect(large / small).toBeLessThan(80);
   });
 
   it('rejects when its signal is aborted', async () => {

@@ -26,7 +26,7 @@ import {
 } from '@/lib/privacy/adapters/types';
 import { COMMON_WORDS, isFirstName, ORG_SUFFIXES } from '@/lib/privacy/pii/lexicon';
 import { phoneCandidates, toE164 } from '@/lib/privacy/pii/phones';
-import { allMatches, escapeRegExp, span } from '@/lib/privacy/pii/text';
+import { allMatches, escapeRegExp, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
 
 export const KNOWN_VALUES_DETECTOR_ID = 'core.known-values';
 
@@ -183,10 +183,14 @@ export function knownValuesDetector(): PrivacyDetector {
     id: KNOWN_VALUES_DETECTOR_ID,
     egress: 'in_process',
     entityTypes: CORE_ENTITY_TYPES,
-    detect: ({ text }, ctx) =>
-      Promise.resolve().then(() => {
-        ctx.signal.throwIfAborted();
-        return findKnownValueSpans(text, ctx.knownValues);
-      }),
+    // Synchronous work: the turn given to the event loop after it lets an
+    // expired timeout abort the signal, so an overrun rejects (see text.ts).
+    detect: async ({ text }, ctx) => {
+      ctx.signal.throwIfAborted();
+      const spans = findKnownValueSpans(text, ctx.knownValues);
+      await yieldToEventLoop();
+      ctx.signal.throwIfAborted();
+      return spans;
+    },
   };
 }

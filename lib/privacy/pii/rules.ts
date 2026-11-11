@@ -33,7 +33,7 @@ import {
   isValidUkVat,
 } from '@/lib/privacy/pii/checksums';
 import { phoneCandidates } from '@/lib/privacy/pii/phones';
-import { allMatches, hasContextBefore, span } from '@/lib/privacy/pii/text';
+import { allMatches, hasContextBefore, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
 
 export const RULES_DETECTOR_ID = 'core.rules';
 
@@ -64,34 +64,47 @@ type Recogniser = (text: string) => DetectedSpan[];
 // ---------------------------------------------------------------------------
 
 /**
- * The longest prefix of a separator-tolerant match that passes `valid`,
- * as its end offset in `text`.
+ * The longest part of a separator-tolerant match that passes `valid`, as
+ * offsets in `text`.
  *
  * A greedy pattern for a spaced number runs on into whatever digits follow
  * ("4111 1111 1111 1111 12/27"), so the match is shortened one significant
- * character at a time until the compact form validates. Returns null when no
- * prefix of at least `minLength` characters does.
+ * character at a time until the compact form validates. With
+ * `fromAnyGroup`, each group of the match is tried as the start as well, for
+ * digits written just before the number ("Qty 2 4111 1111 1111 1111").
+ * Returns null when nothing of at least `minLength` characters validates.
  */
-function longestValidPrefix(
+function longestValid(
   start: number,
   raw: string,
   isSignificant: (ch: string) => boolean,
   minLength: number,
-  valid: (compact: string) => boolean
-): { end: number; compact: string } | null {
+  valid: (compact: string) => boolean,
+  fromAnyGroup = false
+): { start: number; end: number } | null {
+  const starts: number[] = [];
   const ends: number[] = [];
+  const groupStarts: number[] = [];
   let compact = '';
   for (let i = 0; i < raw.length; i++) {
     if (isSignificant(raw[i])) {
+      if (compact.length === 0 || !isSignificant(raw[i - 1])) groupStarts.push(compact.length);
       compact += raw[i];
+      starts.push(start + i);
       ends.push(start + i + 1);
     }
   }
-  for (let len = compact.length; len >= minLength; len--) {
-    const candidate = compact.slice(0, len);
-    if (valid(candidate)) return { end: ends[len - 1], compact: candidate };
+  let best: { start: number; end: number; length: number } | null = null;
+  for (const from of fromAnyGroup ? groupStarts : [0]) {
+    for (let len = compact.length - from; len >= minLength; len--) {
+      if (best && len <= best.length) break;
+      if (valid(compact.slice(from, from + len))) {
+        best = { start: starts[from], end: ends[from + len - 1], length: len };
+        break;
+      }
+    }
   }
-  return null;
+  return best && { start: best.start, end: best.end };
 }
 
 const isDigit = (ch: string) => ch >= '0' && ch <= '9';
@@ -151,7 +164,7 @@ function postcodes(text: string): DetectedSpan[] {
 }
 
 const NINO_CONTEXT = /national\s+insurance|\bNI\s*(?:no|number|#)|\bNINO\b/i;
-const NINO = /(?<![A-Za-z0-9])([A-Z]{2}) ?(\d{2}) ?(\d{2}) ?(\d{2}) ?([A-D])?(?![A-Za-z0-9])/gi;
+const NINO = /(?<![A-Za-z0-9])([A-Z]{2}) ?(\d{2}) ?(\d{2}) ?(\d{2})(?: ?([A-D]))?(?![A-Za-z0-9])/gi;
 
 /**
  * National Insurance numbers. With the suffix letter the shape is distinctive
@@ -161,13 +174,22 @@ const NINO = /(?<![A-Za-z0-9])([A-Z]{2}) ?(\d{2}) ?(\d{2}) ?(\d{2}) ?([A-D])?(?!
 function ninos(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
   for (const m of allMatches(NINO, text)) {
-    const compact = m[0].replace(/ /g, '');
+    let matched = m[0];
+    let suffix: string | undefined = m[5];
+    // "AB123456 a dog": a lower-case letter after a capitalised number is the
+    // next word, not the suffix.
+    const prefixUpper = m[1] === m[1].toUpperCase();
+    if (suffix !== undefined && prefixUpper && suffix !== suffix.toUpperCase()) {
+      matched = matched.slice(0, matched.length - 1).trimEnd();
+      suffix = undefined;
+    }
+    const compact = matched.replace(/ /g, '');
     const upper = compact.toUpperCase();
     if (!isValidNino(upper)) continue;
     const context = hasContextBefore(text, m.index, NINO_CONTEXT, 40);
-    const strict = compact === upper && m[5] !== undefined;
+    const strict = compact === upper && suffix !== undefined;
     if (strict || context) {
-      out.push(span('UK_NINO', m.index, m.index + m[0].length, strict ? 1 : 0.9));
+      out.push(span('UK_NINO', m.index, m.index + matched.length, strict ? 1 : 0.9));
     }
   }
   return out;
@@ -234,8 +256,8 @@ function ibans(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
   for (const m of allMatches(IBAN, text)) {
     const minLength = IBAN_LENGTHS[m[0].slice(0, 2)] ?? 15;
-    const found = longestValidPrefix(m.index, m[0], isAlnum, minLength, isValidIban);
-    if (found) out.push(span('IBAN', m.index, found.end, 1));
+    const found = longestValid(m.index, m[0], isAlnum, minLength, isValidIban);
+    if (found) out.push(span('IBAN', found.start, found.end, 1));
   }
   return out;
 }
@@ -246,8 +268,8 @@ const CARD = /(?<![\d-])\d(?:[ -]?\d){11,18}(?!\d)/g;
 function cards(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
   for (const m of allMatches(CARD, text)) {
-    const found = longestValidPrefix(m.index, m[0], isDigit, 12, isValidCardNumber);
-    if (found) out.push(span('CARD_NUMBER', m.index, found.end, 1));
+    const found = longestValid(m.index, m[0], isDigit, 12, isValidCardNumber, true);
+    if (found) out.push(span('CARD_NUMBER', found.start, found.end, 1));
   }
   return out;
 }
@@ -326,7 +348,13 @@ const VERSION_CONTEXT =
 
 /** IPv6 validity, by asking the URL parser: no hand-rolled grammar. */
 function isIpv6(candidate: string): boolean {
-  if (!/[0-9A-Fa-f]/.test(candidate) || candidate.length < 3) return false;
+  if (!/\d/.test(candidate) || candidate.length < 3) return false;
+  // "cafe::1" and "dead::beef" parse too. An address in text has four or more
+  // groups, or starts like a real one: global (2xxx, 3xxx), link-local
+  // (fe80), unique-local (fc/fd), loopback or IPv4-mapped.
+  const groups = candidate.split(':').filter((g) => g !== '').length;
+  const realStart = /^(?:[23][0-9a-f]{3}|fe[89ab][0-9a-f]|f[cd][0-9a-f]{2}):|^::(?:1$|ffff:)/i;
+  if (groups < 4 && !realStart.test(candidate)) return false;
   try {
     new URL(`http://[${candidate}]/`);
     return true;
@@ -371,8 +399,22 @@ const PREFIXED_SECRETS: readonly RegExp[] = [
  * `api_key=...`, `Bearer ...`. The span is the value only, so the model still
  * sees that a password was there.
  */
-const ASSIGNED_SECRET =
-  /\b(?:password|passwd|pwd|passcode|pin|secret|api[_ -]?key|access[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|token)\s*(?:is\s*|[:=]\s*)["']?([^\s"'`,;]{6,})/gi;
+const CREDENTIAL_NAME =
+  '(?:password|passwd|pwd|passcode|pin|secret|api[_ -]?key|access[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|token)';
+const ASSIGNED_SECRET = new RegExp(
+  `\\b${CREDENTIAL_NAME}\\s*[:=]\\s*["']?([^\\s"'\`,;]{6,})`,
+  'gi'
+);
+/**
+ * "the password is Tr0ub4dor&3", but not "the password is correct": after
+ * "is" the value must look like a credential — a letter and a digit or symbol.
+ */
+const STATED_SECRET = new RegExp(
+  `\\b${CREDENTIAL_NAME}\\s+is\\s+["']?((?=[^\\s"'\`,;]*[A-Za-z])(?=[^\\s"'\`,;]*[\\d!@#$%^&*])[^\\s"'\`,;]{6,})`,
+  'gi'
+);
+/** A PIN is digits, and shorter than any other credential. */
+const PIN = /\bPIN\b\s*(?:number\s*|code\s*)?(?:is\s*|[:=]\s*)?(\d{4,8})(?!\d)/gi;
 const BEARER = /\bBearer\s+([A-Za-z0-9._~+/-]{20,}=*)/g;
 /**
  * "using the password Tr0ub4dor&3": no separator, so the value must look like
@@ -389,7 +431,7 @@ function secrets(text: string): DetectedSpan[] {
       out.push(span('SECRET', m.index, m.index + m[0].length, 1));
     }
   }
-  for (const pattern of [ASSIGNED_SECRET, BEARER, UNSEPARATED_PASSWORD]) {
+  for (const pattern of [ASSIGNED_SECRET, STATED_SECRET, BEARER, UNSEPARATED_PASSWORD, PIN]) {
     for (const m of allMatches(pattern, text)) {
       // The capture is the match's tail, so its start is measured from the end.
       const start = m.index + m[0].length - m[1].length;
@@ -415,7 +457,7 @@ const DATE = new RegExp(
   'gi'
 );
 const DOB_CONTEXT =
-  /\b(?:born|DOB|D\.O\.B\.?|date\s+of\s+birth|birth\s*date|birthday|b\.)\s*(?:on|is|was|:)?\s*$/i;
+  /\b(?:born|DOB|D\.O\.B\.?|date\s+of\s+birth|birth\s*date|birthday|b\.)\s*(?:on|is|was|:|-|–|—)?\s*(?:the\s+)?$/i;
 
 /**
  * Dates of birth: a date with a birth word just before it. Any other date is
@@ -447,25 +489,26 @@ const RECOGNISERS: readonly Recogniser[] = [
 ];
 
 /**
- * Tier A as a detector adapter. Synchronous work behind the async contract;
- * it checks the abort signal between recognisers so an abandoned call stops
- * early.
+ * Tier A as a detector adapter. The recognisers are synchronous, so it gives
+ * the event loop a turn after each one and then checks its signal: a timeout
+ * that expired during a recogniser fires in that turn, and the detector
+ * rejects instead of handing back a late result.
  */
 export function rulesDetector(): PrivacyDetector {
   return {
     id: RULES_DETECTOR_ID,
     egress: 'in_process',
     entityTypes: RULES_ENTITY_TYPES,
-    // Inside a promise, so an aborted signal rejects rather than throws.
-    detect: ({ text }, ctx) =>
-      Promise.resolve().then(() => {
-        const out: DetectedSpan[] = [];
-        for (const recognise of RECOGNISERS) {
-          ctx.signal.throwIfAborted();
-          out.push(...recognise(text));
-        }
-        return out;
-      }),
+    detect: async ({ text }, ctx) => {
+      const out: DetectedSpan[] = [];
+      for (const recognise of RECOGNISERS) {
+        ctx.signal.throwIfAborted();
+        out.push(...recognise(text));
+        await yieldToEventLoop();
+      }
+      ctx.signal.throwIfAborted();
+      return out;
+    },
   };
 }
 

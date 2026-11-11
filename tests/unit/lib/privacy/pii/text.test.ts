@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allMatches,
+  coverage,
   escapeRegExp,
   hasContextBefore,
   overlapsAny,
@@ -46,6 +47,33 @@ describe('escapeRegExp', () => {
     const literal = 'a.b*c+d?e^f$g{h}i(j)k|l[m]n\\o';
     expect(new RegExp(`^${escapeRegExp(literal)}$`).test(literal)).toBe(true);
     expect(new RegExp(escapeRegExp('a.b')).test('axb')).toBe(false);
+  });
+});
+
+describe('coverage', () => {
+  it('answers whether a range lies wholly inside the spans, merged', () => {
+    const covered = coverage([
+      { start: 10, end: 20 },
+      { start: 0, end: 5 },
+      { start: 18, end: 30 },
+    ]);
+    expect(covered(0, 5)).toBe(true);
+    expect(covered(12, 28)).toBe(true); // across two overlapping spans
+    expect(covered(4, 11)).toBe(false); // straddles a gap
+    expect(covered(30, 31)).toBe(false);
+    expect(coverage([])(0, 1)).toBe(false);
+  });
+
+  it('does not change the spans it was given', () => {
+    const spans = [
+      { start: 5, end: 9 },
+      { start: 0, end: 6 },
+    ];
+    coverage(spans);
+    expect(spans).toEqual([
+      { start: 5, end: 9 },
+      { start: 0, end: 6 },
+    ]);
   });
 });
 
