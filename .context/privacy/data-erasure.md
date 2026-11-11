@@ -321,7 +321,9 @@ conversation through the admin conversation route, which allows it on the
 This is the easiest way to silently regress erasure, and it has happened twice.
 Any **new** model with a `userId` or `createdBy` FK to `User` **must** declare an
 explicit `onDelete` — Prisma's default is `Restrict`, which makes
-`prisma.user.delete()` throw `P2003` for any user who has touched that table:
+`prisma.user.delete()` throw `P2003` for any user who has touched that table.
+For a Prisma `@relation`, `tests/unit/prisma/user-relation-on-delete.test.ts` fails
+until it does, in core and in every fork's schema files:
 
 1. Decide the policy: **personal data → `onDelete: Cascade`**; **reusable config,
    audit, or logs → `onDelete: SetNull`** (and make the FK column nullable).
@@ -1274,8 +1276,8 @@ schema file and relates them to the Sunrise `User`. **Use a Prisma
 so the line merges cleanly on every sync and is not a divergence (#859;
 CUSTOMIZATION.md §5,
 "[Relating your models to `Org` and `User`](../../CUSTOMIZATION.md#relating-your-models-to-org-and-user)").
-A framework fork uses the framework zone above it. The relation is reviewed by
-the schema-level `onDelete` guard
+A framework fork uses the framework zone above it. Its `onDelete` is checked
+by `tests/unit/prisma/user-relation-on-delete.test.ts`
 ([Adding a new `User` relation](#adding-a-new-user-relation-required-step)), and
 Prisma keeps the foreign key:
 
@@ -1318,10 +1320,11 @@ ALTER TABLE "AppHubUserProfile"
   ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
 ```
 
-**⚠️ The schema-level `onDelete` guard does NOT catch this.** The
+**⚠️ The `onDelete` guard does NOT catch this.** The
 [Adding a new `User` relation](#adding-a-new-user-relation-required-step) rule
-above is enforced by reviewing `@relation onDelete` in `schema.prisma`. A
-plain-scalar FK has no `@relation`, so it **slips past that guard entirely**.
+above is enforced by `tests/unit/prisma/user-relation-on-delete.test.ts`, which reads
+`@relation onDelete`. A plain-scalar FK has no `@relation`, so it **slips past
+that guard entirely**.
 Two failure modes if the migration FK is wrong:
 
 - **No DB FK at all** → `prisma.user.delete()` leaves the app rows **orphaned**

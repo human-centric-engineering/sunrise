@@ -1229,7 +1229,8 @@ model AppUserProfile {
 }
 ```
 
-The `onDelete` is reviewed by the schema-level guard, and Prisma writes and
+The `onDelete` is checked by `tests/unit/prisma/user-relation-on-delete.test.ts`, which fails on a
+`User` relation without `Cascade` (or `SetNull` on an optional one). Prisma writes and
 keeps the foreign key, so there is nothing to add to the migration by hand.
 
 **The plain-FK pattern still works.** Before the zones, adding a relation
@@ -1259,8 +1260,8 @@ ALTER TABLE "AppUserProfile"
   ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
 ```
 
-> ⚠️ **The schema-level `onDelete` guard does not catch a plain-scalar FK** — it
-> only reviews `@relation onDelete`, and your table has none. Skip the migration
+> ⚠️ **The `onDelete` guard (`tests/unit/prisma/user-relation-on-delete.test.ts`) does not catch a
+> plain-scalar FK** — it only reads `@relation onDelete`, and your table has none. Skip the migration
 > FK and `prisma.user.delete()` either orphans your rows (a silent GDPR retention
 > violation) or throws `P2003` (erasure breaks for every user). For residual-PII
 > scrub or external cleanup the cascade can't reach, register a hook from
@@ -1313,7 +1314,8 @@ its `ON DELETE` action drifts from `CASCADE`. See
    blocks erasure whatever the other says.
 
 4. Only then remove the model's probe from `lib/app/db-drift.ts`. Prisma now owns the FK,
-   and the schema-level `onDelete` guard reviews its policy.
+   and `tests/unit/prisma/user-relation-on-delete.test.ts` fails if its `onDelete` is missing or
+   blocks erasure.
 
 Then surface the table through its own API endpoint (`app/api/v1/<resource>/`)
 and types — don't widen `User`'s public shape for app-only fields.
