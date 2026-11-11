@@ -1448,6 +1448,7 @@ export function ExecutionDetailView({
                   outputTokens={entry.outputTokens}
                   llmDurationMs={entry.llmDurationMs}
                   requestParams={entry.requestParams}
+                  privacy={entry.privacy}
                   costEntries={costEntriesByStep.get(entry.stepId)}
                   provenance={entry.provenance}
                   agent={entry.agent}
