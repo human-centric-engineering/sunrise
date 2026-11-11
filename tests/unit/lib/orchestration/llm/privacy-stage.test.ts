@@ -446,6 +446,31 @@ describe('refusals', () => {
   });
 });
 
+describe('a cancel while the policy resolvers run', () => {
+  it('lets the call go quietly rather than report a refused one', async () => {
+    const caller = new AbortController();
+    const events: PrivacyEvent[] = [];
+    seam.init.mockImplementation(() => {
+      registerPrivacyObserver({ id: 'app.obs', observe: (e) => void events.push(e) });
+      registerPrivacyPolicyResolver({
+        id: 'app.slow',
+        resolve: () => {
+          caller.abort();
+          return new Promise<undefined>(() => undefined);
+        },
+      });
+    });
+    const args = [messages(), { model: 'm', signal: caller.signal }];
+
+    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+
+    expect(result).toBe(args);
+    expect(privacySummary(scope)).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(events).toEqual([]);
+  });
+});
+
 describe('what a refusal says', () => {
   it("tells the reader only that it stopped, and puts the operator's remedy in the log", async () => {
     seam.init.mockImplementation(() => {

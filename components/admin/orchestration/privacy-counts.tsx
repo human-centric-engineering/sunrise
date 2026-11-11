@@ -19,6 +19,24 @@ function countsText(counts: Record<string, number>): string {
   return entries.length === 0 ? 'nothing' : entries.map(([t, n]) => `${n} ${t}`).join(' · ');
 }
 
+function callsText(n: number): string {
+  return `${n} ${n === 1 ? 'call' : 'calls'}`;
+}
+
+/** One line: the chat calls' counts, then the embedding calls', each only when there were any. */
+function summaryText(summary: PrivacySummary): string {
+  const parts: string[] = [];
+  if (summary.calls > 0) {
+    parts.push(`${countsText(summary.counts)} sent across ${callsText(summary.calls)}`);
+  }
+  if (summary.embeddingCalls > 0) {
+    parts.push(
+      `embeddings: ${countsText(summary.embeddingCounts)} sent across ${callsText(summary.embeddingCalls)}`
+    );
+  }
+  return `Privacy (${summary.mode}): ${parts.join(' · ')}`;
+}
+
 export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
   return (
     <div
@@ -26,16 +44,7 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
       data-testid="privacy-counts"
     >
       <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-      <span>
-        Privacy ({summary.mode}): {countsText(summary.counts)} sent across {summary.calls}{' '}
-        {summary.calls === 1 ? 'call' : 'calls'}
-      </span>
-      {summary.embeddingCalls > 0 && (
-        <span>
-          · embeddings: {countsText(summary.embeddingCounts)} sent across {summary.embeddingCalls}{' '}
-          {summary.embeddingCalls === 1 ? 'call' : 'calls'}
-        </span>
-      )}
+      <span>{summaryText(summary)}</span>
       {summary.degraded && (
         <span className="text-amber-700 dark:text-amber-400">
           · degraded{summary.failedAdapters ? ` (${summary.failedAdapters.join(', ')})` : ''}
@@ -43,11 +52,11 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
       )}
       <FieldHelp title="Privacy counts">
         How many times each type of personal data was sent to a provider, across every call made
-        here, tools, embeddings and any agent or chat turn it ran included. Each call resends the
-        conversation so far, so a value that stays in the history is counted on every call that
-        carried it, and again on a retry with another provider. In detect mode nothing is changed;
-        the values themselves are never stored. Degraded means a detector failed or ran out of time
-        on a call, which went ahead without it.
+        here, tools, embeddings and any agent, chat turn or workflow it ran included. Each call
+        resends the conversation so far, so a value that stays in the history is counted on every
+        call that carried it, and again on a retry with another provider. In detect mode nothing is
+        changed; the values themselves are never stored. Degraded means a detector failed or ran out
+        of time on a call, which went ahead without it.
       </FieldHelp>
     </div>
   );

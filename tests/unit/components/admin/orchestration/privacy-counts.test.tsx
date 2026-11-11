@@ -48,6 +48,25 @@ describe('PrivacyCounts', () => {
   });
 });
 
+describe('PrivacyCounts with only embedding calls', () => {
+  it('leaves out the chat clause rather than say nothing was sent', () => {
+    render(
+      <PrivacyCounts
+        summary={{
+          ...SUMMARY,
+          calls: 0,
+          counts: {},
+          embeddingCalls: 1,
+          embeddingCounts: { PERSON: 2 },
+        }}
+      />
+    );
+    const line = screen.getByTestId('privacy-counts');
+    expect(line).toHaveTextContent('Privacy (detect): embeddings: 2 PERSON sent across 1 call');
+    expect(line).not.toHaveTextContent('0 calls');
+  });
+});
+
 describe('the conversation trace', () => {
   function message(metadata: Record<string, unknown> | null) {
     return {

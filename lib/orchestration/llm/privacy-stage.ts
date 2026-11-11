@@ -272,6 +272,8 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       },
       abandoned
     );
+    // The caller gave up while the resolvers ran: a cancel, not a refusal.
+    if (abandoned?.aborted) return call.args;
     mode = policy.mode;
     if (resolverFailures.length > 0) {
       throw refuse(

@@ -9048,6 +9048,31 @@ describe('the privacy scope a chat turn enters', () => {
     ]);
   });
 
+  it('records the counts on the error marker when the turn fails after a scanned call', async () => {
+    const { provider } = recordingProvider({ EMAIL: 1 });
+    const script = provider.chatStream.getMockImplementation()!;
+    // eslint-disable-next-line require-yield -- fails before its first chunk
+    provider.chatStream.mockImplementation(async function* () {
+      // Record as the stage would, then fail as a vendor might.
+      const inner = script();
+      await inner.next();
+      throw new Error('vendor fell over');
+    });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(assistantMetadata()).toEqual([
+      expect.objectContaining({
+        error: true,
+        privacy: expect.objectContaining({ calls: 1, counts: { EMAIL: 1 } }),
+      }),
+    ]);
+  });
+
   it('writes no privacy field when the layer scanned no call', async () => {
     (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
       provider: mockProvider([

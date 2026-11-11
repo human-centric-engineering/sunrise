@@ -31,6 +31,7 @@ import type {
   MessageMetadata,
   MessageProvenance,
   PendingApproval,
+  PrivacySummary,
   SideEffectModelUsage,
   ToolCallTrace,
 } from '@/types/orchestration';
@@ -441,6 +442,16 @@ interface WriteEvaluationLogParams {
   executionTimeMs?: number;
   tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
   metadata?: { citations?: Citation[] };
+}
+
+/**
+ * The turn's privacy counts (§127) as a metadata field, for whichever
+ * assistant message ends the turn: the answer, a pause for approval, a
+ * cost-cap stop or an error marker. Empty when the layer scanned no call.
+ */
+function privacyField(scope: PrivacyScope): { privacy?: PrivacySummary } {
+  const summary = privacySummary(scope);
+  return summary ? { privacy: summary } : {};
 }
 
 export class StreamingChatHandler {
@@ -2189,8 +2200,7 @@ export class StreamingChatHandler {
             }
             // What the privacy layer counted across the turn's calls (§127).
             // Counts only; absent when it scanned none.
-            const privacy = privacySummary(privacyScope);
-            if (privacy) assistantMetadata.privacy = privacy;
+            Object.assign(assistantMetadata, privacyField(privacyScope));
           }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
@@ -2437,6 +2447,7 @@ export class StreamingChatHandler {
             modelId: resolvedModel,
             providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             metadata: {
+              ...privacyField(privacyScope),
               endedReason: 'budget_exceeded',
               budgetExceededDetail: {
                 usedUsd: turnCostUsd,
@@ -2725,7 +2736,12 @@ export class StreamingChatHandler {
               agentVersionId,
               modelId: resolvedModel,
               providerSlug: currentProviderSlug,
-              metadata: { pendingApproval },
+              // The turn ends here when the result says so, and then this
+              // is its last assistant message.
+              metadata: {
+                pendingApproval,
+                ...(result.skipFollowup ? privacyField(privacyScope) : {}),
+              },
             });
             yield { type: 'approval_required', pendingApproval };
           }
@@ -3025,7 +3041,10 @@ export class StreamingChatHandler {
                 agentVersionId,
                 modelId: resolvedModel,
                 providerSlug: currentProviderSlug,
-                metadata: { pendingApproval: pa },
+                metadata: {
+                  pendingApproval: pa,
+                  ...(anySkipFollowup ? privacyField(privacyScope) : {}),
+                },
               });
               yield { type: 'approval_required', pendingApproval: pa };
             }
@@ -3099,7 +3118,7 @@ export class StreamingChatHandler {
             // error markers; the audit trail reads that as "model in
             // effect at error time was ambiguous (possibly mid-fallback)".
             ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
-            metadata: { error: true, errorCode },
+            metadata: { error: true, errorCode, ...privacyField(privacyScope) },
           });
         } catch (persistErr) {
           log.warn('Failed to persist error-marker assistant message', {

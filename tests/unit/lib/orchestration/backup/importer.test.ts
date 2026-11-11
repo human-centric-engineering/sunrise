@@ -679,6 +679,22 @@ describe('importOrchestrationConfig', () => {
     expect(call.update).toMatchObject(privacy);
   });
 
+  it('keeps the current mode, with a warning, when the backup carries one this version cannot apply', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const result = await importOrchestrationConfig(
+      {
+        ...minPayload,
+        data: { ...minPayload.data, settings: { ...makeSettings(), privacyMode: 'redact' } },
+      },
+      'user-1',
+      SHARED_SCOPE
+    );
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.update).not.toHaveProperty('privacyMode');
+    expect(call.create).not.toHaveProperty('privacyMode');
+    expect(result.warnings).toContainEqual(expect.stringContaining('"redact"'));
+  });
+
   it('leaves the current privacy settings alone when the backup predates them', async () => {
     mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
     await importOrchestrationConfig(

@@ -124,14 +124,15 @@ The stage runs in `off` and `detect`.
   agent and conversation are bound once loaded. A workflow execution enters
   one in `OrchestrationEngine.execute()`, and each step, sequential or a
   parallel branch, runs in a child of it whose counts also roll up into the
-  execution's. A chat turn started inside other work (a step's `judge_call`,
-  an agent another agent called) is a child of that work's scope, so its
-  calls count there too. Known values are the user's own name and email
+  execution's. A chat turn or a workflow run started inside other work (a step's
+  `judge_call`, an agent another agent called, an agent's `run_workflow`) is a
+  child of that work's scope, so its calls count there too. Known values are the user's own name and email
   (`userKnownValues()`), loaded once per scope and only when a call is
   actually scanned, so mode `off` reads nothing; a failed load is logged.
 - **Where counts land.** `privacySummary()` writes per-type counts, the
   number of calls scanned, embedding counts apart, and any degraded call, to
-  the terminal assistant message's `metadata.privacy` and to each step's trace
+  the assistant message that ends the turn's `metadata.privacy` (the answer,
+  a pause for approval, a cost-cap stop or an error marker) and to each step's trace
   entry `privacy`. The conversation trace and the execution trace show them
   (`PrivacyCounts`). Values are never stored. **A count is how many times a
   type was sent**, not how many distinct values there were: every call

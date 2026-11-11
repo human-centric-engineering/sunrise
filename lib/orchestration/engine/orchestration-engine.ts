@@ -335,11 +335,16 @@ export class OrchestrationEngine {
       // per execution, end-to-end.
       // `withPrivacyScope` gives every provider call the execution makes the
       // execution's privacy scope (§127); each step runs in a child of it.
-      const privacyScope = createPrivacyScope({
-        scopeId: `execution:${executionId}`,
-        ...(options.userId ? { userId: options.userId } : {}),
-        ...(options.userId ? { loadKnownValues: userKnownValues(options.userId) } : {}),
-      });
+      // A run started inside other work (an agent's `run_workflow` mid-turn,
+      // a sub-workflow) sits in that work's scope, so it counts there too.
+      const privacyScope = createPrivacyScope(
+        {
+          scopeId: `execution:${executionId}`,
+          ...(options.userId ? { userId: options.userId } : {}),
+          ...(options.userId ? { loadKnownValues: userKnownValues(options.userId) } : {}),
+        },
+        currentPrivacyScope()
+      );
       yield* withPrivacyScope(
         privacyScope,
         withSpanGenerator(

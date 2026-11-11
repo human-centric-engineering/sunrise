@@ -96,7 +96,13 @@ vi.mock('@/lib/orchestration/engine/lease', () => ({
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
-import { currentPrivacyScope, recordPrivacyCall } from '@/lib/orchestration/privacy/scope';
+import {
+  createPrivacyScope,
+  currentPrivacyScope,
+  privacySummary,
+  recordPrivacyCall,
+  runInPrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
 import {
   __resetRegistryForTests,
   registerStepType,
@@ -7137,6 +7143,17 @@ describe('OrchestrationEngine', () => {
       expect(trace.find((e) => e.stepId === 'a')?.privacy).toMatchObject({ counts: { EMAIL: 1 } });
       expect(trace.find((e) => e.stepId === 'b')?.privacy).toMatchObject({ counts: { PHONE: 3 } });
       expect(trace.find((e) => e.stepId === 'p')).not.toHaveProperty('privacy');
+    });
+
+    it("counts a run started inside other work — an agent's run_workflow mid-turn — there too", async () => {
+      recordingExecutor({ a: { EMAIL: 1 }, b: { PHONE: 1 } });
+      const turn = createPrivacyScope({ scopeId: 'conversation:c1' });
+
+      await runInPrivacyScope(turn, () =>
+        collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()))
+      );
+
+      expect(privacySummary(turn)).toMatchObject({ calls: 2, counts: { EMAIL: 1, PHONE: 1 } });
     });
 
     it('writes no privacy field for a step whose calls were not scanned', async () => {
