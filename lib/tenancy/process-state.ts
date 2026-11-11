@@ -767,6 +767,18 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "Privacy adapters registered from code, core's and the fork's, plus the install latch, whether the init is on the stack, and the core and init failure messages. Per-call state (a token session's placeholder map, the privacy scope) is created per call and never held here; a persistent token strategy keeps its map in its own tables.",
   },
   {
+    file: 'lib/privacy/pii/lexicon.ts',
+    holders: ['FIRST_NAMES', 'SURNAMES'],
+    posture: 'no-tenant-data',
+    why: 'Lookup tables built once at load from the bundled public name lists (ONS, US Census); never written after.',
+  },
+  {
+    file: 'lib/privacy/pii/rules.ts',
+    holders: ['IPV4', 'DATE'],
+    posture: 'no-tenant-data',
+    why: 'Patterns compiled once from string parts; every match runs on a fresh copy (allMatches), so no lastIndex is shared between calls or tenants.',
+  },
+  {
     file: 'lib/privacy/subject-source-registry.ts',
     holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',

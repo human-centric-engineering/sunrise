@@ -14,6 +14,18 @@ vi.mock('@/lib/app/privacy-adapters', () => ({
   initAppPrivacyAdapters: () => seam.init(),
 }));
 
+// The runner is the subject here, not core's own detectors (those have their
+// own tests under tests/unit/lib/privacy/pii/), so core contributes nothing
+// and every adapter in play is one a test registered.
+vi.mock('@/lib/privacy/adapters/core-defaults', () => ({
+  corePrivacyAdapters: () => ({
+    detectors: [],
+    tokenStrategy: null,
+    policyResolvers: [],
+    observers: [],
+  }),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
