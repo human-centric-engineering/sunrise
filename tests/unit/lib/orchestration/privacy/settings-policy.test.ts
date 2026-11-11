@@ -1,0 +1,92 @@
+/**
+ * Tests: the install-wide privacy settings as a policy, and what the settings
+ * API accepts for them (§127).
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  basePolicyFromSettings,
+  parseIgnoredEntityTypes,
+  parsePrivacyMode,
+  PRIVACY_MODES_AVAILABLE,
+} from '@/lib/orchestration/privacy/settings-policy';
+import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
+
+describe('parsePrivacyMode', () => {
+  it('accepts the five modes and nothing else', () => {
+    for (const mode of ['off', 'detect', 'pseudonymise', 'redact', 'block']) {
+      expect(parsePrivacyMode(mode)).toBe(mode);
+    }
+    for (const bad of ['pseudonymize', 'OFF', '', null, undefined, 1]) {
+      expect(parsePrivacyMode(bad)).toBeNull();
+    }
+  });
+});
+
+describe('parseIgnoredEntityTypes', () => {
+  it('keeps a list of type names, once each', () => {
+    expect(parseIgnoredEntityTypes(['DATE', 'LOCATION', 'DATE'])).toEqual(['DATE', 'LOCATION']);
+  });
+
+  it('reads anything else as nothing ignored, the stricter reading of exclusions', () => {
+    for (const bad of [null, 'DATE', { DATE: true }, ['DATE', 'lower'], ['DATE', 1]]) {
+      expect(parseIgnoredEntityTypes(bad)).toEqual([]);
+    }
+  });
+});
+
+describe('basePolicyFromSettings', () => {
+  it('starts from the settings, falling back on a failed detector', () => {
+    expect(
+      basePolicyFromSettings({
+        privacyMode: 'detect',
+        privacyIgnoredEntityTypes: ['DATE'],
+        privacyProtectLocalProviders: true,
+      })
+    ).toEqual({
+      mode: 'detect',
+      ignoredEntityTypes: ['DATE'],
+      protectLocalProviders: true,
+      onDetectorFailure: 'fallback',
+    });
+  });
+
+  it('gives no policy for an unreadable mode', () => {
+    expect(
+      basePolicyFromSettings({
+        privacyMode: null,
+        privacyIgnoredEntityTypes: [],
+        privacyProtectLocalProviders: false,
+      })
+    ).toBeNull();
+  });
+});
+
+describe('the settings API', () => {
+  it('accepts only the modes this version can apply', () => {
+    expect(PRIVACY_MODES_AVAILABLE).toEqual(['off', 'detect']);
+    for (const mode of PRIVACY_MODES_AVAILABLE) {
+      expect(updateOrchestrationSettingsSchema.safeParse({ privacyMode: mode }).success).toBe(true);
+    }
+    for (const mode of ['pseudonymise', 'redact', 'block', 'nonsense']) {
+      expect(updateOrchestrationSettingsSchema.safeParse({ privacyMode: mode }).success).toBe(
+        false
+      );
+    }
+  });
+
+  it('accepts ignored types that are type names, deduplicated, and refuses others', () => {
+    const ok = updateOrchestrationSettingsSchema.safeParse({
+      privacyIgnoredEntityTypes: ['DATE', 'DATE', 'US_SSN'],
+    });
+    expect(ok.success && ok.data.privacyIgnoredEntityTypes).toEqual(['DATE', 'US_SSN']);
+    expect(
+      updateOrchestrationSettingsSchema.safeParse({ privacyIgnoredEntityTypes: ['date'] }).success
+    ).toBe(false);
+  });
+
+  it('counts a privacy field alone as a change', () => {
+    expect(
+      updateOrchestrationSettingsSchema.safeParse({ privacyProtectLocalProviders: true }).success
+    ).toBe(true);
+  });
+});
