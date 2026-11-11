@@ -1,0 +1,233 @@
+/**
+ * The stateless token strategy, masking and restoring, by example.
+ * `properties.test.ts` checks the round trip over generated inputs.
+ */
+import { describe, expect, it } from 'vitest';
+import { maskText, PLACEHOLDER_INSTRUCTION } from '@/lib/privacy/pii/mask';
+import { canonical, placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
+import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
+import {
+  formatPlaceholder,
+  STATELESS_TOKEN_STRATEGY_ID,
+  statelessTokenStrategy,
+} from '@/lib/privacy/pii/token-strategy';
+
+const newSession = () => statelessTokenStrategy().createSession({ scopeId: 's' });
+
+describe('statelessTokenStrategy', () => {
+  it('is core, and says it stores nothing', () => {
+    const strategy = statelessTokenStrategy();
+    expect(strategy.id).toBe(STATELESS_TOKEN_STRATEGY_ID);
+    expect(strategy.persistent).toBe(false);
+  });
+
+  it('numbers by first appearance within each type', () => {
+    const s = newSession();
+    expect(s.placeholderFor('PERSON', 'James Hart')).toBe('[PERSON_1]');
+    expect(s.placeholderFor('ORG', 'Halden Ltd')).toBe('[ORG_1]');
+    expect(s.placeholderFor('PERSON', 'Priya Sharma')).toBe('[PERSON_2]');
+    expect(s.placeholderFor('PERSON', 'James Hart')).toBe('[PERSON_1]');
+  });
+
+  it('gives a value one placeholder whatever type it is reported as', () => {
+    const s = newSession();
+    expect(s.placeholderFor('ORG', 'Halden')).toBe('[ORG_1]');
+    expect(s.placeholderFor('PERSON', 'Halden')).toBe('[ORG_1]');
+  });
+
+  it('treats values that differ in case as different values', () => {
+    // Restoring must give back exactly what was masked.
+    const s = newSession();
+    expect(s.placeholderFor('PERSON', 'James')).not.toBe(s.placeholderFor('PERSON', 'JAMES'));
+  });
+
+  it('maps a placeholder back, and knows nothing it did not issue', () => {
+    const s = newSession();
+    s.placeholderFor('EMAIL', 'a@example.com');
+    expect(s.valueFor('[EMAIL_1]')).toBe('a@example.com');
+    expect(s.valueFor('[EMAIL_2]')).toBeUndefined();
+    expect(s.entries()).toEqual([
+      { placeholder: '[EMAIL_1]', type: 'EMAIL', value: 'a@example.com' },
+    ]);
+  });
+
+  it('starts every session empty: nothing carries from one call to the next', () => {
+    const strategy = statelessTokenStrategy();
+    const first = strategy.createSession({ scopeId: 's' });
+    first.placeholderFor('PERSON', 'James Hart');
+    expect(strategy.createSession({ scopeId: 's' }).entries()).toEqual([]);
+  });
+
+  it('cannot be changed through what entries() returns', () => {
+    const s = newSession();
+    s.placeholderFor('PERSON', 'James Hart');
+    const [entry] = s.entries();
+    entry.value = 'someone else';
+    expect(s.valueFor('[PERSON_1]')).toBe('James Hart');
+  });
+});
+
+describe('maskText', () => {
+  it('replaces each span with its placeholder and counts them by type', () => {
+    const s = newSession();
+    const text = 'Email James Hart at j.hart@example.com; James Hart agreed.';
+    const result = maskText(
+      text,
+      [
+        { type: 'PERSON', start: 6, end: 16 },
+        { type: 'EMAIL', start: 20, end: 38 },
+        { type: 'PERSON', start: 40, end: 50 },
+      ],
+      s
+    );
+    expect(result.text).toBe('Email [PERSON_1] at [EMAIL_1]; [PERSON_1] agreed.');
+    expect(result.counts).toEqual({ PERSON: 2, EMAIL: 1 });
+  });
+
+  it('merges overlapping spans rather than dropping one', () => {
+    const s = newSession();
+    const result = maskText(
+      'at 14 Acacia Avenue',
+      [
+        { type: 'ADDRESS', start: 3, end: 15 },
+        { type: 'LOCATION', start: 6, end: 19 },
+      ],
+      s
+    );
+    expect(result.text).toBe('at [ADDRESS_1]');
+    expect(s.valueFor('[ADDRESS_1]')).toBe('14 Acacia Avenue');
+  });
+
+  it('masks text that already looks like a placeholder, so it comes back as written', () => {
+    const s = newSession();
+    const text = 'The template uses [PERSON_1] and PERSON_2 for names.';
+    const masked = maskText(text, [], s);
+    expect(masked.text).toBe('The template uses [LITERAL_1] and [LITERAL_2] for names.');
+    expect(masked.counts).toEqual({ LITERAL: 2 });
+    expect(restoreText(masked.text, s).text).toBe(text);
+  });
+
+  it('catches a look-alike a span cuts through, and one masking would create', () => {
+    const s = newSession();
+    // A span over "2]" leaves "[PERSON_1" behind; restoring it must not
+    // become someone's name.
+    const cut = '[PERSON_12] here';
+    const masked = maskText(cut, [{ type: 'DATE', start: 9, end: 11 }], s);
+    expect(restoreText(masked.text, s).text).toBe(cut);
+    // "PERSON_1x" is not a look-alike, but with "x" masked it would become
+    // "PERSON_1[…]", which is.
+    const s2 = newSession();
+    s2.placeholderFor('PERSON', 'James Hart');
+    const made = maskText('PERSON_1x', [{ type: 'PERSON', start: 8, end: 9 }], s2);
+    expect(restoreText(made.text, s2).text).toBe('PERSON_1x');
+  });
+
+  it('leaves identifiers that only resemble a placeholder alone', () => {
+    const s = newSession();
+    expect(maskText('MY_PERSON_1 HTTP_2 UTF_8', [], s).text).toBe('MY_PERSON_1 HTTP_2 UTF_8');
+  });
+
+  it('ignores an empty span', () => {
+    expect(maskText('abc', [{ type: 'PERSON', start: 1, end: 1 }], newSession()).text).toBe('abc');
+  });
+
+  it('has a short instruction for the model that shows the format', () => {
+    expect(PLACEHOLDER_INSTRUCTION).toContain(formatPlaceholder('PERSON', 1));
+    expect(PLACEHOLDER_INSTRUCTION.length).toBeLessThan(250);
+  });
+});
+
+describe('restoreText', () => {
+  function issued() {
+    const s = newSession();
+    s.placeholderFor('PERSON', 'James Hart');
+    s.placeholderFor('EMAIL', 'j.hart@example.com');
+    s.placeholderFor('UK_NINO', 'TJ 33 15 36 A');
+    return s;
+  }
+
+  it.each([
+    ['[PERSON_1]', 'James Hart'],
+    ['PERSON_1', 'James Hart'],
+    ['[PERSON_1', 'James Hart'],
+    ['PERSON_1]', 'James Hart'],
+    ["[PERSON_1]'s", "James Hart's"],
+    ["PERSON_1's", "James Hart's"],
+    ['"to":"[EMAIL_1]"', '"to":"j.hart@example.com"'],
+    ['[UK_NINO_1]', 'TJ 33 15 36 A'],
+  ])('restores %j leniently', (input, expected) => {
+    expect(restoreText(input, issued()).text).toBe(expected);
+  });
+
+  it('leaves a placeholder it never issued visible, and reports it', () => {
+    const r = restoreText('Ask [PERSON_9], not PERSON_01', issued());
+    expect(r.text).toBe('Ask [PERSON_9], not PERSON_01');
+    expect(r.restored).toBe(0);
+    expect(r.unresolved).toEqual(['[PERSON_9]', 'PERSON_01']);
+  });
+
+  it('does not touch a placeholder inside a longer identifier', () => {
+    expect(restoreText('MY_PERSON_1 and PERSON_12', issued()).text).toBe(
+      'MY_PERSON_1 and PERSON_12'
+    );
+  });
+
+  it('counts what it restored', () => {
+    expect(restoreText('[PERSON_1], PERSON_1 and [EMAIL_1]', issued()).restored).toBe(3);
+  });
+});
+
+describe('restoreValue', () => {
+  it('restores strings at any depth of objects and arrays, and leaves keys', () => {
+    const s = newSession();
+    s.placeholderFor('PERSON', 'James Hart');
+    s.placeholderFor('EMAIL', 'j.hart@example.com');
+    const r = restoreValue(
+      {
+        to: ['[EMAIL_1]', { cc: '[PERSON_1]' }],
+        nested: { deeper: [[{ name: 'PERSON_1' }]] },
+        '[PERSON_1]': 'key stays',
+        count: 2,
+        ok: true,
+        none: null,
+      },
+      s
+    );
+    expect(r.value).toEqual({
+      to: ['j.hart@example.com', { cc: 'James Hart' }],
+      nested: { deeper: [[{ name: 'James Hart' }]] },
+      '[PERSON_1]': 'key stays',
+      count: 2,
+      ok: true,
+      none: null,
+    });
+    expect(r.restored).toBe(3);
+  });
+
+  it('restores a value containing a quote without breaking anything', () => {
+    const s = newSession();
+    s.placeholderFor('ORG', 'The "Best" Café');
+    const args = JSON.parse('{"company":"[ORG_1]"}') as unknown;
+    expect(restoreValue(args, s).value).toEqual({ company: 'The "Best" Café' });
+  });
+
+  it('reports unresolved placeholders from anywhere inside', () => {
+    const s = newSession();
+    expect(restoreValue({ a: ['[PERSON_3]'] }, s).unresolved).toEqual(['[PERSON_3]']);
+  });
+});
+
+describe('placeholder grammar', () => {
+  it('prefers the longer type', () => {
+    const pattern = placeholderPattern(['UK', 'UK_NINO']);
+    expect(pattern && [...'[UK_NINO_1]'.matchAll(pattern)].map((m) => m[1])).toEqual(['UK_NINO']);
+  });
+
+  it('has nothing to look for without types', () => {
+    expect(placeholderPattern([])).toBeNull();
+  });
+
+  it('keeps the number as written', () => {
+    expect(canonical('PERSON', '01')).toBe('[PERSON_01]');
+  });
+});
