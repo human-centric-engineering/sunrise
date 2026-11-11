@@ -17,7 +17,7 @@
  *
  * Paths are relative to `prisma/schema`, with `/` separators on every OS.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /** `prisma/schema` under the current directory, read when called. */
@@ -93,8 +93,9 @@ export function isForkOwnedSchemaFile(file: string): boolean {
  * cannot crash every guard with EISDIR.
  */
 export function listSchemaFiles(dir: string = schemaDir()): string[] {
-  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
-    .filter((file) => file.endsWith('.prisma') && statSync(path.join(dir, file)).isFile())
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.prisma'))
+    .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)))
     .map((file) => file.split(path.sep).join('/'))
     .sort();
 }

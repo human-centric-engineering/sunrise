@@ -111,13 +111,23 @@ function zoneViolations(body: string[], tierOf: Map<string, SchemaTier>): string
   }
 
   let zone: SchemaTier = 'core';
+  let afterAttributes = false;
   for (const line of trimmed) {
+    if (line.startsWith('@@')) afterAttributes = true;
     if (line === FRAMEWORK_MARKER) zone = 'framework';
     else if (line === APP_MARKER) zone = 'app';
     if (line === '' || line.startsWith('//') || line.startsWith('@')) continue;
     const field = /^(\w+)\s+(\w+)/.exec(line);
     if (!field) continue;
     const [, name, type] = field;
+    if (afterAttributes) {
+      problems.push(
+        `\`${name} ${type}\` comes after a block attribute. Fields go above the \`@@\` lines, ` +
+          "which are core's and stay last; a zone line among them puts a core attribute edit " +
+          'next to a fork line.'
+      );
+      continue;
+    }
     const tier = tierOf.get(type);
     if (tier === zone) continue;
     if (zone === 'core') {
@@ -255,6 +265,14 @@ describe('fork back-relation zones on Org and User (sunrise#859)', () => {
       const v = zoneViolations(body, fixtureTiers);
       expect(v).toEqual([
         expect.stringContaining('`@@index([createdAt])` sits above the app zone'),
+      ]);
+    });
+
+    it('rejects a fork line after a block attribute', () => {
+      const body = [...layout([], [], ['appThings AppThing[]']), '  appMore AppThing[]'];
+      const v = zoneViolations(body, fixtureTiers);
+      expect(v).toEqual([
+        expect.stringContaining('`appMore AppThing` comes after a block attribute'),
       ]);
     });
 

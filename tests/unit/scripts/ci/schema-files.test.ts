@@ -103,7 +103,8 @@ describe('listSchemaFiles / readSchemaFiles', () => {
     const missing = [...CORE_SCHEMA_FILES].filter((f) => !onDisk.has(f)).sort();
     expect(
       missing,
-      'CORE_SCHEMA_FILES names a file that is not in prisma/schema. Rename or remove it there.'
+      'CORE_SCHEMA_FILES names a file that is not in prisma/schema. If you renamed or removed ' +
+        'a core schema file, update CORE_SCHEMA_FILES in scripts/ci/schema-files.ts to match.'
     ).toEqual([]);
     expect(listSchemaFiles()).toEqual(expect.arrayContaining([...CORE_SCHEMA_FILES]));
   });

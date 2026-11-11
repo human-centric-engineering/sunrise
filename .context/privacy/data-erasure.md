@@ -320,8 +320,9 @@ conversation through the admin conversation route, which allows it on the
 
 This is the easiest way to silently regress erasure, and it has happened twice.
 Any **new** model with a `userId` or `createdBy` FK to `User` **must** declare an
-explicit `onDelete` — Prisma's default is `Restrict`, which makes
-`prisma.user.delete()` throw `P2003` for any user who has touched that table.
+explicit `onDelete` — Prisma's default on a required relation is `Restrict`, which makes
+`prisma.user.delete()` throw `P2003` for any user who has touched that table;
+on an optional one it is `SetNull`, which keeps rows that may be personal data.
 For a Prisma `@relation`, `tests/unit/prisma/user-relation-on-delete.test.ts` fails
 until it does, in core and in every fork's schema files:
 

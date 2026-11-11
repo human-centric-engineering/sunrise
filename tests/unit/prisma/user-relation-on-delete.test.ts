@@ -2,10 +2,12 @@
  * Guard: every relation to `User` says what happens to its rows when the user
  * is erased.
  *
- * Prisma's default `onDelete` is `Restrict`. A relation that leaves it out
- * makes `prisma.user.delete()` throw `P2003` for any user with a row in that
- * table, so erasure fails for exactly the people who used the feature. It has
- * happened twice (`.context/privacy/data-erasure.md`, "Adding a new `User`
+ * A relation that leaves `onDelete` out gets Prisma's default for its shape.
+ * On a required relation that is `Restrict`, which makes `prisma.user.delete()`
+ * throw `P2003` for any user with a row in that table, so erasure fails for
+ * exactly the people who used the feature. On an optional one it is `SetNull`,
+ * which erasure survives but which keeps personal data that should have gone,
+ * de-attributed. Either way nobody chose. It has happened twice (`.context/privacy/data-erasure.md`, "Adding a new `User`
  * relation"). The rule:
  *
  * - **`onDelete: Cascade`** for personal data, which goes with the user.
@@ -59,7 +61,10 @@ function unsafeUserRelations(files: SchemaFile[]): string[] {
       const where = `${block}.${name} (prisma/schema/${file.name})`;
       if (onDelete === undefined) {
         problems.push(
-          `${where} has no onDelete, so Prisma uses Restrict and erasing the user fails. Add ` +
+          (optional === '?'
+            ? `${where} has no onDelete, so Prisma uses SetNull: erasing the user keeps these ` +
+              `rows, de-attributed. Say which you mean: `
+            : `${where} has no onDelete, so Prisma uses Restrict and erasing the user fails. Add `) +
             `onDelete: Cascade (personal data) or onDelete: SetNull on an optional relation ` +
             `(retained config, audit or logs).`
         );
@@ -111,6 +116,13 @@ describe('relations to User say what erasure does to their rows', () => {
           'AppWidget.user (prisma/schema/app/widgets.prisma) has no onDelete'
         ),
       ]);
+    });
+
+    it('rejects an optional relation with no onDelete, saying what Prisma does instead', () => {
+      const v = unsafeUserRelations(
+        file(['  editor User? @relation(fields: [editorId], references: [id])'])
+      );
+      expect(v).toEqual([expect.stringContaining('has no onDelete, so Prisma uses SetNull')]);
     });
 
     it('rejects SetNull on a required relation', () => {
