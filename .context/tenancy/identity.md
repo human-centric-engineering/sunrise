@@ -381,6 +381,14 @@ redeemed. The org route refuses the same way. The admin table's Resend
 and Delete name the row's org for that reason, and Delete revokes only that
 org's invitation (`?orgId=`). A caller who is not a platform admin is refused
 while any platform-role invitation is pending for the address.
+**The platform route invites an existing account into an org too** (t-1008),
+so the table's Resend works on an invitation the org route sent to one. An
+invitation into another org at the default role is sent as the org route
+sends it: the email asks them to sign in, and the answer does not depend on
+whether the account exists. Someone already in that org gets `409
+ALREADY_MEMBER`. A platform invitation (a platform role, or the install org)
+to an address with an account is still `409 EMAIL_TAKEN`, because an existing
+account cannot redeem one.
 
 ## Accepting as an existing account
 
@@ -716,7 +724,8 @@ merge-impact section promises forks.
   real guard: row + cookie, non-enumerating refusals, API keys refused.
 - `tests/unit/app/api/v1/users/invite/route.test.ts` — an invitation without
   an org writes metadata byte-identical to before; one with an org asks the
-  policy.
+  policy; an existing account's org invitation re-sends (that org's only, the
+  same answer either way) while a platform one to it is still refused.
 - `tests/unit/auth-role-literals.test.ts` — no bare `'OWNER'` / `'MEMBER'`
   outside `lib/tenancy/roles.ts`, the way it already polices `'ADMIN'`.
 

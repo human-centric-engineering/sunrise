@@ -692,3 +692,325 @@ describe('POST /api/v1/users/invite — platform role floor', () => {
     });
   });
 });
+
+describe('POST /api/v1/users/invite — an address that already has an account (t-1008)', () => {
+  // The admin invitations table re-sends an org invitation the org route
+  // wrote to an existing account (#1199) through this route. It goes out as
+  // the org route sends it; a platform invitation to that address is still
+  // refused, since an existing account cannot redeem one.
+  const ORG_Y = 'cmorg00000000000000000orgy';
+
+  function row(id: string, metadata: Record<string, unknown>) {
+    return {
+      id,
+      email: invitee.email,
+      metadata: {
+        name: 'Jane Doe',
+        role: 'USER',
+        invitedBy: 'org-admin-1',
+        invitedAt: '2026-11-01T00:00:00.000Z',
+        ...metadata,
+      },
+      expiresAt: new Date(Date.now() + 86400000),
+      createdAt: new Date(),
+    };
+  }
+
+  function accountExists(memberOfTarget = false) {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'user-jane',
+      orgMemberships: memberOfTarget ? [{ id: 'm-1' }] : [],
+    } as never);
+  }
+
+  /** What the table's Resend posts for an org row. */
+  const resendOrgRow = () =>
+    POST(
+      request({ ...invitee, role: 'USER', orgId: OTHER_ORG, orgRole: 'MEMBER' }, '?resend=true')
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      id: OTHER_ORG,
+      status: 'ACTIVE',
+      name: 'Other Org',
+    } as never);
+  });
+
+  it("re-sends an existing account's org invitation with a new token, asking them to sign in", async () => {
+    accountExists();
+    mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+
+    const res = await resendOrgRow();
+
+    expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateInvitationToken).mock.calls[0]).toEqual([
+      invitee.email,
+      expect.objectContaining({ role: 'USER', orgId: OTHER_ORG, orgRole: 'MEMBER' }),
+    ]);
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    const { resolveEmailTemplate } = await import('@/lib/email/registry');
+    expect(vi.mocked(resolveEmailTemplate)).toHaveBeenCalledWith(
+      'invitation',
+      expect.objectContaining({ hasAccount: true, orgName: 'Other Org' })
+    );
+    // The membership looked up is the target org's, not any org's.
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: invitee.email },
+        select: expect.objectContaining({
+          orgMemberships: expect.objectContaining({ where: { orgId: OTHER_ORG } }),
+        }),
+      })
+    );
+  });
+
+  it("replaces only that org's invitation, leaving the address's other org's alone", async () => {
+    accountExists();
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [
+        row('row-y', { orgId: ORG_Y }), // newest: another org's
+        row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }),
+      ],
+      unreadable: 0,
+    });
+
+    const res = await resendOrgRow();
+
+    expect(res.status).toBe(201);
+    // One replacement, keyed on the target org; the store replaces by
+    // (email, org), so ORG_Y's row is not what it was told to rewrite.
+    expect(updateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+      orgId: OTHER_ORG,
+    });
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('answers the same whether or not the account exists', async () => {
+    const strip = (body: { data: { invitation: Record<string, unknown> } }) => {
+      const { invitedAt: _i, expiresAt: _e, ...rest } = body.data.invitation;
+      return { ...body, data: { ...body.data, invitation: rest } };
+    };
+
+    mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+    const without = await resendOrgRow();
+
+    accountExists();
+    mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+    const withAccount = await resendOrgRow();
+
+    expect(withAccount.status).toBe(without.status);
+    expect(strip(JSON.parse(await withAccount.text()))).toEqual(
+      strip(JSON.parse(await without.text()))
+    );
+  });
+
+  it('still answers "already pending" without a resend, as for a new address', async () => {
+    accountExists();
+    mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(await res.text()).data.emailStatus).toBe('pending');
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('invites an existing account into an org for the first time', async () => {
+    accountExists();
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(201);
+    expect(vi.mocked(generateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+      orgId: OTHER_ORG,
+    });
+  });
+
+  it('refuses someone already a member of that org, as the org route does', async () => {
+    accountExists(true);
+    mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+
+    const res = await resendOrgRow();
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('ALREADY_MEMBER');
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  describe('the org and the policy are checked before anything about the address', () => {
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    it('a caller the policy refuses for the org gets 403, not whether they are a member', async () => {
+      accountExists(true);
+      const canAdminister = vi.fn(async () => false);
+      registerAuthorizationPolicy({ ...DEFAULT_AUTHORIZATION_POLICY, canAdminister });
+      // Let the guard's own canAdminister(principal, null) pass.
+      canAdminister.mockImplementationOnce(async () => true);
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).not.toBe('ALREADY_MEMBER');
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('a member of a suspended org gets the same 400 as anyone else', async () => {
+      accountExists(true);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({
+        id: OTHER_ORG,
+        status: 'SUSPENDED',
+        name: 'Other Org',
+      } as never);
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(400);
+      expect(JSON.parse(await res.text()).error.message).toBe(
+        'Cannot invite into that organisation'
+      );
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an OWNER org invitation needs owner standing, as on the org route', () => {
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    /** A fork policy admitting a non-platform-admin, as t-671 will an org's admins. */
+    function asAdmittedNonPlatformAdmin() {
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canAdminister: async () => true,
+        subjectScope: async () => ({}),
+      });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    }
+
+    it('refuses inviting an existing account as OWNER without it', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).toBe('OWNER_STANDING');
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('refuses re-sending a pending OWNER invitation without it, whatever role the body names', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+      mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      const res = await resendOrgRow(); // the body names MEMBER
+
+      expect(res.status).toBe(403);
+      expect(JSON.parse(await res.text()).error.code).toBe('OWNER_STANDING');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('still answers "already pending" for a pending OWNER invitation without a resend', async () => {
+      asAdmittedNonPlatformAdmin();
+      accountExists();
+      mockPending(row('row-other', { orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(await res.text()).data.emailStatus).toBe('pending');
+    });
+
+    it('lets a platform admin invite an existing account as OWNER', async () => {
+      accountExists();
+
+      const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'OWNER' }));
+
+      expect(res.status).toBe(201);
+      expect(vi.mocked(generateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+        orgId: OTHER_ORG,
+        orgRole: 'OWNER',
+      });
+    });
+  });
+
+  it('refuses re-sending an org invitation while another pending one cannot be read', async () => {
+    accountExists();
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({
+      readable: [row('row-other', { orgId: OTHER_ORG, orgRole: 'MEMBER' })],
+      unreadable: 1,
+    });
+
+    const res = await resendOrgRow();
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('lets a platform invitation through beside a row it cannot read, as before', async () => {
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({ readable: [], unreadable: 1 });
+
+    const res = await POST(request({ ...invitee }));
+
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses a new invitation while a pending one cannot be read, as the org route does', async () => {
+    accountExists();
+    vi.mocked(pendingInvitationsFor).mockResolvedValueOnce({ readable: [], unreadable: 1 });
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  describe('a platform invitation to an existing account is still refused', () => {
+    it('an install-org invitation (no org named)', async () => {
+      accountExists();
+      mockPending(row('row-install', {}));
+
+      const res = await POST(request({ ...invitee, role: 'USER' }, '?resend=true'));
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(await res.text()).error.code).toBe('EMAIL_TAKEN');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('the install org named explicitly', async () => {
+      accountExists();
+      const { INSTALL_ORG_ID } = await import('@/lib/tenancy/constants');
+
+      const res = await POST(request({ ...invitee, orgId: INSTALL_ORG_ID }));
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(await res.text()).error.code).toBe('EMAIL_TAKEN');
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('a platform role into another org', async () => {
+      accountExists();
+      mockPending(row('row-other', { orgId: OTHER_ORG, role: 'ADMIN' }));
+
+      const res = await POST(
+        request({ ...invitee, role: 'ADMIN', orgId: OTHER_ORG }, '?resend=true')
+      );
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(await res.text()).error.code).toBe('EMAIL_TAKEN');
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -142,6 +142,13 @@ await apiClient.post('/api/v1/users/invite?resend=true', {
 });
 ```
 
+The table also sends the row's `orgId` and `orgRole` for an org invitation,
+so only that org's invitation is replaced. An org invitation to an address
+that already has an account (one an org admin sent, #1199) re-sends the same
+way, and its email asks them to sign in (t-1008). A platform invitation to
+such an address cannot be redeemed, and the route refuses it with
+`409 EMAIL_TAKEN`; delete it instead.
+
 Provides visual feedback:
 
 - Spinning icon during send

@@ -80,6 +80,18 @@ release process.
   and `isPlatformInvitation()`. `InvitationRecord` gains an optional `id`.
   `POST /api/auth/accept-invite` answers `409 EMAIL_TAKEN` for an address that
   already has an account, instead of a 500 from the failed sign-up.
+- **`POST /api/v1/users/invite` invites an address with an account into an
+  org (t-1008).** An invitation into an org other than the install org, at
+  the default `USER` role, is now stored and sent rather than refused with
+  `409 EMAIL_TAKEN`, so the admin invitations table can re-send one the org
+  route wrote. The email asks them to sign in, and the answer is the same
+  whether or not the account exists. An existing member of that org gets
+  `409 ALREADY_MEMBER`. A platform invitation (a platform role, or the
+  install org) to an address with an account is still `409 EMAIL_TAKEN`.
+  The org and the policy are checked before the address's membership of it
+  is answered. An `OWNER` org invitation, or a resend of one, needs a platform
+  admin (`403 OWNER_STANDING`), and a pending invitation the route cannot
+  read refuses a new org invitation (`409 CONFLICT`), as on the org route.
 
 ### Fixed
 
