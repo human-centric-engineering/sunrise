@@ -1,0 +1,202 @@
+{
+  "development": {
+    "cases": 109,
+    "types": {
+      "ADDRESS": {
+        "labelled": 21,
+        "recall": 1,
+        "precision": 1
+      },
+      "BANK_ACCOUNT": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "CARD_NUMBER": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "DATE_OF_BIRTH": {
+        "labelled": 5,
+        "recall": 1,
+        "precision": 1
+      },
+      "EMAIL": {
+        "labelled": 28,
+        "recall": 1,
+        "precision": 1
+      },
+      "IBAN": {
+        "labelled": 10,
+        "recall": 1,
+        "precision": 1
+      },
+      "IP_ADDRESS": {
+        "labelled": 4,
+        "recall": 1,
+        "precision": 1
+      },
+      "NHS_NUMBER": {
+        "labelled": 10,
+        "recall": 1,
+        "precision": 1
+      },
+      "ORG": {
+        "labelled": 24,
+        "recall": 1,
+        "precision": 1
+      },
+      "PERSON": {
+        "labelled": 120,
+        "recall": 0.9833,
+        "precision": 1
+      },
+      "PHONE": {
+        "labelled": 22,
+        "recall": 1,
+        "precision": 1
+      },
+      "POSTCODE": {
+        "labelled": 21,
+        "recall": 1,
+        "precision": 1
+      },
+      "SECRET": {
+        "labelled": 8,
+        "recall": 1,
+        "precision": 1
+      },
+      "SORT_CODE": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_DRIVING_LICENCE": {
+        "labelled": 1,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_NINO": {
+        "labelled": 9,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_PASSPORT": {
+        "labelled": 1,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_UTR": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_VAT": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      }
+    }
+  },
+  "heldOut": {
+    "cases": 46,
+    "types": {
+      "ADDRESS": {
+        "labelled": 14,
+        "recall": 0.8571,
+        "precision": 1
+      },
+      "BANK_ACCOUNT": {
+        "labelled": 4,
+        "recall": 1,
+        "precision": 1
+      },
+      "CARD_NUMBER": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "DATE_OF_BIRTH": {
+        "labelled": 12,
+        "recall": 1,
+        "precision": 1
+      },
+      "EMAIL": {
+        "labelled": 15,
+        "recall": 1,
+        "precision": 1
+      },
+      "IBAN": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "IP_ADDRESS": {
+        "labelled": 4,
+        "recall": 1,
+        "precision": 0.8
+      },
+      "NHS_NUMBER": {
+        "labelled": 7,
+        "recall": 1,
+        "precision": 1
+      },
+      "ORG": {
+        "labelled": 19,
+        "recall": 0.7368,
+        "precision": 1
+      },
+      "PERSON": {
+        "labelled": 91,
+        "recall": 0.7582,
+        "precision": 0.9726
+      },
+      "PHONE": {
+        "labelled": 16,
+        "recall": 0.9375,
+        "precision": 0.8824
+      },
+      "POSTCODE": {
+        "labelled": 12,
+        "recall": 1,
+        "precision": 1
+      },
+      "SECRET": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "SORT_CODE": {
+        "labelled": 4,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_DRIVING_LICENCE": {
+        "labelled": 1,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_NINO": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_PASSPORT": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_UTR": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      },
+      "UK_VAT": {
+        "labelled": 2,
+        "recall": 1,
+        "precision": 1
+      }
+    }
+  }
+}

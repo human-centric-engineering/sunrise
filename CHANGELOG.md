@@ -18,6 +18,19 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: local detection (§127, t-989).** Core now registers
+  three default privacy detectors, all in-process and required:
+  `core.rules` (UK and international identifiers, checksum-validated where
+  the identifier has one), `core.known-values` (what the stage already knows
+  about the people in a call, with variants) and `core.lists` (names,
+  street addresses and companies, from bundled name lists and cues). An app
+  turns one off or swaps it with
+  `registerPrivacyDetector(mine, { replace: '<id>' })`, so the three ids are
+  part of the seam. Nothing calls the detectors yet, so behaviour is
+  unchanged. The bundled ONS name list is used under the Open Government
+  Licence v3.0; its attribution, and the measured precision and recall, are
+  in `.context/privacy/llm-privacy-layer.md`.
+
 - **LLM privacy layer: the adapter seam (§127, t-988).** A new fork seam,
   `lib/app/privacy-adapters.ts` → `initAppPrivacyAdapters()`, ships empty.
   From it an app registers its own privacy adapters with
