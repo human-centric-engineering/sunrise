@@ -20,7 +20,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() } },
 }));
 
-const privacy = vi.hoisted(() => ({ mode: 'detect' }));
+const privacy = vi.hoisted((): { mode: string | null } => ({ mode: 'detect' }));
 vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
   getOrchestrationSettings: vi.fn(async () => ({
