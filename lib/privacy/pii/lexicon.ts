@@ -502,8 +502,8 @@ export const PLACES: ReadonlySet<string> = new Set([
 /**
  * Public bodies, brands and products. Not personal data, and the names a
  * model most needs to read: never reported by tier C, as a name or as a
- * company. A fork adds its own through a detector of its own, or by asking
- * for a protected term the other way round.
+ * company. Core's list only: a fork with names of its own to leave visible
+ * replaces `core.lists`.
  */
 export const ALLOWLIST: ReadonlySet<string> = new Set([
   // UK public bodies

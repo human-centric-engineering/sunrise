@@ -7,8 +7,9 @@
  * Confidence is how specific a match is, because the overlap merge uses it to
  * choose a merged span's type: 1 for a checksum-valid match or a credential
  * with a published prefix; 0.95 for a distinctive shape, or a generic one a
- * context word confirms; 0.9 for phone numbers and dates of birth. Phones sit
- * low on purpose: the library finds a phone number in many digit runs, so a
+ * context word confirms; 0.9 for a valid phone number, a date of birth or a
+ * value assigned to a credential's name; 0.85 for a phone number that is only
+ * possible. Phones sit low on purpose: the library finds a phone number in many digit runs, so a
  * UTR or NHS number that overlaps one should name the span.
  *
  * Every pattern that starts with a character class is anchored with a
