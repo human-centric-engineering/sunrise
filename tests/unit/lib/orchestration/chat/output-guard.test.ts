@@ -18,7 +18,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const seam = vi.hoisted(() => ({ init: vi.fn<() => void>() }));
 vi.mock('@/lib/app/privacy-adapters', () => ({ initAppPrivacyAdapters: () => seam.init() }));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
+import { logger } from '@/lib/logging';
 import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
@@ -27,6 +31,7 @@ import {
 } from '@/lib/privacy/adapters/registry';
 
 beforeEach(() => {
+  vi.clearAllMocks();
   __resetPrivacyAdaptersForTests();
   seam.init.mockImplementation(() => undefined);
 });
@@ -153,6 +158,35 @@ describe('scanOutput', () => {
 
     // The app's rules replaced core's, emails included.
     expect(result.builtInMatches).toEqual(['pii_staff_id']);
+  });
+
+  it('leaves alone the types the admin told the privacy layer to ignore', async () => {
+    const reply = 'Visit us at SW1A 1AA or email john@example.com.';
+    expect((await scanOutput(reply, [])).builtInMatches).toEqual(
+      expect.arrayContaining(['pii_postcode', 'pii_email'])
+    );
+    const result = await scanOutput(reply, [], [], { ignoredEntityTypes: ['POSTCODE'] });
+    expect(result.builtInMatches).toEqual(['pii_email']);
+  });
+
+  it('says in the log when it could not finish its scan, rather than pass silently', async () => {
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector(
+        {
+          id: 'app.rules',
+          egress: 'in_process',
+          entityTypes: ['EMAIL'],
+          detect: () => Promise.reject(new Error('down')),
+        },
+        { replace: 'core.rules' }
+      )
+    );
+    const result = await scanOutput('Email john@example.com.', []);
+    expect(result.builtInMatches).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith('output-guard: identifier scan incomplete', {
+      failedAdapters: ['app.rules'],
+      reasons: ['threw'],
+    });
   });
 
   it('combines topic and built-in matches', async () => {

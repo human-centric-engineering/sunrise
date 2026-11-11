@@ -8,6 +8,7 @@
  *
  * @see .context/privacy/llm-privacy-layer.md — *Settings*
  */
+import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import {
   ENTITY_TYPE_PATTERN,
   PRIVACY_MODES_BY_STRICTNESS,
@@ -35,6 +36,15 @@ export const PRIVACY_MODES_AVAILABLE = [
  */
 export function isMaskingMode(mode: PrivacyMode): boolean {
   return mode === 'pseudonymise' || mode === 'redact';
+}
+
+/**
+ * Whether `mode` protects what is sent: `pseudonymise` or stricter. The test
+ * for refusing on a failed detector, for the `local_only` embeddings refusal,
+ * and for the settings page's embeddings warning: one definition for all three.
+ */
+export function protectsContent(mode: PrivacyMode): boolean {
+  return modeStrictness(mode) >= modeStrictness('pseudonymise');
 }
 
 /**

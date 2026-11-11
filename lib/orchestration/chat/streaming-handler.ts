@@ -2008,10 +2008,17 @@ export class StreamingChatHandler {
             // The messages this iteration sent: an identifier they carried
             // (the user's own email, a tool result's phone number) is not a
             // leak when the reply repeats it.
+            // The admin's ignored types govern both the privacy layer and this
+            // check. Unreadable settings: nothing ignored, the stricter reading.
+            const ignoredEntityTypes = await getOrchestrationSettings().then(
+              (settings) => settings.privacyIgnoredEntityTypes,
+              () => []
+            );
             const outputScan = await scanOutput(
               assistantText,
               agent.topicBoundaries ?? [],
-              messages
+              messages,
+              { ignoredEntityTypes }
             );
             if (outputScan.flagged) {
               log.warn('Output guard triggered', {

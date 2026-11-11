@@ -26,7 +26,12 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@/lib/logging';
-import type { EntityType, KnownValue, PrivacyMode } from '@/lib/privacy/adapters/types';
+import type {
+  EntityType,
+  KnownValue,
+  PrivacyMode,
+  TokenSession,
+} from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import type { PrivacySummary } from '@/types/orchestration';
 
@@ -86,6 +91,15 @@ export interface PrivacyScope {
   loadKnownValues?: () => Promise<readonly KnownValue[]>;
   /** The loader's result, once asked for. Shared with child scopes. */
   loaded?: Promise<readonly KnownValue[]>;
+  /**
+   * The token session every masked call in this scope uses (§127, t-992),
+   * created on the first. In memory only, and gone with the scope: never
+   * stored, never shared with a child scope. One session per scope keeps a
+   * value's placeholder the same across a turn's tool loop even when a later
+   * call detects a value an earlier one missed, so reasoning blocks replayed
+   * from an earlier call still point at the right value.
+   */
+  tokenSession?: TokenSession;
   readonly tally: PrivacyTally;
   /** The scope this one sits inside. What is recorded here is recorded there too. */
   readonly parent?: PrivacyScope;

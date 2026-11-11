@@ -19,6 +19,7 @@
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import { messagePieces } from '@/lib/orchestration/privacy/call-masking';
 import { CORE_RULES_DETECTOR_ID } from '@/lib/privacy/adapters/core-defaults';
+import { logger } from '@/lib/logging';
 import { runPrivacyDetectors } from '@/lib/privacy/adapters/run';
 
 export interface OutputScanResult {
@@ -53,14 +54,24 @@ function comparable(text: string): string {
  */
 async function identifierMatches(
   content: string,
-  supplied: readonly LlmMessage[]
+  supplied: readonly LlmMessage[],
+  ignoredEntityTypes: readonly string[]
 ): Promise<string[]> {
-  const { spans } = await runPrivacyDetectors(content, {
+  const { spans, failures } = await runPrivacyDetectors(content, {
     scopeId: 'output-guard',
     knownValues: [],
     detectorIds: [CORE_RULES_DETECTOR_ID],
+    ignoredEntityTypes,
     signal: AbortSignal.timeout(OUTPUT_SCAN_TIMEOUT_MS),
   });
+  // Flags nothing it could not scan, rather than hold the turn; said here so
+  // a quiet guard is not read as a clean reply. Ids only, never the text.
+  if (failures.length > 0) {
+    logger.warn('output-guard: identifier scan incomplete', {
+      failedAdapters: failures.map((f) => f.adapterId),
+      reasons: failures.map((f) => f.reason),
+    });
+  }
   if (spans.length === 0) return [];
   const conversation = comparable(messagePieces(supplied).join('\n'));
   const labels = new Set<string>();
@@ -82,11 +93,20 @@ async function identifierMatches(
  * @param supplied - What the conversation sent the model: the system prompt,
  *   the user's messages, tool results. An identifier found in it is not
  *   flagged in the reply.
+ * @param options.ignoredEntityTypes - Types the admin told the privacy layer
+ *   to leave alone; not flagged here either.
  */
 export async function scanOutput(
   content: string,
   topicBoundaries: string[],
-  supplied: readonly LlmMessage[] = []
+  supplied: readonly LlmMessage[] = [],
+  options: {
+    /**
+     * Identifier types not to flag: the LLM privacy settings'
+     * `privacyIgnoredEntityTypes`, so one admin choice governs both.
+     */
+    ignoredEntityTypes?: readonly string[];
+  } = {}
 ): Promise<OutputScanResult> {
   const lower = content.toLowerCase();
 
@@ -100,7 +120,11 @@ export async function scanOutput(
     }
   }
 
-  const builtInMatches = await identifierMatches(content, supplied);
+  const builtInMatches = await identifierMatches(
+    content,
+    supplied,
+    options.ignoredEntityTypes ?? []
+  );
 
   return {
     flagged: topicMatches.length > 0 || builtInMatches.length > 0,

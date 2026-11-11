@@ -10,6 +10,8 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { errorResponse } from '@/lib/api/responses';
+import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -38,10 +40,20 @@ export const POST = withAdminAuth(
       }
     }
 
-    const results = await searchKnowledge(query, filters, limit, undefined, {
-      userId: session.user.id,
-      metadata: { kind: 'admin_knowledge_search' },
-    });
+    let results: Awaited<ReturnType<typeof searchKnowledge>>;
+    try {
+      results = await searchKnowledge(query, filters, limit, undefined, {
+        userId: session.user.id,
+        metadata: { kind: 'admin_knowledge_search' },
+      });
+    } catch (err) {
+      // The LLM privacy layer requires a local embedding model and none is
+      // active (§127): say so, with the setting to change, not a bare 500.
+      if (isLocalOnlyEmbeddingRefusal(err)) {
+        return errorResponse(err.message, { code: 'EMBEDDINGS_LOCAL_ONLY', status: 409 });
+      }
+      throw err;
+    }
 
     log.info('Knowledge search completed', {
       query,

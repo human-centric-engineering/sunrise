@@ -266,6 +266,72 @@ describe('pseudonymise: what is sent', () => {
   });
 });
 
+/** A detector for `CODE` values that reports only the codes `find` names, first copy only. */
+function codeDetector(find: () => readonly string[]) {
+  registerPrivacyDetector({
+    id: 'app.codes',
+    egress: 'in_process',
+    entityTypes: ['CODE'],
+    detect: async ({ text }) =>
+      find().flatMap((code) => {
+        const at = text.indexOf(code);
+        return at === -1 ? [] : [{ type: 'CODE', start: at, end: at + code.length, confidence: 1 }];
+      }),
+  });
+}
+
+describe('pseudonymise: every copy of a value', () => {
+  it('masks a copy the detector did not report, so it never sits in plaintext beside its placeholder', async () => {
+    seam.init.mockImplementation(() => codeDetector(() => ['ZX-4471']));
+    const args = [
+      [
+        { role: 'user', content: 'My code is ZX-4471.' },
+        { role: 'user', content: 'Yes, ZX-4471 is right, not ZX-4471Q.' },
+      ],
+      { model: 'm' },
+    ];
+    const { result } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const sent = sentMessages(result.args);
+    expect(sent[1].content).toBe('My code is [CODE_1].');
+    // The second copy is masked; a longer token that merely starts with it is not.
+    expect(sent[2].content).toBe('Yes, [CODE_1] is right, not ZX-4471Q.');
+  });
+});
+
+describe('pseudonymise: one session per scope', () => {
+  it('keeps a value’s placeholder across a turn’s calls when a later call detects more', async () => {
+    let found: string[] = ['BETA-2'];
+    seam.init.mockImplementation(() => codeDetector(() => found));
+    const scope = createPrivacyScope({ scopeId: 'conversation:c1' });
+    const history: LlmMessage[] = [{ role: 'user', content: 'Codes ALPHA-1 and BETA-2.' }];
+
+    const first = await runInPrivacyScope(scope, () => applyPrivacyStage(chatCall([history, {}])));
+    expect(sentMessages(first.args)[1].content).toBe('Codes ALPHA-1 and [CODE_1].');
+
+    // A later call in the loop detects ALPHA-1 too. Numbering by first
+    // appearance alone would renumber BETA-2 to CODE_2, and reasoning replayed
+    // from the first call would then point [CODE_1] at the wrong value.
+    found = ['ALPHA-1', 'BETA-2'];
+    const second = await runInPrivacyScope(scope, () => applyPrivacyStage(chatCall([history, {}])));
+    expect(sentMessages(second.args)[1].content).toBe('Codes [CODE_2] and [CODE_1].');
+    expect(second.restorer?.response(response('[CODE_1] then [CODE_2]')).content).toBe(
+      'BETA-2 then ALPHA-1'
+    );
+
+    // A call whose detector misses a value the scope already masked still masks it.
+    found = [];
+    const third = await runInPrivacyScope(scope, () => applyPrivacyStage(chatCall([history, {}])));
+    expect(sentMessages(third.args)[1].content).toBe('Codes [CODE_2] and [CODE_1].');
+  });
+
+  it('starts afresh in another scope, numbering by first appearance', async () => {
+    seam.init.mockImplementation(() => codeDetector(() => ['ALPHA-1', 'BETA-2']));
+    const history: LlmMessage[] = [{ role: 'user', content: 'Codes ALPHA-1 and BETA-2.' }];
+    const { result } = await inScope(() => applyPrivacyStage(chatCall([history, {}])));
+    expect(sentMessages(result.args)[1].content).toBe('Codes [CODE_1] and [CODE_2].');
+  });
+});
+
 describe('pseudonymise: what comes back', () => {
   it('restores the reply and a tool call’s arguments, keys included, before the caller sees them', async () => {
     const { result, scope } = await inScope(() => applyPrivacyStage(chatCall()));

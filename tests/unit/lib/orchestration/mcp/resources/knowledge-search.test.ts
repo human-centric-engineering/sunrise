@@ -16,6 +16,7 @@ import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { logger } from '@/lib/logging';
 import { handleKnowledgeSearch } from '@/lib/orchestration/mcp/resources/knowledge-search';
+import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -393,6 +394,36 @@ describe('handleKnowledgeSearch', () => {
       expect(typeof body.error).toBe('string');
       // searchKnowledge must not be called when the URI is malformed
       expect(vi.mocked(searchKnowledge)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('under the LLM privacy layer’s local-only embeddings policy (§127)', () => {
+    it('tells the client why search is unavailable, rather than failing generically', async () => {
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('embeddings_local_only', 'openai')
+      );
+      const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=acme', null, {
+        scopedAgentId: null,
+        apiKeyId: 'key-1',
+        userId: null,
+      });
+      expect(JSON.parse(result.text)).toEqual({
+        error: expect.stringContaining('embeddings policy: local only'),
+        code: 'embeddings_local_only',
+      });
+    });
+
+    it('lets any other failure through', async () => {
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('stage_error', 'openai')
+      );
+      await expect(
+        handleKnowledgeSearch('sunrise://knowledge/search?q=acme', null, {
+          scopedAgentId: null,
+          apiKeyId: 'key-1',
+          userId: null,
+        })
+      ).rejects.toMatchObject({ reason: 'stage_error' });
     });
   });
 });

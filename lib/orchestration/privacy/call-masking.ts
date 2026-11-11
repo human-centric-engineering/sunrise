@@ -24,6 +24,7 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import type { EntityType, TokenSession } from '@/lib/privacy/adapters/types';
 import { maskText, PLACEHOLDER_INSTRUCTION, type MaskSpan } from '@/lib/privacy/pii/mask';
+import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
 import { isRecord } from '@/lib/utils';
 import { StreamRestorer } from '@/lib/privacy/pii/stream-restore';
@@ -162,10 +163,14 @@ export function maskMessages(
   spans: readonly MaskSpan[],
   session: TokenSession,
   declaredTypes: Iterable<EntityType>,
-  escapeLookAlikes: boolean
+  escapeLookAlikes: boolean,
+  options: {
+    /** `messagePieces(messages)`, when the caller has it already. */
+    pieces?: readonly string[];
+  } = {}
 ): MaskedMessages {
-  const pieces = messagePieces(messages);
-  const byPiece = spansByPiece(pieces, spans);
+  const pieces = options.pieces ?? messagePieces(messages);
+  const byPiece = withEveryCopy(pieces, spansByPiece(pieces, spans), session);
   const types = [...declaredTypes];
   let changed = false;
   let k = 0;
@@ -176,6 +181,56 @@ export function maskMessages(
     return r.text;
   });
   return { messages: masked, changed };
+}
+
+/** Shorter than this, an exact copy is too likely to be part of something else. */
+const MIN_COPY_LENGTH = 3;
+
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+
+/**
+ * `byPiece`, plus a span for every other exact copy of a value already found:
+ * found anywhere in this call, or masked by an earlier call in the same scope
+ * (the session's entries). A detector that needs context to report a value —
+ * a phone number only after a phone word — would otherwise leave its second
+ * copy in plaintext beside the placeholder for the first, which ties the two
+ * together for the provider.
+ *
+ * A copy must stand on its own: where the value begins or ends with a letter
+ * or digit, the character beside it must not be one, so "Ann" never masks the
+ * start of "Annual". Overlaps are merged by `maskText()`.
+ */
+function withEveryCopy(
+  pieces: readonly string[],
+  byPiece: MaskSpan[][],
+  session: TokenSession
+): MaskSpan[][] {
+  const values = new Map<string, EntityType>();
+  for (const e of session.entries()) {
+    if (e.type !== LITERAL_TYPE) values.set(e.value, e.type);
+  }
+  pieces.forEach((piece, i) => {
+    for (const s of byPiece[i]) {
+      const value = piece.slice(s.start, s.end);
+      if (!values.has(value)) values.set(value, s.type);
+    }
+  });
+  if (values.size === 0) return byPiece;
+  return pieces.map((piece, i) => {
+    const out = [...byPiece[i]];
+    for (const [value, type] of values) {
+      if (value.length < MIN_COPY_LENGTH) continue;
+      const wordStart = WORD_CHAR.test(value[0]);
+      const wordEnd = WORD_CHAR.test(value[value.length - 1]);
+      for (let at = piece.indexOf(value); at !== -1; at = piece.indexOf(value, at + 1)) {
+        const end = at + value.length;
+        if (wordStart && at > 0 && WORD_CHAR.test(piece[at - 1])) continue;
+        if (wordEnd && end < piece.length && WORD_CHAR.test(piece[end])) continue;
+        out.push({ type, start: at, end });
+      }
+    }
+    return out;
+  });
 }
 
 /**

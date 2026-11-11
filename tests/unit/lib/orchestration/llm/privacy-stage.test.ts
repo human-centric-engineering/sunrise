@@ -39,7 +39,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import { applyPrivacyStage, PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
-import { isRequestFault } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   createPrivacyScope,
@@ -268,7 +268,7 @@ describe('mode detect', () => {
     expect(detect).toHaveBeenCalledTimes(2);
   });
 
-  it('stops the scan when the caller abandons the call, and neither counts nor refuses it', async () => {
+  it('stops the scan when the caller abandons the call, and throws the abort: neither counted nor refused', async () => {
     const caller = new AbortController();
     const events: PrivacyEvent[] = [];
     seam.init.mockImplementation(() => {
@@ -295,11 +295,19 @@ describe('mode detect', () => {
     const args = [messages(), { model: 'm', signal: caller.signal }];
     const started = Date.now();
 
-    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage(chatCall(args)).then(
+        () => 'handed back',
+        (e: unknown) => e
+      )
+    );
 
     expect(Date.now() - started).toBeLessThan(900);
-    expect(result.args).toBe(args);
-    expect(result.restorer).toBeUndefined();
+    // A cancel: the abort every provider throws, never the unscanned
+    // arguments, and never a refusal.
+    expect(result).toBeInstanceOf(ProviderError);
+    expect(result).toMatchObject({ code: 'aborted' });
+    expect(result).not.toBeInstanceOf(PrivacyRefusedError);
     expect(privacySummary(scope)).toBeUndefined();
     await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([]);
@@ -448,7 +456,7 @@ describe('refusals', () => {
 });
 
 describe('a cancel while the policy resolvers run', () => {
-  it('lets the call go quietly rather than report a refused one', async () => {
+  it('throws the abort rather than hand back a call whose policy it never finished', async () => {
     const caller = new AbortController();
     const events: PrivacyEvent[] = [];
     seam.init.mockImplementation(() => {
@@ -463,10 +471,18 @@ describe('a cancel while the policy resolvers run', () => {
     });
     const args = [messages(), { model: 'm', signal: caller.signal }];
 
-    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage(chatCall(args)).then(
+        () => 'handed back',
+        (e: unknown) => e
+      )
+    );
 
-    expect(result.args).toBe(args);
-    expect(result.restorer).toBeUndefined();
+    // Thrown even in `detect`: the resolver that would have raised the mode
+    // may be the one the cancel cut short.
+    expect(result).toBeInstanceOf(ProviderError);
+    expect(result).toMatchObject({ code: 'aborted' });
+    expect(result).not.toBeInstanceOf(PrivacyRefusedError);
     expect(privacySummary(scope)).toBeUndefined();
     await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([]);
