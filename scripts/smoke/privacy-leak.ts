@@ -150,7 +150,7 @@ function workflowProvider(received: LlmMessage[][]): LlmProvider {
         usage: { inputTokens: 10, outputTokens: 10 },
       };
     },
-    async *chatStream(): AsyncIterable<StreamChunk> {
+    chatStream(): AsyncIterable<StreamChunk> {
       throw new Error('the smoke workflow provider does not stream');
     },
     async embed(): Promise<number[]> {
@@ -296,7 +296,8 @@ async function workflowStep(userId: string, mode: 'pseudonymise' | 'off'): Promi
       slug: `${WORKFLOW_SLUG}-${mode}-${Date.now()}`,
       description: 'smoke',
       orgId: INSTALL_ORG_ID,
-      draftDefinition: definition as object,
+      // The engine runs `definition` as passed; the row only has to exist.
+      draftDefinition: { steps: [] },
       createdBy: userId,
     },
   });
