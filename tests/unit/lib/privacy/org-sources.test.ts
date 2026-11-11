@@ -31,9 +31,8 @@
  * @see lib/privacy/org-sources.ts
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { readSchemaFiles, type SchemaFile } from '@/scripts/ci/schema-files';
 
 const prismaMock = vi.hoisted(() => {
   // The named delegates the hand-written tests reach for, plus a fallback
@@ -67,7 +66,6 @@ const {
   __resetAppOrgSourceRegistryForTests,
 } = await import('@/lib/privacy/org-source-registry');
 
-const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
 const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
 /**
  * The column, by name and exactly. `activeOrgId` on `Session` is a pointer
@@ -92,11 +90,6 @@ const ON_DELETE = /onDelete:\s*(\w+)/;
  * two apart; choosing SetNull is a retention decision its author owns.
  */
 const ERASURE_SAFE = new Set(['Cascade', 'SetNull']);
-
-interface SchemaFile {
-  name: string;
-  contents: string;
-}
 
 /**
  * Every model declaring an `orgId` column, every model name, and the
@@ -140,12 +133,6 @@ function scanSchemaFiles(files: SchemaFile[]): {
     }
   }
   return { orgLinked, allModels, orgOnDelete };
-}
-
-function readSchemaFiles(): SchemaFile[] {
-  return readdirSync(SCHEMA_DIR)
-    .filter((file) => file.endsWith('.prisma'))
-    .map((name) => ({ name, contents: readFileSync(path.join(SCHEMA_DIR, name), 'utf8') }));
 }
 
 /** The rule, in one function, so the real schema and the fixture run identical code. */

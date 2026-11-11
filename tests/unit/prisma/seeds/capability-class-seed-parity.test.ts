@@ -62,7 +62,7 @@
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
@@ -97,6 +97,7 @@ vi.mock('@/lib/privacy/erase-user', () => ({ eraseUser: vi.fn() }));
 
 import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { isRecord } from '@/lib/utils';
+import { readSchemaFiles } from '@/scripts/ci/schema-files';
 import { maskLiterals } from '@/tests/helpers/seed-capabilities';
 import {
   APP_CAPABILITY_PAIRS,
@@ -175,11 +176,10 @@ interface Column {
 function readSchema(): { models: Map<string, Map<string, Column>>; enums: Map<string, string> } {
   const models = new Map<string, Map<string, Column>>();
   const enums = new Map<string, string>();
-  const dir = join(process.cwd(), 'prisma', 'schema');
-  for (const file of readdirSync(dir).filter((f) => f.endsWith('.prisma'))) {
+  for (const file of readSchemaFiles()) {
     let model: Map<string, Column> | null = null;
     let enumName: string | null = null;
-    for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
+    for (const line of file.contents.split('\n')) {
       const open = /^(model|enum)\s+(\w+)\s*\{/.exec(line);
       if (open) {
         if (open[1] === 'model') models.set(open[2], (model = new Map()));

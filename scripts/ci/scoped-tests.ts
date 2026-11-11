@@ -242,6 +242,30 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'connects to this test.',
   },
   {
+    path: 'tests/unit/prisma/back-relation-zones.test.ts',
+    reason:
+      'parses every `prisma/schema` file off disk, at any depth, and fails when a back-relation on `Org` or ' +
+      "`User` sits outside its tier's zone, or a zone marker changed (#859). The change " +
+      'that breaks it is a schema edit, often `prisma format` appending a core line into ' +
+      'the app zone, and a `.prisma` file reaches no test through the module graph.',
+  },
+  {
+    path: 'tests/unit/scripts/ci/schema-files.test.ts',
+    reason:
+      'holds that every file in `CORE_SCHEMA_FILES` is on disk. A core `.prisma` file renamed ' +
+      'without updating the list reaches no test through the module graph, and every schema ' +
+      "guard would then treat its models as a fork's and drop them out of core's rules.",
+  },
+  {
+    path: 'tests/unit/prisma/user-relation-on-delete.test.ts',
+    reason:
+      'parses every `prisma/schema` file off disk, at any depth, and fails naming any ' +
+      'relation to `User` without `onDelete: Cascade`, or `SetNull` on an optional ' +
+      "relation. Prisma's default is Restrict, which makes erasing that user throw. The " +
+      'change that breaks it is a schema edit, and a `.prisma` file reaches no test ' +
+      'through the module graph.',
+  },
+  {
     path: 'tests/unit/prisma/auth-schema-parity.test.ts',
     reason:
       'reads `prisma/schema/auth.prisma` off disk and compares it against ' +

@@ -135,7 +135,7 @@ The six steps above are the **platform** path (the A-series, which Sunrise owns)
 
 ## Forks: registering your own unmodelled objects
 
-Any fork that follows Sunrise's own recipes inherits unmodelled objects of its own — most commonly the **hand-written FK constraint behind a satellite `User` table** (`CUSTOMIZATION.md` §5), which has no Prisma `@relation` and so is invisible to both the schema and the `onDelete` review rule. Without a probe, a future `migrate dev` can silently drop it (orphaning rows or breaking `eraseUser()`), and CI won't notice.
+A fork can add unmodelled objects of its own: custom indexes, CHECK constraints, and the **hand-written FK constraint behind a satellite `User` table built with the plain-FK pattern** (`CUSTOMIZATION.md` §5). That pattern predates the back-relation zones (#859); a new satellite table uses a Prisma `@relation`, whose FK Prisma models, so it needs no probe. A plain FK has no `@relation`, so it is invisible to both the schema and the `onDelete` guard (`tests/unit/prisma/user-relation-on-delete.test.ts`). Without a probe, a future `migrate dev` can silently drop it (orphaning rows or breaking `eraseUser()`), and CI won't notice.
 
 Register it in the fork-owned scaffold **`lib/app/db-drift.ts`** — one of the auto-wired `lib/app/*` seams (see `CUSTOMIZATION.md` §4). `scripts/db/check-drift.ts` calls `registerAppDriftProbes()` and probes your objects alongside the A-series; you never touch the platform script.
 

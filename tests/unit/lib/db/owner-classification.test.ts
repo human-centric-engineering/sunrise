@@ -41,7 +41,6 @@
  * in `owner-classification-fork.test.ts`, which mocks the seam empty so that
  * filling yours does not fail them.
  */
-import { readdirSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   allOwnerClassifications,
@@ -51,8 +50,6 @@ import {
   __resetAppOwnerClassificationForTests,
 } from '@/lib/db/owner-classification';
 import {
-  CORE_SCHEMA_FILES,
-  SCHEMA_DIR,
   auditOwnerClassification,
   fullSchema,
   parseSchema,
@@ -71,9 +68,7 @@ describe('owner classification', () => {
   });
 
   it('reads the core schema', () => {
-    // Every core file listed is present, so a renamed file cannot quietly drop its models.
-    const present = new Set(readdirSync(SCHEMA_DIR));
-    for (const f of CORE_SCHEMA_FILES) expect(present.has(f), `${f} is missing`).toBe(true);
+    // That every listed core file is on disk is held once, in schema-files.test.ts.
     expect(schema.get('AiConversation')?.relations.get('user')?.target).toBe('User');
   });
 

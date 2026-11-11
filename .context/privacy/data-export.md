@@ -414,10 +414,11 @@ what you declared into the same guard that holds its own manifest level with the
 schema.
 
 **Every model in a schema file that is not Sunrise's own must be declared or
-excluded** — `app.prisma`, `framework-*.prisma`, or any other name you pick.
-Core identifies its own eleven files by name and treats everything else in
-`prisma/schema/` as a fork tier's, because splitting a domain across files is
-normal and core cannot know what you will call them.
+excluded** — `app.prisma`, `framework-*.prisma`, or any other name you pick,
+in a subfolder or not. Core identifies its own files by name
+(`CORE_SCHEMA_FILES` in `scripts/ci/schema-files.ts`) and treats everything
+else in `prisma/schema/`, at any depth, as a fork tier's, because splitting a
+domain across files is normal and core cannot know what you will call them.
 
 That is stricter than the `userId`/`createdBy` heuristic core applies to itself,
 and deliberately so: core reads its own column vocabulary and cannot read yours,

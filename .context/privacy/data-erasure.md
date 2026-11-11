@@ -320,8 +320,11 @@ conversation through the admin conversation route, which allows it on the
 
 This is the easiest way to silently regress erasure, and it has happened twice.
 Any **new** model with a `userId` or `createdBy` FK to `User` **must** declare an
-explicit `onDelete` — Prisma's default is `Restrict`, which makes
-`prisma.user.delete()` throw `P2003` for any user who has touched that table:
+explicit `onDelete` — Prisma's default on a required relation is `Restrict`, which makes
+`prisma.user.delete()` throw `P2003` for any user who has touched that table;
+on an optional one it is `SetNull`, which keeps rows that may be personal data.
+For a Prisma `@relation`, `tests/unit/prisma/user-relation-on-delete.test.ts` fails
+until it does, in core and in every fork's schema files:
 
 1. Decide the policy: **personal data → `onDelete: Cascade`**; **reusable config,
    audit, or logs → `onDelete: SetNull`** (and make the FK column nullable).
@@ -1268,11 +1271,36 @@ does.
 ## App / Fork Tables Relating to `User`
 
 An app built on Sunrise (or an external fork) keeps its own models in its own
-schema file and relates them to the Sunrise `User`. It **cannot** add a Prisma
-`@relation` to `User` — that needs a reverse field _on_ `User`, a core edit to
-the most central, most merge-prone model. So the canonical pattern is a **plain
-`String` FK with no `@relation`**, and the referential action is written by hand
-in the migration:
+schema file and relates them to the Sunrise `User`. **Use a Prisma
+`@relation`** with an explicit `onDelete`, and put its reverse field in `User`'s
+**app zone**: the marked lines at the end of the model that Sunrise never edits,
+so the line merges cleanly on every sync and is not a divergence (#859;
+CUSTOMIZATION.md §5,
+"[Relating your models to `Org` and `User`](../../CUSTOMIZATION.md#relating-your-models-to-org-and-user)").
+A framework fork uses the framework zone above it. Its `onDelete` is checked
+by `tests/unit/prisma/user-relation-on-delete.test.ts`
+([Adding a new `User` relation](#adding-a-new-user-relation-required-step)), and
+Prisma keeps the foreign key:
+
+```prisma
+// app-owned schema file
+model AppHubUserProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // …app fields…
+}
+
+// prisma/schema/auth.prisma, model User, below the app zone marker
+  appHubUserProfile AppHubUserProfile?
+```
+
+### The plain-FK pattern (models built before the zones)
+
+Before the zones, a relation meant editing `User`, so forks were told to use a
+**plain `String` FK with no `@relation`** and write the referential action by
+hand in the migration. Existing models built that way keep working. The rules
+below apply to them:
 
 ```prisma
 // app-owned schema file — a satellite profile/extension table
@@ -1289,14 +1317,15 @@ model AppHubUserProfile {
 -- hand-added to the generated migration
 ALTER TABLE "AppHubUserProfile"
   ADD CONSTRAINT "AppHubUserProfile_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id")
+  FOREIGN KEY ("userId") REFERENCES "user"("id") -- User is @@map("user")
   ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
 ```
 
-**⚠️ The schema-level `onDelete` guard does NOT catch this.** The
+**⚠️ The `onDelete` guard does NOT catch this.** The
 [Adding a new `User` relation](#adding-a-new-user-relation-required-step) rule
-above is enforced by reviewing `@relation onDelete` in `schema.prisma`. A
-plain-scalar FK has no `@relation`, so it **slips past that guard entirely**.
+above is enforced by `tests/unit/prisma/user-relation-on-delete.test.ts`, which reads
+`@relation onDelete`. A plain-scalar FK has no `@relation`, so it **slips past
+that guard entirely**.
 Two failure modes if the migration FK is wrong:
 
 - **No DB FK at all** → `prisma.user.delete()` leaves the app rows **orphaned**
@@ -1495,4 +1524,4 @@ demoted or deleted). See
 - [Security Overview](../security/overview.md) — application security
 - [Auth Security](../auth/security.md) — sessions, password handling
 - `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
-- [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#4-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`
+- [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#5-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`

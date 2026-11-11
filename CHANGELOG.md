@@ -18,6 +18,38 @@ release process.
 
 ### Added
 
+- **Fork zones for back-relations on `Org` and `User` (t-1009, #859).**
+  `Org` (`prisma/schema/tenancy.prisma`) and `User`
+  (`prisma/schema/auth.prisma`) now end with two fixed markers, a framework
+  zone and an app zone, empty in Sunrise. A fork's back-relation lines go
+  below its own tier's marker, and Sunrise never edits below the first one.
+  Core's edits and a fork's are always separated by unchanged lines, so a
+  sync merges without a conflict, and filling a zone is not a
+  divergence-ledger row. `prisma format` already places a leaf's missing
+  back-relations in the app zone. The new
+  `tests/unit/prisma/back-relation-zones.test.ts` fails on a core field or
+  block attribute below a marker, a fork line outside its zone, a missing
+  blank line before the `@@` attributes, or a reworded marker. **On the sync
+  that brings this in**, a fork that carries a block of back-relations
+  resolves one conflict: keep both markers and move its block below its
+  tier's marker (a framework fork's below the framework marker). Then retire
+  the ledger row for it. A fork model can now relate to `User` with a Prisma
+  `@relation`, its line in `User`'s app zone, in place of a plain `userId`
+  with a hand-written foreign key (CUSTOMIZATION.md §5). Existing plain-FK
+  models keep working.
+
+- **A guard for `onDelete` on every relation to `User` (t-1009).**
+  `tests/unit/prisma/user-relation-on-delete.test.ts` fails on a `User`
+  relation, in core or any fork schema file, without `onDelete: Cascade`,
+  or `SetNull` on an optional relation. Left out, Prisma uses `Restrict` on
+  a required relation, which makes erasing that user throw `P2003`, and
+  `SetNull` on an optional one, which keeps the rows when they may be
+  personal data. The rule was a manual checklist step in
+  `.context/privacy/data-erasure.md` until now. **On the sync that brings
+  this in**, a fork with a `User` relation that leaves `onDelete` out, or uses
+  `Restrict` or `NoAction`, sees it fail and names the relation. Pick the
+  policy the failure describes.
+
 - **An org can be shown its own admin history (t-1005, #1181).**
   `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed: the org whose
   data each action changed. `logAdminAction()` sets it, in order, from a new
@@ -94,6 +126,21 @@ release process.
   read refuses a new org invitation (`409 CONFLICT`), as on the org route.
 
 ### Fixed
+
+- **Schema guards read every subfolder of `prisma/schema` and share one tier
+  rule (t-1009).** Prisma loads `.prisma` files from subfolders, but the
+  schema guards (subject-access and org export, stale writers, tenancy and
+  owner classification, and others) only read the top level. A fork model in
+  `prisma/schema/app/widgets.prisma` was never checked, so a `User`-linked
+  model there could ship missing from the subject-access export with the
+  suite green. Every guard now reads the schema through
+  `scripts/ci/schema-files.ts`, which walks the whole tree and holds the one
+  tier rule: `CORE_SCHEMA_FILES` is core, a top-level file or folder named
+  `framework` or `framework-*` is the framework tier, and any other file is
+  the app tier.
+  **On the sync that brings this in**, a fork keeping models in a subfolder may
+  see the export, org-export or classification guards fail on them for the
+  first time. Declare them the way the failure says.
 
 - **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`
   (#1138).** The capability dispatcher is one `globalThis` instance, built in

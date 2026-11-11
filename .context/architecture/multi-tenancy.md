@@ -303,8 +303,9 @@ public` until `--create` re-grants), and the policies come back
 ## What a fork adds for its own models
 
 A model of yours that is an org's joins the boundary by carrying the column,
-in the exact shape every core model uses (a back-relation line on `Org` goes
-with it):
+in the exact shape every core model uses. A back-relation line on `Org` goes
+with it, below your tier's zone marker at the end of the model, which merges
+cleanly and is not a divergence (#859; CUSTOMIZATION.md §5):
 
 ```prisma
 orgId String?

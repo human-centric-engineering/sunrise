@@ -30,8 +30,8 @@
  * FORK NOTE — you satisfy this from your own code, and it still checks you
  * ---------------------------------------------------------------------------
  * Every schema file in `prisma/schema/` that is not one of Sunrise's own — the
- * list is `CORE_SCHEMA_FILES` below — is yours, whatever you named it. Models
- * in one are held to a stricter rule than core holds itself: **every** model
+ * list is `CORE_SCHEMA_FILES` in `scripts/ci/schema-files.ts` — is yours,
+ * whatever you named it and however deep it sits. Models in one are held to a stricter rule than core holds itself: **every** model
  * must be declared through `registerAppSubjectSources()` — as a source or as an
  * exclusion with a reason — from `lib/app/data-export.ts` or your framework
  * tier's own init. Nothing here needs editing, and nothing is skipped (#533).
@@ -47,9 +47,13 @@
  * @see lib/privacy/subject-source-registry.ts
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
+import {
+  CORE_SCHEMA_FILES,
+  isForkOwnedSchemaFile,
+  readSchemaFiles,
+  type SchemaFile,
+} from '@/scripts/ci/schema-files';
 
 // The manifest imports the Prisma client at module scope. Its delegates are
 // only touched inside `fetch` closures, which this file never calls — the stub
@@ -63,8 +67,6 @@ const {
   getAccountedAppModels,
   __resetAppSubjectSourceRegistryForTests,
 } = await import('@/lib/privacy/subject-source-registry');
-
-const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
 
 /** A field declaring an FK to `User` — `creator User? @relation(...)`. */
 const USER_RELATION_FIELD = /^\s*\w+\s+User\??\s+@relation\(/;
@@ -86,47 +88,6 @@ const USER_SCALAR_FIELD =
   /^\s*(userId|createdBy|uploadedBy|ownerId|actorUserId|subjectUserId)\s+String/;
 
 /**
- * Sunrise's own schema files. **Everything else in `prisma/schema/` belongs to a
- * fork tier**, whatever it is named.
- *
- * Stated as an allowlist rather than a pattern for the fork-reserved names,
- * because core knows its own files exactly and cannot know what a fork will
- * call theirs. Matching only `app.prisma` and `framework-*.prisma` left a fork
- * that splits its domain across `app-billing.prisma` — normal enough that core
- * itself has eleven of these — classified as core-owned, held to core's column
- * heuristic, and unable to satisfy the result from fork-owned code. That is
- * #533 again, one filename away.
- *
- * Adding a core schema file means adding it here. The failure is loud and the
- * message says so: until it is listed, its models are treated as a fork tier's
- * and the accounting rule asks someone to declare them.
- */
-const CORE_SCHEMA_FILES = new Set([
-  'auth.prisma',
-  'base.prisma',
-  'mcp.prisma',
-  'orchestration-agents.prisma',
-  'orchestration-conversations.prisma',
-  'orchestration-evaluation.prisma',
-  'orchestration-knowledge.prisma',
-  'orchestration-ops.prisma',
-  'orchestration-providers.prisma',
-  'orchestration-workflows.prisma',
-  'tenancy.prisma',
-  // Sunrise's own app-domain models (ContactSubmission, FeatureFlag,
-  // AuthBootstrap) live here, NOT in the fork-reserved app.prisma.
-  'platform.prisma',
-]);
-
-/**
- * Whether a schema file belongs to a fork tier. Models here are accounted for
- * through the registry, not the core manifest.
- */
-function isForkOwnedSchemaFile(file: string): boolean {
-  return !CORE_SCHEMA_FILES.has(file);
-}
-
-/**
  * Models carrying a user-id scalar that the export handles OUTSIDE the manifest,
  * with the reason. Kept deliberately tiny — it is an accounting note, not an
  * escape hatch, and anything added here still has to be justified to a reader.
@@ -137,11 +98,6 @@ const HANDLED_OUTSIDE_MANIFEST = new Map([
     'Fetched directly by exportUserData() and returned as the bundle’s `erasureReceipts` section, so it is exported — just not through a manifest source.',
   ],
 ]);
-
-interface SchemaFile {
-  name: string;
-  contents: string;
-}
 
 interface SchemaScan {
   /** Core-owned models that declare at least one FK to `User`. */
@@ -214,12 +170,6 @@ function scanSchemaFiles(files: SchemaFile[]): SchemaScan {
   return { userLinked, scalarLinked, allModels, forkModels };
 }
 
-function readSchemaFiles(): SchemaFile[] {
-  return readdirSync(SCHEMA_DIR)
-    .filter((file) => file.endsWith('.prisma'))
-    .map((name) => ({ name, contents: readFileSync(path.join(SCHEMA_DIR, name), 'utf8') }));
-}
-
 /**
  * Fork-owned models no tier has decided about. The whole fork rule, in one
  * function, so the real schema and the synthetic tier below run identical code.
@@ -270,15 +220,8 @@ describe('subject-data source manifest', () => {
       expect(isForkOwnedSchemaFile('orchestration-agents.prisma')).toBe(false);
     });
 
-    it('lists every core schema file that is actually on disk', () => {
-      // Drift guard, direction one: a rename or a removal leaves a name here
-      // matching nothing, and the file it used to cover would be silently
-      // reclassified as a fork tier's.
-      const onDisk = new Set(readSchemaFiles().map((file) => file.name));
-      const stale = [...CORE_SCHEMA_FILES].filter((name) => !onDisk.has(name)).sort();
-
-      expect(stale, 'CORE_SCHEMA_FILES names a file that no longer exists').toEqual([]);
-    });
+    // Direction one, every listed core file is on disk, is held once in
+    // tests/unit/scripts/ci/schema-files.test.ts, beside the list.
 
     it('lists whichever file every core-manifest model actually lives in', () => {
       // Drift guard, direction two — the one that matters more, because nothing
@@ -304,7 +247,7 @@ describe('subject-data source manifest', () => {
           ? ''
           : `Core's manifest names models that are not in any file listed in ` +
               `CORE_SCHEMA_FILES: ${elsewhere.join(', ')}. If you added a core schema ` +
-              `file, add its name to CORE_SCHEMA_FILES — until you do it is treated as ` +
+              `file, add its name to CORE_SCHEMA_FILES in scripts/ci/schema-files.ts — until you do it is treated as ` +
               `a fork tier's, and its User-linked models drop out of the strict rule.`
       ).toEqual([]);
     });
@@ -421,7 +364,7 @@ describe('subject-data source manifest', () => {
               `rather than guessing which hold a user id. ` +
               `See lib/app/data-export.ts and .context/privacy/data-export.md. ` +
               `(Sunrise maintainers: if you just added a CORE schema file, add its ` +
-              `name to CORE_SCHEMA_FILES in this file instead.)`
+              `name to CORE_SCHEMA_FILES in scripts/ci/schema-files.ts instead.)`
       ).toEqual([]);
     });
   });

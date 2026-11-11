@@ -29,6 +29,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OWNER_CLASSIFICATION, enforcedModels } from '@/lib/db/owner-classification';
+import { readSchemaFiles } from '@/scripts/ci/schema-files';
 
 /** A raw member call (as the allowlist matches it) or a raw fragment builder. */
 const RAW_SQL = /[\w$)\]]\.\$(queryRaw|executeRaw)(Unsafe|Typed)?\s*[(`<]|\bPrisma\.(sql|raw)\b/;
@@ -76,13 +77,11 @@ const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [
 ];
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-const SCHEMA_DIR = path.join(REPO_ROOT, 'prisma', 'schema');
 
 /** The `@@map` table of each enforced model, read from the schema files. */
 function enforcedTables(): string[] {
-  const text = readdirSync(SCHEMA_DIR)
-    .filter((f) => f.endsWith('.prisma'))
-    .map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8'))
+  const text = readSchemaFiles(path.join(REPO_ROOT, 'prisma', 'schema'))
+    .map((f) => f.contents)
     .join('\n');
   // Core's enforced models only. A fork's, added through its seam, are its
   // own raw-SQL concern: this manifest is core's, and a fork cannot extend it.

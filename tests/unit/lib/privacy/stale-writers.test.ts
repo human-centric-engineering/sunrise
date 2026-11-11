@@ -37,9 +37,9 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
+import { readSchemaFiles } from '@/scripts/ci/schema-files';
 
 // A fork's erasure hooks may import the Prisma client at module scope; this
 // file never runs them.
@@ -52,10 +52,7 @@ const { SCRUBBED_COLUMNS, STALE_WRITERS } = await import('@/lib/privacy/stale-wr
 const { getAppStaleWriters } = await import('@/lib/privacy/erasure-hooks');
 const { createScanner, relationsOf } = await import('@/scripts/ci/scrubbed-column-writes');
 
-const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
-const SCHEMAS = readdirSync(SCHEMA_DIR)
-  .filter((f) => f.endsWith('.prisma'))
-  .map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8'));
+const SCHEMAS = readSchemaFiles().map((file) => file.contents);
 
 /**
  * Not scanned, each with the reason:
