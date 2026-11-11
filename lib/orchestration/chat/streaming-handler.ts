@@ -130,7 +130,16 @@ import {
   splitGapNote,
   withGapNote,
 } from '@/lib/orchestration/chat/summarizer';
+import { randomUUID } from 'node:crypto';
 import { isEmbedUserId, userIdForUserRef } from '@/lib/embed/auth';
+import { userKnownValues } from '@/lib/orchestration/privacy/known-values';
+import {
+  bindPrivacyScope,
+  createPrivacyScope,
+  privacySummary,
+  withPrivacyScope,
+  type PrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
 import { hintScope } from '@/lib/orchestration/scope';
 import {
   GEN_AI_OPERATION_NAME,
@@ -471,17 +480,32 @@ export class StreamingChatHandler {
     // From then the provider gate refuses every paid call the turn makes —
     // tools, the summarizer and embeddings as well as the main stream.
     const hold: PaidCallHold = { cap: null };
+    // `withPrivacyScope` gives every provider call the turn makes — the main
+    // stream, tools, the summarizer, embeddings — the turn's privacy scope
+    // (§127): its agent, its user's known values, and the tally the terminal
+    // assistant message records. The conversation and agent are bound once
+    // `runInner` has loaded them; no provider call is made before that.
+    const privacyScope = createPrivacyScope({
+      scopeId: request.conversationId
+        ? `conversation:${request.conversationId}`
+        : `turn:${randomUUID()}`,
+      userId: request.userId,
+      loadKnownValues: userKnownValues(request.userId),
+    });
     yield* withPaidCallHold(
       hold,
-      withSpanGenerator(
-        SPAN_CHAT_TURN,
-        {
-          [GEN_AI_OPERATION_NAME]: 'chat',
-          [SUNRISE_USER_ID]: request.userId,
-          [SUNRISE_AGENT_SLUG]: request.agentSlug,
-        },
-        (chatSpan) => this.runInner(chatSpan, request, hold),
-        { manualStatus: true }
+      withPrivacyScope(
+        privacyScope,
+        withSpanGenerator(
+          SPAN_CHAT_TURN,
+          {
+            [GEN_AI_OPERATION_NAME]: 'chat',
+            [SUNRISE_USER_ID]: request.userId,
+            [SUNRISE_AGENT_SLUG]: request.agentSlug,
+          },
+          (chatSpan) => this.runInner(chatSpan, request, hold, privacyScope),
+          { manualStatus: true }
+        )
       )
     );
   }
@@ -498,7 +522,8 @@ export class StreamingChatHandler {
   private async *runInner(
     chatSpan: Span,
     request: ChatRequest,
-    hold: PaidCallHold
+    hold: PaidCallHold,
+    privacyScope: PrivacyScope
   ): AsyncGenerator<ChatEvent, void, unknown> {
     const log =
       request.requestId || request.visitorId
@@ -523,6 +548,7 @@ export class StreamingChatHandler {
 
       const agent = await this.loadAgent(request.agentSlug);
       agentVersionId = agent.versions[0]?.id;
+      bindPrivacyScope(privacyScope, { agentId: agent.id });
       // Resolve provider + model once. Empty agent.provider/agent.model fall
       // back to the active provider with a key set + the system default-model
       // map; explicit values pass through unchanged.
@@ -756,6 +782,7 @@ export class StreamingChatHandler {
         capSettings?.maxConversationsPerUser ?? null
       );
       conversationId = conversation.id;
+      bindPrivacyScope(privacyScope, { scopeId: `conversation:${conversation.id}` });
       setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
       // The stored summary, if there is a usable one. A pin with no text behind
       // it covers nothing, whatever it says — and neither does a pin behind the
@@ -2151,6 +2178,10 @@ export class StreamingChatHandler {
             if (sideEffects.length > 0) {
               assistantMetadata.sideEffectModels = sideEffects;
             }
+            // What the privacy layer counted across the turn's calls (§127).
+            // Counts only; absent when it scanned none.
+            const privacy = privacySummary(privacyScope);
+            if (privacy) assistantMetadata.privacy = privacy;
           }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,

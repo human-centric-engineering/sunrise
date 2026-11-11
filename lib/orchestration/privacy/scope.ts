@@ -55,14 +55,29 @@ export interface PrivacyScopeInit {
   userId?: string;
   /** What the layer already knows belongs to the people in this call. */
   knownValues?: readonly KnownValue[];
+  /**
+   * Loads more known values (the user's own name and email, say), once per
+   * scope and only when a call is actually scanned, so mode `off` costs
+   * nothing. A loader that fails leaves just `knownValues`: tier B then finds
+   * less, and tiers A and C still run.
+   */
+  loadKnownValues?: () => Promise<readonly KnownValue[]>;
 }
 
+/**
+ * A scope. The fields other than `tally` and `parent` can be filled in by
+ * whoever entered it, once it knows them (a chat turn learns its conversation
+ * after it has entered the scope); see {@link bindPrivacyScope}.
+ */
 export interface PrivacyScope {
-  readonly scopeId: string;
-  readonly orgId?: string;
-  readonly agentId?: string;
-  readonly userId?: string;
-  readonly knownValues: readonly KnownValue[];
+  scopeId: string;
+  orgId?: string;
+  agentId?: string;
+  userId?: string;
+  knownValues: readonly KnownValue[];
+  loadKnownValues?: () => Promise<readonly KnownValue[]>;
+  /** The loader's result, once asked for. Shared with child scopes. */
+  loaded?: Promise<readonly KnownValue[]>;
   readonly tally: PrivacyTally;
   /** The scope this one sits inside. What is recorded here is recorded there too. */
   readonly parent?: PrivacyScope;
@@ -80,6 +95,10 @@ function emptyTally(): PrivacyTally {
   };
 }
 
+function frozenValues(values: readonly KnownValue[]): readonly KnownValue[] {
+  return Object.freeze(values.map((v) => Object.freeze({ ...v })));
+}
+
 /** A new scope, with an empty tally. Known values are copied and frozen. */
 export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope): PrivacyScope {
   return {
@@ -87,16 +106,28 @@ export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope
     ...(init.orgId !== undefined ? { orgId: init.orgId } : {}),
     ...(init.agentId !== undefined ? { agentId: init.agentId } : {}),
     ...(init.userId !== undefined ? { userId: init.userId } : {}),
-    knownValues: Object.freeze((init.knownValues ?? []).map((v) => Object.freeze({ ...v }))),
+    knownValues: frozenValues(init.knownValues ?? []),
+    ...(init.loadKnownValues ? { loadKnownValues: init.loadKnownValues } : {}),
     tally: emptyTally(),
     ...(parent ? { parent } : {}),
   };
 }
 
+/** Fill in what the code that entered `scope` has since learned. */
+export function bindPrivacyScope(
+  scope: PrivacyScope,
+  fields: Partial<Pick<PrivacyScopeInit, 'scopeId' | 'orgId' | 'agentId' | 'userId'>>
+): void {
+  if (fields.scopeId !== undefined) scope.scopeId = fields.scopeId;
+  if (fields.orgId !== undefined) scope.orgId = fields.orgId;
+  if (fields.agentId !== undefined) scope.agentId = fields.agentId;
+  if (fields.userId !== undefined) scope.userId = fields.userId;
+}
+
 /**
  * A scope inside `parent` with its own tally, for one part of the work (a
- * workflow step). It inherits everything else; what it records is recorded in
- * `parent` as well.
+ * workflow step). It takes `parent`'s fields as they are now, and shares its
+ * known-value loader. What it records is recorded in `parent` as well.
  */
 export function childPrivacyScope(parent: PrivacyScope, scopeId: string): PrivacyScope {
   return createPrivacyScope(
@@ -109,6 +140,23 @@ export function childPrivacyScope(parent: PrivacyScope, scopeId: string): Privac
     },
     parent
   );
+}
+
+/**
+ * Every known value for `scope`: its own, plus its loader's (or its
+ * parent's), loaded once. Never rejects.
+ */
+export async function knownValuesOf(scope: PrivacyScope): Promise<readonly KnownValue[]> {
+  let owner: PrivacyScope | undefined = scope;
+  while (owner && !owner.loadKnownValues) owner = owner.parent;
+  const loader = owner?.loadKnownValues;
+  if (!owner || !loader) return scope.knownValues;
+  // `.then(loader)` so a loader that throws synchronously is caught too.
+  owner.loaded ??= Promise.resolve()
+    .then(loader)
+    .then(frozenValues, (): readonly KnownValue[] => []);
+  const loaded = await owner.loaded;
+  return loaded.length === 0 ? scope.knownValues : [...scope.knownValues, ...loaded];
 }
 
 const globalForPrivacyScope = globalThis as unknown as {

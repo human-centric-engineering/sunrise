@@ -27,6 +27,7 @@ import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   createPrivacyScope,
   currentPrivacyScope,
+  knownValuesOf,
   recordPrivacyCall,
   type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
@@ -158,20 +159,22 @@ function scopeFor(): PrivacyScope {
   if (scope) return scope;
   // No turn or execution entered a scope: an ephemeral one for this call.
   // Its policy is the global one, never looser than a scoped call's.
-  const orgId = getTenantContext()?.orgId;
-  return createPrivacyScope({
-    scopeId: `ephemeral:${randomUUID()}`,
-    ...(orgId ? { orgId } : {}),
-  });
+  return createPrivacyScope({ scopeId: `ephemeral:${randomUUID()}` });
+}
+
+/** The org the call is for: the scope's, else the tenant context's. */
+function orgOf(scope: PrivacyScope): string | undefined {
+  return scope.orgId ?? getTenantContext()?.orgId ?? undefined;
 }
 
 function eventBase(
   scope: PrivacyScope,
   providerSlug: string
 ): Pick<PrivacyEvent, 'scopeId' | 'orgId' | 'agentId' | 'providerSlug'> {
+  const orgId = orgOf(scope);
   return {
     scopeId: scope.scopeId,
-    ...(scope.orgId !== undefined ? { orgId: scope.orgId } : {}),
+    ...(orgId !== undefined ? { orgId } : {}),
     ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
     providerSlug,
   };
@@ -230,8 +233,9 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
     if (base === null) throw refuse('settings_unreadable', call, scope, mode);
 
     // Resolvers run even when the base is `off`: one may raise it.
+    const orgId = orgOf(scope);
     const { policy, failures: resolverFailures } = await resolvePrivacyPolicy(base, {
-      ...(scope.orgId !== undefined ? { orgId: scope.orgId } : {}),
+      ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
       ...(scope.userId !== undefined ? { userId: scope.userId } : {}),
       providerSlug: call.providerSlug,
@@ -268,9 +272,9 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
 
     const { spans, failures } = await runPrivacyDetectors(outboundText(call), {
       scopeId: scope.scopeId,
-      ...(scope.orgId !== undefined ? { orgId: scope.orgId } : {}),
+      ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
-      knownValues: scope.knownValues,
+      knownValues: await knownValuesOf(scope),
       ignoredEntityTypes: policy.ignoredEntityTypes,
       signal: AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS),
     });
