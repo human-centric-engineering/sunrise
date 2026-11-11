@@ -602,6 +602,40 @@ describe('emitHookEventDurably (#834)', () => {
 });
 
 describe('retryHookDelivery', () => {
+  it('refuses a pending row still holding its lease: it is being sent now (#834)', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...leasedDelivery({ status: 'pending', attempts: 0 }),
+      hook: makeHook(),
+    } as never);
+
+    const result = await retryHookDelivery('del-1');
+
+    expect(result).toBe(false);
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends a pending row whose lease has run out: the process sending it ended', async () => {
+    const leaseRanOut = new Date(Date.now() - 1_000);
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ status: 'pending', attempts: 0, nextRetryAt: leaseRanOut }),
+      hook: makeHook(),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      leasedDelivery({ status: 'pending', attempts: 0 }),
+    ] as never);
+
+    const result = await retryHookDelivery('del-1');
+
+    expect(result).toBe(true);
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'pending', nextRetryAt: leaseRanOut }),
+      })
+    );
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+  });
+
   it('returns false when delivery not found', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(null);
 

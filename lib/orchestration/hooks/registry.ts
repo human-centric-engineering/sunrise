@@ -405,7 +405,9 @@ async function createDeliveryRow(
     // would have a durable caller retry, resending to every hook that was
     // written, for as long as the cache holds the deleted one.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-      invalidateHookCache();
+      // This org's partition only: the stale hook is this org's.
+      const { orgId } = requireTenantContext();
+      if (orgId !== null) hookCacheByOrg.delete(orgId);
       logger.info('Hook delivery skipped: the hook was deleted', { hookId });
       return 'hook-gone';
     }
@@ -967,6 +969,16 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
   // Stopped by an erasure: what it would send is about the erased person
   // (t-793). Refused, and left as the record.
   if (delivery.stoppedByErasure) return false;
+  // Pending and still holding its lease: its first attempt (or another
+  // manual retry) is sending it now, and the tick sends it if that process
+  // ends (#834). A second send alongside would reach the receiver twice.
+  if (
+    delivery.status === 'pending' &&
+    delivery.nextRetryAt !== null &&
+    delivery.nextRetryAt.getTime() > Date.now()
+  ) {
+    return false;
+  }
 
   const parsed = await parseDeliveryForDispatch({ ...delivery, hook: delivery.hook });
   if (!parsed) return false;

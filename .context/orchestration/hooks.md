@@ -345,7 +345,7 @@ Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action
 
 - **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
 - **List across hooks** (`GET /hooks/deliveries`) — the same rows for every hook, and the only route that reaches a delivery whose hook was deleted: `?orphaned=true` selects those, `?hookId` narrows to one hook, `?status` as above. Hooks are admin-global, so there is no owner clause.
-- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
+- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. A `pending` row still holding its lease is being sent now and answers `409`; once its lease has run out (the process sending it ended), a retry sends it, as the tick would. A deleted hook, a disabled one, or a row an erasure stopped also answers `409`.
 
 ## Retention
 
