@@ -71,6 +71,7 @@ import {
 } from '@/lib/privacy/erased-subjects';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
+import { PRIVACY_MODES_AVAILABLE } from '@/lib/orchestration/privacy/settings-policy';
 import {
   AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
   INITIAL_VERSION_SUMMARY,
@@ -873,6 +874,26 @@ async function importParsed(
           );
         }
         noteKept(escalationAddresses(escalationConfig));
+        // The privacy settings a backup carries; one from before them leaves
+        // the current values alone (§127).
+        // A mode this version cannot apply is not restored: the settings API
+        // refuses it for the same reason, since the stage would refuse every
+        // chat call under it.
+        const privacyMode = PRIVACY_MODES_AVAILABLE.find((m) => m === s.privacyMode);
+        if (s.privacyMode !== undefined && privacyMode === undefined) {
+          result.warnings.push(
+            `LLM privacy mode "${s.privacyMode}" is not one this version can apply, so the current mode was kept`
+          );
+        }
+        const privacySettings = {
+          ...(privacyMode !== undefined ? { privacyMode } : {}),
+          ...(s.privacyIgnoredEntityTypes !== undefined
+            ? { privacyIgnoredEntityTypes: s.privacyIgnoredEntityTypes }
+            : {}),
+          ...(s.privacyProtectLocalProviders !== undefined
+            ? { privacyProtectLocalProviders: s.privacyProtectLocalProviders }
+            : {}),
+        };
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },
           create: {
@@ -894,6 +915,7 @@ async function importParsed(
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
             escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            ...privacySettings,
           },
           update: {
             defaultModels: s.defaultModels as Prisma.InputJsonValue,
@@ -913,6 +935,7 @@ async function importParsed(
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
             escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            ...privacySettings,
           },
         });
         result.settingsUpdated = true;

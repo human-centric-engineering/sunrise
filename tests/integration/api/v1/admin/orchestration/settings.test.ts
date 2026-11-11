@@ -536,6 +536,9 @@ describe('Admin Orchestration — /settings', () => {
         embedAllowedOrigins: { value: ['https://example.com'] },
         defaultMaxCostPerExecutionUsd: { value: 1 },
         defaultMaxCostPerTurnUsd: { value: 1 },
+        privacyMode: { value: 'detect' },
+        privacyIgnoredEntityTypes: { value: ['DATE'] },
+        privacyProtectLocalProviders: { value: true },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.
@@ -558,6 +561,24 @@ describe('Admin Orchestration — /settings', () => {
         const update = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0]?.update;
         expect(update).toHaveProperty(writes ?? field);
       });
+    });
+
+    it('writes the privacy settings on a first save that creates the row, not the column default', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      const privacy = {
+        privacyMode: 'off',
+        privacyIgnoredEntityTypes: ['DATE'],
+        privacyProtectLocalProviders: true,
+      };
+
+      const res = await PATCH(makePatch(privacy));
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.create).toMatchObject(privacy);
+      expect(args?.update).toMatchObject(privacy);
     });
 
     it('updates voiceInputGloballyEnabled back to true', async () => {

@@ -34,7 +34,8 @@ import { MessageWithCitations } from '@/components/admin/orchestration/chat/mess
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
 import { ReasoningPanel } from '@/components/admin/orchestration/chat/reasoning-panel';
 import { SaveToDatasetButton } from '@/components/admin/orchestration/evaluations-foundations/save-to-dataset-button';
-import type { Citation, ToolCallTrace } from '@/types/orchestration';
+import { PrivacyCounts } from '@/components/admin/orchestration/privacy-counts';
+import type { Citation, PrivacySummary, ToolCallTrace } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,7 @@ interface MessageMetadata {
   latencyMs?: number;
   costUsd?: number;
   reasoningSummary?: string;
+  privacy?: PrivacySummary;
 }
 
 interface MessageProvenance {
@@ -192,6 +194,7 @@ function MessageCard({ message }: { message: ConversationMessage }) {
           {meta.costUsd !== undefined && <span>${meta.costUsd.toFixed(4)}</span>}
         </div>
       )}
+      {meta.privacy && <PrivacyCounts summary={meta.privacy} />}
 
       {/* Provenance pin row — version pins surface as small badges next
           to the message so an auditor can see at a glance which

@@ -152,3 +152,16 @@ describe('ExecutorError — a spend-cap refusal in the cause chain (§110 t-788)
     expect(err.retriable).toBe(false);
   });
 });
+
+describe('ExecutorError — a privacy refusal in the cause chain (§127 t-991)', () => {
+  it('keeps privacy_refused and never retries it, however the executor wrapped it', async () => {
+    const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
+    // `rag_retrieve` wraps a failed query embedding as a retriable `search_failed`.
+    const wrapped = new Error('search failed', {
+      cause: new PrivacyRefusedError('app_init_failed', 'openai'),
+    });
+    const err = new ExecutorError('s1', 'search_failed', 'Knowledge search failed', wrapped, true);
+    expect(err.code).toBe('privacy_refused');
+    expect(err.retriable).toBe(false);
+  });
+});

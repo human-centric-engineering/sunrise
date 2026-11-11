@@ -661,6 +661,58 @@ describe('importOrchestrationConfig', () => {
     expect(call.update.webhookDlqRetentionDays).toBe(45);
   });
 
+  it('restores the LLM privacy settings (§127)', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const privacy = {
+      privacyMode: 'off',
+      privacyIgnoredEntityTypes: ['DATE'],
+      privacyProtectLocalProviders: true,
+    };
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), ...privacy } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.create).toMatchObject(privacy);
+    expect(call.update).toMatchObject(privacy);
+  });
+
+  it('keeps the current mode, with a warning, when the backup carries one this version cannot apply', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const result = await importOrchestrationConfig(
+      {
+        ...minPayload,
+        data: { ...minPayload.data, settings: { ...makeSettings(), privacyMode: 'redact' } },
+      },
+      'user-1',
+      SHARED_SCOPE
+    );
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.update).not.toHaveProperty('privacyMode');
+    expect(call.create).not.toHaveProperty('privacyMode');
+    expect(result.warnings).toContainEqual(expect.stringContaining('"redact"'));
+  });
+
+  it('leaves the current privacy settings alone when the backup predates them', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    await importOrchestrationConfig(
+      { ...minPayload, data: { ...minPayload.data, settings: makeSettings() } },
+      'user-1',
+      SHARED_SCOPE
+    );
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    for (const key of [
+      'privacyMode',
+      'privacyIgnoredEntityTypes',
+      'privacyProtectLocalProviders',
+    ]) {
+      expect(call.update).not.toHaveProperty(key);
+      expect(call.create).not.toHaveProperty(key);
+    }
+  });
+
   it('leaves the current failed-webhook window alone when the backup predates it', async () => {
     mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
 

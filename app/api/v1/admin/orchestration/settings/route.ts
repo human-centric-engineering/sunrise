@@ -331,6 +331,15 @@ export const PATCH = withAdminAuth(
     if (body.defaultMaxCostPerTurnUsd !== undefined) {
       updateData.defaultMaxCostPerTurnUsd = body.defaultMaxCostPerTurnUsd;
     }
+    if (body.privacyMode !== undefined) {
+      updateData.privacyMode = body.privacyMode;
+    }
+    if (body.privacyIgnoredEntityTypes !== undefined) {
+      updateData.privacyIgnoredEntityTypes = body.privacyIgnoredEntityTypes;
+    }
+    if (body.privacyProtectLocalProviders !== undefined) {
+      updateData.privacyProtectLocalProviders = body.privacyProtectLocalProviders;
+    }
     if (body.escalationConfig !== undefined) {
       updateData.escalationConfig =
         body.escalationConfig === null ? Prisma.JsonNull : body.escalationConfig;
@@ -365,6 +374,15 @@ export const PATCH = withAdminAuth(
           // with is the list's, not an empty row's (t-899).
           ...(updateData.escalationConfig !== undefined
             ? { escalationConfig: updateData.escalationConfig }
+            : {}),
+          // So is a first save of the privacy settings: left out, the row
+          // would take the column default (`detect`) whatever was chosen.
+          ...(body.privacyMode !== undefined ? { privacyMode: body.privacyMode } : {}),
+          ...(body.privacyIgnoredEntityTypes !== undefined
+            ? { privacyIgnoredEntityTypes: body.privacyIgnoredEntityTypes }
+            : {}),
+          ...(body.privacyProtectLocalProviders !== undefined
+            ? { privacyProtectLocalProviders: body.privacyProtectLocalProviders }
             : {}),
         },
         update: updateData,

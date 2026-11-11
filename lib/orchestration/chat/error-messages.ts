@@ -205,6 +205,15 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'This request uses an AI provider this deployment does not permit.',
     action: 'Ask an administrator to review this deployment’s provider settings.',
   },
+  // The LLM privacy layer refused the call (§127): either it could not
+  // establish what the privacy policy is, or the policy itself says to
+  // refuse. Nothing was sent. The reason is in the log; the reader is told
+  // only that it stopped, and where to look.
+  privacy_refused: {
+    title: 'Stopped by Privacy Settings',
+    message: "This request was stopped before it was sent, by the deployment's privacy settings.",
+    action: 'Ask an administrator to check the deployment’s LLM privacy settings.',
+  },
   no_default_model_configured: {
     title: 'Default Model Not Set',
     message: 'A default model for this task has not been chosen yet.',

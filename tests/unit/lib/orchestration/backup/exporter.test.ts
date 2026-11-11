@@ -325,6 +325,58 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.settings?.webhookDlqRetentionDays).toBe(120);
   });
 
+  it('reads and exports the LLM privacy settings (§127)', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({
+      ...settingsRow,
+      privacyMode: 'off',
+      privacyIgnoredEntityTypes: ['DATE'],
+      privacyProtectLocalProviders: true,
+    });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          privacyMode: true,
+          privacyIgnoredEntityTypes: true,
+          privacyProtectLocalProviders: true,
+        }),
+      })
+    );
+    expect(payload.data.settings).toMatchObject({
+      privacyMode: 'off',
+      privacyIgnoredEntityTypes: ['DATE'],
+      privacyProtectLocalProviders: true,
+    });
+  });
+
+  it('leaves out a stored privacy mode that is not one, so a restore keeps the target mode', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({
+      ...settingsRow,
+      privacyMode: 'pseudonymize',
+      privacyIgnoredEntityTypes: 'DATE',
+      privacyProtectLocalProviders: false,
+    });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    expect(payload.data.settings).not.toHaveProperty('privacyMode');
+    expect(payload.data.settings?.privacyIgnoredEntityTypes).toEqual([]);
+  });
+
   it('webhook entries do not have a secret field (secrets are never exported)', async () => {
     // The Prisma select excludes secret — the row never has it
     mockFindMany

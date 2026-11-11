@@ -80,6 +80,7 @@ import {
   WorkflowStatus,
   type ExecutionEvent,
   type ExecutionTraceEntry,
+  type PrivacySummary,
   type LlmTelemetryEntry,
   type StepResult,
   type TurnEntry,
@@ -135,6 +136,16 @@ import {
 import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
 import { dispatchApprovalNotification } from '@/lib/orchestration/notifications/dispatcher';
 import { env } from '@/lib/env';
+import { userKnownValues } from '@/lib/orchestration/privacy/known-values';
+import {
+  childPrivacyScope,
+  createPrivacyScope,
+  currentPrivacyScope,
+  privacySummary,
+  runInPrivacyScope,
+  withPrivacyScope,
+  type PrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
 import {
   SPAN_WORKFLOW_EXECUTE,
   SPAN_WORKFLOW_STEP,
@@ -271,6 +282,22 @@ export interface ExecuteWorkflowArg {
   versionId?: string;
 }
 
+/**
+ * A step's privacy scope: a child of the execution's, or a scope of its own
+ * when the step runs outside one (a test driving a step directly).
+ */
+function stepPrivacyScope(executionId: string, stepId: string): PrivacyScope {
+  const scopeId = `execution:${executionId}:step:${stepId}`;
+  const parent = currentPrivacyScope();
+  return parent ? childPrivacyScope(parent, scopeId) : createPrivacyScope({ scopeId });
+}
+
+/** The trace entry's `privacy` field: the step's counts, when the layer scanned a call. */
+function privacyField(scope: PrivacyScope | undefined): { privacy?: PrivacySummary } {
+  const summary = scope ? privacySummary(scope) : undefined;
+  return summary ? { privacy: summary } : {};
+}
+
 export class OrchestrationEngine {
   async *execute(
     workflow: ExecuteWorkflowArg,
@@ -306,27 +333,42 @@ export class OrchestrationEngine {
       // and parallel) and any deeper helper-`withSpan` calls automatically
       // see workflow.execute as their parent in OTLP backends — one trace
       // per execution, end-to-end.
-      yield* withSpanGenerator(
-        SPAN_WORKFLOW_EXECUTE,
+      // `withPrivacyScope` gives every provider call the execution makes the
+      // execution's privacy scope (§127); each step runs in a child of it.
+      // A run started inside other work (an agent's `run_workflow` mid-turn,
+      // a sub-workflow) sits in that work's scope, so it counts there too.
+      const privacyScope = createPrivacyScope(
         {
-          [SUNRISE_EXECUTION_ID]: executionId,
-          [SUNRISE_WORKFLOW_ID]: workflow.id,
-          [SUNRISE_USER_ID]: options.userId ?? '',
+          scopeId: `execution:${executionId}`,
+          ...(options.userId ? { userId: options.userId } : {}),
+          ...(options.userId ? { loadKnownValues: userKnownValues(options.userId) } : {}),
         },
-        (workflowSpan) =>
-          this.executeInner(
-            workflowSpan,
-            workflow,
-            lease,
-            trace,
-            budgetLimitUsd,
-            ctx,
-            resumeAfterStepId,
-            baseLogger,
-            options,
-            resumePosition ?? null
-          ),
-        { manualStatus: true }
+        currentPrivacyScope()
+      );
+      yield* withPrivacyScope(
+        privacyScope,
+        withSpanGenerator(
+          SPAN_WORKFLOW_EXECUTE,
+          {
+            [SUNRISE_EXECUTION_ID]: executionId,
+            [SUNRISE_WORKFLOW_ID]: workflow.id,
+            [SUNRISE_USER_ID]: options.userId ?? '',
+          },
+          (workflowSpan) =>
+            this.executeInner(
+              workflowSpan,
+              workflow,
+              lease,
+              trace,
+              budgetLimitUsd,
+              ctx,
+              resumeAfterStepId,
+              baseLogger,
+              options,
+              resumePosition ?? null
+            ),
+          { manualStatus: true }
+        )
       );
     } finally {
       stopHeartbeat();
@@ -1347,14 +1389,21 @@ export class OrchestrationEngine {
       await this.recordStepTurn(lease, step.id, [], baseLogger, { attempt, attemptId });
     };
 
+    // The step's own privacy scope (§127): every provider call the step makes,
+    // a capability's included, is tallied here and in the execution's scope,
+    // and the step's trace entry records the step's counts.
+    const stepScope = stepPrivacyScope(executionId, step.id);
     try {
-      stepResult = yield* this.runStepWithStrategy(
-        step,
-        ctx,
-        telemetryOut,
-        onAttemptStart,
-        startAttempt,
-        startAttemptId
+      stepResult = yield* withPrivacyScope(
+        stepScope,
+        this.runStepWithStrategy(
+          step,
+          ctx,
+          telemetryOut,
+          onAttemptStart,
+          startAttempt,
+          startAttemptId
+        )
       );
     } catch (err) {
       if (err instanceof PausedForApproval) {
@@ -1379,6 +1428,7 @@ export class OrchestrationEngine {
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
+          ...privacyField(stepScope),
           ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
         });
         // The pause path does not call `clearRunningStep`, so the row
@@ -1470,6 +1520,7 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
+        ...privacyField(stepScope),
         ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
       });
       ctx.resumeTurns = undefined;
@@ -1512,6 +1563,7 @@ export class OrchestrationEngine {
       durationMs,
       input: step.config,
       ...rollupTelemetry(telemetryOut),
+      ...privacyField(stepScope),
       ...(stepTurns.length > 0 ? { turns: traceTurns(stepTurns) } : {}),
       ...(completedProvenance ? { provenance: completedProvenance } : {}),
     });
@@ -1655,6 +1707,9 @@ export class OrchestrationEngine {
     // (including retries) independently.
     // Note: allEvents.push() from concurrent callbacks is safe because
     // Node.js is single-threaded — each push() completes atomically between awaits.
+    // Each branch's own privacy scope (§127), so its trace entry records only
+    // its own calls.
+    const stepScopes = new Map<string, PrivacyScope>();
     const promises = steps.map(async (step) =>
       // `withSpan` activates the parallel-branch span as the OTEL active
       // context; AsyncLocalStorage forks per Promise (Node ≥ 18), so each
@@ -1677,7 +1732,11 @@ export class OrchestrationEngine {
           allEvents.push(stepStarted(step.id, step.type, step.name, step.description));
 
           try {
-            const result = await this.runStepToCompletion(step, ctx, telemetryOut);
+            const stepScope = stepPrivacyScope(executionId, step.id);
+            stepScopes.set(step.id, stepScope);
+            const result = await runInPrivacyScope(stepScope, () =>
+              this.runStepToCompletion(step, ctx, telemetryOut)
+            );
             // Capture endedAt *inside* the callback — once per branch, at the
             // real finish moment. The post-`Promise.allSettled` loop runs
             // sequentially long after the slowest branch ends, so writing
@@ -1783,6 +1842,7 @@ export class OrchestrationEngine {
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
+          ...privacyField(stepScopes.get(step.id)),
         });
         const batchApprovalData =
           typeof outcome.value.payload === 'object' && outcome.value.payload !== null
@@ -1830,6 +1890,7 @@ export class OrchestrationEngine {
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
+          ...privacyField(stepScopes.get(step.id)),
         });
         await this.checkpoint(lease, ctx, trace, { ended: { stepId: step.id, kind: 'failed' } });
         await this.clearRunningStep(executionId, step.id, baseLogger);
@@ -1867,6 +1928,7 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
+        ...privacyField(stepScopes.get(step.id)),
         ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
       const nextIds = chosenNextIds(step, stepResult);

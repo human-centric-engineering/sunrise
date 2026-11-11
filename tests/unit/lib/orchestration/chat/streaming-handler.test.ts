@@ -257,6 +257,14 @@ const { ProviderError } = await import('@/lib/orchestration/llm/provider');
 const { SpendCapExceededError, assertWithinSpendCaps } =
   await import('@/lib/orchestration/llm/spend-caps');
 const { ProviderCallRefusedError } = await import('@/lib/orchestration/llm/provider-eligibility');
+const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
+const {
+  createPrivacyScope,
+  currentPrivacyScope,
+  privacySummary,
+  recordPrivacyCall,
+  runInPrivacyScope,
+} = await import('@/lib/orchestration/privacy/scope');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
   await import('@/lib/orchestration/chat/guard-floor');
@@ -8936,5 +8944,203 @@ describe('provider web search (t-912)', () => {
     });
     await collect(streamChat(baseRequest));
     expect((provider.chatStream.mock.calls[0] as unknown[])[1]).not.toHaveProperty('providerTools');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The privacy scope (§127, t-991)
+// ---------------------------------------------------------------------------
+
+describe('the privacy scope a chat turn enters', () => {
+  /**
+   * A provider whose stream does what the real privacy stage does on the
+   * Proxy: reads the scope the call runs in and records counts into it. The
+   * provider manager is mocked in this file, so this is how the turn's side
+   * of the contract is seen.
+   */
+  function recordingProvider(counts: Record<string, number>) {
+    const seen: Array<ReturnType<typeof currentPrivacyScope>> = [];
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    const script = provider.chatStream.getMockImplementation()!;
+    provider.chatStream.mockImplementation(async function* () {
+      const scope = currentPrivacyScope();
+      seen.push(scope);
+      if (scope) {
+        recordPrivacyCall(scope, {
+          kind: 'chat',
+          mode: 'detect',
+          counts,
+          degraded: false,
+          failedAdapters: [],
+        });
+      }
+      yield* script();
+    });
+    return { provider, seen };
+  }
+
+  function assistantMetadata() {
+    return (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls
+      .map(([arg]) => (arg as { data: { role: string; metadata?: Record<string, unknown> } }).data)
+      .filter((d) => d.role === 'assistant')
+      .map((d) => d.metadata);
+  }
+
+  it("gives every provider call the turn's agent, conversation and user", async () => {
+    const { provider, seen } = recordingProvider({});
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      scopeId: 'conversation:conv-1',
+      agentId: 'agent-1',
+      userId: 'u1',
+    });
+  });
+
+  it('records the counts on the terminal assistant message, and nothing else', async () => {
+    const { provider } = recordingProvider({ EMAIL: 1, PERSON: 2 });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(assistantMetadata()).toEqual([
+      expect.objectContaining({
+        privacy: {
+          mode: 'detect',
+          calls: 1,
+          counts: { EMAIL: 1, PERSON: 2 },
+          embeddingCalls: 0,
+          embeddingCounts: {},
+        },
+      }),
+    ]);
+  });
+
+  it("counts a turn run inside other work — a workflow step's judge — in that work's scope too", async () => {
+    const { provider, seen } = recordingProvider({ EMAIL: 1 });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    const step = createPrivacyScope({ scopeId: 'execution:e1:step:judge' });
+
+    await runInPrivacyScope(step, () => collect(streamChat(baseRequest)));
+
+    expect(seen[0]).not.toBe(step);
+    expect(seen[0]?.parent).toBe(step);
+    expect(privacySummary(step)).toMatchObject({ calls: 1, counts: { EMAIL: 1 } });
+    expect(assistantMetadata()).toEqual([
+      expect.objectContaining({ privacy: expect.objectContaining({ counts: { EMAIL: 1 } }) }),
+    ]);
+  });
+
+  it('records the counts on the error marker when the turn fails after a scanned call', async () => {
+    const { provider } = recordingProvider({ EMAIL: 1 });
+    const script = provider.chatStream.getMockImplementation()!;
+    // eslint-disable-next-line require-yield -- fails before its first chunk
+    provider.chatStream.mockImplementation(async function* () {
+      // Record as the stage would, then fail as a vendor might.
+      const inner = script();
+      await inner.next();
+      throw new Error('vendor fell over');
+    });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(assistantMetadata()).toEqual([
+      expect.objectContaining({
+        error: true,
+        privacy: expect.objectContaining({ calls: 1, counts: { EMAIL: 1 } }),
+      }),
+    ]);
+  });
+
+  it('writes no privacy field when the layer scanned no call', async () => {
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'Hello' },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    for (const metadata of assistantMetadata()) expect(metadata).not.toHaveProperty('privacy');
+  });
+
+  it("keeps one turn's counts out of the next turn's", async () => {
+    const first = recordingProvider({ EMAIL: 1 });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      provider: first.provider,
+      usedSlug: 'anthropic',
+    });
+    await collect(streamChat(baseRequest));
+    const second = recordingProvider({ PHONE: 1 });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      provider: second.provider,
+      usedSlug: 'anthropic',
+    });
+    await collect(streamChat(baseRequest));
+
+    expect(first.seen[0]).not.toBe(second.seen[0]);
+    expect(assistantMetadata().map((m) => (m?.privacy as { counts: unknown }).counts)).toEqual([
+      { EMAIL: 1 },
+      { PHONE: 1 },
+    ]);
+  });
+
+  it('ends the turn on a privacy refusal without failing over or tripping a breaker', async () => {
+    const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+    (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+    const refused = {
+      ...mockProvider([]),
+      // eslint-disable-next-line require-yield
+      chatStream: vi.fn(async function* () {
+        throw new PrivacyRefusedError('app_init_failed', 'anthropic');
+      }),
+    };
+    const fallback = mockProvider([[{ type: 'text', content: 'should not stream' }]]);
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ fallbackProviders: ['openai'] })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: refused,
+      usedSlug: 'anthropic',
+    });
+    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallback);
+
+    const events = (await collect(streamChat(baseRequest))) as Array<{
+      type: string;
+      code?: string;
+      message?: string;
+    }>;
+
+    expect(fallback.chatStream).not.toHaveBeenCalled(); // test-review:accept no_arg_called — never failed over to
+    expect(mockBreaker.recordFailure).not.toHaveBeenCalled(); // test-review:accept no_arg_called — not provider health
+    const error = events.find((e) => e.type === 'error');
+    expect(error).toMatchObject({ code: 'privacy_refused' });
+    // The reader is told it stopped, not the operator's reason.
+    expect(error?.message).not.toContain('initAppPrivacyAdapters');
   });
 });

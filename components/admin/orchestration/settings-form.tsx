@@ -26,6 +26,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { costLogsOutliveExecutions } from '@/lib/validations/orchestration';
+import { CORE_ENTITY_TYPES, type CoreEntityType } from '@/lib/privacy/adapters/types';
+import { PRIVACY_MODES_AVAILABLE } from '@/lib/orchestration/privacy/settings-policy';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -95,6 +97,10 @@ export interface OrchestrationSettings {
   voiceInputGloballyEnabled?: boolean;
   imageInputGloballyEnabled?: boolean;
   documentInputGloballyEnabled?: boolean;
+  /** LLM privacy layer (§127). `null` when the stored mode is not one this version knows. */
+  privacyMode?: string | null;
+  privacyIgnoredEntityTypes?: string[];
+  privacyProtectLocalProviders?: boolean;
 }
 
 export interface SettingsFormProps {
@@ -110,6 +116,49 @@ export interface SettingsFormProps {
 // ─── Client-side validation schema ──────────────────────────────────────────
 
 const GUARD_MODES = ['none', 'log_only', 'warn_and_continue', 'block'] as const;
+
+/** What each core entity type is called on the page (§127). */
+const ENTITY_TYPE_LABELS: Record<CoreEntityType, string> = {
+  PERSON: 'Names of people',
+  ORG: 'Company names',
+  EMAIL: 'Email addresses',
+  PHONE: 'Phone numbers',
+  ADDRESS: 'Street addresses',
+  POSTCODE: 'Postcodes',
+  UK_NINO: 'National Insurance numbers',
+  NHS_NUMBER: 'NHS numbers',
+  SORT_CODE: 'Sort codes',
+  BANK_ACCOUNT: 'Bank account numbers',
+  IBAN: 'IBANs',
+  CARD_NUMBER: 'Card numbers',
+  UK_UTR: 'Tax references (UTR)',
+  UK_VAT: 'VAT numbers',
+  UK_PASSPORT: 'Passport numbers',
+  UK_DRIVING_LICENCE: 'Driving licence numbers',
+  IP_ADDRESS: 'IP addresses',
+  SECRET: 'Passwords, keys and tokens',
+  DATE_OF_BIRTH: 'Dates of birth',
+  DATE: 'Other dates',
+  LOCATION: 'Place names',
+};
+
+const PRIVACY_MODE_LABELS: Record<(typeof PRIVACY_MODES_AVAILABLE)[number], string> = {
+  off: 'Off',
+  detect: 'Detect (count only)',
+};
+
+/**
+ * The select's value when the stored mode is one this page cannot show (a
+ * mode a later version wrote, or an unreadable one): keep it. Every real mode
+ * is then a choice the admin made, Off included, and is sent.
+ */
+const KEEP_STORED_MODE = 'keep';
+
+function isAvailablePrivacyMode(
+  v: string | null | undefined
+): v is (typeof PRIVACY_MODES_AVAILABLE)[number] {
+  return PRIVACY_MODES_AVAILABLE.some((m) => m === v);
+}
 const APPROVAL_ACTIONS = ['deny', 'allow'] as const;
 const ESCALATION_PRIORITY_FILTERS = ['all', 'medium_and_above', 'high'] as const;
 
@@ -123,6 +172,11 @@ const settingsFormSchema = z
     inputGuardMode: z.enum(GUARD_MODES),
     outputGuardMode: z.enum(GUARD_MODES),
     citationGuardMode: z.enum(GUARD_MODES),
+    // LLM privacy (§127). The page holds the types to PROTECT; the API stores
+    // the ones to leave alone.
+    privacyMode: z.enum([...PRIVACY_MODES_AVAILABLE, KEEP_STORED_MODE]),
+    privacyProtectedTypes: z.array(z.string()),
+    privacyProtectLocalProviders: z.boolean(),
     // Limits
     globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
     // Per-execution / per-turn defaults (improvement #39 runaway-loop
@@ -205,6 +259,18 @@ function guardModeToForm(v: string | null): (typeof GUARD_MODES)[number] {
 
 function guardModeToApi(v: string): string | null {
   return v === 'none' ? null : v;
+}
+
+/**
+ * The types to leave alone, from the core types the page has unticked. Types
+ * the page does not list (a fork detector's own) keep whatever the row had.
+ */
+function ignoredTypesFrom(protectedTypes: readonly string[], stored: readonly string[]): string[] {
+  const core: readonly string[] = CORE_ENTITY_TYPES;
+  return [
+    ...stored.filter((t) => !core.includes(t)),
+    ...CORE_ENTITY_TYPES.filter((t) => !protectedTypes.includes(t)),
+  ];
 }
 
 /**
@@ -357,11 +423,27 @@ export function SettingsForm({
     clearErrors('escalationEnabled');
   };
 
+  // Whether the stored mode is one the select can show. A save that writes a
+  // mode makes it so; new settings from the page start the question again.
+  const [storedPrivacyModeShown, setStoredPrivacyModeShown] = React.useState(() =>
+    isAvailablePrivacyMode(initialSettings.privacyMode)
+  );
+  React.useEffect(() => {
+    setStoredPrivacyModeShown(isAvailablePrivacyMode(initialSettings.privacyMode));
+  }, [initialSettings.privacyMode]);
+
   const defaults: SettingsFormData = React.useMemo(
     () => ({
       inputGuardMode: guardModeToForm(initialSettings.inputGuardMode),
       outputGuardMode: guardModeToForm(initialSettings.outputGuardMode),
       citationGuardMode: guardModeToForm(initialSettings.citationGuardMode),
+      privacyMode: isAvailablePrivacyMode(initialSettings.privacyMode)
+        ? initialSettings.privacyMode
+        : KEEP_STORED_MODE,
+      privacyProtectedTypes: CORE_ENTITY_TYPES.filter(
+        (t) => !(initialSettings.privacyIgnoredEntityTypes ?? []).includes(t)
+      ),
+      privacyProtectLocalProviders: initialSettings.privacyProtectLocalProviders === true,
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
       defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
@@ -461,6 +543,15 @@ export function SettingsForm({
             inputGuardMode: guardModeToApi(values.inputGuardMode),
             outputGuardMode: guardModeToApi(values.outputGuardMode),
             citationGuardMode: guardModeToApi(values.citationGuardMode),
+            // A stored mode this page cannot show (one a later version wrote,
+            // or an unreadable one) is kept unless the admin chose a mode: a
+            // save of anything else must not quietly replace it.
+            ...(values.privacyMode !== KEEP_STORED_MODE ? { privacyMode: values.privacyMode } : {}),
+            privacyIgnoredEntityTypes: ignoredTypesFrom(
+              values.privacyProtectedTypes,
+              initialSettings.privacyIgnoredEntityTypes ?? []
+            ),
+            privacyProtectLocalProviders: values.privacyProtectLocalProviders,
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
             defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
             defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
@@ -489,6 +580,7 @@ export function SettingsForm({
         }
       );
       reset(undefined, { keepValues: true });
+      if (values.privacyMode !== KEEP_STORED_MODE) setStoredPrivacyModeShown(true);
       setSavedEmails([...escalationEmails]);
       // Only a save that wrote the list moves this page's copy of it on. One
       // that left it alone returns the list's current version, which may
@@ -617,6 +709,130 @@ export function SettingsForm({
                     <SelectItem value="block">Block</SelectItem>
                   </SelectContent>
                 </Select>
+              )}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── LLM privacy ─────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">LLM privacy</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Finds personal data in what agents send to external LLM providers, locally, before each
+            call. This lowers exposure; it is not anonymisation, so the providers&apos; data
+            processing agreements are still needed.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="privacyMode" className="flex items-center gap-1">
+              Privacy mode
+              <FieldHelp title="What the privacy layer does">
+                <p>
+                  <strong>Off</strong> sends every call as it is. <strong>Detect</strong> also sends
+                  every call unchanged, and counts what it finds by type — names, email addresses,
+                  NI numbers and so on — on each conversation and workflow step, so you can see what
+                  agents meet before anything is changed. Values are never stored or logged, only
+                  counts.
+                </p>
+                <p className="mt-2">
+                  Default: off on an install that was upgraded, detect on a new one. Replacing
+                  values with placeholders comes in a later version. Embedding calls are counted,
+                  never altered; transcription is not covered.
+                </p>
+              </FieldHelp>
+            </Label>
+            <Controller
+              name="privacyMode"
+              control={control}
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger id="privacyMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {!storedPrivacyModeShown && (
+                      <SelectItem value={KEEP_STORED_MODE}>
+                        Keep the stored mode
+                        {initialSettings.privacyMode ? ` (${initialSettings.privacyMode})` : ''}
+                      </SelectItem>
+                    )}
+                    {PRIVACY_MODES_AVAILABLE.map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {PRIVACY_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {!storedPrivacyModeShown && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                The stored mode
+                {initialSettings.privacyMode ? ` (${initialSettings.privacyMode})` : ''} is not one
+                this page can show. Choose a mode to replace it, or keep it to leave it as it is.
+              </p>
+            )}
+          </div>
+
+          <fieldset className="space-y-2">
+            <legend className="flex items-center gap-1 text-sm font-medium">
+              What to look for
+              <FieldHelp title="Types of personal data">
+                Ticked types are looked for and counted. Unticked ones are left alone. Default:
+                everything except other dates and place names, which are common in ordinary text and
+                rarely identify anyone on their own. A type a new detector adds is looked for until
+                you untick it here.
+              </FieldHelp>
+            </legend>
+            <Controller
+              name="privacyProtectedTypes"
+              control={control}
+              render={({ field }) => (
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {CORE_ENTITY_TYPES.map((type) => (
+                    <label key={type} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={field.value.includes(type)}
+                        onChange={(e) =>
+                          field.onChange(
+                            e.target.checked
+                              ? [...field.value, type]
+                              : field.value.filter((t) => t !== type)
+                          )
+                        }
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      {ENTITY_TYPE_LABELS[type]}
+                    </label>
+                  ))}
+                </div>
+              )}
+            />
+          </fieldset>
+
+          <div className="flex items-center gap-2">
+            <Controller
+              name="privacyProtectLocalProviders"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Apply to local providers too
+                  <FieldHelp title="Local providers">
+                    Default: off. A provider marked local runs on infrastructure you control, so the
+                    text never leaves it and the layer skips it. Turn this on to count what local
+                    models are sent as well.
+                  </FieldHelp>
+                </label>
               )}
             />
           </div>

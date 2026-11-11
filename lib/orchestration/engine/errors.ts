@@ -6,7 +6,11 @@
  * without string-matching on error messages.
  */
 
-import { PROVIDER_NOT_PERMITTED, SPEND_CAP_CODES } from '@/lib/orchestration/llm/provider';
+import {
+  PRIVACY_REFUSED,
+  PROVIDER_NOT_PERMITTED,
+  SPEND_CAP_CODES,
+} from '@/lib/orchestration/llm/provider';
 
 /**
  * Thrown by the `human_approval` executor. The engine catches this
@@ -83,6 +87,9 @@ function isPolicyRefusal(cause: unknown): boolean {
 
 const SPEND_CAP_REFUSALS: readonly string[] = Object.values(SPEND_CAP_CODES);
 
+/** Refusals whose own code a step keeps: the spend caps, and the LLM privacy layer's (§127). */
+const KEPT_CODE_REFUSALS: readonly string[] = [...SPEND_CAP_REFUSALS, PRIVACY_REFUSED];
+
 /**
  * The first of `codes` carried by `cause` or anything it wraps, by duck type
  * on `code`; bounded at ten levels, as {@link isPolicyRefusal} explains.
@@ -145,10 +152,11 @@ export class ExecutorError extends Error {
     //
     // A monthly spend cap's refusal (§110 t-788) is decided the same way, for
     // the same reason: the cap is still reached on the next attempt. Its code
-    // is kept, so a trace says which cap stopped the step.
+    // is kept, so a trace says which cap stopped the step. So is the LLM
+    // privacy layer's refusal (§127): the same policy refuses on every attempt.
     const refusalCode = isPolicyRefusal(cause)
       ? PROVIDER_NOT_PERMITTED
-      : refusalCodeIn(cause, SPEND_CAP_REFUSALS);
+      : refusalCodeIn(cause, KEPT_CODE_REFUSALS);
     this.code = refusalCode !== null && code !== EXECUTOR_THREW ? refusalCode : code;
     this.cause = cause;
     this.retriable = refusalCode !== null ? false : retriable;

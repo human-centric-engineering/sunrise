@@ -967,3 +967,50 @@ describe('STUCK_THRESHOLD_BOUNDS', () => {
     expect(STUCK_THRESHOLD_BOUNDS.default).toBe(5);
   });
 });
+
+// ─── LLM privacy settings (§127, t-991) ──────────────────────────────────────
+
+describe('hydrateSettings — privacy', () => {
+  it('passes a stored mode, ignored types and the local-provider flag through', () => {
+    const result = hydrateSettings({
+      ...makeRow(),
+      privacyMode: 'detect',
+      privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
+      privacyProtectLocalProviders: true,
+    });
+    expect(result.privacyMode).toBe('detect');
+    expect(result.privacyIgnoredEntityTypes).toEqual(['DATE', 'LOCATION']);
+    expect(result.privacyProtectLocalProviders).toBe(true);
+  });
+
+  it('reads a stored mode that is not a mode as null, which the stage refuses on', () => {
+    expect(hydrateSettings({ ...makeRow(), privacyMode: 'pseudonymize' }).privacyMode).toBeNull();
+    expect(hydrateSettings({ ...makeRow(), privacyMode: null }).privacyMode).toBeNull();
+  });
+
+  it('reads a row shape from before the columns as off, with the default exclusions', () => {
+    const result = hydrateSettings(makeRow());
+    expect(result.privacyMode).toBe('off');
+    expect(result.privacyIgnoredEntityTypes).toEqual(['DATE', 'LOCATION']);
+    expect(result.privacyProtectLocalProviders).toBe(false);
+  });
+
+  it('reads ignored types that are not a list of type names as none ignored', () => {
+    for (const bad of [{ a: 1 }, 'DATE', ['DATE', 'not a type'], ['DATE', 3]]) {
+      expect(
+        hydrateSettings({ ...makeRow(), privacyIgnoredEntityTypes: bad }).privacyIgnoredEntityTypes
+      ).toEqual([]);
+    }
+  });
+
+  it('leaves the privacy columns out of a created row, so the column default (detect) applies', async () => {
+    invalidateOrchestrationSettingsCache();
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(makeRow() as never);
+
+    await getOrchestrationSettings();
+
+    const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0][0];
+    expect(Object.keys(args.create).filter((k) => k.startsWith('privacy'))).toEqual([]);
+  });
+});

@@ -32,6 +32,7 @@ import { isMarkdown } from '@/lib/utils/is-markdown';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import { SourcesField } from '@/components/admin/orchestration/approvals/sources-field';
+import { PrivacyCounts } from '@/components/admin/orchestration/privacy-counts';
 import { hasTemplateTokens } from '@/lib/orchestration/engine/interpolate-from-trace';
 import {
   resolveTemplatesIn,
@@ -222,6 +223,8 @@ export interface ExecutionTraceEntryRowProps {
    * non-LLM steps and historical rows from before this field existed.
    */
   requestParams?: ExecutionTraceEntry['requestParams'];
+  /** What the LLM privacy layer counted in this step's provider calls (§127). */
+  privacy?: ExecutionTraceEntry['privacy'];
   /** Cost-log rows attributed to this step, for the per-call breakdown. */
   costEntries?: TraceCostEntry[];
   /**
@@ -343,6 +346,7 @@ export function ExecutionTraceEntryRow({
   outputTokens,
   llmDurationMs,
   requestParams,
+  privacy,
   costEntries,
   provenance,
   agent,
@@ -537,6 +541,7 @@ export function ExecutionTraceEntryRow({
                 .join(' · ')}
             </p>
           )}
+          {privacy && <PrivacyCounts summary={privacy} />}
           {/* Skipped steps surface their reason inline so the operator
               doesn't have to expand the row to see why the step was
               skipped. When the engine didn't capture an error (e.g.

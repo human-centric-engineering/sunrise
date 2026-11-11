@@ -21,6 +21,15 @@ vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() } },
 }));
 
+// The privacy stage reads the install's settings on every call; this file's
+// database mock has none. See `tests/helpers/privacy-settings.ts`.
+vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
+  getOrchestrationSettings: vi.fn(async () =>
+    (await import('@/tests/helpers/privacy-settings')).privacyOffSettings()
+  ),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

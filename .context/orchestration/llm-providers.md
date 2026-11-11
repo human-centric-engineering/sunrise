@@ -473,6 +473,35 @@ could not.
   that as the signal it is: you have widened the egress surface, and anything
   downstream that enumerated it is now short.
 
+### The privacy stage on every vendor call
+
+After the eligibility gate and the spend gate, the Proxy runs the LLM privacy
+layer's stage (`applyPrivacyStage()` in `lib/orchestration/llm/privacy-stage.ts`,
+§127). What it does to each method is a second exhaustive record,
+`PRIVACY_COVERAGE`, so a method added to `LlmProvider` will not compile until
+someone decides whether its input is scanned:
+
+| Method                           | Coverage                                  |
+| -------------------------------- | ----------------------------------------- |
+| `chat`, `chatStream`             | scanned and acted on per the privacy mode |
+| `embed`, `embedMany`             | scanned and counted, never altered        |
+| `transcribe`, `transcribeStream` | not covered: audio cannot be masked       |
+| `listModels`, `testConnection`   | not covered: no user content              |
+
+In this version the mode is `off` or `detect`. `detect` sends the call
+unchanged and records per-type counts, never values, on the chat turn's
+assistant message (`metadata.privacy`) and on each workflow step's trace entry
+(`privacy`). A local provider is skipped unless the settings protect local
+providers. The stage refuses a call (`PrivacyRefusedError`, code
+`privacy_refused`, a request fault: never retried, never failed over, never
+counted against a breaker) when it cannot say what the policy is: a failed app
+privacy init or core install (mode `off` included), an unreadable stored mode,
+a failed policy resolver, or an error inside the stage itself.
+
+It covers what this page's guarantee covers and no more: a provider object a
+fork builds directly never passes through it. See
+[LLM Privacy Layer](../privacy/llm-privacy-layer.md).
+
 ## Model Registry
 
 Dynamic catalogue of models with pricing, context windows, and capabilities. Four layers:

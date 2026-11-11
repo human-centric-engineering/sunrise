@@ -20,29 +20,32 @@ has merged; this table says what exists.
 | Adapter contracts, registry, span validation, overlaps, runner, `lib/app/` seam        | t-988  | **Built** |
 | Local detection tiers A–C, synthetic UK corpus and its precision/recall gate           | t-989  | **Built** |
 | Placeholders: stateless token strategy, mask and restore, streams, tool-call arguments | t-990  | **Built** |
-| The Proxy stage in `detect` mode, the privacy scope, global settings, per-type counts  | t-991  | Planned   |
+| The Proxy stage in `detect` mode, the privacy scope, global settings, per-type counts  | t-991  | **Built** |
 | `pseudonymise`, `redact` and `block`; embeddings policy; output-guard change           | t-992  | Planned   |
 | Agent override, org floor, protected terms                                             | t-1010 | Planned   |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
 
-| Need                           | Use                                                                         |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| Register an app's adapters     | `initAppPrivacyAdapters()` in `lib/app/privacy-adapters.ts`                 |
-| Add a detector                 | `registerPrivacyDetector(detector, { required?, timeoutMs?, replace? })`    |
-| Replace the token strategy     | `registerPrivacyTokenStrategy(strategy)`                                    |
-| Tighten policy for some calls  | `registerPrivacyPolicyResolver(resolver)`                                   |
-| Receive per-call counts        | `registerPrivacyObserver(observer)`                                         |
-| Read everything registered     | `getPrivacyAdapters()` — `lib/privacy/adapters/registry.ts`                 |
-| Run the detectors over text    | `runPrivacyDetectors(text, ctx)` — `lib/privacy/adapters/run.ts`            |
-| Apply the policy resolvers     | `resolvePrivacyPolicy(base, input)` — `lib/privacy/adapters/run.ts`         |
-| Notify observers               | `notifyPrivacyObservers(event)` — `lib/privacy/adapters/run.ts`             |
-| The contracts                  | `lib/privacy/adapters/types.ts` (type-only, safe to import from `lib/app/`) |
-| Sunrise's own default adapters | `lib/privacy/adapters/core-defaults.ts`                                     |
-| Mask detected spans            | `maskText(text, spans, session, declaredTypes)` — `mask.ts`                 |
-| Restore a reply, or tool args  | `restoreText()`, `restoreValue()` — `lib/privacy/pii/restore.ts`            |
-| Restore a stream               | `new StreamRestorer(session)` — `lib/privacy/pii/stream-restore.ts`         |
+| Need                           | Use                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| Register an app's adapters     | `initAppPrivacyAdapters()` in `lib/app/privacy-adapters.ts`                         |
+| Add a detector                 | `registerPrivacyDetector(detector, { required?, timeoutMs?, replace? })`            |
+| Replace the token strategy     | `registerPrivacyTokenStrategy(strategy)`                                            |
+| Tighten policy for some calls  | `registerPrivacyPolicyResolver(resolver)`                                           |
+| Receive per-call counts        | `registerPrivacyObserver(observer)`                                                 |
+| Read everything registered     | `getPrivacyAdapters()` — `lib/privacy/adapters/registry.ts`                         |
+| Run the detectors over text    | `runPrivacyDetectors(text, ctx)` — `lib/privacy/adapters/run.ts`                    |
+| Apply the policy resolvers     | `resolvePrivacyPolicy(base, input)` — `lib/privacy/adapters/run.ts`                 |
+| Notify observers               | `notifyPrivacyObservers(event)` — `lib/privacy/adapters/run.ts`                     |
+| The contracts                  | `lib/privacy/adapters/types.ts` (type-only, safe to import from `lib/app/`)         |
+| Sunrise's own default adapters | `lib/privacy/adapters/core-defaults.ts`                                             |
+| Mask detected spans            | `maskText(text, spans, session, declaredTypes)` — `mask.ts`                         |
+| Restore a reply, or tool args  | `restoreText()`, `restoreValue()` — `lib/privacy/pii/restore.ts`                    |
+| Restore a stream               | `new StreamRestorer(session)` — `lib/privacy/pii/stream-restore.ts`                 |
+| The stage on every vendor call | `applyPrivacyStage()` — `lib/orchestration/llm/privacy-stage.ts`                    |
+| Enter a scope for some work    | `withPrivacyScope()` / `runInPrivacyScope()` — `lib/orchestration/privacy/scope.ts` |
+| Read a scope's counts          | `privacySummary(scope)` — the `PrivacySummary` written to metadata                  |
 
 ## What it protects
 
@@ -104,6 +107,53 @@ model call a capability makes mid-turn, which would then lose the agent's
 policy. A call with no scope gets an ephemeral one whose policy is the global
 mode tightened by the org floor, never looser.
 
+### What is built (t-991)
+
+The stage runs in `off` and `detect`.
+
+- **Which methods.** `PRIVACY_COVERAGE` in `provider-manager.ts` classifies
+  every `LlmProvider` method, exhaustively like `METHOD_DISPOSITION`: `chat`
+  and `chatStream` are scanned and acted on; `embed` and `embedMany` are
+  scanned and counted, never altered; `transcribe` and `transcribeStream` are
+  not covered; `listModels` and `testConnection` send no user content.
+- **What is scanned.** Every message's text, text content parts, and every
+  string inside an assistant message's tool-call arguments, joined into one
+  input so a name tier C learns in one message is found in the others. Images,
+  documents and provider reasoning blocks are not.
+- **The scopes.** A chat turn enters one in `StreamingChatHandler.run()`; its
+  agent and conversation are bound once loaded. A workflow execution enters
+  one in `OrchestrationEngine.execute()`, and each step, sequential or a
+  parallel branch, runs in a child of it whose counts also roll up into the
+  execution's. A chat turn or a workflow run started inside other work (a step's
+  `judge_call`, an agent another agent called, an agent's `run_workflow`) is a
+  child of that work's scope, so its calls count there too. Known values are the user's own name and email
+  (`userKnownValues()`), loaded once per scope and only when a call is
+  actually scanned, so mode `off` reads nothing; a failed load is logged.
+- **Where counts land.** `privacySummary()` writes per-type counts, the
+  number of calls scanned, embedding counts apart, and any degraded call, to
+  the assistant message that ends the turn's `metadata.privacy` (the answer,
+  a pause for approval, a cost-cap stop or an error marker) and to each step's trace
+  entry `privacy`. The conversation trace and the execution trace show them
+  (`PrivacyCounts`). Values are never stored. **A count is how many times a
+  type was sent**, not how many distinct values there were: every call
+  resends the conversation so far, so a value in the history counts once per
+  call that carried it, and again on a failover to another provider, which
+  was sent it too. A call made outside any scope (knowledge ingestion, a
+  background job) records nowhere, so it is not scanned at all unless an
+  observer is registered or the policy says `block` on a detector failure.
+- **Stricter modes.** A chat call whose policy a resolver raises past
+  `detect` is refused (`mode_unavailable`) until t-992 can apply it, rather
+  than sent unprotected under a mode that promised protection. An embedding
+  call is only ever counted.
+- **Cost.** One detection pass over the joined text, per call. Measured on
+  the development corpus, the median pass took 3 ms for 2 KB, 8 ms for 10 KB,
+  26 ms for 50 KB, 112 ms for 200 KB and about 1 s for 2 MB, with no detector
+  timing out. A tool loop re-scans the history on each call. The pass is
+  bounded by `PRIVACY_PASS_DEADLINE_MS` (5 s), and by the call's own
+  `options.signal` when the caller abandons it; detectors still running then
+  are reported `aborted`, and the call goes ahead degraded unless the policy
+  says `block`.
+
 ### Modes
 
 | Mode           | Sends                                | Restores | Use                                                |
@@ -123,12 +173,12 @@ interfaces it exposes**: Sunrise's local implementation of each is registered
 as a default adapter through the registry an app uses. If an app cannot do
 something through an adapter, neither can core.
 
-| Slot                    | Does                                               | Many or one          | Core default (task)                             |
-| ----------------------- | -------------------------------------------------- | -------------------- | ----------------------------------------------- |
-| `PrivacyDetector`       | finds spans in text                                | many; results merged | `core.rules`, `core.known-values`, `core.lists` |
-| `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)              |
-| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | settings, agent, org floor (t-991, t-1010)      |
-| `PrivacyObserver`       | receives counts and ids per call                   | many                 | message and execution metadata (t-991)          |
+| Slot                    | Does                                               | Many or one          | Core default (task)                                          |
+| ----------------------- | -------------------------------------------------- | -------------------- | ------------------------------------------------------------ |
+| `PrivacyDetector`       | finds spans in text                                | many; results merged | `core.rules`, `core.known-values`, `core.lists`              |
+| `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)                           |
+| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | none yet: settings are the base; agent, org floor (t-1010)   |
+| `PrivacyObserver`       | receives counts and ids per call                   | many                 | none: core's counts reach metadata through the scope (t-991) |
 
 Two more slots arrive with the features that use them: `SensitivityClassifier`
 (sensitive-content routing) and `MediaProcessor` (attachments). They are not
@@ -277,11 +327,20 @@ when it fires are reported `aborted`.
 | An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                  |
 | The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                 |
 | A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                 |
-| A bug throws inside the stage                               | —                                      | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose  |
+| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                               |
+| A resolver raises a chat call past what this version builds | `mode_unavailable`                     | Refuses (t-991 builds `off` and `detect` only)                          |
+| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose  |
 | The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted        |
 
-Every refusal ships its remedy: the user sees a plain message, and the admin
-sees the reason on the trace.
+Every refusal ships its remedy: the user sees a plain message
+(`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
+reason and its remedy (`refusalRemedy()`) in the refusal's log line. A refusal
+is a `PrivacyRefusedError` with code `privacy_refused` and a `reason`; its
+message is safe for anyone, because a workflow executor copies it to the SSE
+client. It is a request fault: never retried (an `ExecutorError` with it in
+its cause chain takes its code and is not retriable), never failed over to
+another provider, never counted against a circuit breaker. A call the caller
+abandoned during the scan is neither counted nor refused.
 
 **Nothing logs request text or a found value.** Detectors and resolvers each get
 a frozen copy of what they are handed, so none can change what the next one or
@@ -315,7 +374,14 @@ tightening that did nothing) and combined, never trusted to tighten by itself.
 | Embeddings policy | global                            | `allow` \| `local_only` | `allow`                                     | t-992         |
 
 The global values are columns on `AiOrchestrationSettings` (one row per
-install). The org floor and protected terms are a slice of `Org.settings` read
+install): `privacyMode`, `privacyIgnoredEntityTypes`,
+`privacyProtectLocalProviders`. The migration that added them filled the row an
+install already had with `off`, then made `detect` the column default for a row
+created afterwards; it never writes a mode into a row. The settings API accepts
+`off` and `detect` only until t-992 builds the stricter modes, and the settings
+page saves a stored mode it cannot show only if the admin chooses another. A
+stored mode that is not a mode reads as `null`, and the stage refuses every
+call until one is chosen. The org floor and protected terms are a slice of `Org.settings` read
 and written through `lib/tenancy/org-settings.ts`, like the provider policy and
 quotas. Every field gets a `<FieldHelp>`; the agent field goes through the core
 field registry (`lib/orchestration/agents/agent-field-registry.ts`).
@@ -419,11 +485,14 @@ the text never mentions after one look-up. Measured on a laptop:
 | 540 KB, about a 128k-token context (all three)   | 0.3 s             |
 | 2 MB (all three)                                 | 1 s, tier A ≈ 1 s |
 
-At around 2 MB, tier A reaches its default 1 s timeout, and because core's
-detectors are required, the call is refused. **The stage (t-991) must decide
-what a very large input does**: pass a larger `timeoutMs`, or scan per message.
-A timer cannot interrupt one piece of synchronous work, so a single piece still
-blocks the process for as long as it takes.
+At around 2 MB, tier A nears its default 1 s timeout. **What the stage does
+with it (t-991):** a required detector that times out marks the call
+degraded, and it goes ahead under the default `onDetectorFailure: 'fallback'`;
+only a policy that says `block` refuses it. In `detect` nothing is altered
+either way, so refusing would protect nothing. The masking modes (t-992) must
+revisit this, since a degraded call there sends what the timed-out detector
+would have found. A timer cannot interrupt one piece of synchronous work, so a
+single piece still blocks the process for as long as it takes.
 
 ### Bundled lists
 

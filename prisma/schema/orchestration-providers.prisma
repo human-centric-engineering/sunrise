@@ -270,6 +270,18 @@ model AiOrchestrationSettings {
   // page + the executions list. Clamped to [1, 1440] on PATCH; the read
   // path defends with the same clamp so a bad DB value never breaks the UI.
   stuckExecutionThresholdMins   Int       @default(5)
+  // LLM privacy layer (§127), install-wide. `privacyMode` is one of off |
+  // detect | pseudonymise | redact | block (lib/privacy/adapters/types.ts).
+  // The column default is `detect`, for a row created from now on; the
+  // migration that added it filled rows that already existed with `off`, so
+  // an upgrade changes nothing until an operator turns it on (spec § Settings).
+  privacyMode                   String    @default("detect")
+  // Entity types the layer leaves alone. A list of exclusions, so a type a
+  // new detector introduces is protected by default.
+  privacyIgnoredEntityTypes     Json      @default("[\"DATE\", \"LOCATION\"]")
+  // Apply the layer to `isLocal` providers too. Off by default: the text
+  // never leaves infrastructure the operator controls.
+  privacyProtectLocalProviders  Boolean   @default(false)
   createdAt                     DateTime  @default(now())
   updatedAt                     DateTime  @updatedAt
 

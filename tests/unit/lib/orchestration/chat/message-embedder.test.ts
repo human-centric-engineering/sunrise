@@ -67,6 +67,24 @@ describe('queueMessageEmbedding', () => {
     });
   });
 
+  it("embeds outside the turn's privacy scope, so its call is not one of the turn's (§127)", async () => {
+    const { createPrivacyScope, currentPrivacyScope, runInPrivacyScope } =
+      await import('@/lib/orchestration/privacy/scope');
+    const seen: unknown[] = [];
+    vi.mocked(embedText).mockImplementation(async () => {
+      seen.push(currentPrivacyScope());
+      return FAKE_EMBED_RESULT;
+    });
+    const turn = createPrivacyScope({ scopeId: 'conversation:c1' });
+
+    runInPrivacyScope(turn, () =>
+      queueMessageEmbedding('msg-scope', 'A long enough assistant reply to embed')
+    );
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]).toBeUndefined();
+  });
+
   it('embeds and stores a valid message', async () => {
     const content = 'This is a message with enough content to embed';
     queueMessageEmbedding('msg-2', content);
