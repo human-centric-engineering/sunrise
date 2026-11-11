@@ -52,3 +52,21 @@ describe('the privacy settings migration', () => {
     );
   });
 });
+
+/** t-992: the embeddings policy. */
+const embeddingsSql = read(
+  'prisma/migrations/20261111200000_privacy_embeddings_policy/migration.sql'
+)
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('--'))
+  .join('\n');
+
+describe('the embeddings policy migration (t-992)', () => {
+  it("adds the policy as 'allow' for every row, existing or new, and writes no other value", () => {
+    expect(embeddingsSql).toMatch(
+      /ADD COLUMN\s+"privacyEmbeddingsPolicy" TEXT NOT NULL DEFAULT 'allow'/
+    );
+    expect(embeddingsSql).not.toMatch(/\bUPDATE\b|\bINSERT\b|SET DEFAULT/i);
+    expect(schema).toMatch(/privacyEmbeddingsPolicy\s+String\s+@default\("allow"\)/);
+  });
+});

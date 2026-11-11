@@ -993,6 +993,20 @@ describe('hydrateSettings — privacy', () => {
     expect(result.privacyMode).toBe('off');
     expect(result.privacyIgnoredEntityTypes).toEqual(['DATE', 'LOCATION']);
     expect(result.privacyProtectLocalProviders).toBe(false);
+    expect(result.privacyEmbeddingsPolicy).toBe('allow');
+  });
+
+  it('reads the embeddings policy, and one that is not a policy as local_only (t-992)', () => {
+    expect(
+      hydrateSettings({ ...makeRow(), privacyEmbeddingsPolicy: 'local_only' })
+        .privacyEmbeddingsPolicy
+    ).toBe('local_only');
+    expect(
+      hydrateSettings({ ...makeRow(), privacyEmbeddingsPolicy: 'allow' }).privacyEmbeddingsPolicy
+    ).toBe('allow');
+    expect(
+      hydrateSettings({ ...makeRow(), privacyEmbeddingsPolicy: 'local' }).privacyEmbeddingsPolicy
+    ).toBe('local_only');
   });
 
   it('reads ignored types that are not a list of type names as none ignored', () => {

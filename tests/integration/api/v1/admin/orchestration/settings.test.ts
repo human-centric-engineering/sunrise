@@ -539,6 +539,7 @@ describe('Admin Orchestration — /settings', () => {
         privacyMode: { value: 'detect' },
         privacyIgnoredEntityTypes: { value: ['DATE'] },
         privacyProtectLocalProviders: { value: true },
+        privacyEmbeddingsPolicy: { value: 'local_only' },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.
@@ -571,6 +572,7 @@ describe('Admin Orchestration — /settings', () => {
         privacyMode: 'off',
         privacyIgnoredEntityTypes: ['DATE'],
         privacyProtectLocalProviders: true,
+        privacyEmbeddingsPolicy: 'local_only',
       };
 
       const res = await PATCH(makePatch(privacy));

@@ -337,6 +337,7 @@ describe('exportOrchestrationConfig', () => {
       privacyMode: 'off',
       privacyIgnoredEntityTypes: ['DATE'],
       privacyProtectLocalProviders: true,
+      privacyEmbeddingsPolicy: 'local_only',
     });
 
     const payload = await exportOrchestrationConfig(SHARED_SCOPE);
@@ -347,6 +348,7 @@ describe('exportOrchestrationConfig', () => {
           privacyMode: true,
           privacyIgnoredEntityTypes: true,
           privacyProtectLocalProviders: true,
+          privacyEmbeddingsPolicy: true,
         }),
       })
     );
@@ -354,6 +356,7 @@ describe('exportOrchestrationConfig', () => {
       privacyMode: 'off',
       privacyIgnoredEntityTypes: ['DATE'],
       privacyProtectLocalProviders: true,
+      privacyEmbeddingsPolicy: 'local_only',
     });
   });
 
@@ -369,12 +372,15 @@ describe('exportOrchestrationConfig', () => {
       privacyMode: 'pseudonymize',
       privacyIgnoredEntityTypes: 'DATE',
       privacyProtectLocalProviders: false,
+      privacyEmbeddingsPolicy: 'local-only',
     });
 
     const payload = await exportOrchestrationConfig(SHARED_SCOPE);
 
     expect(payload.data.settings).not.toHaveProperty('privacyMode');
     expect(payload.data.settings?.privacyIgnoredEntityTypes).toEqual([]);
+    // An unreadable policy exports as the stricter one, as the layer reads it.
+    expect(payload.data.settings?.privacyEmbeddingsPolicy).toBe('local_only');
   });
 
   it('webhook entries do not have a secret field (secrets are never exported)', async () => {
