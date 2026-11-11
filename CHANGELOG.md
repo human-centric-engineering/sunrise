@@ -55,7 +55,8 @@ release process.
   `AiEventHookDelivery` row has been written, without waiting on any delivery
   attempt. It rejects when the event was not queued for every matching hook:
   the hooks could not be loaded, a row could not be written, or the call ran
-  outside an org scope. An outbox drainer marks its row sent only once the
+  outside an org scope. A hook deleted since this instance cached it is
+  skipped, not counted as a failure. An outbox drainer marks its row sent only once the
   promise resolves, and leaves it for the next pass on a rejection. Delivery is
   at least once, so put an id in `data` a receiver can de-duplicate on.
   `emitHookEvent()` is unchanged and stays `void`. See

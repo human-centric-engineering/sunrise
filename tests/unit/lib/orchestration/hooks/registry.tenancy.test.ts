@@ -35,7 +35,10 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiEventHook: { findMany: mockFindMany },
     aiEventHookDelivery: {
-      create: vi.fn().mockResolvedValue({ id: 'del-1', createdAt: new Date() }),
+      // Returns the lease it was written with, as Prisma does (#834).
+      create: vi.fn((args: { data: { nextRetryAt?: Date } }) =>
+        Promise.resolve({ id: 'del-1', createdAt: new Date(), nextRetryAt: args.data.nextRetryAt })
+      ),
       update: vi.fn().mockResolvedValue({ id: 'del-1' }),
       // The first attempt claims the lease its row was written with (#834).
       updateManyAndReturn: vi.fn().mockResolvedValue([{ id: 'del-1', createdAt: new Date() }]),

@@ -24,7 +24,7 @@
  * label two orgs share (lib/tenancy/process-state.ts).
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
@@ -351,7 +351,7 @@ async function dispatchToHooks(
   await Promise.allSettled(
     matched.map(async (hook, i) => {
       const row = await rows[i];
-      if (!row) return;
+      if (!row || row === 'hook-gone') return;
       await attemptFirstDelivery(
         hook.id,
         row,
@@ -369,7 +369,9 @@ async function dispatchToHooks(
 }
 
 /**
- * Write a hook's delivery row; `null`, logged, when the write fails.
+ * Write a hook's delivery row. `'hook-gone'` when the hook was deleted since
+ * the cache read it, which is not a failure: there is no one to send to.
+ * `null`, logged, when the write failed for any other reason.
  *
  * The row is born `pending` holding a claim lease (#834). The first attempt
  * claims it before it sends, and a tick that finds the lease run out (the
@@ -381,8 +383,7 @@ async function createDeliveryRow(
   hookId: string,
   action: WebhookAction,
   payload: HookEventPayload
-): Promise<LeasedRow | null> {
-  const lease = new Date(Date.now() + RETRY_CLAIM_LEASE_MS);
+): Promise<LeasedRow | 'hook-gone' | null> {
   try {
     const row = await prisma.aiEventHookDelivery.create({
       data: {
@@ -390,13 +391,24 @@ async function createDeliveryRow(
         eventType: payload.eventType,
         payload: payload as unknown as Prisma.InputJsonValue,
         status: 'pending',
-        nextRetryAt: lease,
+        nextRetryAt: new Date(Date.now() + RETRY_CLAIM_LEASE_MS),
         ...describeDestination('webhook', action.url),
       },
     });
-    // The lease as written, which the claim matches on.
+    // The lease as the database holds it, which the claim matches on.
+    const lease = row.nextRetryAt;
+    if (!lease) throw new Error('Hook delivery row was written without its lease');
     return { ...row, nextRetryAt: lease };
   } catch (err: unknown) {
+    // The hook was deleted on another instance and this one's cache still
+    // matched it (P2003, the hookId foreign key). Counting it as a failure
+    // would have a durable caller retry, resending to every hook that was
+    // written, for as long as the cache holds the deleted one.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+      invalidateHookCache();
+      logger.info('Hook delivery skipped: the hook was deleted', { hookId });
+      return 'hook-gone';
+    }
     logDispatchSetupFailure(hookId, action, err);
     return null;
   }
@@ -444,6 +456,9 @@ async function attemptFirstDelivery(
     );
   } catch (err: unknown) {
     logDispatchSetupFailure(hookId, action, err);
+    // The row is left holding its lease for the tick to send. Without this an
+    // idle gate armed on this instance could hold that off past the lease.
+    noteMaintenanceWork('hook-delivery-retry');
   }
 }
 
@@ -973,7 +988,9 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
       attempts: 0,
       lastError: null,
       // Held by this attempt, so the tick sends the row if the process ends
-      // before the attempt does (#834).
+      // before the attempt does (#834). The reset is this attempt's claim: it
+      // matches the row as read, as `claimArmedRetry` does, so a second claim
+      // before sending would close no window this one leaves open.
       nextRetryAt: new Date(Date.now() + RETRY_CLAIM_LEASE_MS),
       lastAttemptAt: null,
       lastResponseCode: null,

@@ -214,6 +214,8 @@ await prisma.appLeadGenEvent.update({ where: { id: row.id }, data: { dispatchedA
 
 - **Resolves** when every matching hook's row is written, or when no hook matches. It does not wait on any delivery attempt.
 - **Rejects** when the event was not queued for every matching hook: the hooks could not be loaded, a row could not be written, or the call ran outside an org scope (a tick job must enter each row's org with `runAsOrg`). Leave the outbox row for the next pass.
+- **"Every matching hook" is as this instance last read them.** Hooks are cached per org for 60 seconds, so a hook created or re-enabled on another instance in that window does not get the event, as it would not from `emitHookEvent`.
+- **No timeout of its own.** It settles when the hook read and the row writes do. A drainer that must bound a pass races its own timer and leaves the row on a timeout; a write that lands afterwards makes one more repeat, which the receiver's de-duplication absorbs.
 - **Delivery is at least once.** A pass that retries after a rejection sends again to any hook whose row was written the first time. Put an id in `data`, such as the outbox row's, so a receiver can drop a repeat.
 
 `emitHookEvent` stays `void` and logs a failure instead: returning the promise from it would trip `no-floating-promises` at every bare call, in core and in forks.
@@ -235,9 +237,10 @@ A recovered row goes out within the lease plus however long the tick's idle gate
 }
 ```
 
-Dispatch behaviour (`dispatchWebhook`):
+Dispatch behaviour (`dispatchToHooks` → `createDeliveryRow` → `attemptFirstDelivery` in `registry.ts`):
 
-- Creates an `AiEventHookDelivery` record per dispatch (status `pending` → `delivered` / `failed` / `exhausted`)
+- Creates an `AiEventHookDelivery` record per matching hook (status `pending` → `delivered` / `failed` / `exhausted`), holding a claim lease, then claims it and makes the first attempt. Each hook's attempt follows its own row; none waits on another hook's write
+- A hook deleted on another instance since this one cached it fails its row's foreign key; that hook is skipped and the cache dropped, and it does not count as a failed write
 - `POST` with `Content-Type: application/json`, `X-Hook-Event: <eventType>`, plus any user-supplied headers
 - Body is the full `HookEventPayload`
 - 10-second timeout (`DISPATCH_TIMEOUT_MS.hook` in `lib/orchestration/webhooks/not-retried.ts`, kept below the retry claim lease by a test, t-808)
