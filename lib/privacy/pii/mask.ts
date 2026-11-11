@@ -40,11 +40,22 @@ export interface MaskSpan {
 
 export interface MaskResult {
   text: string;
-  /** How many spans were replaced, by type; `LITERAL` counts escaped look-alikes. */
+  /** How many detected spans were replaced, by type. */
   counts: Record<string, number>;
+  /**
+   * How many look-alikes were masked as `LITERAL`. Kept apart from `counts`:
+   * they are not detections, and per-type counts must not report them as one.
+   */
+  literals: number;
 }
 
-/** Sort and merge overlapping spans; the first one's type names the merge. */
+/**
+ * Sort and merge overlapping spans. A safety net for a caller that has not
+ * merged: overlaps are joined so none of their text is left out, and the
+ * first span's type names the join. The runner's own merge
+ * (`resolveOverlaps()`) chooses types by confidence, which `MaskSpan` does not
+ * carry, so callers should pass its output.
+ */
 function merged(spans: readonly MaskSpan[]): MaskSpan[] {
   const out: MaskSpan[] = [];
   for (const s of [...spans].sort((a, b) => a.start - b.start || b.end - a.end)) {
@@ -88,17 +99,18 @@ function withLookAlikes(text: string, spans: MaskSpan[], types: Iterable<string>
 /**
  * Replace every span in `text` with its placeholder from `session`.
  *
- * `declaredTypes` is every type the registered detectors may report. The stage
- * passes it (`getPrivacyAdapters().detectors`), so a look-alike of a fork's
- * own type is masked even in a message masked before the first real value of
- * that type: otherwise "US_SSN_1" typed in an early message would be restored
- * into the SSN a later message supplied. Core's types are always included.
+ * `declaredTypes` is every type the registered detectors may report
+ * (`getPrivacyAdapters().detectors`). Required, because leaving it out fails
+ * silently: a look-alike of a fork's own type would go unmasked in a message
+ * masked before the first real value of that type, so "US_SSN_1" typed early
+ * would be restored into the SSN a later message supplied. Core's types are
+ * always included; pass `[]` only when no detector declares more.
  */
 export function maskText(
   text: string,
   spans: readonly MaskSpan[],
   session: TokenSession,
-  declaredTypes: Iterable<EntityType> = []
+  declaredTypes: Iterable<EntityType>
 ): MaskResult {
   const detected = merged(spans.filter((s) => s.start < s.end));
   const types = new Set<string>([
@@ -109,14 +121,16 @@ export function maskText(
   ]);
   const all = withLookAlikes(text, detected, types);
   const counts: Record<string, number> = {};
+  let literals = 0;
   let out = '';
   let at = 0;
   for (const s of all) {
     out += text.slice(at, s.start);
     out += session.placeholderFor(s.type, text.slice(s.start, s.end));
-    counts[s.type] = (counts[s.type] ?? 0) + 1;
+    if (s.type === LITERAL_TYPE) literals++;
+    else counts[s.type] = (counts[s.type] ?? 0) + 1;
     at = s.end;
   }
   out += text.slice(at);
-  return { text: out, counts };
+  return { text: out, counts, literals };
 }

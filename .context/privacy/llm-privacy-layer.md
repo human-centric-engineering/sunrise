@@ -40,7 +40,7 @@ has merged; this table says what exists.
 | Notify observers               | `notifyPrivacyObservers(event)` — `lib/privacy/adapters/run.ts`             |
 | The contracts                  | `lib/privacy/adapters/types.ts` (type-only, safe to import from `lib/app/`) |
 | Sunrise's own default adapters | `lib/privacy/adapters/core-defaults.ts`                                     |
-| Mask detected spans            | `maskText(text, spans, session)` — `lib/privacy/pii/mask.ts`                |
+| Mask detected spans            | `maskText(text, spans, session, declaredTypes)` — `mask.ts`                 |
 | Restore a reply, or tool args  | `restoreText()`, `restoreValue()` — `lib/privacy/pii/restore.ts`            |
 | Restore a stream               | `new StreamRestorer(session)` — `lib/privacy/pii/stream-restore.ts`         |
 
@@ -516,9 +516,12 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   contains it, would have it restored into someone's name. The search runs on
   each stretch of text between spans on its own, so a span that cuts through
   one, or masking that would create one ("PERSON_1x" with "x" detected), is
-  caught. The stage passes every type the registered detectors declare, so a
-  look-alike of a fork's own type is masked even before the first real value
-  of that type appears. A property test checks that `restoreText(maskText(x)) = x` over
+  caught. The stage passes every type the registered detectors declare
+  (`declaredTypes`, required), so a look-alike of a fork's own type is masked
+  even before the first real value of that type appears. Look-alikes are
+  counted in `literals`, apart from the per-type detection counts.
+- **A replacement strategy must write `[TYPE_n]`** (`formatPlaceholder()`).
+  Restoring, its leniency and look-alike masking all read that grammar. A property test checks that `restoreText(maskText(x)) = x` over
   generated inputs.
 - **Lenient restore.** `PERSON_1`, `[PERSON_1`, `PERSON_1]`, `[PERSON_1]'s`
   and a placeholder inside a JSON string all restore. Values go in as they

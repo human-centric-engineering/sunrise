@@ -80,22 +80,40 @@ describe('restore(mask(x)) = x', () => {
     for (let seed = 1; seed <= 2000; seed++) {
       const { text, spans } = generate(rng(seed));
       const session = statelessTokenStrategy().createSession({ scopeId: 's' });
-      const masked = maskText(text, spans, session);
+      const masked = maskText(text, spans, session, []);
       const restored = restoreText(masked.text, session);
       expect(restored.text, `seed ${seed}`).toBe(text);
       expect(restored.unresolved, `seed ${seed}`).toEqual([]);
     }
   });
 
-  it('leaves no detected value in the masked text, inside its span', () => {
-    for (let seed = 1; seed <= 500; seed++) {
-      const { text, spans } = generate(rng(seed));
-      const session = statelessTokenStrategy().createSession({ scopeId: 's' });
-      const masked = maskText(text, spans, session).text;
-      // Every character a span covered is now part of a placeholder.
-      for (const e of session.entries()) {
-        expect(masked, `seed ${seed}`).toContain(e.placeholder);
+  it('leaves nothing a span covered in the masked text', () => {
+    // Values that occur only inside spans: if any of one survives masking,
+    // it went out. (Checking for placeholders would pass whatever happened,
+    // because masking inserted them.)
+    for (let seed = 1; seed <= 2000; seed++) {
+      const next = rng(seed);
+      const { text: filler } = generate(next);
+      const secrets: string[] = [];
+      let text = '';
+      const spans: MaskSpan[] = [];
+      for (let i = 0; i < 4; i++) {
+        const secret = `QZX${seed}V${i}QZX`;
+        secrets.push(secret);
+        const cut = Math.floor(next() * (filler.length + 1));
+        const before = filler.slice(0, cut);
+        text += before;
+        // A span exactly over the secret, or reaching past it either side.
+        const pad = Math.floor(next() * 3);
+        const start = Math.max(0, text.length - pad);
+        text += secret;
+        spans.push({ type: 'PERSON', start, end: Math.min(text.length + pad, text.length) });
+        text += filler.slice(cut);
       }
+      const session = statelessTokenStrategy().createSession({ scopeId: 's' });
+      const masked = maskText(text, spans, session, []).text;
+      expect(masked, `seed ${seed}`).not.toMatch(/QZX/);
+      expect(restoreText(masked, session).text, `seed ${seed}`).toBe(text);
     }
   });
 });
@@ -111,7 +129,7 @@ describe('masking a growing history', () => {
       let previous: string[] = [];
       for (let k = 1; k <= history.length; k++) {
         const session = statelessTokenStrategy().createSession({ scopeId: 's' });
-        const sent = history.slice(0, k).map((m) => maskText(m.text, m.spans, session).text);
+        const sent = history.slice(0, k).map((m) => maskText(m.text, m.spans, session, []).text);
         expect(sent.slice(0, previous.length), `seed ${seed}, call ${k}`).toEqual(previous);
         previous = sent;
       }

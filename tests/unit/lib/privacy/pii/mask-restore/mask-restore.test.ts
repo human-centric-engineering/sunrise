@@ -78,7 +78,8 @@ describe('maskText', () => {
         { type: 'EMAIL', start: 20, end: 38 },
         { type: 'PERSON', start: 40, end: 50 },
       ],
-      s
+      s,
+      []
     );
     expect(result.text).toBe('Email [PERSON_1] at [EMAIL_1]; [PERSON_1] agreed.');
     expect(result.counts).toEqual({ PERSON: 2, EMAIL: 1 });
@@ -92,7 +93,8 @@ describe('maskText', () => {
         { type: 'ADDRESS', start: 3, end: 15 },
         { type: 'LOCATION', start: 6, end: 19 },
       ],
-      s
+      s,
+      []
     );
     expect(result.text).toBe('at [ADDRESS_1]');
     expect(s.valueFor('[ADDRESS_1]')).toBe('14 Acacia Avenue');
@@ -101,9 +103,11 @@ describe('maskText', () => {
   it('masks text that already looks like a placeholder, so it comes back as written', () => {
     const s = newSession();
     const text = 'The template uses [PERSON_1] and PERSON_2 for names.';
-    const masked = maskText(text, [], s);
+    const masked = maskText(text, [], s, []);
     expect(masked.text).toBe('The template uses [LITERAL_1] and [LITERAL_2] for names.');
-    expect(masked.counts).toEqual({ LITERAL: 2 });
+    // Look-alikes are counted apart: they are not detections.
+    expect(masked.counts).toEqual({});
+    expect(masked.literals).toBe(2);
     expect(restoreText(masked.text, s).text).toBe(text);
   });
 
@@ -112,13 +116,13 @@ describe('maskText', () => {
     // A span over "2]" leaves "[PERSON_1" behind; restoring it must not
     // become someone's name.
     const cut = '[PERSON_12] here';
-    const masked = maskText(cut, [{ type: 'DATE', start: 9, end: 11 }], s);
+    const masked = maskText(cut, [{ type: 'DATE', start: 9, end: 11 }], s, []);
     expect(restoreText(masked.text, s).text).toBe(cut);
     // "PERSON_1x" is not a look-alike, but with "x" masked it would become
     // "PERSON_1[…]", which is.
     const s2 = newSession();
     s2.placeholderFor('PERSON', 'James Hart');
-    const made = maskText('PERSON_1x', [{ type: 'PERSON', start: 8, end: 9 }], s2);
+    const made = maskText('PERSON_1x', [{ type: 'PERSON', start: 8, end: 9 }], s2, []);
     expect(restoreText(made.text, s2).text).toBe('PERSON_1x');
   });
 
@@ -136,11 +140,13 @@ describe('maskText', () => {
 
   it('leaves identifiers that only resemble a placeholder alone', () => {
     const s = newSession();
-    expect(maskText('MY_PERSON_1 HTTP_2 UTF_8', [], s).text).toBe('MY_PERSON_1 HTTP_2 UTF_8');
+    expect(maskText('MY_PERSON_1 HTTP_2 UTF_8', [], s, []).text).toBe('MY_PERSON_1 HTTP_2 UTF_8');
   });
 
   it('ignores an empty span', () => {
-    expect(maskText('abc', [{ type: 'PERSON', start: 1, end: 1 }], newSession()).text).toBe('abc');
+    expect(maskText('abc', [{ type: 'PERSON', start: 1, end: 1 }], newSession(), []).text).toBe(
+      'abc'
+    );
   });
 
   it('has a short instruction for the model that shows the format', () => {
@@ -169,6 +175,11 @@ describe('restoreText', () => {
     ['[UK_NINO_1]', 'TJ 33 15 36 A'],
   ])('restores %j leniently', (input, expected) => {
     expect(restoreText(input, issued()).text).toBe(expected);
+  });
+
+  it('reports a made-up placeholder of a declared fork type when told the type', () => {
+    expect(restoreText('Ref [US_SSN_3]', issued()).unresolved).toEqual([]);
+    expect(restoreText('Ref [US_SSN_3]', issued(), ['US_SSN']).unresolved).toEqual(['[US_SSN_3]']);
   });
 
   it('leaves a placeholder it never issued visible, and reports it', () => {

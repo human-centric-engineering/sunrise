@@ -14,8 +14,9 @@
  *
  * @see .context/privacy/llm-privacy-layer.md — *Placeholders*
  */
-import type { TokenSession } from '@/lib/privacy/adapters/types';
-import { restoreAfter } from '@/lib/privacy/pii/restore';
+import type { EntityType, TokenSession } from '@/lib/privacy/adapters/types';
+import { restoreAfter, sessionPattern } from '@/lib/privacy/pii/restore';
+import { escapeRegExp } from '@/lib/privacy/pii/text';
 import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
 
 /**
@@ -23,7 +24,7 @@ import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
  * bracket, then a run of capitals, digits and underscores starting a word.
  * Also a complete one, which a closing bracket or more digits may follow.
  */
-const OPEN = PLACEHOLDER_FORMAT.open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const OPEN = escapeRegExp(PLACEHOLDER_FORMAT.open);
 const PENDING_TAIL = new RegExp(`(?:${OPEN}|(?<![A-Za-z0-9_]))[A-Z][A-Z0-9_]*$|${OPEN}$`);
 
 /** Longer than any placeholder: a run past this is not one, and is released. */
@@ -41,7 +42,15 @@ export class StreamRestorer {
   private restoredCount = 0;
   private readonly unresolvedList: string[] = [];
 
-  constructor(private readonly session: TokenSession) {}
+  /** Built once: masking is finished before the reply streams. */
+  private readonly pattern: RegExp | null;
+
+  constructor(
+    private readonly session: TokenSession,
+    declaredTypes: Iterable<EntityType> = []
+  ) {
+    this.pattern = sessionPattern(session, declaredTypes);
+  }
 
   /** Add a chunk; returns the restored text that is now safe to emit. */
   push(chunk: string): string {
@@ -85,7 +94,7 @@ export class StreamRestorer {
 
   private emit(segment: string): string {
     if (segment === '') return '';
-    const r = restoreAfter(this.before, segment, this.session);
+    const r = restoreAfter(this.before, segment, this.session, this.pattern);
     this.before = segment[segment.length - 1];
     this.restoredCount += r.restored;
     this.unresolvedList.push(...r.unresolved);

@@ -10,7 +10,7 @@
  * @see .context/privacy/llm-privacy-layer.md — *Placeholders*
  */
 import { escapeRegExp } from '@/lib/privacy/pii/text';
-import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
+import { formatPlaceholder, PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
 
 /**
  * A pattern for placeholders of `types`, bracketed or not. Group 1 is the
@@ -31,5 +31,5 @@ export function placeholderPattern(types: Iterable<string>): RegExp | null {
  * `PERSON_01` is not `PERSON_1`, because reading it so would be a guess.
  */
 export function canonical(type: string, n: string): string {
-  return `${PLACEHOLDER_FORMAT.open}${type}_${n}${PLACEHOLDER_FORMAT.close}`;
+  return formatPlaceholder(type, n);
 }

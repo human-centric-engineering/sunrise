@@ -27,7 +27,8 @@ export const PLACEHOLDER_FORMAT = { open: '[', close: ']' } as const;
 /** The type that marks text which already looked like a placeholder. */
 export const LITERAL_TYPE = 'LITERAL';
 
-export function formatPlaceholder(type: EntityType, n: number): string {
+/** A placeholder as written. `n` is taken as given: "01" stays "01". */
+export function formatPlaceholder(type: EntityType, n: number | string): string {
   return `${PLACEHOLDER_FORMAT.open}${type}_${n}${PLACEHOLDER_FORMAT.close}`;
 }
 

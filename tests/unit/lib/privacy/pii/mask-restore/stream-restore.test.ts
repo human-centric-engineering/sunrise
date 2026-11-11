@@ -92,13 +92,19 @@ describe('StreamRestorer', () => {
     expect(restorer.flush()).toBe('');
   });
 
-  it('does not re-scan the whole stream on every chunk', () => {
-    // Held-back detection looks only at the end of the text, so a long
-    // stream costs about the same per chunk throughout.
-    const restorer = new StreamRestorer(session());
-    const t0 = performance.now();
-    for (let i = 0; i < 20_000; i++) restorer.push('some ordinary words here, ');
-    restorer.flush();
-    expect(performance.now() - t0).toBeLessThan(1500);
+  it('costs about the same per chunk however long the stream has run', () => {
+    // Held-back detection looks only at the end of the text. A ratio, not a
+    // wall-clock limit, so a slow machine does not fail it: ten times the
+    // chunks must cost far less than the hundred times a re-scan would.
+    const time = (chunks: number) => {
+      const restorer = new StreamRestorer(session());
+      const t0 = performance.now();
+      for (let i = 0; i < chunks; i++) restorer.push('some ordinary words here, ');
+      restorer.flush();
+      return performance.now() - t0;
+    };
+    time(500); // warm-up
+    const small = Math.max(time(2_000), 1);
+    expect(time(20_000) / small).toBeLessThan(40);
   });
 });

@@ -10,7 +10,11 @@
  *
  * @see .context/privacy/llm-privacy-layer.md — *Placeholders*
  */
-import { CORE_ENTITY_TYPES, type TokenSession } from '@/lib/privacy/adapters/types';
+import {
+  CORE_ENTITY_TYPES,
+  type EntityType,
+  type TokenSession,
+} from '@/lib/privacy/adapters/types';
 import { canonical, placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
 import { allMatches } from '@/lib/privacy/pii/text';
 import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
@@ -24,13 +28,21 @@ export interface RestoreResult {
 }
 
 /**
- * The pattern for `session`: the types it issued, plus every core type so a
- * made-up core placeholder is reported as unresolved rather than ignored.
+ * The pattern for `session`: the types it issued, plus every core type and
+ * every `declaredTypes` entry, so a made-up placeholder of any type a
+ * detector could report is counted as unresolved rather than ignored.
+ *
+ * Built once per restore — per stream, per argument walk — not per chunk or
+ * per string.
  */
-export function sessionPattern(session: TokenSession): RegExp | null {
+export function sessionPattern(
+  session: TokenSession,
+  declaredTypes: Iterable<EntityType> = []
+): RegExp | null {
   return placeholderPattern([
     ...CORE_ENTITY_TYPES,
     LITERAL_TYPE,
+    ...declaredTypes,
     ...session.entries().map((e) => e.type),
   ]);
 }
@@ -41,20 +53,32 @@ export function sessionPattern(session: TokenSession): RegExp | null {
  * Values go in as they are. For JSON — tool-call arguments, a structured
  * reply — parse first and use `restoreValue()`: a value containing a quote
  * restored into raw JSON text would break it, or add a key.
+ *
+ * `declaredTypes` (every type the registered detectors may report) only
+ * widens what is counted as unresolved; leaving it out loses a count, never
+ * a value.
  */
-export function restoreText(text: string, session: TokenSession): RestoreResult {
-  return restoreAfter('', text, session);
+export function restoreText(
+  text: string,
+  session: TokenSession,
+  declaredTypes: Iterable<EntityType> = []
+): RestoreResult {
+  return restoreAfter('', text, session, sessionPattern(session, declaredTypes));
 }
 
 /**
- * Restore `text`, read as following `context`. A placeholder needs a word
- * boundary before it, so whether the start of `text` can begin one depends on
- * what came before; the streaming restorer passes the last character it
- * emitted. A match that begins inside `context` is not this text's to
- * restore.
+ * Restore `text`, read as following `context`, with a pattern from
+ * `sessionPattern()`. A placeholder needs a word boundary before it, so
+ * whether the start of `text` can begin one depends on what came before; the
+ * streaming restorer passes the last character it emitted. A match that
+ * begins inside `context` is not this text's to restore.
  */
-export function restoreAfter(context: string, text: string, session: TokenSession): RestoreResult {
-  const pattern = sessionPattern(session);
+export function restoreAfter(
+  context: string,
+  text: string,
+  session: TokenSession,
+  pattern: RegExp | null
+): RestoreResult {
   if (!pattern) return { text, restored: 0, unresolved: [] };
   const probe = context + text;
   let out = '';
@@ -93,12 +117,17 @@ export interface ValueRestoreResult {
  * Returns `unknown`: the arguments are model output, and the capability
  * validates them with its own schema after this, as it always does.
  */
-export function restoreValue(value: unknown, session: TokenSession): ValueRestoreResult {
+export function restoreValue(
+  value: unknown,
+  session: TokenSession,
+  declaredTypes: Iterable<EntityType> = []
+): ValueRestoreResult {
   let restored = 0;
   const unresolved: string[] = [];
+  const pattern = sessionPattern(session, declaredTypes);
   const walk = (v: unknown): unknown => {
     if (typeof v === 'string') {
-      const r = restoreText(v, session);
+      const r = restoreAfter('', v, session, pattern);
       restored += r.restored;
       unresolved.push(...r.unresolved);
       return r.text;
