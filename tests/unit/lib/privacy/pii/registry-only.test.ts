@@ -9,7 +9,9 @@
  *
  * - only `lib/privacy/adapters/core-defaults.ts` may import a tier's detector
  *   module (outside `lib/privacy/pii/` itself);
- * - only `lib/privacy/adapters/run.ts` may call `.detect(`.
+ * - only `lib/privacy/adapters/run.ts` may call `.detect(`;
+ * - only `core-defaults.ts` may build core's token strategy, so an app's
+ *   replacement (`registerPrivacyTokenStrategy()`) cannot be bypassed.
  *
  * This reads the tree, so it is declared in `ALWAYS_RUN_TESTS`: a new caller
  * in some unrelated module would not select it by module graph.
@@ -32,10 +34,14 @@ const SCANNED_DIRS = ['lib', 'app', 'components', 'scripts'];
 
 const DETECTOR_MODULE = /['"]@\/lib\/privacy\/pii\/(?:rules|known-values|lists)['"]/;
 const DETECT_CALL = /\.detect\s*\(/;
+/** Building core's token strategy directly would bypass an app's replacement. */
+const STRATEGY_CALL = /\bstatelessTokenStrategy\s*\(/;
 
 const MAY_IMPORT_DETECTORS = (file: string) =>
   file === 'lib/privacy/adapters/core-defaults.ts' || file.startsWith('lib/privacy/pii/');
 const MAY_CALL_DETECT = (file: string) => file === 'lib/privacy/adapters/run.ts';
+const MAY_BUILD_STRATEGY = (file: string) =>
+  file === 'lib/privacy/adapters/core-defaults.ts' || file === 'lib/privacy/pii/token-strategy.ts';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -61,6 +67,9 @@ function violations(files: readonly { file: string; source: string }[]): string[
       if (DETECT_CALL.test(line) && !MAY_CALL_DETECT(file)) {
         out.push(`${file}:${i + 1}: calls a detector directly: ${trimmed}`);
       }
+      if (STRATEGY_CALL.test(line) && !MAY_BUILD_STRATEGY(file)) {
+        out.push(`${file}:${i + 1}: builds the token strategy directly: ${trimmed}`);
+      }
     });
   }
   return out;
@@ -75,6 +84,7 @@ describe('core detectors are reached only through the registry', () => {
           source: [
             "import { rulesDetector } from '@/lib/privacy/pii/rules';",
             'const spans = await rulesDetector().detect({ text }, ctx);',
+            'const session = statelessTokenStrategy().createSession({ scopeId });',
             "// import { listsDetector } from '@/lib/privacy/pii/lists'; — comments are fine",
           ].join('\n'),
         },
@@ -87,6 +97,7 @@ describe('core detectors are reached only through the registry', () => {
     ).toEqual([
       "lib/orchestration/chat/something.ts:1: imports a detector module: import { rulesDetector } from '@/lib/privacy/pii/rules';",
       'lib/orchestration/chat/something.ts:2: calls a detector directly: const spans = await rulesDetector().detect({ text }, ctx);',
+      'lib/orchestration/chat/something.ts:3: builds the token strategy directly: const session = statelessTokenStrategy().createSession({ scopeId });',
     ]);
   });
 

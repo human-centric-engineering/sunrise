@@ -82,6 +82,14 @@ describe('StreamRestorer', () => {
     expect([...restorer.unresolved]).toEqual(['[PERSON_9]', '[ORG_1]']);
   });
 
+  it('holds back no more than 64 characters, even at the start of a stream', () => {
+    const fresh = new StreamRestorer(session());
+    expect(fresh.push('A'.repeat(65))).toBe('A'.repeat(65));
+    const held = new StreamRestorer(session());
+    expect(held.push('A'.repeat(64))).toBe('');
+    expect(held.flush()).toBe('A'.repeat(64));
+  });
+
   it('holds back only a possible placeholder, and no more than one', () => {
     const restorer = new StreamRestorer(session());
     expect(restorer.push('Dear [PER')).toBe('Dear ');

@@ -5,6 +5,7 @@ import {
   escapeRegExp,
   hasContextBefore,
   overlapsAny,
+  ownMatches,
   span,
 } from '@/lib/privacy/pii/text';
 
@@ -30,6 +31,16 @@ describe('allMatches', () => {
 
   it('does not loop on a pattern that can match empty', () => {
     expect(allMatches(/a*/g, 'bab').map((m) => m[0])).toEqual(['', 'a', '', '']);
+  });
+});
+
+describe('ownMatches', () => {
+  it('returns every match and leaves the pattern ready for the next text', () => {
+    const own = /\d+/g;
+    expect(ownMatches(own, 'a1 b22').map((m) => m[0])).toEqual(['1', '22']);
+    expect(own.lastIndex).toBe(0);
+    expect(ownMatches(own, '333').map((m) => m[0])).toEqual(['333']);
+    expect(ownMatches(/a*/g, 'ba').map((m) => m[0])).toEqual(['', 'a', '']);
   });
 });
 

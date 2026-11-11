@@ -77,6 +77,22 @@ export function createYielder(sliceMs = 20): () => Promise<void> {
   };
 }
 
+/**
+ * Every match of a global `pattern` the caller owns, without copying it:
+ * `allMatches()` copies so a shared pattern's `lastIndex` cannot leak, and a
+ * pattern built for one restore or one mask needs no such protection.
+ */
+export function ownMatches(pattern: RegExp, text: string): RegExpExecArray[] {
+  const out: RegExpExecArray[] = [];
+  pattern.lastIndex = 0;
+  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+    out.push(m);
+    if (m[0] === '') pattern.lastIndex++;
+  }
+  pattern.lastIndex = 0;
+  return out;
+}
+
 /** Escape a literal for use inside a RegExp. */
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

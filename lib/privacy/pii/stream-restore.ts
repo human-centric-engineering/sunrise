@@ -16,6 +16,7 @@
  */
 import type { EntityType, TokenSession } from '@/lib/privacy/adapters/types';
 import { restoreAfter, sessionPattern } from '@/lib/privacy/pii/restore';
+import { TYPE_CHAR, TYPE_FIRST_CHAR, WORD_CHAR } from '@/lib/privacy/pii/placeholder-grammar';
 import { escapeRegExp } from '@/lib/privacy/pii/text';
 import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
 
@@ -25,7 +26,9 @@ import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
  * Also a complete one, which a closing bracket or more digits may follow.
  */
 const OPEN = escapeRegExp(PLACEHOLDER_FORMAT.open);
-const PENDING_TAIL = new RegExp(`(?:${OPEN}|(?<![A-Za-z0-9_]))[A-Z][A-Z0-9_]*$|${OPEN}$`);
+const PENDING_TAIL = new RegExp(
+  `(?:${OPEN}|(?<!${WORD_CHAR}))${TYPE_FIRST_CHAR}${TYPE_CHAR}*$|${OPEN}$`
+);
 
 /** Longer than any placeholder: a run past this is not one, and is released. */
 const MAX_HOLD = 64;
@@ -43,7 +46,7 @@ export class StreamRestorer {
   private readonly unresolvedList: string[] = [];
 
   /** Built once: masking is finished before the reply streams. */
-  private readonly pattern: RegExp | null;
+  private readonly pattern: RegExp;
 
   constructor(
     private readonly session: TokenSession,
@@ -89,7 +92,9 @@ export class StreamRestorer {
     // placeholder, and is released.
     const truncated = offset > 0;
     if (!tail || (truncated && tail.index === 0)) return text.length;
-    return Math.max(0, offset + tail.index - this.before.length);
+    const from = Math.max(0, offset + tail.index - this.before.length);
+    // At most MAX_HOLD characters: a longer run is not a placeholder.
+    return text.length - from > MAX_HOLD ? text.length : from;
   }
 
   private emit(segment: string): string {

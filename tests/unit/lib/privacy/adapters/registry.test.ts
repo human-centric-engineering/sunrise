@@ -55,11 +55,19 @@ function strategy(id: string): PrivacyTokenStrategy {
   return {
     id,
     persistent: false,
-    createSession: () => ({
-      placeholderFor: () => 'X_1',
-      valueFor: () => undefined,
-      entries: () => [],
-    }),
+    // Writes placeholders in the form restore reads, as the registry checks.
+    createSession: () => {
+      const values = new Map<string, string>();
+      return {
+        placeholderFor: (type: string, value: string) => {
+          const placeholder = `[${type}_1]`;
+          values.set(placeholder, value);
+          return placeholder;
+        },
+        valueFor: (placeholder: string) => values.get(placeholder),
+        entries: () => [],
+      };
+    },
   };
 }
 
@@ -439,6 +447,51 @@ describe('validation of what an app registers', () => {
       /is not a valid name/,
     ],
     [
+      'the reserved LITERAL type',
+      () => registerPrivacyDetector(detector('acme.x', { entityTypes: ['LITERAL'] })),
+      /LITERAL is reserved/,
+    ],
+    [
+      'a token strategy that does not write [TYPE_n]',
+      () =>
+        registerPrivacyTokenStrategy({
+          id: 'acme.odd',
+          persistent: false,
+          createSession: () => ({
+            placeholderFor: () => '<<PERSON_1>>',
+            valueFor: () => 'check',
+            entries: () => [],
+          }),
+        }),
+      /must be written as \[PERSON_1\]/,
+    ],
+    [
+      'a token strategy whose placeholders do not map back',
+      () =>
+        registerPrivacyTokenStrategy({
+          id: 'acme.forgetful',
+          persistent: false,
+          createSession: () => ({
+            placeholderFor: () => '[PERSON_1]',
+            valueFor: () => undefined,
+            entries: () => [],
+          }),
+        }),
+      /map back to their value/,
+    ],
+    [
+      'a token strategy whose session cannot be created',
+      () =>
+        registerPrivacyTokenStrategy({
+          id: 'acme.broken',
+          persistent: false,
+          createSession: () => {
+            throw new Error('nope');
+          },
+        }),
+      /creating a session failed/,
+    ],
+    [
       'a detect that is not a function',
       () =>
         registerPrivacyDetector(
@@ -533,6 +586,17 @@ describe('validation of what an app registers', () => {
     const adapters = getPrivacyAdapters();
 
     expect(adapters.appInitFailure).toMatch(message);
+  });
+
+  it('does not try a persistent token strategy, whose sessions may write', () => {
+    const createSession = vi.fn();
+    registerPrivacyTokenStrategy({
+      id: 'acme.vault',
+      persistent: true,
+      storesIn: ['AppVault'],
+      createSession,
+    });
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it('accepts a persistent token strategy that names its tables, displacing core', () => {

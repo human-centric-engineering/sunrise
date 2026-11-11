@@ -10,7 +10,7 @@
  * @see .context/privacy/llm-privacy-layer.md — *Placeholders*
  */
 import { escapeRegExp } from '@/lib/privacy/pii/text';
-import { formatPlaceholder, PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
+import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
 
 /**
  * A pattern for placeholders of `types`, bracketed or not. Group 1 is the
@@ -18,18 +18,21 @@ import { formatPlaceholder, PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-s
  * as `UK` and `NINO_…`. Word boundaries keep `MY_PERSON_1` and `PERSON_12`
  * from matching `PERSON_1`.
  */
-export function placeholderPattern(types: Iterable<string>): RegExp | null {
+export function placeholderPattern(types: Iterable<string>): RegExp {
   const list = [...new Set(types)].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  if (list.length === 0) return null;
+  // Every caller includes core's types; an empty list is a bug, not a case.
+  if (list.length === 0) throw new Error('placeholderPattern: no types');
   const open = escapeRegExp(PLACEHOLDER_FORMAT.open);
   const close = escapeRegExp(PLACEHOLDER_FORMAT.close);
   return new RegExp(`${open}?\\b(${list.join('|')})_(\\d+)\\b${close}?`, 'g');
 }
 
 /**
- * The canonical placeholder a match names. The number is taken as written:
- * `PERSON_01` is not `PERSON_1`, because reading it so would be a guess.
+ * The characters of an entity type, as character classes: a capital, then
+ * capitals, digits and underscores (ENTITY_TYPE_PATTERN). The stream's
+ * hold-back is built from these, so it and restore read the same grammar.
  */
-export function canonical(type: string, n: string): string {
-  return formatPlaceholder(type, n);
-}
+export const TYPE_FIRST_CHAR = '[A-Z]';
+export const TYPE_CHAR = '[A-Z0-9_]';
+/** A word character, as the placeholder pattern's `\b` counts one. */
+export const WORD_CHAR = '[A-Za-z0-9_]';

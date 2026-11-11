@@ -21,7 +21,7 @@ import {
   type TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
-import { allMatches } from '@/lib/privacy/pii/text';
+import { ownMatches } from '@/lib/privacy/pii/text';
 import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 
 /**
@@ -36,6 +36,15 @@ export interface MaskSpan {
   type: EntityType;
   start: number;
   end: number;
+}
+
+export interface MaskOptions {
+  /**
+   * Mask text that already looks like a placeholder (default true). That only
+   * protects a restore, so a mode that never restores (`redact`) passes false
+   * and leaves the user's own text, a template's "[PERSON_2]" say, alone.
+   */
+  escapeLookAlikes?: boolean;
 }
 
 export interface MaskResult {
@@ -83,12 +92,11 @@ function merged(spans: readonly MaskSpan[]): MaskSpan[] {
  */
 function withLookAlikes(text: string, spans: MaskSpan[], types: Iterable<string>): MaskSpan[] {
   const pattern = placeholderPattern([...types, LITERAL_TYPE]);
-  if (!pattern) return spans;
   const found: MaskSpan[] = [];
   let at = 0;
   for (const s of [...spans, { type: LITERAL_TYPE, start: text.length, end: text.length }]) {
     const piece = text.slice(at, s.start);
-    for (const m of allMatches(pattern, piece)) {
+    for (const m of ownMatches(pattern, piece)) {
       found.push({ type: LITERAL_TYPE, start: at + m.index, end: at + m.index + m[0].length });
     }
     at = s.end;
@@ -110,7 +118,8 @@ export function maskText(
   text: string,
   spans: readonly MaskSpan[],
   session: TokenSession,
-  declaredTypes: Iterable<EntityType>
+  declaredTypes: Iterable<EntityType>,
+  options: MaskOptions = {}
 ): MaskResult {
   const detected = merged(spans.filter((s) => s.start < s.end));
   const types = new Set<string>([
@@ -119,7 +128,7 @@ export function maskText(
     ...detected.map((s) => s.type),
     ...session.entries().map((e) => e.type),
   ]);
-  const all = withLookAlikes(text, detected, types);
+  const all = options.escapeLookAlikes === false ? detected : withLookAlikes(text, detected, types);
   const counts: Record<string, number> = {};
   let literals = 0;
   let out = '';

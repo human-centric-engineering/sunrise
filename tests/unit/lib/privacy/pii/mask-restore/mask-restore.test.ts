@@ -4,7 +4,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { maskText, PLACEHOLDER_INSTRUCTION } from '@/lib/privacy/pii/mask';
-import { canonical, placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
+import { ENTITY_TYPE_PATTERN } from '@/lib/privacy/adapters/types';
+import {
+  placeholderPattern,
+  TYPE_CHAR,
+  TYPE_FIRST_CHAR,
+} from '@/lib/privacy/pii/placeholder-grammar';
 import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
 import {
   formatPlaceholder,
@@ -138,6 +143,21 @@ describe('maskText', () => {
     );
   });
 
+  it('can leave look-alikes alone when nothing will be restored', () => {
+    const s = newSession();
+    const result = maskText(
+      'Template [PERSON_2] for James',
+      [{ type: 'PERSON', start: 24, end: 29 }],
+      s,
+      [],
+      {
+        escapeLookAlikes: false,
+      }
+    );
+    expect(result.text).toBe('Template [PERSON_2] for [PERSON_1]');
+    expect(result.literals).toBe(0);
+  });
+
   it('leaves identifiers that only resemble a placeholder alone', () => {
     const s = newSession();
     expect(maskText('MY_PERSON_1 HTTP_2 UTF_8', [], s, []).text).toBe('MY_PERSON_1 HTTP_2 UTF_8');
@@ -246,11 +266,25 @@ describe('placeholder grammar', () => {
     expect(pattern && [...'[UK_NINO_1]'.matchAll(pattern)].map((m) => m[1])).toEqual(['UK_NINO']);
   });
 
-  it('has nothing to look for without types', () => {
-    expect(placeholderPattern([])).toBeNull();
+  it("refuses to build a pattern for no types: every caller passes core's", () => {
+    expect(() => placeholderPattern([])).toThrow(/no types/);
   });
 
   it('keeps the number as written', () => {
-    expect(canonical('PERSON', '01')).toBe('[PERSON_01]');
+    expect(formatPlaceholder('PERSON', '01')).toBe('[PERSON_01]');
+  });
+
+  it('reads types with the same characters ENTITY_TYPE_PATTERN allows', () => {
+    // The stream's hold-back is built from these classes; if the type grammar
+    // changed and they did not, a split placeholder would go out half-restored.
+    const typeShape = new RegExp(`^${TYPE_FIRST_CHAR}${TYPE_CHAR}*$`);
+    for (const t of ['A', 'PERSON', 'UK_NINO', 'X9_Y', 'LITERAL']) {
+      expect(ENTITY_TYPE_PATTERN.test(t)).toBe(true);
+      expect(typeShape.test(t)).toBe(true);
+    }
+    for (const t of ['a', '9X', '_X', 'Per-son']) {
+      expect(ENTITY_TYPE_PATTERN.test(t)).toBe(false);
+      expect(typeShape.test(t)).toBe(false);
+    }
   });
 });

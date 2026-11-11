@@ -15,9 +15,9 @@ import {
   type EntityType,
   type TokenSession,
 } from '@/lib/privacy/adapters/types';
-import { canonical, placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
-import { allMatches } from '@/lib/privacy/pii/text';
-import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
+import { placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
+import { ownMatches } from '@/lib/privacy/pii/text';
+import { formatPlaceholder, LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 
 export interface RestoreResult {
   text: string;
@@ -38,7 +38,7 @@ export interface RestoreResult {
 export function sessionPattern(
   session: TokenSession,
   declaredTypes: Iterable<EntityType> = []
-): RegExp | null {
+): RegExp {
   return placeholderPattern([
     ...CORE_ENTITY_TYPES,
     LITERAL_TYPE,
@@ -77,17 +77,18 @@ export function restoreAfter(
   context: string,
   text: string,
   session: TokenSession,
-  pattern: RegExp | null
+  pattern: RegExp
 ): RestoreResult {
-  if (!pattern) return { text, restored: 0, unresolved: [] };
   const probe = context + text;
   let out = '';
   let at = context.length;
   let restored = 0;
   const unresolved: string[] = [];
-  for (const m of allMatches(pattern, probe)) {
+  for (const m of ownMatches(pattern, probe)) {
     if (m.index < context.length) continue;
-    const value = session.valueFor(canonical(m[1], m[2]));
+    // The number is taken as written: PERSON_01 is not PERSON_1, as reading it
+    // so would be a guess.
+    const value = session.valueFor(formatPlaceholder(m[1], m[2]));
     if (value === undefined) {
       unresolved.push(m[0]);
       continue;

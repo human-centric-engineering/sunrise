@@ -521,7 +521,15 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   even before the first real value of that type appears. Look-alikes are
   counted in `literals`, apart from the per-type detection counts.
 - **A replacement strategy must write `[TYPE_n]`** (`formatPlaceholder()`).
-  Restoring, its leniency and look-alike masking all read that grammar. A property test checks that `restoreText(maskText(x)) = x` over
+  Restoring, its leniency and look-alike masking all read that grammar. The
+  registry tries a strategy that stores nothing once at registration, and
+  refuses one that writes another form or cannot map a placeholder back.
+  A persistent strategy is not tried, because its sessions may write to its
+  tables; it must follow the same form. `LITERAL` is reserved: a detector
+  that declares it is refused.
+- **A mode that never restores** (`redact`) passes `escapeLookAlikes: false`,
+  so text that only looks like a placeholder, such as a template's
+  "[PERSON_2]", reaches the model as written. A property test checks that `restoreText(maskText(x)) = x` over
   generated inputs.
 - **Lenient restore.** `PERSON_1`, `[PERSON_1`, `PERSON_1]`, `[PERSON_1]'s`
   and a placeholder inside a JSON string all restore. Values go in as they
