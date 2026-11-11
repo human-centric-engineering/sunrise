@@ -66,20 +66,14 @@ async function withTimeout<T>(
   timeoutMs: number,
   outer: AbortSignal | undefined
 ): Promise<T> {
+  // An abandoned call does not start the adapter at all.
+  if (outer?.aborted) throw abortReason(outer);
   const controller = new AbortController();
   const signal = outer ? AbortSignal.any([outer, controller.signal]) : controller.signal;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason instanceof Error ? signal.reason : new AdapterTimeoutError());
-      return;
-    }
-    onAbort = () =>
-      reject(signal.reason instanceof Error ? signal.reason : new AdapterTimeoutError());
-    signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => controller.abort(new AdapterTimeoutError()), timeoutMs);
-  });
+  const { promise: aborted, reject } = Promise.withResolvers<never>();
+  const listener = () => reject(abortReason(signal));
+  signal.addEventListener('abort', listener, { once: true });
+  const timer = setTimeout(() => controller.abort(new AdapterTimeoutError()), timeoutMs);
   // `.then` so a synchronous throw inside `fn` becomes a rejection here too.
   const work = Promise.resolve().then(() => fn(signal));
   work.catch(() => undefined);
@@ -87,9 +81,14 @@ async function withTimeout<T>(
   try {
     return await Promise.race([work, aborted]);
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    if (onAbort) signal.removeEventListener('abort', onAbort);
+    clearTimeout(timer);
+    signal.removeEventListener('abort', listener);
   }
+}
+
+/** The abort reason as an Error; a caller may abort with anything. */
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('aborted');
 }
 
 function classify(err: unknown, outer: AbortSignal | undefined): AdapterFailureReason {

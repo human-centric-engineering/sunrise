@@ -245,6 +245,41 @@ describe('runPrivacyDetectors', () => {
     ]);
   });
 
+  it('reports a detector as aborted when the call is abandoned mid-run, whatever the reason', async () => {
+    const controller = new AbortController();
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(
+        detector('acme.first', () => {
+          // A caller may abort with anything, not only an Error.
+          controller.abort('user left');
+          return new Promise(() => undefined);
+        })
+      );
+    });
+
+    const result = await runPrivacyDetectors(TEXT, { ...CTX, signal: controller.signal });
+
+    expect(result.failures).toEqual([
+      { adapterId: 'acme.first', required: false, reason: 'aborted' },
+    ]);
+  });
+
+  it('reports a detector that throws something that is not an Error', async () => {
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(
+        detector('acme.odd', () => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the case under test
+          throw 'nope';
+        })
+      );
+    });
+
+    const result = await runPrivacyDetectors(TEXT, CTX);
+
+    expect(result.failures).toEqual([{ adapterId: 'acme.odd', required: false, reason: 'threw' }]);
+    expect(vi.mocked(logger.warn).mock.calls[0][1]).toMatchObject({ errorName: 'string' });
+  });
+
   it('never logs the text, a value found, or an adapter error message', async () => {
     seam.init.mockImplementation(() => {
       registerPrivacyDetector(
@@ -321,6 +356,19 @@ describe('resolvePrivacyPolicy', () => {
     expect(result.failures).toEqual([
       { adapterId: 'acme.typo', required: true, reason: 'malformed' },
     ]);
+  });
+
+  it('does not start a resolver for a call already abandoned', async () => {
+    const resolve = vi.fn(() => ({ mode: 'block' as const }));
+    seam.init.mockImplementation(() => registerPrivacyPolicyResolver({ id: 'acme.p', resolve }));
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await resolvePrivacyPolicy(POLICY, INPUT, controller.signal);
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(result.policy).toEqual(POLICY);
+    expect(result.failures).toEqual([{ adapterId: 'acme.p', required: true, reason: 'aborted' }]);
   });
 
   it('reports a resolver that throws or hangs', async () => {
