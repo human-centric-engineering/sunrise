@@ -778,11 +778,11 @@ export function SettingsForm({
                 </p>
                 <p className="mt-2">
                   <strong>Pseudonymise</strong> replaces what it finds with placeholders such as
-                  [PERSON_1] before the call, and puts the real values back in the reply and in
-                  what tools are given, so answers read normally. <strong>Redact</strong> replaces
-                  them and never puts them back. <strong>Block</strong> refuses any call that
-                  contains them. Under pseudonymise and redact, a call that cannot be fully
-                  scanned (very large, or a detector failed) is refused rather than sent part-masked.
+                  [PERSON_1] before the call, and puts the real values back in the reply and in what
+                  tools are given, so answers read normally. <strong>Redact</strong> replaces them
+                  and never puts them back. <strong>Block</strong> refuses any call that contains
+                  them. Under pseudonymise and redact, a call that cannot be fully scanned (very
+                  large, or a detector failed) is refused rather than sent part-masked.
                 </p>
                 <p className="mt-2">
                   Default: off on an install that was upgraded, detect on a new one. Values are
@@ -829,10 +829,9 @@ export function SettingsForm({
               What to look for
               <FieldHelp title="Types of personal data">
                 Ticked types are looked for, then counted, replaced or refused as the mode says.
-                Unticked ones are left alone. Default:
-                everything except other dates and place names, which are common in ordinary text and
-                rarely identify anyone on their own. A type a new detector adds is looked for until
-                you untick it here.
+                Unticked ones are left alone. Default: everything except other dates and place
+                names, which are common in ordinary text and rarely identify anyone on their own. A
+                type a new detector adds is looked for until you untick it here.
               </FieldHelp>
             </legend>
             <Controller
@@ -890,9 +889,9 @@ export function SettingsForm({
               Embeddings
               <FieldHelp title="Embedding calls">
                 <p>
-                  Embedding turns text into vectors for knowledge search: uploaded documents,
-                  search queries and chat replies. Its input is counted but never masked, because a
-                  name replaced by a placeholder could not be searched for.
+                  Embedding turns text into vectors for knowledge search: uploaded documents, search
+                  queries and chat replies. Its input is counted but never masked, because a name
+                  replaced by a placeholder could not be searched for.
                 </p>
                 <p className="mt-2">
                   <strong>Local providers only</strong> refuses embedding with a provider that is

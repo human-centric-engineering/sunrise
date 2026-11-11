@@ -574,7 +574,10 @@ function withInFlightTracking(
               method,
               args
             );
-            const response = await track(stateKey, () => fn.apply(target, sent) as Promise<unknown>);
+            const response = await track(
+              stateKey,
+              () => fn.apply(target, sent) as Promise<unknown>
+            );
             // Only `chat` is masked, so only its response is ever restored.
             return restorer ? restorer.response(response as LlmResponse) : response;
           };

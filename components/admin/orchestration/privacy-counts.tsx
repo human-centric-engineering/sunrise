@@ -96,11 +96,11 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         here, tools, embeddings and any agent, chat turn or workflow it ran included. Each call
         resends the conversation so far, so a value that stays in the history is counted on every
         call that carried it, and again on a retry with another provider. In detect mode nothing is
-        changed; in pseudonymise and redact each was replaced by a placeholder before it was sent. The
-        values themselves are never stored. Degraded means a detector failed or ran out of time on a
-        call, which went ahead without it. Refused means a call was stopped before it was sent, and
-        why. A placeholder left unrestored is one the model wrote that no call had issued, shown as
-        written.
+        changed; in pseudonymise and redact each was replaced by a placeholder before it was sent.
+        The values themselves are never stored. Degraded means a detector failed or ran out of time
+        on a call, which went ahead without it. Refused means a call was stopped before it was sent,
+        and why. A placeholder left unrestored is one the model wrote that no call had issued, shown
+        as written.
       </FieldHelp>
     </div>
   );

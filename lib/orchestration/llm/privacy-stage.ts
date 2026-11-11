@@ -31,11 +31,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
-import {
-  PRIVACY_BLOCKED,
-  PRIVACY_REFUSED,
-  ProviderError,
-} from '@/lib/orchestration/llm/provider';
+import { PRIVACY_BLOCKED, PRIVACY_REFUSED, ProviderError } from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   CallRestorer,
