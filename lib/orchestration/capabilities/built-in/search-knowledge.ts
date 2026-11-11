@@ -17,6 +17,7 @@ import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolv
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { isWorkflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
 import { isEmbedUserId } from '@/lib/embed/auth';
+import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -145,23 +146,38 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
     // `costLogMetadata` rides along so the row carries the `stepId` both
     // execution cost readers filter on. Without any of this the embedding spend
     // was recorded and attributable to nothing (#654).
-    const { results, embedding } = await searchKnowledgeWithEmbedding(
-      args.query,
-      Object.keys(filters).length > 0 ? filters : undefined,
-      DEFAULT_LIMIT,
-      DEFAULT_THRESHOLD,
-      {
-        ...(context.agentId && !isWorkflowAgentId(context.agentId)
-          ? { agentId: context.agentId }
-          : {}),
-        ...(context.conversationId ? { conversationId: context.conversationId } : {}),
-        ...(context.workflowExecutionId
-          ? { workflowExecutionId: context.workflowExecutionId }
-          : {}),
-        ...(context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}),
-        metadata: { ...(context.costLogMetadata ?? {}), kind: 'knowledge_search' },
+    let searched: Awaited<ReturnType<typeof searchKnowledgeWithEmbedding>>;
+    try {
+      searched = await searchKnowledgeWithEmbedding(
+        args.query,
+        Object.keys(filters).length > 0 ? filters : undefined,
+        DEFAULT_LIMIT,
+        DEFAULT_THRESHOLD,
+        {
+          ...(context.agentId && !isWorkflowAgentId(context.agentId)
+            ? { agentId: context.agentId }
+            : {}),
+          ...(context.conversationId ? { conversationId: context.conversationId } : {}),
+          ...(context.workflowExecutionId
+            ? { workflowExecutionId: context.workflowExecutionId }
+            : {}),
+          ...(context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}),
+          metadata: { ...(context.costLogMetadata ?? {}), kind: 'knowledge_search' },
+        }
+      );
+    } catch (err) {
+      // The install requires local embeddings and none is active (§127): the
+      // query cannot be embedded. Told to the model so it can say so, rather
+      // than a generic tool failure it would retry.
+      if (isLocalOnlyEmbeddingRefusal(err)) {
+        return this.error(
+          'Knowledge search is unavailable: this deployment requires a local embedding model for search, and none is active.',
+          'embeddings_local_only'
+        );
       }
-    );
+      throw err;
+    }
+    const { results, embedding } = searched;
 
     const sideEffectModel: SideEffectModelUsage = {
       kind: 'embedding',

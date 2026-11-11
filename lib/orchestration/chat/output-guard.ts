@@ -10,56 +10,84 @@
  * still steer the model off-topic. The primary defense is always the
  * system prompt; this guard is a safety net for logging and alerting.
  *
- * The guard also detects common PII patterns (emails, phone numbers,
- * SSNs) that should rarely appear in assistant output regardless of
- * agent configuration.
+ * The guard also flags identifiers in the reply — email addresses, phone
+ * numbers, NI and NHS numbers, card and bank details, keys — using the LLM
+ * privacy layer's tier A rules through its registry (§127), and ignores any
+ * the conversation itself supplied: a reply that repeats the user's own email
+ * back to them, or one the privacy layer restored, is not a leak.
  */
+import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import { messagePieces } from '@/lib/orchestration/privacy/call-masking';
+import { CORE_RULES_DETECTOR_ID } from '@/lib/privacy/adapters/core-defaults';
+import { runPrivacyDetectors } from '@/lib/privacy/adapters/run';
 
 export interface OutputScanResult {
   flagged: boolean;
   /** Which forbidden topics matched. */
   topicMatches: string[];
-  /** Which built-in patterns matched (e.g. 'pii_email'). */
+  /**
+   * Which kinds of identifier the reply contained that the conversation did
+   * not supply, as `pii_<type>` (e.g. `pii_email`, `pii_uk_nino`).
+   */
   builtInMatches: string[];
 }
 
-interface BuiltInPattern {
-  label: string;
-  regex: RegExp;
+/**
+ * How long the identifier scan may take. A reply is short, so this is
+ * generous; a scan that runs out flags nothing rather than holding the turn.
+ */
+const OUTPUT_SCAN_TIMEOUT_MS = 2_000;
+
+/**
+ * A value reduced to what identifies it: lower case, without spaces or the
+ * punctuation people write identifiers with. "07700 900123" and
+ * "(07700) 900-123" are the same number.
+ */
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/[\s\-.()/]/g, '');
 }
 
 /**
- * Built-in patterns that apply to all agents regardless of configuration.
- * These catch common PII leaks in assistant output.
+ * The kinds of identifier in `content` that `supplied` does not contain, as
+ * `pii_<type>` labels in order of first appearance.
  */
-const BUILT_IN_PATTERNS: BuiltInPattern[] = [
-  {
-    label: 'pii_email',
-    regex: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/,
-  },
-  {
-    label: 'pii_phone',
-    regex: /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b/,
-  },
-  {
-    label: 'pii_ssn',
-    regex: /\b\d{3}-\d{2}-\d{4}\b/,
-  },
-  {
-    label: 'pii_credit_card',
-    regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/,
-  },
-];
+async function identifierMatches(
+  content: string,
+  supplied: readonly LlmMessage[]
+): Promise<string[]> {
+  const { spans } = await runPrivacyDetectors(content, {
+    scopeId: 'output-guard',
+    knownValues: [],
+    detectorIds: [CORE_RULES_DETECTOR_ID],
+    signal: AbortSignal.timeout(OUTPUT_SCAN_TIMEOUT_MS),
+  });
+  if (spans.length === 0) return [];
+  const conversation = comparable(messagePieces(supplied).join('\n'));
+  const labels = new Set<string>();
+  for (const span of spans) {
+    const value = comparable(content.slice(span.start, span.end));
+    if (value.length > 0 && conversation.includes(value)) continue;
+    labels.add(`pii_${span.type.toLowerCase()}`);
+  }
+  return [...labels];
+}
 
 /**
- * Scan an assistant response against per-agent topic boundaries
- * and built-in PII patterns.
+ * Scan an assistant response against per-agent topic boundaries and for
+ * identifiers the conversation did not supply.
  *
  * @param content - The assistant response text
  * @param topicBoundaries - Forbidden keywords/phrases from the agent config.
  *   Each entry is matched case-insensitively as a word-boundary substring.
+ * @param supplied - What the conversation sent the model: the system prompt,
+ *   the user's messages, tool results. An identifier found in it is not
+ *   flagged in the reply.
  */
-export function scanOutput(content: string, topicBoundaries: string[]): OutputScanResult {
+export async function scanOutput(
+  content: string,
+  topicBoundaries: string[],
+  supplied: readonly LlmMessage[] = []
+): Promise<OutputScanResult> {
   const lower = content.toLowerCase();
 
   const topicMatches: string[] = [];
@@ -72,12 +100,7 @@ export function scanOutput(content: string, topicBoundaries: string[]): OutputSc
     }
   }
 
-  const builtInMatches: string[] = [];
-  for (const pattern of BUILT_IN_PATTERNS) {
-    if (pattern.regex.test(content)) {
-      builtInMatches.push(pattern.label);
-    }
-  }
+  const builtInMatches = await identifierMatches(content, supplied);
 
   return {
     flagged: topicMatches.length > 0 || builtInMatches.length > 0,

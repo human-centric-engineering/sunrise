@@ -4,12 +4,14 @@
  * After each assistant message is persisted, queues an async embedding
  * job to generate and store a vector embedding for semantic search.
  * Non-blocking to the chat stream — failures are logged but do not
- * affect the user experience.
+ * affect the user experience. Under the LLM privacy layer's `local_only`
+ * embeddings policy with no local embedding model, the message is skipped.
  */
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
 import { outsidePrivacyScope } from '@/lib/orchestration/privacy/scope';
 
 /**
@@ -31,6 +33,14 @@ export function queueMessageEmbedding(
   // so its embedding call is not one of the turn's (§127).
   void outsidePrivacyScope(() => generateAndStoreEmbedding(messageId, content, attribution)).catch(
     (err: unknown) => {
+      // The install requires local embeddings and none is active (§127): the
+      // reply is not indexed for search. Expected, so not a warning.
+      if (isLocalOnlyEmbeddingRefusal(err)) {
+        logger.info('Message embedding skipped: the privacy embeddings policy is local only', {
+          messageId,
+        });
+        return;
+      }
       logger.warn('Message embedding failed', {
         messageId,
         error: err instanceof Error ? err.message : String(err),

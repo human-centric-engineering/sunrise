@@ -155,6 +155,16 @@ export class PrivacyRefusedError extends ProviderError {
   }
 }
 
+/**
+ * Whether `err` is the refusal of an embedding call under `embeddingsPolicy:
+ * local_only`. Each embedding caller answers it with its own remedy: a
+ * reply's embedding is skipped, a knowledge search returns a tool error the
+ * model can relay, an upload fails naming the setting (spec § Embeddings).
+ */
+export function isLocalOnlyEmbeddingRefusal(err: unknown): err is PrivacyRefusedError {
+  return err instanceof PrivacyRefusedError && err.reason === 'embeddings_local_only';
+}
+
 /** One vendor call, as the Proxy hands it to the stage. */
 export interface PrivacyStageCall {
   providerSlug: string;
