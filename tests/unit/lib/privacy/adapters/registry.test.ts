@@ -158,6 +158,24 @@ describe('a throwing app init', () => {
     expect(adapters.failure).toBe("the app's initAppPrivacyAdapters() threw: fork bug");
   });
 
+  it('restores what was registered before the init ran, replacements included', () => {
+    core.adapters.mockReturnValue({
+      ...emptyCore(),
+      detectors: [{ detector: detector('core.rules') }, { detector: detector('core.lists') }],
+    });
+    // Registered at module scope, before the first read runs the init.
+    registerPrivacyDetector(detector('acme.names'), { replace: 'core.lists' });
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.other'), { replace: 'core.rules' });
+      throw new Error('fork bug');
+    });
+
+    const adapters = getPrivacyAdapters();
+
+    expect(adapters.detectors.map((r) => r.detector.id)).toEqual(['core.rules', 'acme.names']);
+    expect(adapters.replacedCoreDetectors).toEqual(['core.lists']);
+  });
+
   it('is not retried: the failure stands on every later read', () => {
     seam.init.mockImplementation(() => {
       throw new Error('fork bug');
