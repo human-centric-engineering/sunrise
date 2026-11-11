@@ -62,6 +62,21 @@ export function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * A yield that only yields once `sliceMs` of work has passed since the last
+ * one. A `setTimeout(0)` waits at least a millisecond, so yielding after every
+ * small piece of work adds idle time to every call; yielding by elapsed time
+ * keeps the timeout enforceable without that cost.
+ */
+export function createYielder(sliceMs = 20): () => Promise<void> {
+  let last = performance.now();
+  return async () => {
+    if (performance.now() - last < sliceMs) return;
+    await yieldToEventLoop();
+    last = performance.now();
+  };
+}
+
 /** Escape a literal for use inside a RegExp. */
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

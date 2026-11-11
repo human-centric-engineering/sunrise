@@ -326,6 +326,22 @@ describe('secrets', () => {
     ]);
   });
 
+  it('reports a value under an .env-style name with a prefix', () => {
+    // An underscore is a word character, so a \\b before the name missed these.
+    expect(texts(R.secrets, 'DB_PASSWORD=hunter22x')).toEqual(['hunter22x']);
+    expect(texts(R.secrets, 'csrf_token=abcdef123456')).toEqual(['abcdef123456']);
+    expect(texts(R.secrets, 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCY')).toEqual([
+      'wJalrXUtnFEMIK7MDENGbPxRfiCY',
+    ]);
+  });
+
+  it('takes a word after a token label for a label, not a token', () => {
+    expect(texts(R.secrets, 'Token: please see the attached')).toEqual([]);
+    expect(texts(R.secrets, 'token: expired')).toEqual([]);
+    // A password is taken whatever it looks like: weak ones are plain words.
+    expect(texts(R.secrets, 'password: sunshine')).toEqual(['sunshine']);
+  });
+
   it('ignores a value too short to be a credential', () => {
     expect(texts(R.secrets, 'password: abc')).toEqual([]);
   });
@@ -349,6 +365,11 @@ describe('datesOfBirth', () => {
       expect(found(R.datesOfBirth, `Born on ${date}.`)).toEqual([['DATE_OF_BIRTH', date, 0.9]]);
     }
   );
+
+  it('reads a year-first date, and a US date when its day makes the order plain', () => {
+    expect(texts(R.datesOfBirth, 'born 1990/12/25')).toEqual(['1990/12/25']);
+    expect(texts(R.datesOfBirth, 'born on 12/25/1990')).toEqual(['12/25/1990']);
+  });
 
   it('accepts "the" and a dash between the birth word and the date', () => {
     expect(texts(R.datesOfBirth, 'born on the 3rd of May 1980')).toEqual(['3rd of May 1980']);
@@ -400,13 +421,22 @@ describe('rulesDetector', () => {
 
   it('rejects when its timeout expires during the work, rather than resolving late', async () => {
     // The runner's timeout is a timer. Synchronous work alone would resolve
-    // before that timer could fire; the detector's turns on the event loop let
-    // it fire, and the next signal check rejects.
+    // before that timer could fire; once a time slice of work has passed, the
+    // detector's turn on the event loop lets it fire, and the next signal
+    // check rejects. The text is large enough for the work to pass a slice.
     const controller = new AbortController();
     setTimeout(() => controller.abort(new Error('timed out')), 0);
+    const text = 'Write to a@example.com or ring 020 7946 0958. '.repeat(12_000);
     await expect(
-      rulesDetector().detect({ text: 'a@example.com' }, { ...ctx(), signal: controller.signal })
+      rulesDetector().detect({ text }, { ...ctx(), signal: controller.signal })
     ).rejects.toThrow('timed out');
+  });
+
+  it('does not wait on the event loop when the work is quick', async () => {
+    // A turn per recogniser would add at least a millisecond each to every call.
+    const t0 = performance.now();
+    for (let i = 0; i < 20; i++) await rulesDetector().detect({ text: 'a@example.com' }, ctx());
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 
   it('stops when its signal is aborted', async () => {

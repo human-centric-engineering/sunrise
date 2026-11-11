@@ -333,24 +333,24 @@ An app replaces one by id: `registerPrivacyDetector(mine, { replace: 'core.lists
 
 ### Tier A
 
-| Type                 | Reported when                                                                                                                                               | Confidence |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| `EMAIL`              | address shape                                                                                                                                               | 1          |
-| `CARD_NUMBER`        | a scheme's prefix and length, and Luhn                                                                                                                      | 1          |
-| `IBAN`               | ISO 13616 mod 97, and the country's length where known                                                                                                      | 1          |
-| `NHS_NUMBER`         | mod 11, and printed 3-3-4 or with a health word before it                                                                                                   | 1          |
-| `UK_VAT`             | HMRC mod 97 / 9755; without `GB`, only with "VAT" before it                                                                                                 | 1          |
-| `UK_NINO`            | HMRC's letter rules and a suffix; without the suffix, or in lower case, only with context                                                                   | 1 / 0.9    |
-| `SECRET`             | a published key prefix, a JWT or a PEM private key; an assigned value (`password: …`), after "is" only when it looks like a credential; a PIN of 4–8 digits | 1 / 0.9    |
-| `UK_DRIVING_LICENCE` | DVLA shape with a possible encoded date; certain with a licence word                                                                                        | 0.95 / 1   |
-| `POSTCODE`           | Royal Mail position rules; the space is required unless written in capitals                                                                                 | 0.95       |
-| `SORT_CODE`          | with a banking word, or an account number beside it                                                                                                         | 0.95       |
-| `BANK_ACCOUNT`       | eight digits with an account word, or a sort code beside it                                                                                                 | 0.95       |
-| `UK_UTR`             | ten digits with a tax word                                                                                                                                  | 0.95       |
-| `UK_PASSPORT`        | nine digits with "passport"                                                                                                                                 | 0.95       |
-| `IP_ADDRESS`         | IPv4 octets, not after "version" or "v"; IPv6 the URL parser accepts, with four groups or a real prefix (so not `cafe::1`)                                  | 0.95       |
-| `PHONE`              | `libphonenumber-js` (full metadata) calls it valid; or possible, with a phone word before it                                                                | 0.9 / 0.85 |
-| `DATE_OF_BIRTH`      | a date with a birth word just before it ("born on the", "DOB -"); other dates are left alone                                                                | 0.9        |
+| Type                 | Reported when                                                                                                                                                                                                                                                                                         | Confidence |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `EMAIL`              | address shape                                                                                                                                                                                                                                                                                         | 1          |
+| `CARD_NUMBER`        | a scheme's prefix and length, and Luhn                                                                                                                                                                                                                                                                | 1          |
+| `IBAN`               | ISO 13616 mod 97, and the country's length where known                                                                                                                                                                                                                                                | 1          |
+| `NHS_NUMBER`         | mod 11, and printed 3-3-4 or with a health word before it                                                                                                                                                                                                                                             | 1          |
+| `UK_VAT`             | HMRC mod 97 / 9755; without `GB`, only with "VAT" before it                                                                                                                                                                                                                                           | 1          |
+| `UK_NINO`            | HMRC's letter rules and a suffix; without the suffix, or in lower case, only with context                                                                                                                                                                                                             | 1 / 0.9    |
+| `SECRET`             | a published key prefix, a JWT or a PEM private key; a value assigned to a credential name, including `.env` names (`DB_PASSWORD=`) and quoted JSON keys — any value after a password name, a credential-shaped one after the others (`token`, `secret`, `api_key`) or after "is"; a PIN of 4–8 digits | 1 / 0.9    |
+| `UK_DRIVING_LICENCE` | DVLA shape with a possible encoded date; certain with a licence word                                                                                                                                                                                                                                  | 0.95 / 1   |
+| `POSTCODE`           | Royal Mail position rules; the space is required unless written in capitals                                                                                                                                                                                                                           | 0.95       |
+| `SORT_CODE`          | with a banking word, or an account number beside it                                                                                                                                                                                                                                                   | 0.95       |
+| `BANK_ACCOUNT`       | eight digits with an account word, or a sort code beside it                                                                                                                                                                                                                                           | 0.95       |
+| `UK_UTR`             | ten digits with a tax word                                                                                                                                                                                                                                                                            | 0.95       |
+| `UK_PASSPORT`        | nine digits with "passport"                                                                                                                                                                                                                                                                           | 0.95       |
+| `IP_ADDRESS`         | IPv4 octets, not after "version" or "v"; IPv6 the URL parser accepts, with four groups or a real prefix (so not `cafe::1`)                                                                                                                                                                            | 0.95       |
+| `PHONE`              | `libphonenumber-js` (full metadata) calls it valid; or possible, with a phone word before it                                                                                                                                                                                                          | 0.9 / 0.85 |
+| `DATE_OF_BIRTH`      | a date with a birth word just before it ("born on the", "DOB -"): day first, year first, or US order when the day makes it plain; other dates are left alone                                                                                                                                          | 0.9        |
 
 National phone numbers are read as UK. Phones sit low on purpose: the library
 finds a number in many digit runs, so a UTR or NHS number overlapping one
@@ -359,12 +359,14 @@ model still sees that a password was there.
 
 ### Tier B
 
-Exact matches report 0.98; a variant 0.9. Variants: for `PERSON`, the first or
+Exact matches report 0.98; a variant 0.9. Variants: for `PERSON`, with any
+title or suffix set aside ("Dr. Jane Hart Jr." is Jane Hart), the first or
 last name alone (three letters or more; a part that is also a word, such as
-Will, only capitalised), an initial and surname, surname first with or without
-a comma; for `ORG`, the name without its legal suffix and its first word
-(capitalised, not a common word or first name); for `PHONE`, any spelling of
-the same E.164 number. Every other type matches exactly, ignoring case and
+Will, only capitalised), an initial and surname, and surname first with or
+without a comma; for `ORG`, the name without its legal suffix (capitalised
+only when it is one word) and its first word (capitalised, not a common word
+or first name); for `PHONE`, the number's own digits written nationally or
+internationally with any separators. Every other type matches exactly, ignoring case and
 spacing. Values under three characters are skipped, and so is a known value of
 a type tier B does not declare (every core type): an undeclared type would
 make the registry reject the whole result, and a required core detector
@@ -396,9 +398,10 @@ visible replaces `core.lists`.
 
 ### Timing
 
-The detectors are synchronous. Each gives the event loop a turn after each
-piece of work and then checks its signal, so a timeout that expires during a
-piece is reported as a timeout, never accepted late.
+The detectors are synchronous. Once 20 ms of work has passed since the last
+turn, each gives the event loop a turn and then checks its signal, so a
+timeout that expires during the work is reported as a timeout, never accepted
+late. Quick work never waits: a turn costs at least a millisecond.
 
 Each tier is linear in the text, and the cost of names and known values does
 not multiply by it. Tier C marks learned names by token lookup. Tier B runs a
@@ -454,13 +457,14 @@ Two sets, recorded separately:
   do not say how the tiers do on text nobody tuned them for.
 - **Held-out** (46 cases, 216 values): written by an author who never saw the
   detector code. The closer estimate: `PERSON` recall 0.76, precision 0.97;
-  `ORG` recall 0.68; `ADDRESS` recall 0.86; `PHONE` recall 0.94, precision
+  `ORG` recall 0.74; `ADDRESS` recall 0.86; `PHONE` recall 0.94, precision
   0.88; `IP_ADDRESS` precision 0.8; every other type 1. Seven defects it
   exposed were fixed before these were recorded: a phone written
   `(07700) 900184`; a known name written surname first; a known company by
   its first word; a password with no separator; contractions ("I've") and
   short acronyms ("NINO") taken for names; day abbreviations ("Thu") taken
-  for names. Nothing else was changed in response to it.
+  for names. Nothing else was changed in response to it. Later, `ORG` recall
+  rose from 0.68 when a code review asked for "Co" as a legal suffix.
 
 What it misses, by design or not yet:
 

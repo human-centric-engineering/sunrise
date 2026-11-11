@@ -71,6 +71,25 @@ describe('findKnownValueSpans — people', () => {
     ]);
   });
 
+  it('leaves a title or suffix out of the name parts', () => {
+    expect(found('Ask Dr. Patel, then Hart', [person('Dr. Jane Hart')])).toEqual([
+      ['PERSON', 'Hart', VARIANT_CONFIDENCE],
+    ]);
+    expect(found('Jr. staff and Hart', [person('Jane Hart Jr.')])).toEqual([
+      ['PERSON', 'Hart', VARIANT_CONFIDENCE],
+    ]);
+  });
+
+  it('finds a known name after text that lower-casing lengthens', () => {
+    // "İ" lower-cases to two code units, so lower-case positions drift.
+    const text = `${'İ'.repeat(200)} contact Jane Hart today`;
+    expect(found(text, [person('Jane Hart')])).toContainEqual([
+      'PERSON',
+      'Jane Hart',
+      KNOWN_VALUE_CONFIDENCE,
+    ]);
+  });
+
   it('does not match inside a longer word', () => {
     expect(found('Hartley and Jamesons', [person('James Hart')])).toEqual([]);
   });
@@ -92,6 +111,12 @@ describe('findKnownValueSpans — companies and other values', () => {
         ['ORG', 'Halden Logistics', VARIANT_CONFIDENCE],
       ])
     );
+  });
+
+  it('matches a word-named company without its suffix only capitalised', () => {
+    const spans = found('What is next? Next PLC called.', [{ type: 'ORG', value: 'Next PLC' }]);
+    expect(spans.map(([, t]) => t)).not.toContain('next');
+    expect(spans).toContainEqual(['ORG', 'Next PLC', KNOWN_VALUE_CONFIDENCE]);
   });
 
   it('finds any other value exactly, ignoring case', () => {
@@ -118,6 +143,13 @@ describe('findKnownValueSpans — phone numbers', () => {
       expect.arrayContaining(['+44 7700 900515', '07700-900-515'])
     );
     expect(spans.every(([type]) => type === 'PHONE')).toBe(true);
+  });
+
+  it('finds a known number in brackets or with an international prefix', () => {
+    const spans = found('Ring (07700) 900515 or 0044 (0)7700-900515', [
+      { type: 'PHONE', value: '+447700900515' },
+    ]).map(([, t]) => t);
+    expect(spans).toEqual(['(07700) 900515', '0044 (0)7700-900515']);
   });
 
   it('does not report a different number', () => {

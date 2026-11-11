@@ -37,7 +37,7 @@ import {
   STREET_SUFFIXES,
   TITLES,
 } from '@/lib/privacy/pii/lexicon';
-import { allMatches, coverage, escapeRegExp, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
+import { allMatches, coverage, createYielder, escapeRegExp, span } from '@/lib/privacy/pii/text';
 
 export const LISTS_DETECTOR_ID = 'core.lists';
 
@@ -274,6 +274,8 @@ function companies(text: string, tokens: Token[], found: Found): void {
   for (let i = 1; i < tokens.length; i++) {
     const suffix = tokens[i];
     if (!ORG_SUFFIXES.has(suffix.lower)) continue;
+    // "Co" only capitalised: "co" is also a prefix and an abbreviation.
+    if (suffix.lower === 'co' && suffix.text[0] !== 'C') continue;
     // "Acme Ltd" or "Acme, Inc.": the suffix follows a space, or a comma and a space.
     const gapBefore = text.slice(tokens[i - 1].end, suffix.start);
     if (!/^,?[ \t]+$/.test(gapBefore)) continue;
@@ -296,7 +298,11 @@ function companies(text: string, tokens: Token[], found: Found): void {
       first++;
     }
     if (first === i || !tokens.slice(first, i).some((t) => t.capitalised)) continue;
-    const nameTokens = tokens.slice(first, i);
+    // "Acme & Co": the name is "Acme", the "&" belongs to the suffix.
+    let last = i;
+    while (last > first && ORG_CONNECTORS.has(tokens[last - 1].lower)) last--;
+    if (last === first) continue;
+    const nameTokens = tokens.slice(first, last);
     const base = text.slice(nameTokens[0].start, nameTokens[nameTokens.length - 1].end);
     if (ALLOWLIST.has(base.toLowerCase()) || ALLOWLIST.has(nameTokens[0].lower)) continue;
     // "Ltd." and "Inc." are abbreviations; "LLP." is a sentence ending.
@@ -633,8 +639,9 @@ export function listsDetector(): PrivacyDetector {
     // expired timeout abort the signal, so an overrun rejects (see text.ts).
     detect: async ({ text }, ctx) => {
       ctx.signal.throwIfAborted();
+      const maybeYield = createYielder();
       const spans = findListSpans(text, ctx.priorSpans);
-      await yieldToEventLoop();
+      await maybeYield();
       ctx.signal.throwIfAborted();
       return spans;
     },

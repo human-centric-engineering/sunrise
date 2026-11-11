@@ -86,6 +86,23 @@ function possibleInRun(
   return out;
 }
 
+/**
+ * A pattern for one known phone number however it is written: national
+ * ("07700 900515", "(07700) 900515") or international ("+44 7700 900515",
+ * "0044 (0)7700-900515"), with any spaces, dots, dashes or brackets between
+ * its digits. Matching the number's own digits needs no parse of the text,
+ * which tier A has already paid for.
+ */
+export function phoneDigitsPattern(e164: string): RegExp | null {
+  const parsed = parsePhoneNumberFromString(e164);
+  if (!parsed) return null;
+  const sep = '[\\s().-]*';
+  const digits = (d: string) => [...d].join(sep);
+  const national = digits(parsed.nationalNumber);
+  const international = `(?:\\+|00)${sep}${digits(parsed.countryCallingCode)}${sep}(?:\\(0\\)${sep})?`;
+  return new RegExp(`(?<![\\d+])(?:${international}|\\(?0${sep})?${national}(?!\\d)`, 'g');
+}
+
 /** `value` as E.164, or null when it is not a possible phone number. */
 export function toE164(value: string): string | null {
   const parsed = parsePhoneNumberFromString(value, 'GB');

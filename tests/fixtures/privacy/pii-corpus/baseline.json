@@ -144,7 +144,7 @@
       },
       "ORG": {
         "labelled": 19,
-        "recall": 0.6842,
+        "recall": 0.7368,
         "precision": 1
       },
       "PERSON": {

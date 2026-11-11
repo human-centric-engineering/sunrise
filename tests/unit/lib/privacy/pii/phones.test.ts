@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { phoneCandidates, toE164 } from '@/lib/privacy/pii/phones';
+import { phoneCandidates, phoneDigitsPattern, toE164 } from '@/lib/privacy/pii/phones';
 
 function found(text: string) {
   return phoneCandidates(text).map((c) => [text.slice(c.start, c.end), c.e164, c.valid]);
@@ -41,6 +41,25 @@ describe('phoneCandidates', () => {
 
   it('uses UTF-16 offsets after astral characters', () => {
     expect(found('😀😀 020 7946 0958')[0][0]).toBe('020 7946 0958');
+  });
+});
+
+describe('phoneDigitsPattern', () => {
+  const matchesIn = (e164: string, text: string) =>
+    [...text.matchAll(phoneDigitsPattern(e164) ?? /$^/g)].map((m) => m[0]);
+
+  it('matches the number written nationally or internationally, however separated', () => {
+    expect(
+      matchesIn('+447700900515', '07700900515, 07700 900 515, +44 7700-900515, 0044 (0)7700 900515')
+    ).toEqual(['07700900515', '07700 900 515', '+44 7700-900515', '0044 (0)7700 900515']);
+  });
+
+  it('does not match inside a longer run of digits', () => {
+    expect(matchesIn('+447700900515', '1077009005159')).toEqual([]);
+  });
+
+  it('returns null for something that is not a phone number', () => {
+    expect(phoneDigitsPattern('not a number')).toBeNull();
   });
 });
 

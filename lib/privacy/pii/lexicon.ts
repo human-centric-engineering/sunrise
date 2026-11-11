@@ -692,6 +692,7 @@ export const ORG_SUFFIXES: ReadonlySet<string> = new Set([
   'pty',
   'cic',
   'cio',
+  'co',
 ]);
 
 /** Words that join a company name's parts ("Bank of Scotland plc"). */

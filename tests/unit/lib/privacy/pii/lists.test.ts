@@ -76,6 +76,12 @@ describe('companies', () => {
     expect(spans).not.toContainEqual(['ORG', 'Sarah']);
   });
 
+  it('takes a capitalised "Co" as a suffix, with its ampersand', () => {
+    expect(found('Quote from Ashby Tile Co today')).toEqual([['ORG', 'Ashby Tile Co']]);
+    expect(found('We paid Morton & Co. in full')[0]).toEqual(['ORG', 'Morton & Co.']);
+    expect(found('the Morton co op')).toEqual([]);
+  });
+
   it('leaves an allowlisted company alone', () => {
     expect(found('We buy from Microsoft Ltd and Tesco PLC.')).toEqual([]);
   });

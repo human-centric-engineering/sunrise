@@ -33,7 +33,7 @@ import {
   isValidUkVat,
 } from '@/lib/privacy/pii/checksums';
 import { phoneCandidates } from '@/lib/privacy/pii/phones';
-import { allMatches, hasContextBefore, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
+import { allMatches, createYielder, hasContextBefore, span } from '@/lib/privacy/pii/text';
 
 export const RULES_DETECTOR_ID = 'core.rules';
 
@@ -399,11 +399,33 @@ const PREFIXED_SECRETS: readonly RegExp[] = [
  * `api_key=...`, `Bearer ...`. The span is the value only, so the model still
  * sees that a password was there.
  */
-const CREDENTIAL_NAME =
-  '(?:password|passwd|pwd|passcode|pin|secret|api[_ -]?key|access[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|token)';
+/**
+ * Names that hold a password. The value after one is taken whatever it looks
+ * like: real weak passwords are plain words.
+ */
+const PASSWORD_NAME = '(?:password|passwd|pwd|passcode)';
+/**
+ * Other credential names. "Token: please see the attached" is a label, so the
+ * value after one of these must look like a credential (see CREDENTIAL_VALUE).
+ */
+const OTHER_CREDENTIAL_NAME =
+  '(?:secret|api[_ -]?key|access[_ -]?key|secret[_ -]?key|access[_ -]?token|auth[_ -]?token|refresh[_ -]?token|client[_ -]?secret|private[_ -]?key|token|pin)';
+const CREDENTIAL_NAME = `(?:${PASSWORD_NAME}|${OTHER_CREDENTIAL_NAME})`;
+/**
+ * Not `\b`: an underscore is a word character, so `\bpassword` misses
+ * DB_PASSWORD and csrf_token, which is how a pasted .env file names them.
+ */
+const NAME_START = '(?<![A-Za-z0-9])';
+/** A value with a digit or symbol in it, or one too long to be a word. */
+const CREDENTIAL_VALUE =
+  '(?:(?=[^\\s"\'`,;]*[\\d!@#$%^&*_+/=-])[^\\s"\'`,;]{6,}|[^\\s"\'`,;]{16,})';
 const ASSIGNED_SECRET = new RegExp(
   // `["']?` before the separator for a quoted key: {"password": "…"}.
-  `\\b${CREDENTIAL_NAME}["']?\\s*[:=]\\s*["']?([^\\s"'\`,;]{6,})`,
+  `${NAME_START}${PASSWORD_NAME}["']?\\s*[:=]\\s*["']?([^\\s"'\`,;]{6,})`,
+  'gi'
+);
+const ASSIGNED_OTHER_SECRET = new RegExp(
+  `${NAME_START}${OTHER_CREDENTIAL_NAME}["']?\\s*[:=]\\s*["']?(${CREDENTIAL_VALUE})`,
   'gi'
 );
 /**
@@ -411,7 +433,7 @@ const ASSIGNED_SECRET = new RegExp(
  * "is" the value must look like a credential — a letter and a digit or symbol.
  */
 const STATED_SECRET = new RegExp(
-  `\\b${CREDENTIAL_NAME}\\s+is\\s+["']?((?=[^\\s"'\`,;]*[A-Za-z])(?=[^\\s"'\`,;]*[\\d!@#$%^&*])[^\\s"'\`,;]{6,})`,
+  `${NAME_START}${CREDENTIAL_NAME}\\s+is\\s+["']?((?=[^\\s"'\`,;]*[A-Za-z])(?=[^\\s"'\`,;]*[\\d!@#$%^&*])[^\\s"'\`,;]{6,})`,
   'gi'
 );
 /** A PIN is digits, and shorter than any other credential. */
@@ -423,7 +445,7 @@ const BEARER = /\bBearer\s+([A-Za-z0-9._~+/-]{20,}=*)/g;
  * mask "reset".
  */
 const UNSEPARATED_PASSWORD =
-  /\b(?:password|passwd|passcode)\s+((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[\d!@#$%^&*])[^\s"'`,;]{6,})/gi;
+  /(?<![A-Za-z0-9])(?:password|passwd|passcode)\s+((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[\d!@#$%^&*])[^\s"'`,;]{6,})/gi;
 
 function secrets(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
@@ -432,7 +454,14 @@ function secrets(text: string): DetectedSpan[] {
       out.push(span('SECRET', m.index, m.index + m[0].length, 1));
     }
   }
-  for (const pattern of [ASSIGNED_SECRET, STATED_SECRET, BEARER, UNSEPARATED_PASSWORD, PIN]) {
+  for (const pattern of [
+    ASSIGNED_SECRET,
+    ASSIGNED_OTHER_SECRET,
+    STATED_SECRET,
+    BEARER,
+    UNSEPARATED_PASSWORD,
+    PIN,
+  ]) {
     for (const m of allMatches(pattern, text)) {
       // The capture is the match's tail, so its start is measured from the end.
       const start = m.index + m[0].length - m[1].length;
@@ -451,7 +480,10 @@ const MONTHS =
 const DATE = new RegExp(
   [
     '(?<!\\d)(?:0?[1-9]|[12]\\d|3[01])[/.-](?:0?[1-9]|1[0-2])[/.-](?:\\d{4}|\\d{2})(?!\\d)',
-    '(?<!\\d)\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])(?!\\d)',
+    '(?<!\\d)\\d{4}[/.-](?:0?[1-9]|1[0-2])[/.-](?:0?[1-9]|[12]\\d|3[01])(?!\\d)',
+    // US order, when the day makes it unambiguous ("12/25/1990"); an
+    // ambiguous one already matches day-first above.
+    '(?<!\\d)(?:0?[1-9]|1[0-2])[/.-](?:1[3-9]|2\\d|3[01])[/.-](?:\\d{4}|\\d{2})(?!\\d)',
     `(?<!\\d)(?:0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:${MONTHS})\\.?,?\\s+\\d{4}(?!\\d)`,
     `\\b(?:${MONTHS})\\.?\\s+(?:0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?,?\\s+\\d{4}(?!\\d)`,
   ].join('|'),
@@ -490,10 +522,10 @@ const RECOGNISERS: readonly Recogniser[] = [
 ];
 
 /**
- * Tier A as a detector adapter. The recognisers are synchronous, so it gives
- * the event loop a turn after each one and then checks its signal: a timeout
- * that expired during a recogniser fires in that turn, and the detector
- * rejects instead of handing back a late result.
+ * Tier A as a detector adapter. The recognisers are synchronous, so once a
+ * time slice of work has passed it gives the event loop a turn and checks its
+ * signal: a timeout that expired during the work fires in that turn, and the
+ * detector rejects instead of handing back a late result.
  */
 export function rulesDetector(): PrivacyDetector {
   return {
@@ -501,11 +533,12 @@ export function rulesDetector(): PrivacyDetector {
     egress: 'in_process',
     entityTypes: RULES_ENTITY_TYPES,
     detect: async ({ text }, ctx) => {
+      const maybeYield = createYielder();
       const out: DetectedSpan[] = [];
       for (const recognise of RECOGNISERS) {
         ctx.signal.throwIfAborted();
         out.push(...recognise(text));
-        await yieldToEventLoop();
+        await maybeYield();
       }
       ctx.signal.throwIfAborted();
       return out;

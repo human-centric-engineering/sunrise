@@ -24,9 +24,9 @@ import {
   type KnownValue,
   type PrivacyDetector,
 } from '@/lib/privacy/adapters/types';
-import { COMMON_WORDS, isFirstName, ORG_SUFFIXES } from '@/lib/privacy/pii/lexicon';
-import { phoneCandidates, toE164 } from '@/lib/privacy/pii/phones';
-import { allMatches, escapeRegExp, span, yieldToEventLoop } from '@/lib/privacy/pii/text';
+import { COMMON_WORDS, isFirstName, ORG_SUFFIXES, TITLES } from '@/lib/privacy/pii/lexicon';
+import { phoneDigitsPattern, toE164 } from '@/lib/privacy/pii/phones';
+import { allMatches, createYielder, escapeRegExp, span } from '@/lib/privacy/pii/text';
 
 export const KNOWN_VALUES_DETECTOR_ID = 'core.known-values';
 
@@ -94,8 +94,33 @@ function variant(literal: string): Variant {
  * word ("Will", "May") is matched only capitalised, so the user called Will
  * Hart does not have every "will" in the conversation masked.
  */
+/** Words around a name that are not the name: "Dr. Jane Hart Jr." is Jane Hart. */
+const NAME_SUFFIXES: ReadonlySet<string> = new Set([
+  'jr',
+  'jnr',
+  'sr',
+  'snr',
+  'ii',
+  'iii',
+  'iv',
+  'phd',
+  'md',
+  'esq',
+  'obe',
+  'mbe',
+  'cbe',
+  'kc',
+  'qc',
+]);
+const bare = (word: string) => word.replace(/[.,]+$/, '').toLowerCase();
+
 function personVariants(value: string): Variant[] {
-  const parts = value.trim().split(/\s+/);
+  let parts = value.trim().split(/\s+/);
+  while (parts.length > 1 && TITLES.has(bare(parts[0]))) parts = parts.slice(1);
+  while (parts.length > 1 && NAME_SUFFIXES.has(bare(parts[parts.length - 1]))) {
+    parts = parts.slice(0, -1);
+  }
+  parts = parts.map((p) => p.replace(/,$/, ''));
   const out: Variant[] = [exact(value)];
   if (parts.length < 2) return out;
   const first = parts[0];
@@ -153,8 +178,13 @@ function orgVariants(value: string): Variant[] {
   const lastPart = parts[parts.length - 1].replace(/\./g, '').toLowerCase();
   const hasSuffix = parts.length > 1 && ORG_SUFFIXES.has(lastPart);
   const nameParts = hasSuffix ? parts.slice(0, -1) : parts;
-  if (hasSuffix && nameParts.join(' ').length >= MIN_LENGTH) {
-    out.push(variant(nameParts.join(' ')));
+  const base = nameParts.join(' ');
+  if (hasSuffix && base.length >= MIN_LENGTH) {
+    // One word without its suffix is matched capitalised only: "Next PLC"
+    // without "PLC" is also the word "next", and a company's short name is
+    // written capitalised.
+    const oneWord = nameParts.length === 1;
+    out.push(oneWord ? { ...variant(base), pattern: wordPattern(base, true) } : variant(base));
   }
   const head = nameParts[0];
   const headLower = head.toLowerCase();
@@ -176,14 +206,17 @@ function variantsFor(known: KnownValue): Variant[] {
 }
 
 /**
- * Known phone numbers however they are spaced: every phone-shaped run in the
- * text is normalised and compared, so "+44 7700 900123" finds "07700900123".
+ * Known phone numbers however they are written, so "+44 7700 900123" finds
+ * "07700900123": each number's own digits, with any separators between them.
  */
 function knownPhones(text: string, phones: ReadonlySet<string>): DetectedSpan[] {
-  if (phones.size === 0) return [];
   const out: DetectedSpan[] = [];
-  for (const c of phoneCandidates(text)) {
-    if (phones.has(c.e164)) out.push(span('PHONE', c.start, c.end, KNOWN_VALUE_CONFIDENCE));
+  for (const e164 of phones) {
+    const pattern = phoneDigitsPattern(e164);
+    if (!pattern) continue;
+    for (const m of allMatches(pattern, text)) {
+      out.push(span('PHONE', m.index, m.index + m[0].length, KNOWN_VALUE_CONFIDENCE));
+    }
   }
   return out;
 }
@@ -237,8 +270,16 @@ class NeedleSearch {
   private readonly words: ReadonlySet<string>;
   private readonly positions = new Map<string, number[]>();
 
+  /**
+   * True when lower-casing changed the text's length ("İ" becomes two code
+   * units): positions in `lower` are then not positions in `text`, so every
+   * search runs over the whole text instead of around its needle.
+   */
+  private readonly drifted: boolean;
+
   constructor(private readonly text: string) {
     this.lower = text.toLowerCase();
+    this.drifted = this.lower.length !== text.length;
     this.words = new Set(allMatches(WORD, this.lower).map((m) => m[0]));
   }
 
@@ -256,7 +297,7 @@ class NeedleSearch {
     // Around each occurrence of the rarest word; or the whole text in one
     // pass, when the windows would cover more than it.
     const ranges: [number, number][] =
-      occurrences.length * (2 * reach + needle.length) >= this.text.length
+      this.drifted || occurrences.length * (2 * reach + needle.length) >= this.text.length
         ? [[0, this.text.length]]
         : occurrences.map((at) => [
             Math.max(0, at - reach),
@@ -318,8 +359,9 @@ export function knownValuesDetector(): PrivacyDetector {
     // expired timeout abort the signal, so an overrun rejects (see text.ts).
     detect: async ({ text }, ctx) => {
       ctx.signal.throwIfAborted();
+      const maybeYield = createYielder();
       const spans = findKnownValueSpans(text, ctx.knownValues);
-      await yieldToEventLoop();
+      await maybeYield();
       ctx.signal.throwIfAborted();
       return spans;
     },
