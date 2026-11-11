@@ -424,6 +424,34 @@ describe('a detector that fails under a masking mode (owner ruling, 2026-11-11)'
   });
 });
 
+describe('a call the caller abandons under a masking mode', () => {
+  it('throws the caller’s own abort rather than hand back unscanned arguments, and records nothing', async () => {
+    const caller = new AbortController();
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector({
+        id: 'app.slow',
+        egress: 'in_process',
+        entityTypes: ['PERSON'],
+        detect: (_input, ctx) =>
+          new Promise((_resolve, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')));
+            caller.abort();
+          }),
+      })
+    );
+    const args = [messages(), { model: 'm', signal: caller.signal }];
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage(chatCall(args)).then(
+        () => 'sent',
+        (e: unknown) => e
+      )
+    );
+    expect(result).toBe(caller.signal.reason);
+    expect(result).not.toBeInstanceOf(PrivacyRefusedError);
+    expect(privacySummary(scope)).toBeUndefined();
+  });
+});
+
 describe('an error inside the stage', () => {
   it('refuses the call rather than send it unmasked', async () => {
     masking.fail = true;

@@ -300,6 +300,18 @@ function refuse(
  */
 export async function applyPrivacyStage(call: PrivacyStageCall): Promise<PrivacyStageResult> {
   const unchanged: PrivacyStageResult = { args: call.args };
+  const abandoned = callerSignal(call);
+  /**
+   * The caller gave up. In `detect` the call goes back as it came, and its own
+   * signal cancels it. Under a stricter mode it was never scanned, so it is
+   * not handed back at all: the caller's own abort is thrown, as the provider
+   * would have thrown it. A provider that ignored its signal would otherwise
+   * send it unmasked. Neither counted nor refused, either way.
+   */
+  const cancelled = (mode: PrivacyPolicy['mode']): PrivacyStageResult => {
+    if (modeStrictness(mode) > modeStrictness('detect')) throw abandoned?.reason;
+    return unchanged;
+  };
   let scope: PrivacyScope | undefined;
   let mode: PrivacyPolicy['mode'] | undefined;
   try {
@@ -318,7 +330,6 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
 
     // Resolvers run even when the base is `off`: one may raise it.
     const orgId = orgOf(scope);
-    const abandoned = callerSignal(call);
     const { policy, failures: resolverFailures } = await resolvePrivacyPolicy(
       base,
       {
@@ -331,7 +342,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       abandoned
     );
     // The caller gave up while the resolvers ran: a cancel, not a refusal.
-    if (abandoned?.aborted) return unchanged;
+    if (abandoned?.aborted) return cancelled(policy.mode);
     mode = policy.mode;
     if (resolverFailures.length > 0) {
       throw refuse(
@@ -395,7 +406,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     });
     // The caller gave up: the call is about to be cancelled, so it is neither
     // counted as sent nor refused. Its own signal ends it.
-    if (abandoned?.aborted) return unchanged;
+    if (abandoned?.aborted) return cancelled(policy.mode);
     const failedAdapters = failures.map((f) => f.adapterId);
     // A chat call under a masking mode that could not be fully scanned would
     // go out part-masked: what the failed detector would have found, in
@@ -458,6 +469,8 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     return result;
   } catch (err) {
     if (err instanceof PrivacyRefusedError) throw err;
+    // The caller's own abort, from `cancelled()`: a cancel, not a refusal.
+    if (abandoned?.aborted && err === abandoned.reason) throw err;
     // A bug refuses. Never sends unmasked.
     logger.error('privacy-stage: internal error', undefined, {
       providerSlug: call.providerSlug,
