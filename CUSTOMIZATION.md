@@ -1180,10 +1180,10 @@ lines (#859):
 model Org {
   // …core's fields and back-relations…
 
-  // ── Framework zone: back-relations to framework-*.prisma models. Sunrise never edits below here. ──
+  // ── Framework zone: back-relations to framework-tier models. Sunrise never edits below here. ──
   modules FrameworkModule[]        // a framework fork (e.g. Daybreak) writes here
 
-  // ── App zone: back-relations to app.prisma / app-*.prisma models. Sunrise never edits below here. ──
+  // ── App zone: back-relations to app-tier models. Sunrise never edits below here. ──
   widgets AppWidget[]              // a leaf app writes here
 
   @@map("org")
@@ -1198,10 +1198,13 @@ model Org {
   needs no [ledger](#the-divergence-ledger) row.
 - **Don't reword or move the markers.** They are the unchanged lines the
   merge relies on. `tests/unit/prisma/back-relation-zones.test.ts` fails on a
-  core line below a marker, a fork line outside its zone, or a marker that
-  changed. The tier comes from the file the model is in: `framework-*.prisma`,
-  `app.prisma` / `app-*.prisma`, or core. A subfolder named the same way
-  (`app/`, `framework-modules/`) gives every file under it that tier.
+  core field below a marker, a fork line outside its zone, a marker that
+  changed, or a missing blank line before the `@@` attributes. The tier comes
+  from the file the model is in, by the rule every schema guard shares
+  (`scripts/ci/schema-files.ts`): Sunrise's own files are core; a file or
+  folder named `framework` or `framework-*` is the framework tier; any other
+  file, at any depth, is the app tier. So `billing.prisma` and
+  `app/widgets.prisma` are both your app's.
 - **Adopting the zones** (a fork that carried a block in `Org` or `User` before
   them): the sync that brings them in conflicts once where your block sits. Keep
   both markers and move your block below your tier's marker. Then retire your
@@ -1252,7 +1255,7 @@ an explicit `ON DELETE` — by hand in the generated migration:
 ```sql
 ALTER TABLE "AppUserProfile"
   ADD CONSTRAINT "AppUserProfile_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id")
+  FOREIGN KEY ("userId") REFERENCES "user"("id") -- User is @@map("user")
   ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
 ```
 
@@ -1293,13 +1296,23 @@ its `ON DELETE` action drifts from `CASCADE`. See
 1. Add the `user User @relation(fields: [userId], references: [id], onDelete: …)`
    field, with the same `onDelete` as your hand-written `ON DELETE`, and its
    back-relation in `User`'s zone.
-2. Run `npm run db:migrate:dev` and read the migration before applying it.
-   Prisma's default name for the FK, `AppUserProfile_userId_fkey`, is the one the
-   recipe above wrote by hand, so expect the migration to change or re-create
-   that constraint, not add a second one. Whatever your FK was named, check that
-   the migration leaves exactly one FK on `userId`, with the `ON DELETE` you
-   meant.
-3. Remove the model's probe from `lib/app/db-drift.ts`. Prisma now owns the FK,
+2. Run `npm run db:migrate:dev -- --create-only` and read the migration
+   before applying it. If your FK has Prisma's default name, `AppUserProfile_userId_fkey`
+   as in the recipe above, the migration should drop and re-create it. If it has
+   another name, the migration may add Prisma's beside it, and you add a
+   `DROP CONSTRAINT` for yours to the same migration.
+3. After applying it, confirm exactly one FK is left on the column, with the
+   `ON DELETE` you meant:
+
+   ```sql
+   SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+   WHERE conrelid = '"AppUserProfile"'::regclass AND contype = 'f';
+   ```
+
+   Two FKs with different actions is the failure to catch: a `RESTRICT` one
+   blocks erasure whatever the other says.
+
+4. Only then remove the model's probe from `lib/app/db-drift.ts`. Prisma now owns the FK,
    and the schema-level `onDelete` guard reviews its policy.
 
 Then surface the table through its own API endpoint (`app/api/v1/<resource>/`)

@@ -1314,7 +1314,7 @@ model AppHubUserProfile {
 -- hand-added to the generated migration
 ALTER TABLE "AppHubUserProfile"
   ADD CONSTRAINT "AppHubUserProfile_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id")
+  FOREIGN KEY ("userId") REFERENCES "user"("id") -- User is @@map("user")
   ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
 ```
 
