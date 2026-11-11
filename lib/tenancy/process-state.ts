@@ -441,6 +441,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "One chat turn's hold on paid calls, set when the turn goes on, on a local model, past its agent's reached budget (§110 t-788); the gate reads it for every paid call that turn makes. The handle is on globalThis (#1138) so a capability running in another module graph meets the same hold; the hold is per turn, and a nested turn runs under its own.",
   },
   {
+    file: 'lib/orchestration/privacy/scope.ts',
+    holders: ['globalForPrivacyScope', 'privacyScopeStore'],
+    posture: 'async-local',
+    why: "The LLM privacy layer's scope for one chat turn or workflow execution (§127 t-991): its org, agent, user, known values and the per-type counts its provider calls add up to. The handle is on globalThis (#1138) so a model call a capability makes in another module graph reads the turn's scope, not an ephemeral one; the scope itself is per turn or execution, and each workflow step runs in a child of it.",
+  },
+  {
     file: 'lib/auth/subject-context.ts',
     holders: ['globalForSubject', 'subjectContext'],
     posture: 'async-local',

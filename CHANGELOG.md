@@ -18,6 +18,26 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: the stage on every vendor call, in `detect` mode
+  (§127, t-991).** **Migration:** `AiOrchestrationSettings` gains
+  `privacyMode`, `privacyIgnoredEntityTypes` and
+  `privacyProtectLocalProviders`. An existing install reads `off`, so
+  nothing changes until an operator turns it on in the orchestration
+  settings; a new install starts in `detect`. In `detect`, every `chat`,
+  `chatStream`, `embed` and `embedMany` call through `getProvider` is
+  scanned locally and sent unchanged. Per-type counts, never values, are
+  recorded on the turn's assistant message (`metadata.privacy`) and on each
+  workflow step's trace entry (`privacy`), and shown on both traces. The
+  stage refuses a call with `PrivacyRefusedError` (code `privacy_refused`, a
+  request fault) when it cannot say what the policy is: while
+  `initAppPrivacyAdapters()` or a core adapter has failed (mode `off`
+  included), the stored mode is unreadable, a policy resolver fails, or the
+  stage itself throws. A method added to `LlmProvider` must now be
+  classified in `PRIVACY_COVERAGE` as well as `METHOD_DISPOSITION`. A fork's
+  own long-running work can enter a privacy scope with `withPrivacyScope()`
+  (`lib/orchestration/privacy/scope.ts`) so its calls are counted together.
+  See `.context/privacy/llm-privacy-layer.md`.
+
 - **LLM privacy layer: placeholders (§127, t-990).** Core now registers a
   default token strategy, `core.stateless`, which an app can replace with
   `registerPrivacyTokenStrategy()`. It issues typed, numbered placeholders
