@@ -494,6 +494,7 @@ small and conflict-free.)
 | `lib/app/authorization.ts`                 | who may administer, and over whose data                                | `withAuth` / `withAdminAuth` / the admin layout (server)                                                              |
 | `lib/app/tenant-resolver.ts`               | which org a request is acting in (`registerAppTenantResolver`)         | `proxy.ts` at module load → the `x-sunrise-org` header (proxy runtime)                                                |
 | `lib/app/platform-agents.ts`               | agents every org gets its own instance of (`initAppPlatformAgents`)    | the platform-agent registry → its reconcile (org creation, seed, maintenance tick)                                    |
+| `lib/app/privacy-adapters.ts`              | how the LLM privacy layer finds and replaces personal data             | `getPrivacyAdapters()` → the privacy stage, before every protected provider call (server)                             |
 | `lib/app/provider-credentials.ts`          | where a provider's API key comes from (`initAppProviderCredentials`)   | the provider manager, every time a provider is fetched (server)                                                       |
 
 > **Filling a seam is expected to fail one row of a core test.**

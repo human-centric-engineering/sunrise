@@ -136,6 +136,11 @@ import {
   __resetAppTenancyClassificationForTests,
 } from '@/lib/tenancy/classification';
 import {
+  getPrivacyAdapters,
+  __resetPrivacyAdaptersForTests,
+} from '@/lib/privacy/adapters/registry';
+import { corePrivacyAdapters } from '@/lib/privacy/adapters/core-defaults';
+import {
   DEFAULT_AUTHORIZATION_POLICY,
   getAuthorizationPolicy,
   hasAppAuthorizationPolicy,
@@ -474,6 +479,29 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       listPlatformAgents().forEach((definition, i) =>
         expect(definition).toBe(CORE_PLATFORM_AGENTS[i])
       );
+    },
+  },
+  {
+    seam: 'lib/app/privacy-adapters.ts',
+    risk: 'a stray detector would scan every install\u2019s provider calls, and one with external egress would send their text to another processor; a stray replace would turn a core detector off; a stray resolver or token strategy would change what every protected call sends',
+    assert: () => {
+      __resetPrivacyAdaptersForTests();
+      // The read triggers the lazy init, so this exercises the REAL file. What
+      // is left is exactly Sunrise's own defaults, compared by id against the
+      // core list so the row stays true as core gains adapters.
+      const core = corePrivacyAdapters();
+      const adapters = getPrivacyAdapters();
+      expect(adapters.failure).toBeNull();
+      expect(adapters.detectors.map((r) => r.detector.id)).toEqual(
+        core.detectors.map((d) => d.detector.id)
+      );
+      expect(adapters.detectors.every((r) => r.core)).toBe(true);
+      expect(adapters.tokenStrategy?.id ?? null).toBe(core.tokenStrategy?.id ?? null);
+      expect(adapters.policyResolvers.map((r) => r.id)).toEqual(
+        core.policyResolvers.map((r) => r.id)
+      );
+      expect(adapters.observers.map((o) => o.id)).toEqual(core.observers.map((o) => o.id));
+      expect(adapters.replacedCoreDetectors).toEqual([]);
     },
   },
   {

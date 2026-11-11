@@ -10,6 +10,7 @@ Sunrise includes a GDPR/PECR-compliant cookie consent system that gives users co
 - [API Reference](./api.md) - Hooks, functions, types, and exports
 - [Account Deletion & Right to Erasure](./data-erasure.md) - GDPR Art. 17 erasure, the erase-vs-retain data model, and `eraseUser()`
 - [Subject Access Export](./data-export.md) - GDPR Art. 15/20 access, the source manifest and its coverage guard, and `exportUserData()`
+- [LLM Privacy Layer](./llm-privacy-layer.md) - finding personal data in what Sunrise sends to external LLM providers and replacing it with placeholders; the adapter seam apps extend it through
 - [Anonymous Visitor ID](./visitor-id.md) - privacy posture of the `sunrise_vid` observability cookie (classification, retention, erasure)
 
 ## Architecture
