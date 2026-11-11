@@ -11,6 +11,7 @@
  */
 import { z } from 'zod';
 import {
+  DETECTOR_FAILURE_ACTIONS,
   ENTITY_TYPE_PATTERN,
   PRIVACY_MODES_BY_STRICTNESS,
   type PrivacyMode,
@@ -35,13 +36,26 @@ export function stricterMode(a: PrivacyMode, b: PrivacyMode): PrivacyMode {
  */
 export const privacyPolicyPatchSchema = z
   .object({
-    mode: z.enum(['off', 'detect', 'pseudonymise', 'redact', 'block']),
+    mode: z.enum(PRIVACY_MODES_BY_STRICTNESS),
     ignoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)),
     protectLocalProviders: z.boolean(),
-    onDetectorFailure: z.enum(['fallback', 'block']),
+    onDetectorFailure: z.enum(DETECTOR_FAILURE_ACTIONS),
   })
   .partial()
-  .strict();
+  .strict() satisfies z.ZodType<Partial<PrivacyPolicy>>;
+
+/**
+ * Fails to compile when `PrivacyPolicy` gains or loses a field the schema does
+ * not: `.strict()` would otherwise refuse every resolver that returns
+ * `{ ...current }`, and so every protected call.
+ */
+type SameKeys<A, B> = [keyof A] extends [keyof B]
+  ? [keyof B] extends [keyof A]
+    ? true
+    : false
+  : false;
+const schemaCoversPolicy: SameKeys<z.infer<typeof privacyPolicyPatchSchema>, PrivacyPolicy> = true;
+void schemaCoversPolicy;
 
 export type PrivacyPolicyPatch = z.infer<typeof privacyPolicyPatchSchema>;
 

@@ -91,7 +91,8 @@ describe('loading', () => {
     expect(seam.init).toHaveBeenCalledTimes(1);
     expect(core.adapters).toHaveBeenCalledTimes(1);
     expect(first.detectors.map((r) => r.detector.id)).toEqual(['core.rules', 'acme.extra']);
-    expect(first.failure).toBeNull();
+    expect(first.appInitFailure).toBeNull();
+    expect(first.coreFailure).toBeNull();
   });
 
   it('makes core detectors required and app detectors optional unless they say so', () => {
@@ -155,7 +156,7 @@ describe('a throwing app init', () => {
     expect(adapters.tokenStrategy).toBe(coreStrategy);
     expect(adapters.policyResolvers).toEqual([]);
     expect(adapters.observers).toEqual([]);
-    expect(adapters.failure).toBe("the app's initAppPrivacyAdapters() threw: fork bug");
+    expect(adapters.appInitFailure).toBe("the app's initAppPrivacyAdapters() threw: fork bug");
   });
 
   it('restores what was registered before the init ran, replacements included', () => {
@@ -182,8 +183,80 @@ describe('a throwing app init', () => {
     });
 
     getPrivacyAdapters();
-    expect(getPrivacyAdapters().failure).not.toBeNull();
+    expect(getPrivacyAdapters().appInitFailure).not.toBeNull();
     expect(seam.init).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('replacement logs', () => {
+  beforeEach(() => {
+    core.adapters.mockReturnValue({
+      ...emptyCore(),
+      detectors: [{ detector: detector('core.lists') }],
+      tokenStrategy: strategy('core.numbered'),
+    });
+  });
+
+  it('says nothing was replaced when the init that replaced it was rolled back', () => {
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.names'), { replace: 'core.lists' });
+      registerPrivacyTokenStrategy(strategy('acme.tokens'));
+      throw new Error('fork bug');
+    });
+
+    getPrivacyAdapters();
+
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'privacy-adapters: a core detector was replaced',
+      expect.anything()
+    );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      'privacy-adapters: token strategy replaced',
+      expect.anything()
+    );
+  });
+
+  it('reports each replacement once the init has succeeded', () => {
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.names'), { replace: 'core.lists' });
+      registerPrivacyTokenStrategy(strategy('acme.tokens'));
+    });
+
+    getPrivacyAdapters();
+
+    expect(logger.warn).toHaveBeenCalledWith('privacy-adapters: a core detector was replaced', {
+      replaced: 'core.lists',
+      by: 'acme.names',
+    });
+    expect(logger.info).toHaveBeenCalledWith('privacy-adapters: token strategy replaced', {
+      replaced: 'core.numbered',
+      by: 'acme.tokens',
+    });
+  });
+});
+
+describe('what readers are given', () => {
+  it('cannot be changed: registrations are frozen, so a reader cannot make a required detector optional', () => {
+    core.adapters.mockReturnValue({
+      ...emptyCore(),
+      detectors: [{ detector: detector('core.rules') }],
+    });
+    seam.init.mockImplementation(() =>
+      registerPrivacyPolicyResolver({ id: 'acme.p', resolve: () => ({}) }, { timeoutMs: 250 })
+    );
+
+    const [registration] = getPrivacyAdapters().detectors;
+    const [resolver] = getPrivacyAdapters().policyResolvers;
+
+    expect(() => {
+      (registration as { required: boolean }).required = false;
+    }).toThrow(TypeError);
+    expect(() => {
+      (registration.entityTypes as string[]).push('IBAN');
+    }).toThrow(TypeError);
+    expect(getPrivacyAdapters().detectors[0].required).toBe(true);
+    expect(resolver.timeoutMs).toBe(250);
+    expect(Object.isFrozen(resolver)).toBe(true);
   });
 });
 
@@ -197,8 +270,25 @@ describe('a core adapter that fails to install', () => {
 
     const adapters = getPrivacyAdapters();
 
-    expect(adapters.failure).toMatch(/^a core privacy adapter failed to install: /);
+    expect(adapters.coreFailure).toMatch(/^a core privacy adapter failed to install: /);
+    expect(adapters.appInitFailure).toBeNull();
     expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not hidden when the app init then fails too', () => {
+    core.adapters.mockReturnValue({
+      ...emptyCore(),
+      detectors: [{ detector: detector('rules') }],
+    });
+    // Typically because its replace names the core detector that never installed.
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector(detector('acme.names'), { replace: 'core.rules' })
+    );
+
+    const adapters = getPrivacyAdapters();
+
+    expect(adapters.coreFailure).toMatch(/^a core privacy adapter failed to install: /);
+    expect(adapters.appInitFailure).toMatch(/not a registered core detector/);
   });
 });
 
@@ -244,7 +334,7 @@ describe('replacing a core detector', () => {
 
     const adapters = getPrivacyAdapters();
 
-    expect(adapters.failure).toMatch(
+    expect(adapters.appInitFailure).toMatch(
       /replace names core\.list, which is not a registered core detector/
     );
     expect(adapters.detectors.map((r) => r.detector.id)).toEqual(['core.rules', 'core.lists']);
@@ -256,7 +346,7 @@ describe('replacing a core detector', () => {
       registerPrivacyDetector(detector('acme.second'), { replace: 'acme.first' });
     });
 
-    expect(getPrivacyAdapters().failure).toMatch(/not a registered core detector/);
+    expect(getPrivacyAdapters().appInitFailure).toMatch(/not a registered core detector/);
   });
 });
 
@@ -345,6 +435,11 @@ describe('validation of what an app registers', () => {
       /acme\.one is already registered, and only one strategy is active/,
     ],
     [
+      'a resolver timeout of zero',
+      () => registerPrivacyPolicyResolver({ id: 'acme.p', resolve: () => ({}) }, { timeoutMs: 0 }),
+      /timeoutMs must be between/,
+    ],
+    [
       'a resolver with no resolve',
       () =>
         registerPrivacyPolicyResolver({
@@ -368,7 +463,7 @@ describe('validation of what an app registers', () => {
 
     const adapters = getPrivacyAdapters();
 
-    expect(adapters.failure).toMatch(message);
+    expect(adapters.appInitFailure).toMatch(message);
   });
 
   it('accepts a persistent token strategy that names its tables, displacing core', () => {
@@ -382,7 +477,7 @@ describe('validation of what an app registers', () => {
 
     const adapters = getPrivacyAdapters();
 
-    expect(adapters.failure).toBeNull();
+    expect(adapters.appInitFailure).toBeNull();
     expect(adapters.tokenStrategy).toBe(vault);
   });
 });

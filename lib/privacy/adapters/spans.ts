@@ -84,7 +84,9 @@ export function validateSpans(
     ) {
       throw new MalformedSpansError(adapterId, `span ${i} has an invalid confidence`);
     }
-    spans.push({ type, start, end, confidence, source: adapterId });
+    // Frozen here, once: every later reader (the next detector's priorSpans,
+    // the merge) gets a span nobody can change.
+    spans.push(Object.freeze({ type, start, end, confidence, source: adapterId }));
   }
   return spans;
 }
@@ -96,13 +98,14 @@ export function validateSpans(
  * loser would leave its non-overlapping part unmasked — a leak — while masking
  * the union costs at most a few extra characters of context. The merged span
  * takes the type of its most specific member: highest confidence, then the
- * longest, then the earliest-registered adapter (`rank`, lower first), then
- * the type name, so the result never depends on the order spans arrived in.
+ * longest, then the adapter earliest in run order (`rank`, lower first — core
+ * before app within each egress), then the type name, so the result never
+ * depends on the order spans arrived in.
  *
  * Touching spans (`a.end === b.start`) do not overlap and stay separate.
  *
- * @param rank — the registration position of each adapter id; ids absent from
- *   it rank last.
+ * @param rank — each adapter id's position in run order; ids absent from it
+ *   rank last.
  */
 export function resolveOverlaps(
   spans: readonly AttributedSpan[],

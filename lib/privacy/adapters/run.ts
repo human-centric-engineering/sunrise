@@ -16,7 +16,7 @@
  */
 import { logger } from '@/lib/logging';
 import { tightenPolicy, privacyPolicyPatchSchema } from '@/lib/privacy/adapters/policy';
-import { getPrivacyAdapters, DEFAULT_DETECTOR_TIMEOUT_MS } from '@/lib/privacy/adapters/registry';
+import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
 import { MalformedSpansError, resolveOverlaps, validateSpans } from '@/lib/privacy/adapters/spans';
 import type {
   AttributedSpan,
@@ -131,7 +131,7 @@ export async function runPrivacyDetectors(
   const rank = new Map(detectors.map((r, i) => [r.detector.id, i]));
   const found: AttributedSpan[] = [];
   const failures: AdapterFailure[] = [];
-  const { signal: outer, ignoredEntityTypes: _ignored, ...rest } = ctx;
+  const { signal: outer, ignoredEntityTypes = [], ...rest } = ctx;
   // Frozen once: every detector sees the same known values, and none can
   // change what a later one (or the caller) reads.
   const callCtx = {
@@ -146,13 +146,14 @@ export async function runPrivacyDetectors(
       continue;
     }
     try {
-      const priorSpans = Object.freeze(found.map((s) => Object.freeze({ ...s })));
+      // The spans are frozen by validateSpans; the array is frozen here.
+      const priorSpans = Object.freeze([...found]);
       const result = await withTimeout(
         (signal) => detector.detect({ text }, { ...callCtx, signal, priorSpans }),
         timeoutMs,
         outer
       );
-      found.push(...validateSpans(result, text, detector.id, entityTypes));
+      found.push(...validateSpans(result, text, detector.id, new Set(entityTypes)));
     } catch (err) {
       const reason = classify(err, outer);
       failures.push({ adapterId: detector.id, required, reason });
@@ -166,7 +167,7 @@ export async function runPrivacyDetectors(
     }
   }
 
-  const ignored = new Set(ctx.ignoredEntityTypes ?? []);
+  const ignored = new Set(ignoredEntityTypes);
   const acted = found.filter((s) => !ignored.has(s.type));
   return { spans: resolveOverlaps(acted, rank), failures };
 }
@@ -184,6 +185,8 @@ export interface PolicyResult {
 /**
  * Apply every registered policy resolver to `base`, in registration order.
  * Each sees the policy so far and can only tighten it ({@link tightenPolicy}).
+ * A resolver that returns `undefined` or `null` changes nothing; one that
+ * returns anything else that is not a policy is a failure.
  */
 export async function resolvePrivacyPolicy(
   base: PrivacyPolicy,
@@ -194,7 +197,7 @@ export async function resolvePrivacyPolicy(
   let policy = base;
   const failures: AdapterFailure[] = [];
   const frozenInput = Object.freeze({ ...input });
-  for (const resolver of policyResolvers) {
+  for (const { resolver, timeoutMs } of policyResolvers) {
     try {
       // A copy, frozen: the policy so far is the thing a resolver must not be
       // able to loosen, and mutating the object it was handed would do that.
@@ -203,10 +206,12 @@ export async function resolvePrivacyPolicy(
         ignoredEntityTypes: Object.freeze([...policy.ignoredEntityTypes]),
       });
       const patch: unknown = await withTimeout(
-        () => resolver.resolve(frozenInput, current),
-        DEFAULT_DETECTOR_TIMEOUT_MS,
+        (adapterSignal) => resolver.resolve(frozenInput, current, { signal: adapterSignal }),
+        timeoutMs,
         signal
       );
+      // "No change", however a fork's resolver happens to spell it.
+      if (patch === undefined || patch === null) continue;
       const parsed = privacyPolicyPatchSchema.safeParse(patch);
       if (!parsed.success) {
         failures.push({ adapterId: resolver.id, required: true, reason: 'malformed' });
@@ -231,17 +236,18 @@ export async function resolvePrivacyPolicy(
 
 /**
  * Tell every observer what happened. Fire-and-forget: an observer cannot
- * delay, change or fail the call, and its failure is logged and dropped. Each
- * gets its own frozen copy, so one cannot alter what the next receives.
+ * delay, change or fail the call, and its failure is logged and dropped. They
+ * share one frozen copy, so none can alter what another receives.
  */
 export function notifyPrivacyObservers(event: PrivacyEvent): void {
   const { observers } = getPrivacyAdapters();
+  if (observers.length === 0) return;
+  const copy = Object.freeze({
+    ...event,
+    counts: Object.freeze({ ...event.counts }),
+    failedAdapters: Object.freeze([...event.failedAdapters]),
+  });
   for (const observer of observers) {
-    const copy = Object.freeze({
-      ...event,
-      counts: Object.freeze({ ...event.counts }),
-      failedAdapters: Object.freeze([...event.failedAdapters]),
-    });
     void Promise.resolve()
       .then(() => observer.observe(copy))
       .catch((err: unknown) => {

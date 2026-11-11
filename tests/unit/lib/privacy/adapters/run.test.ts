@@ -363,6 +363,50 @@ describe('resolvePrivacyPolicy', () => {
     ]);
   });
 
+  it('reads undefined and null from a resolver as no change, not as a failure', async () => {
+    seam.init.mockImplementation(() => {
+      registerPrivacyPolicyResolver({ id: 'acme.undefined', resolve: () => undefined });
+      registerPrivacyPolicyResolver({
+        id: 'acme.null',
+        resolve: () => null as unknown as undefined,
+      });
+      registerPrivacyPolicyResolver({
+        id: 'acme.async',
+        resolve: () => Promise.resolve(undefined),
+      });
+    });
+
+    const result = await resolvePrivacyPolicy(POLICY, INPUT);
+
+    expect(result).toEqual({ policy: POLICY, failures: [] });
+  });
+
+  it('gives a resolver a signal that aborts at its own timeout', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    seam.init.mockImplementation(() => {
+      registerPrivacyPolicyResolver(
+        {
+          id: 'acme.db',
+          resolve: (_input, _current, ctx) => {
+            signal = ctx.signal;
+            return new Promise(() => undefined);
+          },
+        },
+        { timeoutMs: 3000 }
+      );
+    });
+
+    const pending = resolvePrivacyPolicy(POLICY, INPUT);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pending;
+
+    expect(signal?.aborted).toBe(true);
+    expect(result.failures).toEqual([{ adapterId: 'acme.db', required: true, reason: 'timeout' }]);
+  });
+
   it('reports a resolver that returns something that is not a policy', async () => {
     seam.init.mockImplementation(() => {
       registerPrivacyPolicyResolver({
@@ -436,7 +480,7 @@ describe('notifyPrivacyObservers', () => {
     expect(notifyPrivacyObservers(EVENT)).toBeUndefined();
   });
 
-  it('gives every observer its own frozen copy and contains a failing one', async () => {
+  it('gives observers a frozen copy and contains a failing one', async () => {
     const received: PrivacyEvent[] = [];
     seam.init.mockImplementation(() => {
       registerPrivacyObserver({

@@ -46,9 +46,10 @@
  *   text and sends the real value.
  * - **Turning a core detector off takes `{ replace: 'core.<id>' }`**, and the
  *   admin page shows it was replaced. There is no other way.
- * - **If this function throws, the layer refuses protected calls** rather than
- *   falling back to core alone, because a required detector or a stricter
- *   policy you registered would otherwise be missing without anyone noticing.
+ * - **If this function throws, the layer refuses every LLM call**, even with
+ *   the mode `off`, rather than falling back to core alone: a required
+ *   detector or a stricter policy you registered would otherwise be missing
+ *   without anyone noticing.
  *
  * Full guide: CUSTOMIZATION.md §4 · .context/privacy/llm-privacy-layer.md
  */

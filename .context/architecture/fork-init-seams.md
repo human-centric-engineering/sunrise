@@ -152,10 +152,14 @@ agent while it is known to have thrown, and the worker fails each agent case as
 looks safe and is not: an app that registered a required service detector, or
 a policy resolver that tightens protection for some agents, would run on core
 alone while its author believed their protection was live. So the registry
-records the failure, `getPrivacyAdapters()` reports it as `failure`, and the
-privacy stage refuses any call it would have protected until the init is
-fixed. Calls with the mode `off` are untouched, so an install that has not
-turned the layer on is not taken down by it.
+records the failure, `getPrivacyAdapters()` reports it as `appInitFailure`,
+and the privacy stage refuses **every** call until the init is fixed, mode
+`off` included: a rolled-back resolver may have been the thing raising the
+mode from `off`, so nothing is known to be safe to send. Only a fork that
+filled the seam can trip this. A core adapter that fails to install is
+reported separately, as `coreFailure`, and refuses only calls whose mode is
+not `off`, so a core bug cannot take down an install that never turned the
+layer on.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

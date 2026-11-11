@@ -13,9 +13,11 @@
  * is the safe answer. Here it is not: an app that registered a required
  * service detector, or a stricter policy resolver, would otherwise run on
  * core alone while believing its own protection was live. So the gate still
- * rolls the registry back, and {@link getPrivacyAdapters} reports `failure`;
- * the privacy stage refuses any call it would have protected while that
- * stands. The same goes for a core adapter that fails to install.
+ * rolls the registry back, and {@link getPrivacyAdapters} reports
+ * `appInitFailure`; the privacy stage then refuses EVERY call, whatever the
+ * mode, because a rolled-back resolver may have been what raised it from
+ * `off`. A core adapter that fails to install is reported as `coreFailure`,
+ * and refuses every call whose mode is not `off`.
  *
  * @see .context/privacy/llm-privacy-layer.md — the binding spec
  */
@@ -63,14 +65,27 @@ export interface DetectorRegistrationOptions {
   replace?: string;
 }
 
-/** A registered detector, as the registry holds it. */
+/** A registered detector, as the registry holds it. Frozen. */
 export interface DetectorRegistration {
-  detector: PrivacyDetector;
-  required: boolean;
-  timeoutMs: number;
-  core: boolean;
-  /** The detector's declared entity types, as a set for validation. */
-  entityTypes: ReadonlySet<EntityType>;
+  readonly detector: PrivacyDetector;
+  readonly required: boolean;
+  readonly timeoutMs: number;
+  readonly core: boolean;
+  /** The detector's declared entity types, copied and frozen at registration. */
+  readonly entityTypes: readonly EntityType[];
+}
+
+/** How a policy resolver is registered. */
+export interface PolicyResolverRegistrationOptions {
+  /** Enforced through the resolver's abort signal. Default {@link DEFAULT_DETECTOR_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/** A registered policy resolver, as the registry holds it. Frozen. */
+export interface PolicyResolverRegistration {
+  readonly resolver: PrivacyPolicyResolver;
+  readonly timeoutMs: number;
+  readonly core: boolean;
 }
 
 /** Everything the privacy layer runs, read in one go. */
@@ -82,34 +97,57 @@ export interface PrivacyAdapterSnapshot {
   detectors: readonly DetectorRegistration[];
   /** `null` until one is registered. */
   tokenStrategy: PrivacyTokenStrategy | null;
-  policyResolvers: readonly PrivacyPolicyResolver[];
+  /** In registration order, core first. */
+  policyResolvers: readonly PolicyResolverRegistration[];
   observers: readonly PrivacyObserver[];
   /** Core detectors an app replaced, by id. */
   replacedCoreDetectors: readonly string[];
   /**
-   * Set when an app's init threw (and was rolled back) or a core adapter
-   * failed to install. While set, the layer cannot vouch for its own
-   * configuration and refuses calls it would have protected.
+   * Set when the app's `initAppPrivacyAdapters()` threw and was rolled back.
+   * The stage refuses EVERY call while it is set, mode `off` included: what
+   * was rolled back may have been the resolver that raised the mode.
    */
-  failure: string | null;
+  appInitFailure: string | null;
+  /**
+   * Set when one of Sunrise's own adapters failed to install. The stage
+   * refuses every call whose mode is not `off`. Kept apart from
+   * `appInitFailure` so neither message hides the other.
+   */
+  coreFailure: string | null;
 }
 
 const detectors = new Map<string, DetectorRegistration>();
-const replacedCore = new Set<string>();
-const policyResolvers = new Map<string, PrivacyPolicyResolver>();
+/** Replaced core detector id → the id of the detector that replaced it. */
+const replacedCore = new Map<string, string>();
+const policyResolvers = new Map<string, PolicyResolverRegistration>();
 const observers = new Map<string, PrivacyObserver>();
 /** One slot, held in a Map so the gate can snapshot and restore it like the rest. */
 const tokenStrategySlot = new Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>();
 
 let coreInstalled = false;
-let failure: string | null = null;
+let coreFailure: string | null = null;
+let appInitFailure: string | null = null;
+/**
+ * True while the app's init is on the stack (from the gate's snapshot to its
+ * verdict). A replacement made then is logged only once the init succeeds, so
+ * a rolled-back one is never reported as having happened.
+ */
+let initRunning = false;
 
 interface Snapshot {
   detectors: Map<string, DetectorRegistration>;
-  replacedCore: Set<string>;
-  policyResolvers: Map<string, PrivacyPolicyResolver>;
+  replacedCore: Map<string, string>;
+  policyResolvers: Map<string, PolicyResolverRegistration>;
   observers: Map<string, PrivacyObserver>;
   tokenStrategySlot: Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>;
+}
+
+function logReplacedCoreDetector(replaced: string, by: string): void {
+  logger.warn('privacy-adapters: a core detector was replaced', { replaced, by });
+}
+
+function logReplacedTokenStrategy(replaced: string, by: string): void {
+  logger.info('privacy-adapters: token strategy replaced', { replaced, by });
 }
 
 const appInit = createAppInitGate<Snapshot>({
@@ -118,23 +156,35 @@ const appInit = createAppInitGate<Snapshot>({
   init: initAppPrivacyAdapters,
   // Every map and set the registry owns, or a rolled-back init leaves an entry
   // behind (platform.seam-design).
-  snapshot: () => ({
-    detectors: new Map(detectors),
-    replacedCore: new Set(replacedCore),
-    policyResolvers: new Map(policyResolvers),
-    observers: new Map(observers),
-    tokenStrategySlot: new Map(tokenStrategySlot),
-  }),
+  snapshot: () => {
+    initRunning = true;
+    return {
+      detectors: new Map(detectors),
+      replacedCore: new Map(replacedCore),
+      policyResolvers: new Map(policyResolvers),
+      observers: new Map(observers),
+      tokenStrategySlot: new Map(tokenStrategySlot),
+    };
+  },
   restore: (before) => {
     restoreMap(detectors, before.detectors);
-    replacedCore.clear();
-    for (const id of before.replacedCore) replacedCore.add(id);
+    restoreMap(replacedCore, before.replacedCore);
     restoreMap(policyResolvers, before.policyResolvers);
     restoreMap(observers, before.observers);
     restoreMap(tokenStrategySlot, before.tokenStrategySlot);
   },
+  onSuccess: (before) => {
+    initRunning = false;
+    for (const [replaced, by] of replacedCore) {
+      if (!before.replacedCore.has(replaced)) logReplacedCoreDetector(replaced, by);
+    }
+    const was = before.tokenStrategySlot.get('active')?.strategy;
+    const now = tokenStrategySlot.get('active')?.strategy;
+    if (was && now && was !== now) logReplacedTokenStrategy(was.id, now.id);
+  },
   onFailure: (err) => {
-    failure = `the app's initAppPrivacyAdapters() threw: ${describeThrown(err)}`;
+    initRunning = false;
+    appInitFailure = `the app's initAppPrivacyAdapters() threw: ${describeThrown(err)}`;
   },
 });
 
@@ -153,10 +203,10 @@ function installCoreOnce(): void {
       addDetector(detector, { required: true, timeoutMs }, true);
     }
     if (core.tokenStrategy) setTokenStrategy(core.tokenStrategy, true);
-    for (const resolver of core.policyResolvers) addPolicyResolver(resolver, true);
+    for (const resolver of core.policyResolvers) addPolicyResolver(resolver, {}, true);
     for (const observer of core.observers) addObserver(observer, true);
   } catch (err) {
-    failure = `a core privacy adapter failed to install: ${describeThrown(err)}`;
+    coreFailure = `a core privacy adapter failed to install: ${describeThrown(err)}`;
     logger.error('privacy-adapters: core adapter install failed', { error: describeThrown(err) });
   }
 }
@@ -218,10 +268,7 @@ function addDetector(
   if (detector.health !== undefined)
     checkFunction(kind, id, 'health', typeof detector.health === 'function');
 
-  const timeoutMs = options.timeoutMs ?? DEFAULT_DETECTOR_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_DETECTOR_TIMEOUT_MS) {
-    throw new Error(`${kind} ${id}: timeoutMs must be between 1 and ${MAX_DETECTOR_TIMEOUT_MS}`);
-  }
+  const timeoutMs = checkTimeout(kind, id, options.timeoutMs);
 
   if (options.replace !== undefined) {
     const target = detectors.get(options.replace);
@@ -231,22 +278,31 @@ function addDetector(
       );
     }
     detectors.delete(options.replace);
-    replacedCore.add(options.replace);
-    logger.warn('privacy-adapters: a core detector was replaced', {
-      replaced: options.replace,
-      by: id,
-    });
+    replacedCore.set(options.replace, id);
+    // Inside the init, onSuccess logs it once the init can no longer roll back.
+    if (!initRunning) logReplacedCoreDetector(options.replace, id);
   }
 
-  detectors.set(id, {
-    detector,
-    // A replacement stands in for a core detector, and core's are required,
-    // so it is required unless the app says otherwise.
-    required: core || (options.required ?? options.replace !== undefined),
-    timeoutMs,
-    core,
-    entityTypes: new Set(detector.entityTypes),
-  });
+  detectors.set(
+    id,
+    Object.freeze({
+      detector,
+      // A replacement stands in for a core detector, and core's are required,
+      // so it is required unless the app says otherwise.
+      required: core || (options.required ?? options.replace !== undefined),
+      timeoutMs,
+      core,
+      entityTypes: Object.freeze([...detector.entityTypes]),
+    })
+  );
+}
+
+function checkTimeout(kind: string, id: string, requested: number | undefined): number {
+  const timeoutMs = requested ?? DEFAULT_DETECTOR_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_DETECTOR_TIMEOUT_MS) {
+    throw new Error(`${kind} ${id}: timeoutMs must be between 1 and ${MAX_DETECTOR_TIMEOUT_MS}`);
+  }
+  return timeoutMs;
 }
 
 function setTokenStrategy(strategy: PrivacyTokenStrategy, core: boolean): void {
@@ -275,21 +331,21 @@ function setTokenStrategy(strategy: PrivacyTokenStrategy, core: boolean): void {
       `${kind} ${id}: ${current.strategy.id} is already registered, and only one strategy is active`
     );
   }
-  if (current) {
-    logger.info('privacy-adapters: token strategy replaced', {
-      replaced: current.strategy.id,
-      by: id,
-    });
-  }
+  if (current && !initRunning) logReplacedTokenStrategy(current.strategy.id, id);
   tokenStrategySlot.set('active', { strategy, core });
 }
 
-function addPolicyResolver(resolver: PrivacyPolicyResolver, core: boolean): void {
+function addPolicyResolver(
+  resolver: PrivacyPolicyResolver,
+  options: PolicyResolverRegistrationOptions,
+  core: boolean
+): void {
   const kind = 'privacy policy resolver';
   const id = checkId(kind, resolver.id, core);
   if (policyResolvers.has(id)) throw new Error(`${kind} ${id}: already registered`);
   checkFunction(kind, id, 'resolve', typeof resolver.resolve === 'function');
-  policyResolvers.set(id, resolver);
+  const timeoutMs = checkTimeout(kind, id, options.timeoutMs);
+  policyResolvers.set(id, Object.freeze({ resolver, timeoutMs, core }));
 }
 
 function addObserver(observer: PrivacyObserver, core: boolean): void {
@@ -309,8 +365,8 @@ function addObserver(observer: PrivacyObserver, core: boolean): void {
  * theirs. Pass `{ replace: 'core.<id>' }` to turn a core detector off in its
  * favour. Throws on a malformed detector, a duplicate id, or a `replace` that
  * names no core detector — inside `initAppPrivacyAdapters()` that rolls back
- * everything the init registered and the layer refuses protected calls until
- * it is fixed.
+ * everything the init registered and the layer refuses every call until it is
+ * fixed.
  */
 export function registerPrivacyDetector(
   detector: PrivacyDetector,
@@ -330,9 +386,12 @@ export function registerPrivacyTokenStrategy(strategy: PrivacyTokenStrategy): vo
 }
 
 /** Add a policy resolver. It can only make a call's policy stricter. */
-export function registerPrivacyPolicyResolver(resolver: PrivacyPolicyResolver): void {
+export function registerPrivacyPolicyResolver(
+  resolver: PrivacyPolicyResolver,
+  options: PolicyResolverRegistrationOptions = {}
+): void {
   installCoreOnce();
-  addPolicyResolver(resolver, false);
+  addPolicyResolver(resolver, options, false);
 }
 
 /** Add an observer. It receives counts and ids per call, never values. */
@@ -365,8 +424,9 @@ export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
     tokenStrategy: tokenStrategySlot.get('active')?.strategy ?? null,
     policyResolvers: [...policyResolvers.values()],
     observers: [...observers.values()],
-    replacedCoreDetectors: [...replacedCore],
-    failure,
+    replacedCoreDetectors: [...replacedCore.keys()],
+    appInitFailure,
+    coreFailure,
   };
 }
 
@@ -381,6 +441,8 @@ export function __resetPrivacyAdaptersForTests(): void {
   observers.clear();
   tokenStrategySlot.clear();
   coreInstalled = false;
-  failure = null;
+  coreFailure = null;
+  appInitFailure = null;
+  initRunning = false;
   appInit.reset();
 }

@@ -78,13 +78,9 @@ export const ENTITY_TYPE_PATTERN = /^[A-Z][A-Z0-9_]{0,39}$/;
  *   exists to govern; the service-adapters feature checks it against the org
  *   provider policy. Until then it is recorded and shown, not enforced.
  */
-export type AdapterEgress = 'in_process' | 'self_hosted' | 'external';
+export const ADAPTER_EGRESS_VALUES = ['in_process', 'self_hosted', 'external'] as const;
 
-export const ADAPTER_EGRESS_VALUES: readonly AdapterEgress[] = [
-  'in_process',
-  'self_hosted',
-  'external',
-];
+export type AdapterEgress = (typeof ADAPTER_EGRESS_VALUES)[number];
 
 /**
  * One match a detector found.
@@ -224,15 +220,20 @@ export type PrivacyTokenStrategy =
  * - `redact` — replace identifiers, never restore.
  * - `block` — refuse a call that contains any.
  */
-export type PrivacyMode = 'off' | 'detect' | 'pseudonymise' | 'redact' | 'block';
-
-export const PRIVACY_MODES_BY_STRICTNESS: readonly PrivacyMode[] = [
+export const PRIVACY_MODES_BY_STRICTNESS = [
   'off',
   'detect',
   'pseudonymise',
   'redact',
   'block',
-];
+] as const;
+
+export type PrivacyMode = (typeof PRIVACY_MODES_BY_STRICTNESS)[number];
+
+/** What to do when a detector fails. `block` is the stricter. */
+export const DETECTOR_FAILURE_ACTIONS = ['fallback', 'block'] as const;
+
+export type DetectorFailureAction = (typeof DETECTOR_FAILURE_ACTIONS)[number];
 
 /** The resolved policy for one call. */
 export interface PrivacyPolicy {
@@ -246,7 +247,7 @@ export interface PrivacyPolicy {
   /** Apply the layer to `isLocal` providers too. Off by default: the text never leaves. */
   protectLocalProviders: boolean;
   /** When a detector fails: carry on with the rest (`fallback`) or refuse the call. */
-  onDetectorFailure: 'fallback' | 'block';
+  onDetectorFailure: DetectorFailureAction;
 }
 
 /** What a resolver is told about the call. */
@@ -266,11 +267,20 @@ export interface PolicyInput {
  */
 export interface PrivacyPolicyResolver {
   id: string;
+  /**
+   * Return the fields to tighten, `{}` or `undefined` for no change. `signal`
+   * aborts at the resolver's timeout or when the call is abandoned; a resolver
+   * that does I/O must honour it.
+   */
   resolve(
     input: PolicyInput,
-    current: PrivacyPolicy
-  ): Partial<PrivacyPolicy> | Promise<Partial<PrivacyPolicy>>;
+    current: PrivacyPolicy,
+    ctx: { signal: AbortSignal }
+  ): PolicyResolution | Promise<PolicyResolution>;
 }
+
+/** What a resolver returns: the fields to tighten, or nothing to change. */
+export type PolicyResolution = Partial<PrivacyPolicy> | undefined;
 
 // ---------------------------------------------------------------------------
 // Observer

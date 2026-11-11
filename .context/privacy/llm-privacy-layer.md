@@ -140,12 +140,15 @@ then runs the app's `initAppPrivacyAdapters()` once through
 `core.`; the registry refuses that prefix from an app.
 
 **A throwing app init is rolled back and remembered.** `getPrivacyAdapters()`
-then reports `failure`, and the stage refuses every call it would have
-protected until the init is fixed. Calls under mode `off` are untouched. This
-is the opposite of the degrade-style seams on purpose: falling back to core
-alone would leave an app's required detector, or its stricter resolver, missing
-with nothing saying so. A core adapter that fails to install is reported the
-same way. See `fork-init-seams.md` § "The seams that do more than degrade".
+then reports `appInitFailure`, and the stage refuses **every** call until the
+init is fixed, mode `off` included, because a rolled-back resolver may have
+been what raised the mode from `off`. This is the opposite of the degrade-style
+seams on purpose: falling back to core alone would leave an app's required
+detector, or its stricter resolver, missing with nothing saying so. A core
+adapter that fails to install is reported separately as `coreFailure` and
+refuses every call whose mode is not `off`; keeping the two apart means neither
+message hides the other. See `fork-init-seams.md` § "The seams that do more
+than degrade".
 
 ### Combining
 
@@ -235,8 +238,8 @@ country ID, say) provided they match the pattern.
 `resolveOverlaps()` merges overlapping spans into **their union**. Keeping only
 the winner would leave the loser's non-overlapping part unmasked; the union costs
 a few characters of context at most. The merged span takes the type of its most
-specific member: highest confidence, then longest, then the earliest-registered
-adapter, then the type name, so the result does not depend on arrival order.
+specific member: highest confidence, then longest, then the adapter earliest in
+run order (core before app within each egress), then the type name, so the result does not depend on arrival order.
 Touching spans (`a.end === b.start`) stay separate.
 
 **Ignored types are dropped before the merge, never after.** A merged span takes
@@ -261,7 +264,8 @@ the adapter ignores the signal.
 | A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded |
 | A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                     |
 | An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                  |
-| The app's init threw, or core failed to install             | `getPrivacyAdapters().failure`         | Refuses every call it would have protected                              |
+| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                 |
+| A core adapter failed to install                            | `coreFailure`                          | Refuses every call whose mode is not `off`                              |
 | A bug throws inside the stage                               | —                                      | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose  |
 | The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted        |
 
@@ -347,6 +351,11 @@ that lowers recall for any type fails CI.
 
 A persistent strategy stores personal data: it declares `persistent: true` and
 names its models in `storesIn`, and the registry refuses one that does not.
+**The registry checks only that the list is non-empty**, not that each model is
+in `SUBJECT_DATA_SOURCES` or the erasure path. A vault table with a `userId`
+foreign key is caught by the export-sources schema test anyway; one keyed by
+something else is not. No persistent strategy exists yet; checking each named
+model against the manifests belongs with the service-adapters feature.
 
 ## Embeddings
 

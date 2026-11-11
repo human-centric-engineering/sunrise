@@ -491,13 +491,14 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // core list so the row stays true as core gains adapters.
       const core = corePrivacyAdapters();
       const adapters = getPrivacyAdapters();
-      expect(adapters.failure).toBeNull();
+      expect(adapters.appInitFailure).toBeNull();
+      expect(adapters.coreFailure).toBeNull();
       expect(adapters.detectors.map((r) => r.detector.id)).toEqual(
         core.detectors.map((d) => d.detector.id)
       );
       expect(adapters.detectors.every((r) => r.core)).toBe(true);
       expect(adapters.tokenStrategy?.id ?? null).toBe(core.tokenStrategy?.id ?? null);
-      expect(adapters.policyResolvers.map((r) => r.id)).toEqual(
+      expect(adapters.policyResolvers.map((r) => r.resolver.id)).toEqual(
         core.policyResolvers.map((r) => r.id)
       );
       expect(adapters.observers.map((o) => o.id)).toEqual(core.observers.map((o) => o.id));
