@@ -331,6 +331,15 @@ export const PATCH = withAdminAuth(
     if (body.defaultMaxCostPerTurnUsd !== undefined) {
       updateData.defaultMaxCostPerTurnUsd = body.defaultMaxCostPerTurnUsd;
     }
+    if (body.privacyMode !== undefined) {
+      updateData.privacyMode = body.privacyMode;
+    }
+    if (body.privacyIgnoredEntityTypes !== undefined) {
+      updateData.privacyIgnoredEntityTypes = body.privacyIgnoredEntityTypes;
+    }
+    if (body.privacyProtectLocalProviders !== undefined) {
+      updateData.privacyProtectLocalProviders = body.privacyProtectLocalProviders;
+    }
     if (body.escalationConfig !== undefined) {
       updateData.escalationConfig =
         body.escalationConfig === null ? Prisma.JsonNull : body.escalationConfig;

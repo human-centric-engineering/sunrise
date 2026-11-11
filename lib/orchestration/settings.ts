@@ -14,6 +14,11 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
+  DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES,
+  parseIgnoredEntityTypes,
+  parsePrivacyMode,
+} from '@/lib/orchestration/privacy/settings-policy';
+import {
   searchConfigSchema,
   storedDefaultModelsSchema,
   escalationConfigSchema,
@@ -111,6 +116,9 @@ export function hydrateSettings(row: {
   stuckExecutionThresholdMins?: number | null;
   defaultMaxCostPerExecutionUsd?: number | null;
   defaultMaxCostPerTurnUsd?: number | null;
+  privacyMode?: string | null;
+  privacyIgnoredEntityTypes?: Prisma.JsonValue | null;
+  privacyProtectLocalProviders?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -189,6 +197,15 @@ export function hydrateSettings(row: {
     stuckExecutionThresholdMins: clampStuckThreshold(row.stuckExecutionThresholdMins),
     defaultMaxCostPerExecutionUsd: row.defaultMaxCostPerExecutionUsd ?? null,
     defaultMaxCostPerTurnUsd: row.defaultMaxCostPerTurnUsd ?? null,
+    // Absent only on a row shape from before the migration (a test fixture,
+    // a hand-built row): read as the upgrade default, `off`. A stored value
+    // that is not a mode reads as `null`, which the privacy stage refuses on.
+    privacyMode: row.privacyMode === undefined ? 'off' : parsePrivacyMode(row.privacyMode),
+    privacyIgnoredEntityTypes:
+      row.privacyIgnoredEntityTypes === undefined
+        ? [...DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES]
+        : parseIgnoredEntityTypes(row.privacyIgnoredEntityTypes),
+    privacyProtectLocalProviders: row.privacyProtectLocalProviders === true,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -356,6 +373,10 @@ async function createDefaultSettingsRow() {
       inputGuardMode: 'log_only',
       outputGuardMode: 'log_only',
       citationGuardMode: 'log_only',
+      // The privacy settings are left to their column defaults on purpose:
+      // a row created now is a new install, and the column default (`detect`)
+      // is what a new install starts in. Rows that existed before the column
+      // were filled with `off` by its migration (§127, spec § Settings).
     },
     update: {},
   });

@@ -95,6 +95,9 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   stuckExecutionThresholdMins: 5,
   defaultMaxCostPerExecutionUsd: null,
   defaultMaxCostPerTurnUsd: null,
+  privacyMode: 'off',
+  privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
+  privacyProtectLocalProviders: false,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };
