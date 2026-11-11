@@ -17,10 +17,16 @@
  *
  * Paths are relative to `prisma/schema`, with `/` separators on every OS.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-export const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
+/** `prisma/schema` under the current directory, read when called. */
+export function schemaDir(): string {
+  return path.join(process.cwd(), 'prisma', 'schema');
+}
+
+/** `prisma/schema` under the directory this process started in. */
+export const SCHEMA_DIR = schemaDir();
 
 /**
  * Sunrise's own schema files. **Everything else in `prisma/schema/` belongs to a
@@ -62,16 +68,18 @@ const FRAMEWORK_NAME = /^framework(-.+)?$/;
 /**
  * The tier that owns `file`, a path relative to `prisma/schema`.
  *
- * Core is exactly `CORE_SCHEMA_FILES`. Any other file is a fork's: the
- * framework tier's when the file or any folder above it is named `framework` or
- * `framework-*` (as `lib/framework/` is), and the app tier's otherwise, so a
- * leaf's `billing.prisma` and `app/widgets.prisma` are both the app's.
+ * Core is exactly `CORE_SCHEMA_FILES`. Any other file is a fork's. It is the
+ * framework tier's when its top-level name, the file itself or the folder it
+ * sits in directly under `prisma/schema`, is `framework` or `framework-*` (as
+ * `lib/framework/` is). Otherwise it is the app tier's, so a leaf's
+ * `billing.prisma`, `app/widgets.prisma` and `app/framework-adapters/x.prisma`
+ * are all the app's. Only the top level decides, so a leaf naming a folder of
+ * its own cannot move its models into its upstream's zone.
  */
 export function schemaTierOf(file: string): SchemaTier {
   const segments = file.split(/[\\/]/);
   if (segments.length === 1 && CORE_SCHEMA_FILES.has(file)) return 'core';
-  const framework = segments.some((s) => FRAMEWORK_NAME.test(s.replace(/\.prisma$/, '')));
-  return framework ? 'framework' : 'app';
+  return FRAMEWORK_NAME.test(segments[0].replace(/\.prisma$/, '')) ? 'framework' : 'app';
 }
 
 /** Whether a schema file belongs to a fork tier rather than to Sunrise. */
@@ -79,11 +87,15 @@ export function isForkOwnedSchemaFile(file: string): boolean {
   return schemaTierOf(file) !== 'core';
 }
 
-/** Every `.prisma` file under `dir`, at any depth, relative to it and sorted. */
-export function listSchemaFiles(dir: string = SCHEMA_DIR): string[] {
+/**
+ * Every `.prisma` file under `dir`, at any depth, relative to it and sorted.
+ * A folder whose name ends in `.prisma` is not a file and is left out, so it
+ * cannot crash every guard with EISDIR.
+ */
+export function listSchemaFiles(dir: string = schemaDir()): string[] {
   return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .filter((file) => file.endsWith('.prisma') && statSync(path.join(dir, file)).isFile())
     .map((file) => file.split(path.sep).join('/'))
-    .filter((file) => file.endsWith('.prisma'))
     .sort();
 }
 
@@ -94,7 +106,7 @@ export interface SchemaFile {
 }
 
 /** Every `.prisma` file under `dir` with its contents, in `listSchemaFiles` order. */
-export function readSchemaFiles(dir: string = SCHEMA_DIR): SchemaFile[] {
+export function readSchemaFiles(dir: string = schemaDir()): SchemaFile[] {
   return listSchemaFiles(dir).map((name) => ({
     name,
     contents: readFileSync(path.join(dir, name), 'utf8'),

@@ -37,6 +37,16 @@ release process.
   with a hand-written foreign key (CUSTOMIZATION.md §5). Existing plain-FK
   models keep working.
 
+- **A guard for `onDelete` on every relation to `User` (t-1009).**
+  `tests/unit/prisma/user-relation-on-delete.test.ts` fails on a `User`
+  relation, in core or any fork schema file, without `onDelete: Cascade`,
+  or `SetNull` on an optional relation. Prisma's default, `Restrict`, makes
+  erasing that user throw `P2003`. The rule was a manual checklist step in
+  `.context/privacy/data-erasure.md` until now. **On the sync that brings
+  this in**, a fork with a `User` relation that leaves `onDelete` out, or uses
+  `Restrict` or `NoAction`, sees it fail and names the relation. Pick the
+  policy the failure describes.
+
 - **An org can be shown its own admin history (t-1005, #1181).**
   `AiAdminAuditLog` gains `actingOrgId`, nullable and indexed: the org whose
   data each action changed. `logAdminAction()` sets it, in order, from a new

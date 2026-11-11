@@ -54,7 +54,6 @@
  * data-layer alternative is Hub idea #21.
  */
 
-import path from 'node:path';
 import ts from 'typescript';
 import { allGlobalConfigModels } from '@/lib/tenancy/classification';
 import { readSchemaFiles, type SchemaFile } from '@/scripts/ci/schema-files';
@@ -96,8 +95,7 @@ function tableNamesOf(models: readonly string[]): string[] {
   const mapped = new Map<string, string>();
   let files: SchemaFile[] = [];
   try {
-    // Read from the cwd at call time, not SCHEMA_DIR, so a test's synthetic cwd applies.
-    files = readSchemaFiles(path.join(process.cwd(), 'prisma', 'schema'));
+    files = readSchemaFiles();
   } catch {
     // No schema directory (a test's synthetic cwd): the guesses below still apply.
   }

@@ -220,15 +220,8 @@ describe('subject-data source manifest', () => {
       expect(isForkOwnedSchemaFile('orchestration-agents.prisma')).toBe(false);
     });
 
-    it('lists every core schema file that is actually on disk', () => {
-      // Drift guard, direction one: a rename or a removal leaves a name here
-      // matching nothing, and the file it used to cover would be silently
-      // reclassified as a fork tier's.
-      const onDisk = new Set(readSchemaFiles().map((file) => file.name));
-      const stale = [...CORE_SCHEMA_FILES].filter((name) => !onDisk.has(name)).sort();
-
-      expect(stale, 'CORE_SCHEMA_FILES names a file that no longer exists').toEqual([]);
-    });
+    // Direction one, every listed core file is on disk, is held once in
+    // tests/unit/scripts/ci/schema-files.test.ts, beside the list.
 
     it('lists whichever file every core-manifest model actually lives in', () => {
       // Drift guard, direction two — the one that matters more, because nothing

@@ -43,9 +43,10 @@
 
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { listSchemaFiles } from '@/scripts/ci/schema-files';
 
 /** Where the platform's schema lives, relative to the repo root. */
 export const SCHEMA_DIR = 'prisma/schema';
@@ -61,12 +62,11 @@ export const SCHEMA_DIR = 'prisma/schema';
  * form this replaces), and a top-level model with a relation into a subfolder
  * failing P1012 against an incomplete copy, reported as a broken schema when
  * the schema is fine.
+ *
+ * The walker is the shared one every schema guard uses, so the format check and
+ * the guards always see the same files.
  */
-export function listSchemaFiles(dir: string): string[] {
-  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
-    .filter((name) => name.endsWith('.prisma'))
-    .sort();
-}
+export { listSchemaFiles };
 
 /**
  * Prisma's own declared entry point, to be run with `process.execPath`.

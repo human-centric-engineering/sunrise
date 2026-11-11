@@ -96,7 +96,13 @@ function zoneViolations(body: string[], tierOf: Map<string, SchemaTier>): string
   }
 
   const firstAttribute = trimmed.findIndex((l) => l.startsWith('@@'));
-  if (firstAttribute > trimmed.indexOf(APP_MARKER) && trimmed[firstAttribute - 1] !== '') {
+  if (firstAttribute !== -1 && firstAttribute < trimmed.indexOf(APP_MARKER)) {
+    problems.push(
+      `\`${trimmed[firstAttribute]}\` sits above the app zone. Block attributes are core's ` +
+        'and go after the app zone, where `prisma format` keeps them; one above or inside a ' +
+        'zone puts a core edit among fork lines.'
+    );
+  } else if (firstAttribute !== -1 && trimmed[firstAttribute - 1] !== '') {
     problems.push(
       'keep one blank line between the app zone and the block attributes (`@@…`). It is ' +
         'the unchanged line that keeps a core attribute edit from conflicting with the ' +
@@ -144,11 +150,15 @@ function zoneViolations(body: string[], tierOf: Map<string, SchemaTier>): string
   return problems;
 }
 
-/** Every model in prisma/schema, at any depth, with the tier of the file that defines it. */
+/**
+ * Every model and view in prisma/schema, at any depth, with the tier of the
+ * file that defines it. A view can carry a relation, so its back-relation is
+ * placed by the same rule as a model's.
+ */
 function readModelTiers(): Map<string, SchemaTier> {
   const tiers = new Map<string, SchemaTier>();
   for (const file of readSchemaFiles()) {
-    for (const m of file.contents.matchAll(/^model (\w+)\s*\{/gm)) {
+    for (const m of file.contents.matchAll(/^(?:model|view) (\w+)\s*\{/gm)) {
       tiers.set(m[1], schemaTierOf(file.name));
     }
   }
@@ -237,6 +247,15 @@ describe('fork back-relation zones on Org and User (sunrise#859)', () => {
       const v = zoneViolations(body, fixtureTiers);
       expect(v).toHaveLength(1);
       expect(v[0]).toContain('keep one blank line between the app zone and the block attributes');
+    });
+
+    it('rejects a block attribute written into a zone', () => {
+      const body = layout([], [], []);
+      body.splice(body.indexOf(`  ${APP_MARKER}`), 0, '  @@index([createdAt])');
+      const v = zoneViolations(body, fixtureTiers);
+      expect(v).toEqual([
+        expect.stringContaining('`@@index([createdAt])` sits above the app zone'),
+      ]);
     });
 
     it('rejects a reworded, missing or reordered marker', () => {

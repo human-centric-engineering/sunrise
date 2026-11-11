@@ -80,7 +80,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
 /** The `@@map` table of each enforced model, read from the schema files. */
 function enforcedTables(): string[] {
-  const text = readSchemaFiles()
+  const text = readSchemaFiles(path.join(REPO_ROOT, 'prisma', 'schema'))
     .map((f) => f.contents)
     .join('\n');
   // Core's enforced models only. A fork's, added through its seam, are its

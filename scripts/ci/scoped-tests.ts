@@ -250,6 +250,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the app zone, and a `.prisma` file reaches no test through the module graph.',
   },
   {
+    path: 'tests/unit/prisma/user-relation-on-delete.test.ts',
+    reason:
+      'parses every `prisma/schema` file off disk, at any depth, and fails naming any ' +
+      'relation to `User` without `onDelete: Cascade`, or `SetNull` on an optional ' +
+      "relation. Prisma's default is Restrict, which makes erasing that user throw. The " +
+      'change that breaks it is a schema edit, and a `.prisma` file reaches no test ' +
+      'through the module graph.',
+  },
+  {
     path: 'tests/unit/prisma/auth-schema-parity.test.ts',
     reason:
       'reads `prisma/schema/auth.prisma` off disk and compares it against ' +
