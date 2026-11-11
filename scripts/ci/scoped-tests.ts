@@ -175,6 +175,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'reaches this test, and an undeclared holder is a cross-org cache at multi.',
   },
   {
+    path: 'tests/unit/lib/privacy/pii/registry-only.test.ts',
+    reason:
+      'scans lib/, app/, components/ and scripts/ for any module other than ' +
+      'core-defaults.ts importing a core privacy detector, and any call to a ' +
+      "detector's detect method outside the runner. A direct caller would skip the timeout, " +
+      'validation and an app’s replacement, and it lives in a module whose ' +
+      'import graph never reaches this test.',
+  },
+  {
     path: 'tests/unit/lib/tenancy/roles.test.ts',
     reason:
       'holds `ORG_ROLES` / `ORG_STATUSES` equal to the generated Prisma ' +
