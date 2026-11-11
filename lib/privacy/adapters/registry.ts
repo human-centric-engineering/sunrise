@@ -358,20 +358,24 @@ function checkTimeout(kind: string, id: string, requested: number | undefined): 
 }
 
 function checkPlaceholderForm(kind: string, id: string, strategy: PrivacyTokenStrategy): void {
-  let placeholder: string;
-  let back: string | undefined;
-  try {
-    const session = strategy.createSession({ scopeId: 'privacy-registry-check' });
-    placeholder = session.placeholderFor('PERSON', 'check');
-    back = session.valueFor(placeholder);
-  } catch (err) {
-    throw new Error(`${kind} ${id}: creating a session failed (${describeThrown(err)})`);
-  }
-  const n = /_(\d+)/.exec(placeholder)?.[1];
-  if (n === undefined || placeholder !== formatPlaceholder('PERSON', n) || back !== 'check') {
-    throw new Error(
-      `${kind} ${id}: placeholders must be written as ${formatPlaceholder('PERSON', 1)} and map back to their value`
-    );
+  // `orgId` is optional in the contract, so a strategy must work without one.
+  // Two types: a detected one, and LITERAL, which masking always uses.
+  for (const type of ['PERSON', LITERAL_TYPE]) {
+    let placeholder: string;
+    let back: string | undefined;
+    try {
+      const session = strategy.createSession({ scopeId: 'privacy-registry-check' });
+      placeholder = session.placeholderFor(type, 'check');
+      back = session.valueFor(placeholder);
+    } catch (err) {
+      throw new Error(`${kind} ${id}: creating a session failed (${describeThrown(err)})`);
+    }
+    const n = /_(\d+)/.exec(placeholder)?.[1];
+    if (n === undefined || placeholder !== formatPlaceholder(type, n) || back !== 'check') {
+      throw new Error(
+        `${kind} ${id}: placeholders must be written as ${formatPlaceholder('PERSON', 1)} and map back to their value`
+      );
+    }
   }
 }
 

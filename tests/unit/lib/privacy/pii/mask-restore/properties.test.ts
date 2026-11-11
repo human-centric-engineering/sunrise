@@ -94,22 +94,24 @@ describe('restore(mask(x)) = x', () => {
     for (let seed = 1; seed <= 2000; seed++) {
       const next = rng(seed);
       const { text: filler } = generate(next);
-      const secrets: string[] = [];
+      // Build the whole text first, then the spans: a span may reach past
+      // its secret on either side, into the text around it.
+      const pieces: string[] = [];
+      const secretAt: { start: number; end: number }[] = [];
       let text = '';
-      const spans: MaskSpan[] = [];
       for (let i = 0; i < 4; i++) {
-        const secret = `QZX${seed}V${i}QZX`;
-        secrets.push(secret);
         const cut = Math.floor(next() * (filler.length + 1));
-        const before = filler.slice(0, cut);
-        text += before;
-        // A span exactly over the secret, or reaching past it either side.
-        const pad = Math.floor(next() * 3);
-        const start = Math.max(0, text.length - pad);
-        text += secret;
-        spans.push({ type: 'PERSON', start, end: Math.min(text.length + pad, text.length) });
-        text += filler.slice(cut);
+        text += filler.slice(0, cut);
+        const secret = `QZX${seed}V${i}QZX`;
+        secretAt.push({ start: text.length, end: text.length + secret.length });
+        text += secret + filler.slice(cut);
+        pieces.push(secret);
       }
+      const spans: MaskSpan[] = secretAt.map(({ start, end }) => ({
+        type: 'PERSON',
+        start: Math.max(0, start - Math.floor(next() * 3)),
+        end: Math.min(text.length, end + Math.floor(next() * 3)),
+      }));
       const session = statelessTokenStrategy().createSession({ scopeId: 's' });
       const masked = maskText(text, spans, session, []).text;
       expect(masked, `seed ${seed}`).not.toMatch(/QZX/);

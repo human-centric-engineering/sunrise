@@ -187,8 +187,9 @@ describe('restoreText', () => {
   it.each([
     ['[PERSON_1]', 'James Hart'],
     ['PERSON_1', 'James Hart'],
-    ['[PERSON_1', 'James Hart'],
-    ['PERSON_1]', 'James Hart'],
+    // A lone bracket is restored around, not swallowed: it may be the model's own.
+    ['[PERSON_1', '[James Hart'],
+    ['PERSON_1]', 'James Hart]'],
     ["[PERSON_1]'s", "James Hart's"],
     ["PERSON_1's", "James Hart's"],
     ['"to":"[EMAIL_1]"', '"to":"j.hart@example.com"'],
@@ -200,6 +201,15 @@ describe('restoreText', () => {
   it('reports a made-up placeholder of a declared fork type when told the type', () => {
     expect(restoreText('Ref [US_SSN_3]', issued()).unresolved).toEqual([]);
     expect(restoreText('Ref [US_SSN_3]', issued(), ['US_SSN']).unresolved).toEqual(['[US_SSN_3]']);
+  });
+
+  it('keeps the brackets of a Markdown link the model wrote around a placeholder', () => {
+    expect(restoreText('[Contact PERSON_1](mailto:EMAIL_1)', issued()).text).toBe(
+      '[Contact James Hart](mailto:j.hart@example.com)'
+    );
+    expect(restoreText('[PERSON_1 and others](https://x.example)', issued()).text).toBe(
+      '[James Hart and others](https://x.example)'
+    );
   });
 
   it('leaves a placeholder it never issued visible, and reports it', () => {
@@ -221,7 +231,7 @@ describe('restoreText', () => {
 });
 
 describe('restoreValue', () => {
-  it('restores strings at any depth of objects and arrays, and leaves keys', () => {
+  it('restores strings at any depth of objects and arrays, keys included', () => {
     const s = newSession();
     s.placeholderFor('PERSON', 'James Hart');
     s.placeholderFor('EMAIL', 'j.hart@example.com');
@@ -229,7 +239,7 @@ describe('restoreValue', () => {
       {
         to: ['[EMAIL_1]', { cc: '[PERSON_1]' }],
         nested: { deeper: [[{ name: 'PERSON_1' }]] },
-        '[PERSON_1]': 'key stays',
+        '[EMAIL_1]': 'cc',
         count: 2,
         ok: true,
         none: null,
@@ -239,12 +249,28 @@ describe('restoreValue', () => {
     expect(r.value).toEqual({
       to: ['j.hart@example.com', { cc: 'James Hart' }],
       nested: { deeper: [[{ name: 'James Hart' }]] },
-      '[PERSON_1]': 'key stays',
+      'j.hart@example.com': 'cc',
       count: 2,
       ok: true,
       none: null,
     });
-    expect(r.restored).toBe(3);
+    expect(r.restored).toBe(4);
+  });
+
+  it('keeps a key whose restored form another key already spells, and reports it', () => {
+    const s = newSession();
+    s.placeholderFor('EMAIL', 'a@example.com');
+    const r = restoreValue({ 'a@example.com': 'to', '[EMAIL_1]': 'cc' }, s);
+    expect(r.value).toEqual({ 'a@example.com': 'to', '[EMAIL_1]': 'cc' });
+    expect(r.unresolved).toEqual(['[EMAIL_1]']);
+  });
+
+  it('keeps a "__proto__" key as an ordinary key', () => {
+    const s = newSession();
+    const parsed: unknown = JSON.parse('{"__proto__": {"polluted": true}}');
+    const r = restoreValue(parsed, s);
+    expect(Object.keys(r.value as object)).toEqual(['__proto__']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it('restores a value containing a quote without breaking anything', () => {
@@ -263,7 +289,7 @@ describe('restoreValue', () => {
 describe('placeholder grammar', () => {
   it('prefers the longer type', () => {
     const pattern = placeholderPattern(['UK', 'UK_NINO']);
-    expect(pattern && [...'[UK_NINO_1]'.matchAll(pattern)].map((m) => m[1])).toEqual(['UK_NINO']);
+    expect([...'[UK_NINO_1]'.matchAll(pattern)].map((m) => m[2])).toEqual(['UK_NINO']);
   });
 
   it("refuses to build a pattern for no types: every caller passes core's", () => {

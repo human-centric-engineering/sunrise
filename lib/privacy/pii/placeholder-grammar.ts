@@ -13,8 +13,8 @@ import { escapeRegExp } from '@/lib/privacy/pii/text';
 import { PLACEHOLDER_FORMAT } from '@/lib/privacy/pii/token-strategy';
 
 /**
- * A pattern for placeholders of `types`, bracketed or not. Group 1 is the
- * type, group 2 the number. Longer types come first so `UK_NINO` is not read
+ * A pattern for placeholders of `types`, bracketed or not. Groups: 1 the
+ * opening bracket, 2 the type, 3 the number, 4 the closing bracket. Longer types come first so `UK_NINO` is not read
  * as `UK` and `NINO_…`. Word boundaries keep `MY_PERSON_1` and `PERSON_12`
  * from matching `PERSON_1`.
  */
@@ -24,7 +24,7 @@ export function placeholderPattern(types: Iterable<string>): RegExp {
   if (list.length === 0) throw new Error('placeholderPattern: no types');
   const open = escapeRegExp(PLACEHOLDER_FORMAT.open);
   const close = escapeRegExp(PLACEHOLDER_FORMAT.close);
-  return new RegExp(`${open}?\\b(${list.join('|')})_(\\d+)\\b${close}?`, 'g');
+  return new RegExp(`(${open})?\\b(${list.join('|')})_(\\d+)\\b(${close})?`, 'g');
 }
 
 /**

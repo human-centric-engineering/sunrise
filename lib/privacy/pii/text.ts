@@ -34,13 +34,19 @@ export function hasContextBefore(
 /**
  * Every match of `pattern` in `text`, each with its index. Runs on a copy of
  * the pattern, so a shared global RegExp's `lastIndex` never carries from one
- * call into the next.
+ * call into the next — unless `owned`: a global pattern the caller built for
+ * this one job (a restore, a mask) runs as it is, saving a compile per call,
+ * and is left with `lastIndex` 0. Never pass `owned` for a shared pattern.
  */
-export function allMatches(pattern: RegExp, text: string): RegExpExecArray[] {
-  const re = new RegExp(
-    pattern.source,
-    pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
-  );
+export function allMatches(pattern: RegExp, text: string, owned = false): RegExpExecArray[] {
+  const re =
+    owned && pattern.global
+      ? pattern
+      : new RegExp(
+          pattern.source,
+          pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
+        );
+  re.lastIndex = 0;
   const out: RegExpExecArray[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -48,6 +54,7 @@ export function allMatches(pattern: RegExp, text: string): RegExpExecArray[] {
     // An empty match would otherwise loop forever.
     if (m[0] === '') re.lastIndex++;
   }
+  re.lastIndex = 0;
   return out;
 }
 
@@ -75,22 +82,6 @@ export function createYielder(sliceMs = 20): () => Promise<void> {
     await yieldToEventLoop();
     last = performance.now();
   };
-}
-
-/**
- * Every match of a global `pattern` the caller owns, without copying it:
- * `allMatches()` copies so a shared pattern's `lastIndex` cannot leak, and a
- * pattern built for one restore or one mask needs no such protection.
- */
-export function ownMatches(pattern: RegExp, text: string): RegExpExecArray[] {
-  const out: RegExpExecArray[] = [];
-  pattern.lastIndex = 0;
-  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
-    out.push(m);
-    if (m[0] === '') pattern.lastIndex++;
-  }
-  pattern.lastIndex = 0;
-  return out;
 }
 
 /** Escape a literal for use inside a RegExp. */

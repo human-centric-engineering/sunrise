@@ -522,7 +522,8 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   counted in `literals`, apart from the per-type detection counts.
 - **A replacement strategy must write `[TYPE_n]`** (`formatPlaceholder()`).
   Restoring, its leniency and look-alike masking all read that grammar. The
-  registry tries a strategy that stores nothing once at registration, and
+  registry tries a strategy that stores nothing once at registration, for
+  `PERSON` and `LITERAL` and without an `orgId` (which is optional), and
   refuses one that writes another form or cannot map a placeholder back.
   A persistent strategy is not tried, because its sessions may write to its
   tables; it must follow the same form. `LITERAL` is reserved: a detector
@@ -532,7 +533,11 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   "[PERSON_2]", reaches the model as written. A property test checks that `restoreText(maskText(x)) = x` over
   generated inputs.
 - **Lenient restore.** `PERSON_1`, `[PERSON_1`, `PERSON_1]`, `[PERSON_1]'s`
-  and a placeholder inside a JSON string all restore. Values go in as they
+  and a placeholder inside a JSON string all restore. Brackets are consumed
+  only as a pair: a lone one is the model's own (`[Contact PERSON_1](mailto:…)`
+  is a Markdown link), so it stays. A link whose text is exactly a
+  placeholder, `[EMAIL_1](mailto:EMAIL_1)`, restores as plain text, because
+  masked user text such as "James Hart(CEO)" looks the same. Values go in as they
   are: restore JSON by parsing it and using `restoreValue()`, never as raw
   text, because a value containing a quote would break it. Only a placeholder the
   session issued is replaced. Any other, such as a made-up `[PERSON_9]` or a
@@ -542,10 +547,14 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   could still become a placeholder: an opening bracket, or a run of capitals
   starting a word. It holds at most 64 characters. It carries one character
   of context, so a stream restores exactly as the whole text would however
-  it was split. Tests split every fixture at every position.
+  it was split. Tests split every fixture at every position. It looks at only
+  the last 65 characters on each chunk. A placeholder-shaped run longer than
+  64 characters is released, so its `unresolved` entry can differ from
+  restoring the whole text; the emitted text does not.
 - **Tool calls.** `restoreValue()` restores every string in the parsed
-  arguments, at any depth, before the dispatcher runs them. It leaves keys
-  alone, and it runs on the parsed object, not on JSON text, so a value
+  arguments, at any depth, keys included, before the dispatcher runs them. A
+  restored key that another key already spells keeps its placeholder and is
+  reported. It runs on the parsed object, not on JSON text, so a value
   containing a quote cannot break the JSON. It returns `unknown`, because the
   capability validates its arguments as it always does. Tool results are
   masked on the next outbound call. Capabilities need not know the layer

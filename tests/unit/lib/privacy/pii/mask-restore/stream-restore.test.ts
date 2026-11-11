@@ -3,7 +3,7 @@
  * position (and at every pair of positions for the shorter ones), and the
  * joined output must equal restoring the whole text at once.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { TokenSession } from '@/lib/privacy/adapters/types';
 import { restoreText } from '@/lib/privacy/pii/restore';
 import { StreamRestorer } from '@/lib/privacy/pii/stream-restore';
@@ -100,19 +100,28 @@ describe('StreamRestorer', () => {
     expect(restorer.flush()).toBe('');
   });
 
-  it('costs about the same per chunk however long the stream has run', () => {
-    // Held-back detection looks only at the end of the text. A ratio, not a
-    // wall-clock limit, so a slow machine does not fail it: ten times the
-    // chunks must cost far less than the hundred times a re-scan would.
-    const time = (chunks: number) => {
-      const restorer = new StreamRestorer(session());
-      const t0 = performance.now();
-      for (let i = 0; i < chunks; i++) restorer.push('some ordinary words here, ');
-      restorer.flush();
-      return performance.now() - t0;
-    };
-    time(500); // warm-up
-    const small = Math.max(time(2_000), 1);
-    expect(time(20_000) / small).toBeLessThan(40);
+  it('looks at no more than the end of the text on each chunk', () => {
+    // Deterministic, not timed: every hold-back check is a pattern ending in
+    // `$`, and none may be handed more than MAX_HOLD + 1 characters however
+    // long the stream has run.
+    const exec = vi.spyOn(RegExp.prototype, 'exec');
+    const restorer = new StreamRestorer(session());
+    for (let i = 0; i < 500; i++) restorer.push('some ordinary words here, AND CAPS ');
+    restorer.flush();
+    const holdChecks = exec.mock.calls.filter((_, k) => {
+      const re: unknown = exec.mock.contexts[k];
+      return re instanceof RegExp && re.source.endsWith('$');
+    });
+    exec.mockRestore();
+    expect(holdChecks.length).toBeGreaterThan(0);
+    expect(Math.max(...holdChecks.map(([input]) => input.length))).toBeLessThanOrEqual(65);
+  });
+
+  it('releases a capitalised run that began in text already emitted', () => {
+    // "xP" is emitted ("P" follows a letter); "ERSON_NAME" continues that
+    // word, so nothing is held back waiting for it to become a placeholder.
+    const restorer = new StreamRestorer(session());
+    expect(restorer.push('xP')).toBe('xP');
+    expect(restorer.push('ERSON_NAME')).toBe('ERSON_NAME');
   });
 });

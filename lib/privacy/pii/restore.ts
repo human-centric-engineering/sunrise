@@ -16,7 +16,7 @@ import {
   type TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
-import { ownMatches } from '@/lib/privacy/pii/text';
+import { allMatches } from '@/lib/privacy/pii/text';
 import { formatPlaceholder, LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 
 export interface RestoreResult {
@@ -84,17 +84,24 @@ export function restoreAfter(
   let at = context.length;
   let restored = 0;
   const unresolved: string[] = [];
-  for (const m of ownMatches(pattern, probe)) {
+  for (const m of allMatches(pattern, probe, true)) {
     if (m.index < context.length) continue;
+    const [whole, open, type, n, close] = m;
     // The number is taken as written: PERSON_01 is not PERSON_1, as reading it
     // so would be a guess.
-    const value = session.valueFor(formatPlaceholder(m[1], m[2]));
+    const value = session.valueFor(formatPlaceholder(type, n));
     if (value === undefined) {
-      unresolved.push(m[0]);
+      unresolved.push(whole);
       continue;
     }
-    out += probe.slice(at, m.index) + value;
-    at = m.index + m[0].length;
+    // Brackets are the placeholder's only as a pair. A lone one is the
+    // model's own — "[Contact PERSON_1](mailto:…)" is a Markdown link — and
+    // stays where it was written.
+    const paired = open !== undefined && close !== undefined;
+    const start = paired ? m.index : m.index + (open?.length ?? 0);
+    const end = paired ? m.index + whole.length : m.index + whole.length - (close?.length ?? 0);
+    out += probe.slice(at, start) + value;
+    at = end;
     restored++;
   }
   out += probe.slice(at);
@@ -110,9 +117,10 @@ export interface ValueRestoreResult {
 
 /**
  * Restore placeholders in every string inside a parsed value: a tool call's
- * arguments, at any depth of objects and arrays. Keys are left alone — a
- * placeholder is a value the model copied, and restoring a key could merge
- * two of them. Run on the parsed arguments, not their JSON text, so a value
+ * arguments, at any depth of objects and arrays, keys included — a map keyed
+ * by an email address is keyed by its placeholder in what the model wrote. A
+ * restored key that another key already spells keeps its placeholder and is
+ * reported, rather than overwriting it. Run on the parsed arguments, not their JSON text, so a value
  * containing a quote cannot break the JSON.
  *
  * Returns `unknown`: the arguments are model output, and the capability
@@ -135,7 +143,30 @@ export function restoreValue(
     }
     if (Array.isArray(v)) return v.map(walk);
     if (v !== null && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, inner]) => [k, walk(inner)]));
+      const out: Record<string, unknown> = {};
+      const entries = Object.entries(v);
+      const written = new Set(entries.map(([k]) => k));
+      for (const [k, inner] of entries) {
+        const r = restoreAfter('', k, session, pattern);
+        // A restored key that another key already spells would overwrite it:
+        // keep the placeholder, and report it.
+        const clash = r.text !== k && written.has(r.text);
+        const key = clash ? k : r.text;
+        if (clash) unresolved.push(k);
+        else {
+          restored += r.restored;
+          unresolved.push(...r.unresolved);
+        }
+        written.add(key);
+        // defineProperty, so a key such as "__proto__" stays an own key.
+        Object.defineProperty(out, key, {
+          value: walk(inner),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return out;
     }
     return v;
   };

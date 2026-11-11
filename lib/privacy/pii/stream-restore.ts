@@ -92,7 +92,10 @@ export class StreamRestorer {
     // placeholder, and is released.
     const truncated = offset > 0;
     if (!tail || (truncated && tail.index === 0)) return text.length;
-    const from = Math.max(0, offset + tail.index - this.before.length);
+    // A run that began in text already emitted continues a word, so it cannot
+    // start a placeholder: release it rather than hold it.
+    if (offset + tail.index < this.before.length) return text.length;
+    const from = offset + tail.index - this.before.length;
     // At most MAX_HOLD characters: a longer run is not a placeholder.
     return text.length - from > MAX_HOLD ? text.length : from;
   }

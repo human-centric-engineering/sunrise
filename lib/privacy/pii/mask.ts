@@ -21,7 +21,7 @@ import {
   type TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { placeholderPattern } from '@/lib/privacy/pii/placeholder-grammar';
-import { ownMatches } from '@/lib/privacy/pii/text';
+import { allMatches } from '@/lib/privacy/pii/text';
 import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 
 /**
@@ -96,7 +96,7 @@ function withLookAlikes(text: string, spans: MaskSpan[], types: Iterable<string>
   let at = 0;
   for (const s of [...spans, { type: LITERAL_TYPE, start: text.length, end: text.length }]) {
     const piece = text.slice(at, s.start);
-    for (const m of ownMatches(pattern, piece)) {
+    for (const m of allMatches(pattern, piece, true)) {
       found.push({ type: LITERAL_TYPE, start: at + m.index, end: at + m.index + m[0].length });
     }
     at = s.end;
@@ -125,8 +125,9 @@ export function maskText(
   const types = new Set<string>([
     ...CORE_ENTITY_TYPES,
     ...declaredTypes,
+    // Every type the session issued is a declared one, so its entries need
+    // not be copied per message to find them.
     ...detected.map((s) => s.type),
-    ...session.entries().map((e) => e.type),
   ]);
   const all = options.escapeLookAlikes === false ? detected : withLookAlikes(text, detected, types);
   const counts: Record<string, number> = {};
