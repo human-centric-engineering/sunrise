@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty `initApp*()` functions, in nineteen of the `lib/app/*` scaffolds Sunrise
+Twenty-one `initApp*()` functions, in twenty of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-two `initApp*` exports are different
+init function at all, and two of the twenty-three `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -69,6 +69,7 @@ Three properties come with it:
 | `org-export.ts`                    | `initAppOrgSources`                  | `lib/privacy/org-source-registry.ts`                        | roll back, log, **remembered** |
 | `owner-classification.ts`          | `initAppOwnerClassification`         | `lib/db/owner-classification.ts`                            | roll back, log, degrade        |
 | `platform-agents.ts`               | `initAppPlatformAgents`              | `lib/orchestration/agents/platform-agents.ts`               | roll back, log, degrade        |
+| `privacy-adapters.ts`              | `initAppPrivacyAdapters`             | `lib/privacy/adapters/registry.ts`                          | roll back, log, **refuse**     |
 | `provider-credentials.ts`          | `initAppProviderCredentials`         | `lib/orchestration/llm/provider-credentials.ts`             | roll back, log, **refuse**     |
 | `tenancy-classification.ts`        | `initAppTenancyClassification`       | `lib/tenancy/classification.ts`                             | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
@@ -146,6 +147,20 @@ would read as a regression (or a pass) that measured nothing. Which agents the
 throwing init meant to hook is unknown, so `evalCaseHooksFor()` throws for every
 agent while it is known to have thrown, and the worker fails each agent case as
 `case_setup_failed`, naming the error.
+
+**`privacy-adapters` refuses.** Falling back to Sunrise's own detectors
+looks safe and is not: an app that registered a required service detector, or
+a policy resolver that tightens protection for some agents, would run on core
+alone while its author believed their protection was live. So the registry
+records the failure, `getPrivacyAdapters()` reports it as `appInitFailure`,
+and the privacy stage refuses **every** call until the init is fixed, mode
+`off` included: a rolled-back resolver may have been the thing raising the
+mode from `off`, so nothing is known to be safe to send. Only a fork that
+filled the seam can trip this. A core adapter that fails to install is
+reported separately, as `coreFailure`, and refuses every call too: the
+install stops at the first throw, so core's own policy resolvers may be among
+what is missing. Core's list is fixed code, so that failure surfaces in CI
+rather than first in production.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

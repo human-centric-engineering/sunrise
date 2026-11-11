@@ -18,6 +18,24 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: the adapter seam (§127, t-988).** A new fork seam,
+  `lib/app/privacy-adapters.ts` → `initAppPrivacyAdapters()`, ships empty.
+  From it an app registers its own privacy adapters with
+  `registerPrivacyDetector()` (with `required`, `timeoutMs` and
+  `replace: 'core.<id>'`), `registerPrivacyTokenStrategy()`,
+  `registerPrivacyPolicyResolver()` and `registerPrivacyObserver()`, all in
+  `lib/privacy/adapters/registry.ts`; the contracts are in
+  `lib/privacy/adapters/types.ts`. Nothing reads the registry yet, so
+  behaviour is unchanged: the privacy stage that uses it lands in later
+  §127 tasks. Unlike most seams, a throwing init is remembered as well as
+  rolled back, and the stage will refuse every call until it is fixed, so
+  an app's required detector or stricter policy cannot go missing
+  silently. Policy resolvers get an abort signal and an optional
+  `timeoutMs`.
+  Offsets in a detector's spans are UTF-16 code units; an adapter wrapping
+  a service that counts code points must convert. See
+  `.context/privacy/llm-privacy-layer.md`.
+
 - **Fork zones for back-relations on `Org` and `User` (t-1009, #859).**
   `Org` (`prisma/schema/tenancy.prisma`) and `User`
   (`prisma/schema/auth.prisma`) now end with two fixed markers, a framework

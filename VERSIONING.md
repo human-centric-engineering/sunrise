@@ -131,6 +131,7 @@ covered by the version contract.
   - `lib/app/owner-classification.ts` → `initAppOwnerClassification()` — a fork's own models in the owner classification: personal (and enforced by the owner layer) or not (primitive: `registerAppOwnerClassification()` in `lib/db/owner-classification.ts`)
   - `lib/app/org-export.ts` → `initAppOrgSources()` — a fork's own tables in the org export (primitive: `registerAppOrgSources()` in `lib/privacy/org-source-registry.ts`)
   - `lib/app/platform-agents.ts` → `initAppPlatformAgents()` — platform agents every org gets an instance of (primitive: `registerPlatformAgent()` in `lib/orchestration/agents/platform-agents.ts`)
+  - `lib/app/privacy-adapters.ts` → `initAppPrivacyAdapters()` — the LLM privacy layer's adapters: detectors, the token strategy, policy resolvers and observers (primitives: `registerPrivacyDetector()` / `registerPrivacyTokenStrategy()` / `registerPrivacyPolicyResolver()` / `registerPrivacyObserver()` in `lib/privacy/adapters/registry.ts`; contracts in `lib/privacy/adapters/types.ts`)
   - `lib/app/provider-credentials.ts` → `initAppProviderCredentials()` — where a provider row's API key comes from, per org (primitive: `registerProviderCredentialResolver()` in `lib/orchestration/llm/provider-credentials.ts`)
   - `lib/app/protected-nav.ts` → `protectedNavItems` — authenticated-area nav
   - `lib/app/protected-routes.ts` → `appProtectedRoutes` — extra route prefixes the proxy protects
