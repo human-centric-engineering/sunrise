@@ -16,7 +16,7 @@ function countsText(counts: Record<string, number>): string {
   const entries = Object.entries(counts)
     .filter(([, n]) => n > 0)
     .sort(([a], [b]) => a.localeCompare(b));
-  return entries.length === 0 ? 'nothing found' : entries.map(([t, n]) => `${n} ${t}`).join(' · ');
+  return entries.length === 0 ? 'nothing' : entries.map(([t, n]) => `${n} ${t}`).join(' · ');
 }
 
 export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
@@ -27,12 +27,12 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
     >
       <ShieldCheck className="h-3 w-3" aria-hidden="true" />
       <span>
-        Privacy ({summary.mode}): {countsText(summary.counts)} in {summary.calls}{' '}
+        Privacy ({summary.mode}): {countsText(summary.counts)} sent across {summary.calls}{' '}
         {summary.calls === 1 ? 'call' : 'calls'}
       </span>
       {summary.embeddingCalls > 0 && (
         <span>
-          · embeddings: {countsText(summary.embeddingCounts)} in {summary.embeddingCalls}{' '}
+          · embeddings: {countsText(summary.embeddingCounts)} sent across {summary.embeddingCalls}{' '}
           {summary.embeddingCalls === 1 ? 'call' : 'calls'}
         </span>
       )}
@@ -42,10 +42,12 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         </span>
       )}
       <FieldHelp title="Privacy counts">
-        What the LLM privacy layer found in the text sent to providers, by type, across every call
-        made here, tools and embeddings included. In detect mode nothing is changed; the values
-        themselves are never stored. Degraded means a detector failed or ran out of time on a call,
-        which went ahead without it.
+        How many times each type of personal data was sent to a provider, across every call made
+        here, tools, embeddings and any agent or chat turn it ran included. Each call resends the
+        conversation so far, so a value that stays in the history is counted on every call that
+        carried it, and again on a retry with another provider. In detect mode nothing is changed;
+        the values themselves are never stored. Degraded means a detector failed or ran out of time
+        on a call, which went ahead without it.
       </FieldHelp>
     </div>
   );

@@ -136,6 +136,7 @@ import { userKnownValues } from '@/lib/orchestration/privacy/known-values';
 import {
   bindPrivacyScope,
   createPrivacyScope,
+  currentPrivacyScope,
   privacySummary,
   withPrivacyScope,
   type PrivacyScope,
@@ -485,13 +486,21 @@ export class StreamingChatHandler {
     // (§127): its agent, its user's known values, and the tally the terminal
     // assistant message records. The conversation and agent are bound once
     // `runInner` has loaded them; no provider call is made before that.
-    const privacyScope = createPrivacyScope({
-      scopeId: request.conversationId
-        ? `conversation:${request.conversationId}`
-        : `turn:${randomUUID()}`,
-      userId: request.userId,
-      loadKnownValues: userKnownValues(request.userId),
-    });
+    //
+    // A turn started inside other work — a workflow step's `judge_call`, or
+    // an agent another agent called — sits inside that work's scope, so its
+    // calls are counted there too, on the step's trace or the outer turn's
+    // message.
+    const privacyScope = createPrivacyScope(
+      {
+        scopeId: request.conversationId
+          ? `conversation:${request.conversationId}`
+          : `turn:${randomUUID()}`,
+        userId: request.userId,
+        loadKnownValues: userKnownValues(request.userId),
+      },
+      currentPrivacyScope()
+    );
     yield* withPaidCallHold(
       hold,
       withPrivacyScope(

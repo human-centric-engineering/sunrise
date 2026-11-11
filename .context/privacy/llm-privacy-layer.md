@@ -124,14 +124,22 @@ The stage runs in `off` and `detect`.
   agent and conversation are bound once loaded. A workflow execution enters
   one in `OrchestrationEngine.execute()`, and each step, sequential or a
   parallel branch, runs in a child of it whose counts also roll up into the
-  execution's. Known values are the user's own name and email
+  execution's. A chat turn started inside other work (a step's `judge_call`,
+  an agent another agent called) is a child of that work's scope, so its
+  calls count there too. Known values are the user's own name and email
   (`userKnownValues()`), loaded once per scope and only when a call is
-  actually scanned, so mode `off` reads nothing.
+  actually scanned, so mode `off` reads nothing; a failed load is logged.
 - **Where counts land.** `privacySummary()` writes per-type counts, the
   number of calls scanned, embedding counts apart, and any degraded call, to
   the terminal assistant message's `metadata.privacy` and to each step's trace
   entry `privacy`. The conversation trace and the execution trace show them
-  (`PrivacyCounts`). Values are never stored.
+  (`PrivacyCounts`). Values are never stored. **A count is how many times a
+  type was sent**, not how many distinct values there were: every call
+  resends the conversation so far, so a value in the history counts once per
+  call that carried it, and again on a failover to another provider, which
+  was sent it too. A call made outside any scope (knowledge ingestion, a
+  background job) records nowhere, so it is not scanned at all unless an
+  observer is registered or the policy says `block` on a detector failure.
 - **Stricter modes.** A chat call whose policy a resolver raises past
   `detect` is refused (`mode_unavailable`) until t-992 can apply it, rather
   than sent unprotected under a mode that promised protection. An embedding
@@ -140,9 +148,10 @@ The stage runs in `off` and `detect`.
   the development corpus, the median pass took 3 ms for 2 KB, 8 ms for 10 KB,
   26 ms for 50 KB, 112 ms for 200 KB and about 1 s for 2 MB, with no detector
   timing out. A tool loop re-scans the history on each call. The pass is
-  bounded by `PRIVACY_PASS_DEADLINE_MS` (5 s); detectors still running when it
-  fires are reported `aborted`, and the call goes ahead degraded unless the
-  policy says `block`.
+  bounded by `PRIVACY_PASS_DEADLINE_MS` (5 s), and by the call's own
+  `options.signal` when the caller abandons it; detectors still running then
+  are reported `aborted`, and the call goes ahead degraded unless the policy
+  says `block`.
 
 ### Modes
 

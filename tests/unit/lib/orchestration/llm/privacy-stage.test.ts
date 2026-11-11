@@ -239,6 +239,54 @@ describe('mode detect', () => {
     const args = [messages(), { model: 'm' }];
     await expect(applyPrivacyStage(chatCall(args))).resolves.toBe(args);
   });
+
+  it('skips the scan when nothing would read it: no scope, no observer, no block policy', async () => {
+    const detect = vi.fn(async () => []);
+    const detector = {
+      id: 'app.spy',
+      egress: 'in_process' as const,
+      entityTypes: ['PERSON'],
+      detect,
+    };
+    seam.init.mockImplementation(() => registerPrivacyDetector(detector));
+    await applyPrivacyStage(chatCall());
+    expect(detect).not.toHaveBeenCalled();
+
+    // An observer, or a scope, is something that reads it.
+    __resetPrivacyAdaptersForTests();
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector);
+      registerPrivacyObserver({ id: 'app.obs', observe: () => undefined });
+    });
+    await applyPrivacyStage(chatCall());
+    expect(detect).toHaveBeenCalledTimes(1);
+    __resetPrivacyAdaptersForTests();
+    seam.init.mockImplementation(() => registerPrivacyDetector(detector));
+    await inScope(() => applyPrivacyStage(chatCall()));
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops the scan when the caller abandons the call, marking it degraded', async () => {
+    const caller = new AbortController();
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector({
+        id: 'app.slow',
+        egress: 'in_process',
+        entityTypes: ['PERSON'],
+        detect: (_input, ctx) =>
+          new Promise((_resolve, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')));
+            caller.abort();
+          }),
+      })
+    );
+    const started = Date.now();
+    const { scope } = await inScope(() =>
+      applyPrivacyStage(chatCall([messages(), { model: 'm', signal: caller.signal }]))
+    );
+    expect(Date.now() - started).toBeLessThan(900);
+    expect(privacySummary(scope)).toMatchObject({ degraded: true, failedAdapters: ['app.slow'] });
+  });
 });
 
 describe('local providers', () => {

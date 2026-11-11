@@ -258,8 +258,13 @@ const { SpendCapExceededError, assertWithinSpendCaps } =
   await import('@/lib/orchestration/llm/spend-caps');
 const { ProviderCallRefusedError } = await import('@/lib/orchestration/llm/provider-eligibility');
 const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
-const { currentPrivacyScope, recordPrivacyCall } =
-  await import('@/lib/orchestration/privacy/scope');
+const {
+  createPrivacyScope,
+  currentPrivacyScope,
+  privacySummary,
+  recordPrivacyCall,
+  runInPrivacyScope,
+} = await import('@/lib/orchestration/privacy/scope');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
   await import('@/lib/orchestration/chat/guard-floor');
@@ -9022,6 +9027,24 @@ describe('the privacy scope a chat turn enters', () => {
           embeddingCounts: {},
         },
       }),
+    ]);
+  });
+
+  it("counts a turn run inside other work — a workflow step's judge — in that work's scope too", async () => {
+    const { provider, seen } = recordingProvider({ EMAIL: 1 });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    const step = createPrivacyScope({ scopeId: 'execution:e1:step:judge' });
+
+    await runInPrivacyScope(step, () => collect(streamChat(baseRequest)));
+
+    expect(seen[0]).not.toBe(step);
+    expect(seen[0]?.parent).toBe(step);
+    expect(privacySummary(step)).toMatchObject({ calls: 1, counts: { EMAIL: 1 } });
+    expect(assistantMetadata()).toEqual([
+      expect.objectContaining({ privacy: expect.objectContaining({ counts: { EMAIL: 1 } }) }),
     ]);
   });
 

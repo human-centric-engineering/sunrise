@@ -3,6 +3,12 @@
  * what it tallies, and that it is one store per process.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { logger } from '@/lib/logging';
 import {
   bindPrivacyScope,
   childPrivacyScope,
@@ -177,6 +183,11 @@ describe('known values', () => {
     });
     await expect(knownValuesOf(rejects)).resolves.toEqual(statics);
     await expect(knownValuesOf(throws)).resolves.toEqual(statics);
+    // Said, with the scope and the error's class only: tier B ran short.
+    expect(logger.warn).toHaveBeenCalledWith('privacy-scope: known values could not be loaded', {
+      scopeId: 'r',
+      errorName: 'Error',
+    });
   });
 
   it('freezes what it holds, so no detector can change what the next one reads', async () => {

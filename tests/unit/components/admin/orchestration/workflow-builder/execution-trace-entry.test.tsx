@@ -1292,7 +1292,7 @@ describe('ExecutionTraceEntryRow — privacy counts (§127, t-991)', () => {
       />
     );
     expect(screen.getByTestId('privacy-counts')).toHaveTextContent(
-      'Privacy (detect): 2 EMAIL in 1 call'
+      'Privacy (detect): 2 EMAIL sent across 1 call'
     );
   });
 

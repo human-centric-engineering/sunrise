@@ -1150,6 +1150,31 @@ export interface SystemInstructionsHistoryEntry {
 // ============================================================================
 
 /**
+ * What the LLM privacy layer found across the provider calls of one chat
+ * turn or one workflow step (§127). Counts by entity type and adapter ids
+ * only: never a value, never request text. Absent when the layer scanned no
+ * call (mode `off`, or only local providers).
+ *
+ * @see .context/privacy/llm-privacy-layer.md
+ */
+export interface PrivacySummary {
+  /** The strictest mode any scanned call ran under. */
+  mode: PrivacyMode;
+  /** Chat calls scanned. */
+  calls: number;
+  /** Detections in chat calls, by entity type. */
+  counts: Record<string, number>;
+  /** Embedding calls scanned. Counted, never altered. */
+  embeddingCalls: number;
+  /** Detections in embedding inputs, by entity type. */
+  embeddingCounts: Record<string, number>;
+  /** A detector failed on a call and the call went ahead without it. */
+  degraded?: true;
+  /** Ids of the adapters that failed. */
+  failedAdapters?: string[];
+}
+
+/**
  * Diagnostic metadata stored in `AiMessage.metadata`.
  *
  * Shape varies by message role:
@@ -1167,31 +1192,6 @@ export interface SystemInstructionsHistoryEntry {
  * All fields are optional and JSON-serializable so the object can be
  * written directly to a Prisma `Json` column without runtime conversion.
  */
-/**
- * What the LLM privacy layer found across the provider calls of one chat
- * turn or one workflow step (§127). Counts by entity type and adapter ids
- * only: never a value, never request text. Absent when the layer scanned no
- * call (mode `off`, or only local providers).
- *
- * @see .context/privacy/llm-privacy-layer.md
- */
-export interface PrivacySummary {
-  /** The strictest mode any scanned call ran under. */
-  mode: 'off' | 'detect' | 'pseudonymise' | 'redact' | 'block';
-  /** Chat calls scanned. */
-  calls: number;
-  /** Detections in chat calls, by entity type. */
-  counts: Record<string, number>;
-  /** Embedding calls scanned. Counted, never altered. */
-  embeddingCalls: number;
-  /** Detections in embedding inputs, by entity type. */
-  embeddingCounts: Record<string, number>;
-  /** A detector failed on a call and the call went ahead without it. */
-  degraded?: true;
-  /** Ids of the adapters that failed. */
-  failedAdapters?: string[];
-}
-
 export interface MessageMetadata {
   // Present on assistant messages
   tokenUsage?: TokenUsage;

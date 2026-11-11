@@ -154,12 +154,26 @@ function countByType(spans: readonly { type: EntityType }[]): Record<EntityType,
   return counts;
 }
 
-function scopeFor(): PrivacyScope {
+function scopeFor(): { scope: PrivacyScope; ephemeral: boolean } {
   const scope = currentPrivacyScope();
-  if (scope) return scope;
+  if (scope) return { scope, ephemeral: false };
   // No turn or execution entered a scope: an ephemeral one for this call.
   // Its policy is the global one, never looser than a scoped call's.
-  return createPrivacyScope({ scopeId: `ephemeral:${randomUUID()}` });
+  return {
+    scope: createPrivacyScope({ scopeId: `ephemeral:${randomUUID()}` }),
+    ephemeral: true,
+  };
+}
+
+/**
+ * The call's own cancellation signal, if it has one: `options.signal` on a
+ * chat call. An abandoned call stops the detection pass with it.
+ */
+function callerSignal(call: PrivacyStageCall): AbortSignal | undefined {
+  if (call.coverage !== 'full') return undefined;
+  const options = call.args[1];
+  if (options === null || typeof options !== 'object' || !('signal' in options)) return undefined;
+  return options.signal instanceof AbortSignal ? options.signal : undefined;
 }
 
 /** The org the call is for: the scope's, else the tenant context's. */
@@ -229,7 +243,8 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       privacyIgnoredEntityTypes: settings.privacyIgnoredEntityTypes ?? [],
       privacyProtectLocalProviders: settings.privacyProtectLocalProviders === true,
     });
-    scope = scopeFor();
+    const scoped = scopeFor();
+    scope = scoped.scope;
     if (base === null) throw refuse('settings_unreadable', call, scope, mode);
 
     // Resolvers run even when the base is `off`: one may raise it.
@@ -270,13 +285,27 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       throw refuse('mode_unavailable', call, scope, mode);
     }
 
+    // Nothing would read the result: an unscoped call (knowledge ingestion,
+    // a background job) records nowhere, no observer is listening, and only a
+    // `block` policy would act on a detector failing. In `detect` no call is
+    // altered, so the scan would be work for nothing.
+    if (
+      scoped.ephemeral &&
+      adapters.observers.length === 0 &&
+      policy.onDetectorFailure !== 'block'
+    ) {
+      return call.args;
+    }
+
+    const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+    const abandoned = callerSignal(call);
     const { spans, failures } = await runPrivacyDetectors(outboundText(call), {
       scopeId: scope.scopeId,
       ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
       knownValues: await knownValuesOf(scope),
       ignoredEntityTypes: policy.ignoredEntityTypes,
-      signal: AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS),
+      signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
     });
     const failedAdapters = failures.map((f) => f.adapterId);
     if (failures.some((f) => f.required) && policy.onDetectorFailure === 'block') {

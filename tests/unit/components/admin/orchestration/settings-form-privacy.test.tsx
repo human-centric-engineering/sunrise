@@ -131,6 +131,36 @@ describe('the LLM privacy card', () => {
     expect(body).not.toHaveProperty('privacyMode');
   });
 
+  it.each(['Off', 'Detect (count only)'])(
+    'replaces a stored mode it cannot show with %s, and drops the warning once saved',
+    async (label) => {
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={settings({ privacyMode: 'pseudonymise' })} />);
+      await user.click(screen.getByRole('combobox', { name: /privacy mode/i }));
+      await user.click(within(screen.getByRole('listbox')).getByRole('option', { name: label }));
+      const body = await save();
+      expect(body.privacyMode).toBe(label === 'Off' ? 'off' : 'detect');
+      await waitFor(() =>
+        expect(within(card()).queryByText(/not\s+one this page can show/i)).toBeNull()
+      );
+    }
+  );
+
+  it('offers keeping the stored mode, and a kept mode is not sent', async () => {
+    const user = userEvent.setup();
+    render(<SettingsForm initialSettings={settings({ privacyMode: 'pseudonymise' })} />);
+    await user.click(screen.getByRole('combobox', { name: /privacy mode/i }));
+    await user.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Off' }));
+    await user.click(screen.getByRole('combobox', { name: /privacy mode/i }));
+    await user.click(
+      within(screen.getByRole('listbox')).getByRole('option', {
+        name: /keep the stored mode \(pseudonymise\)/i,
+      })
+    );
+    const body = await save();
+    expect(body).not.toHaveProperty('privacyMode');
+  });
+
   it('replaces a stored mode it cannot show when the admin chooses one', async () => {
     const user = userEvent.setup();
     render(<SettingsForm initialSettings={settings({ privacyMode: null })} />);

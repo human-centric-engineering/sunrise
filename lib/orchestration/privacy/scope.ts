@@ -25,6 +25,7 @@
  * @see .context/privacy/llm-privacy-layer.md — *How a call flows*
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { logger } from '@/lib/logging';
 import type { EntityType, KnownValue, PrivacyMode } from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import type { PrivacySummary } from '@/types/orchestration';
@@ -154,7 +155,14 @@ export async function knownValuesOf(scope: PrivacyScope): Promise<readonly Known
   // `.then(loader)` so a loader that throws synchronously is caught too.
   owner.loaded ??= Promise.resolve()
     .then(loader)
-    .then(frozenValues, (): readonly KnownValue[] => []);
+    .then(frozenValues, (err: unknown): readonly KnownValue[] => {
+      // Tier B finds less without them; say so, with no value in the line.
+      logger.warn('privacy-scope: known values could not be loaded', {
+        scopeId: owner.scopeId,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return [];
+    });
   const loaded = await owner.loaded;
   return loaded.length === 0 ? scope.knownValues : [...scope.knownValues, ...loaded];
 }

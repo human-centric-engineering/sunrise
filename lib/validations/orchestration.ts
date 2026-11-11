@@ -36,7 +36,7 @@ import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 import { validateScopes, listValidApiKeyScopes } from '@/lib/auth/api-key-scopes';
 import { jurisdictionSchema, orgIdSchema } from '@/lib/validations/tenancy';
-import { ENTITY_TYPE_PATTERN } from '@/lib/privacy/adapters/types';
+import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 import { PRIVACY_MODES_AVAILABLE } from '@/lib/orchestration/privacy/settings-policy';
 
 // ============================================================================
@@ -3460,7 +3460,7 @@ export const workflowScopeSchema = capabilityScopeSchema;
  * never hides the rest of the row.
  */
 export const privacySummarySchema = z.object({
-  mode: z.enum(['off', 'detect', 'pseudonymise', 'redact', 'block']),
+  mode: z.enum(PRIVACY_MODES_BY_STRICTNESS),
   calls: z.number().int().nonnegative(),
   counts: z.record(z.string(), z.number().int().nonnegative()),
   embeddingCalls: z.number().int().nonnegative(),

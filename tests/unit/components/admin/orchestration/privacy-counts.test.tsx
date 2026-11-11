@@ -22,8 +22,8 @@ describe('PrivacyCounts', () => {
   it('shows the mode, the counts by type and the calls, chat and embeddings apart', () => {
     render(<PrivacyCounts summary={SUMMARY} />);
     const line = screen.getByTestId('privacy-counts');
-    expect(line).toHaveTextContent('Privacy (detect): 1 EMAIL · 3 PERSON in 2 calls');
-    expect(line).toHaveTextContent('embeddings: 1 PERSON in 1 call');
+    expect(line).toHaveTextContent('Privacy (detect): 1 EMAIL · 3 PERSON sent across 2 calls');
+    expect(line).toHaveTextContent('embeddings: 1 PERSON sent across 1 call');
     expect(line).not.toHaveTextContent('degraded');
   });
 
@@ -42,7 +42,7 @@ describe('PrivacyCounts', () => {
       />
     );
     const line = screen.getByTestId('privacy-counts');
-    expect(line).toHaveTextContent('nothing found in 1 call');
+    expect(line).toHaveTextContent('nothing sent across 1 call');
     expect(line).toHaveTextContent('degraded (core.lists)');
     expect(line).not.toHaveTextContent('embeddings');
   });

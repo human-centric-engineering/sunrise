@@ -147,6 +147,13 @@ const PRIVACY_MODE_LABELS: Record<(typeof PRIVACY_MODES_AVAILABLE)[number], stri
   detect: 'Detect (count only)',
 };
 
+/**
+ * The select's value when the stored mode is one this page cannot show (a
+ * mode a later version wrote, or an unreadable one): keep it. Every real mode
+ * is then a choice the admin made, Off included, and is sent.
+ */
+const KEEP_STORED_MODE = 'keep';
+
 function isAvailablePrivacyMode(
   v: string | null | undefined
 ): v is (typeof PRIVACY_MODES_AVAILABLE)[number] {
@@ -167,7 +174,7 @@ const settingsFormSchema = z
     citationGuardMode: z.enum(GUARD_MODES),
     // LLM privacy (§127). The page holds the types to PROTECT; the API stores
     // the ones to leave alone.
-    privacyMode: z.enum(PRIVACY_MODES_AVAILABLE),
+    privacyMode: z.enum([...PRIVACY_MODES_AVAILABLE, KEEP_STORED_MODE]),
     privacyProtectedTypes: z.array(z.string()),
     privacyProtectLocalProviders: z.boolean(),
     // Limits
@@ -416,7 +423,14 @@ export function SettingsForm({
     clearErrors('escalationEnabled');
   };
 
-  const storedPrivacyModeShown = isAvailablePrivacyMode(initialSettings.privacyMode);
+  // Whether the stored mode is one the select can show. A save that writes a
+  // mode makes it so; new settings from the page start the question again.
+  const [storedPrivacyModeShown, setStoredPrivacyModeShown] = React.useState(() =>
+    isAvailablePrivacyMode(initialSettings.privacyMode)
+  );
+  React.useEffect(() => {
+    setStoredPrivacyModeShown(isAvailablePrivacyMode(initialSettings.privacyMode));
+  }, [initialSettings.privacyMode]);
 
   const defaults: SettingsFormData = React.useMemo(
     () => ({
@@ -425,7 +439,7 @@ export function SettingsForm({
       citationGuardMode: guardModeToForm(initialSettings.citationGuardMode),
       privacyMode: isAvailablePrivacyMode(initialSettings.privacyMode)
         ? initialSettings.privacyMode
-        : 'off',
+        : KEEP_STORED_MODE,
       privacyProtectedTypes: CORE_ENTITY_TYPES.filter(
         (t) => !(initialSettings.privacyIgnoredEntityTypes ?? []).includes(t)
       ),
@@ -466,7 +480,7 @@ export function SettingsForm({
     watch,
     clearErrors,
     setError,
-    formState: { errors, isDirty, isSubmitting, dirtyFields },
+    formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: defaults,
@@ -530,11 +544,9 @@ export function SettingsForm({
             outputGuardMode: guardModeToApi(values.outputGuardMode),
             citationGuardMode: guardModeToApi(values.citationGuardMode),
             // A stored mode this page cannot show (one a later version wrote,
-            // or an unreadable one) is sent only if the admin chose another:
-            // a save of anything else must not quietly replace it.
-            ...(storedPrivacyModeShown || dirtyFields.privacyMode
-              ? { privacyMode: values.privacyMode }
-              : {}),
+            // or an unreadable one) is kept unless the admin chose a mode: a
+            // save of anything else must not quietly replace it.
+            ...(values.privacyMode !== KEEP_STORED_MODE ? { privacyMode: values.privacyMode } : {}),
             privacyIgnoredEntityTypes: ignoredTypesFrom(
               values.privacyProtectedTypes,
               initialSettings.privacyIgnoredEntityTypes ?? []
@@ -568,6 +580,7 @@ export function SettingsForm({
         }
       );
       reset(undefined, { keepValues: true });
+      if (values.privacyMode !== KEEP_STORED_MODE) setStoredPrivacyModeShown(true);
       setSavedEmails([...escalationEmails]);
       // Only a save that wrote the list moves this page's copy of it on. One
       // that left it alone returns the list's current version, which may
@@ -740,6 +753,12 @@ export function SettingsForm({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {!storedPrivacyModeShown && (
+                      <SelectItem value={KEEP_STORED_MODE}>
+                        Keep the stored mode
+                        {initialSettings.privacyMode ? ` (${initialSettings.privacyMode})` : ''}
+                      </SelectItem>
+                    )}
                     {PRIVACY_MODES_AVAILABLE.map((mode) => (
                       <SelectItem key={mode} value={mode}>
                         {PRIVACY_MODE_LABELS[mode]}
@@ -753,8 +772,7 @@ export function SettingsForm({
               <p className="text-xs text-amber-700 dark:text-amber-400">
                 The stored mode
                 {initialSettings.privacyMode ? ` (${initialSettings.privacyMode})` : ''} is not one
-                this page can show. Choose a mode to replace it; saving anything else leaves it as
-                it is.
+                this page can show. Choose a mode to replace it, or keep it to leave it as it is.
               </p>
             )}
           </div>
