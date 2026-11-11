@@ -26,9 +26,8 @@
  * verdicts, same table names. That is what lets consumers read the roster off
  * the client with no hand-written list.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { readSchemaFiles as readSchemaSources, schemaTierOf } from '@/scripts/ci/schema-files';
 
 /**
  * A real generated client on a pool that never connects — `_runtimeDataModel`
@@ -79,11 +78,11 @@ function forkSystemWithOrgId(
   return systemWithOrgId.filter((model) => registrations.get(model)?.cls === 'system');
 }
 
-/** Every model declared in a framework tier's schema files (`framework-*.prisma`). */
+/** Every model declared in a framework tier's schema files (see `schemaTierOf`). */
 function frameworkModels(): Set<string> {
   const names = new Set<string>();
-  for (const file of readdirSync(SCHEMA_DIR).filter((f) => /^framework-.*\.prisma$/.test(f))) {
-    for (const line of readFileSync(path.join(SCHEMA_DIR, file), 'utf8').split('\n')) {
+  for (const file of readSchemaSources().filter((f) => schemaTierOf(f.name) === 'framework')) {
+    for (const line of file.contents.split('\n')) {
       const open = MODEL_OPEN.exec(line);
       if (open) names.add(open[1]);
     }
@@ -117,7 +116,6 @@ function userOwnedWithoutUserLink(
   });
 }
 
-const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
 const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
 /** The column, by name and exactly — `Session.activeOrgId` is a pointer, not ownership. */
 const ORG_ID_FIELD = /^\s*orgId\s+String/;
@@ -155,9 +153,7 @@ function scanSchema(files: string[]): Map<string, SchemaModel> {
 }
 
 function readSchemaFiles(): string[] {
-  return readdirSync(SCHEMA_DIR)
-    .filter((file) => file.endsWith('.prisma'))
-    .map((name) => readFileSync(path.join(SCHEMA_DIR, name), 'utf8'));
+  return readSchemaSources().map((file) => file.contents);
 }
 
 /** Build a runtime-data-model fixture from the schema scan — the same shape the client exposes. */

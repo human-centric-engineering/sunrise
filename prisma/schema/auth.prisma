@@ -113,9 +113,9 @@ model User {
   // `user` relation puts its back-relation line below its tier's marker, and
   // Sunrise's own lines stay above them. Every such relation still needs its
   // `onDelete` (CLAUDE.md, "New `User` relations").
-  // ── Framework zone: back-relations to framework-*.prisma models. Sunrise never edits below here. ──
+  // ── Framework zone: back-relations to framework-tier models. Sunrise never edits below here. ──
 
-  // ── App zone: back-relations to app.prisma / app-*.prisma models. Sunrise never edits below here. ──
+  // ── App zone: back-relations to app-tier models. Sunrise never edits below here. ──
 
   @@unique([email])
   @@index([role])

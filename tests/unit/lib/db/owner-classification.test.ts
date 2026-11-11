@@ -50,9 +50,8 @@ import {
   personalModels,
   __resetAppOwnerClassificationForTests,
 } from '@/lib/db/owner-classification';
+import { CORE_SCHEMA_FILES, SCHEMA_DIR } from '@/scripts/ci/schema-files';
 import {
-  CORE_SCHEMA_FILES,
-  SCHEMA_DIR,
   auditOwnerClassification,
   fullSchema,
   parseSchema,

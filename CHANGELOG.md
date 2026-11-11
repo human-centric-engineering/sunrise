@@ -114,6 +114,20 @@ release process.
 
 ### Fixed
 
+- **Schema guards read every subfolder of `prisma/schema` and share one tier
+  rule (t-1009).** Prisma loads `.prisma` files from subfolders, but the
+  schema guards (subject-access and org export, stale writers, tenancy and
+  owner classification, and others) only read the top level. A fork model in
+  `prisma/schema/app/widgets.prisma` was never checked, so a `User`-linked
+  model there could ship missing from the subject-access export with the
+  suite green. Every guard now reads the schema through
+  `scripts/ci/schema-files.ts`, which walks the whole tree and holds the one
+  tier rule: `CORE_SCHEMA_FILES` is core, a file or folder named `framework`
+  or `framework-*` is the framework tier, and any other file is the app tier.
+  **On the sync that brings this in**, a fork keeping models in a subfolder may
+  see the export, org-export or classification guards fail on them for the
+  first time. Declare them the way the failure says.
+
 - **A capability sees the org its chat turn runs in, at `TENANCY_MODE=multi`
   (#1138).** The capability dispatcher is one `globalThis` instance, built in
   the instrumentation module graph at boot, but the tenant context it read was

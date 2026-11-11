@@ -94,9 +94,9 @@ model Org {
   // below its own marker and Sunrise never edits below the first one, so a
   // sync merges without a conflict and filling a zone is not a divergence.
   // tests/unit/prisma/back-relation-zones.test.ts holds the layout.
-  // ── Framework zone: back-relations to framework-*.prisma models. Sunrise never edits below here. ──
+  // ── Framework zone: back-relations to framework-tier models. Sunrise never edits below here. ──
 
-  // ── App zone: back-relations to app.prisma / app-*.prisma models. Sunrise never edits below here. ──
+  // ── App zone: back-relations to app-tier models. Sunrise never edits below here. ──
 
   @@map("org")
 }

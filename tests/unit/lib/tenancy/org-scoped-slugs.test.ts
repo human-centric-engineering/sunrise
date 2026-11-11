@@ -18,18 +18,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { readSchemaFiles } from '@/scripts/ci/schema-files';
 
-const SCHEMA_DIR = path.join(process.cwd(), 'prisma/schema');
 const MIGRATIONS = path.join(process.cwd(), 'prisma/migrations');
 
 /** `AiWorkflow.slug` is the inbound URL segment and stays global (journal decision). */
 const GLOBAL_SLUG_BY_DECISION = new Set(['AiWorkflow']);
 
 function schemaText(): string {
-  return readdirSync(SCHEMA_DIR)
-    .filter((f) => f.endsWith('.prisma'))
-    .sort()
-    .map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8'))
+  return readSchemaFiles()
+    .map((f) => f.contents)
     .join('\n');
 }
 

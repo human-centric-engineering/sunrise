@@ -4,27 +4,8 @@
  * (`owner-classification-fork.test.ts`). Pure: it parses schema text and
  * reports what a classification gets wrong against it.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import type { OwnerClassification } from '@/lib/db/owner-classification';
-
-export const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
-
-/** Sunrise's own schema files — the same allowlist, for the same reason, as export-sources.test.ts. */
-export const CORE_SCHEMA_FILES = new Set([
-  'auth.prisma',
-  'base.prisma',
-  'mcp.prisma',
-  'orchestration-agents.prisma',
-  'orchestration-conversations.prisma',
-  'orchestration-evaluation.prisma',
-  'orchestration-knowledge.prisma',
-  'orchestration-ops.prisma',
-  'orchestration-providers.prisma',
-  'orchestration-workflows.prisma',
-  'tenancy.prisma',
-  'platform.prisma',
-]);
+import { readSchemaFiles, schemaTierOf } from '@/scripts/ci/schema-files';
 
 const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
 /** `field Target? @relation(... fields: [a, b] ...)` — a relation whose key lives on this model. */
@@ -278,12 +259,11 @@ export function auditOwnerClassification(
  * models (`User`, a personal parent), so the two are audited as one schema.
  */
 export function fullSchema(): Map<string, SchemaModel> {
-  const files = readdirSync(SCHEMA_DIR).filter((f) => f.endsWith('.prisma'));
-  return parseSchema(files.map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8')));
+  return parseSchema(readSchemaFiles().map((f) => f.contents));
 }
 
 /** Sunrise's own schema files only — for fixtures that add a synthetic fork tier. */
 export function coreSchema(): Map<string, SchemaModel> {
-  const files = readdirSync(SCHEMA_DIR).filter((f) => CORE_SCHEMA_FILES.has(f));
-  return parseSchema(files.map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8')));
+  const core = readSchemaFiles().filter((f) => schemaTierOf(f.name) === 'core');
+  return parseSchema(core.map((f) => f.contents));
 }

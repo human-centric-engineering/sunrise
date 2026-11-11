@@ -54,10 +54,10 @@
  * data-layer alternative is Hub idea #21.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { allGlobalConfigModels } from '@/lib/tenancy/classification';
+import { readSchemaFiles, type SchemaFile } from '@/scripts/ci/schema-files';
 
 /** Writes that only add a row; an `upsert` joins them when its `update` is `{}`. */
 const CREATE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn']);
@@ -94,16 +94,16 @@ export const MAP_ATTRIBUTE = /^\s*@@map\(\s*(?:name:\s*)?"(\w+)"/;
  */
 function tableNamesOf(models: readonly string[]): string[] {
   const mapped = new Map<string, string>();
-  const dir = path.join(process.cwd(), 'prisma', 'schema');
-  let files: string[] = [];
+  let files: SchemaFile[] = [];
   try {
-    files = readdirSync(dir).filter((file) => file.endsWith('.prisma'));
+    // Read from the cwd at call time, not SCHEMA_DIR, so a test's synthetic cwd applies.
+    files = readSchemaFiles(path.join(process.cwd(), 'prisma', 'schema'));
   } catch {
     // No schema directory (a test's synthetic cwd): the guesses below still apply.
   }
   for (const file of files) {
     let current: string | null = null;
-    for (const line of readFileSync(path.join(dir, file), 'utf8').split('\n')) {
+    for (const line of file.contents.split('\n')) {
       const open = /^model\s+(\w+)\s*\{/.exec(line);
       if (open) current = open[1];
       else if (line.startsWith('}')) current = null;
