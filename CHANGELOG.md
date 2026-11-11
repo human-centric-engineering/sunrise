@@ -27,10 +27,12 @@ release process.
   and capabilities see real values and need no change. `redact` masks and
   never restores. `block` refuses a chat call with anything found, with the
   new request-fault code `privacy_blocked` (`PRIVACY_BLOCKED`, apart from
-  `privacy_refused` because the reader can fix it). Under `pseudonymise` and
-  `redact` a required detector that fails or times out refuses the call
-  rather than send it part-masked, and a call made outside any scope is
-  always scanned. **Migration:** `AiOrchestrationSettings` gains
+  `privacy_refused` because the reader can fix it). Under `pseudonymise`,
+  `redact` and `block` a required detector that fails or times out refuses
+  a chat call rather than send what it missed, and a chat call made outside
+  any scope is always scanned (an unscoped embedding call no longer is,
+  when nothing reads the result). A call abandoned mid-scan under those
+  modes throws `ProviderError` code `aborted`. **Migration:** `AiOrchestrationSettings` gains
   `privacyEmbeddingsPolicy` (`allow`, the default for every row, or
   `local_only`): under `local_only` and a mode of `pseudonymise` or
   stricter, an embedding call to a provider not marked local is refused
