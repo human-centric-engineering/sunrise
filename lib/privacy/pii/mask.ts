@@ -63,26 +63,26 @@ function merged(spans: readonly MaskSpan[]): MaskSpan[] {
  * spans — each on its own, because in the output each piece sits between
  * placeholders, whose brackets end a word. So a span that cuts through
  * "[LITERAL_1]" leaves "[LITERAL_1" to be caught, and "PERSON_1x" with "x"
- * detected, which becomes "PERSON_1[ORG_1]", is caught too. Masking a
- * look-alike makes new pieces, so the search repeats until it finds none.
+ * detected, which becomes "PERSON_1[ORG_1]", is caught too.
+ *
+ * One pass is enough: masking a look-alike cannot make another. A look-alike
+ * begins after a non-word character and ends at a word boundary, so the text
+ * either side of one already had a boundary there, and the search saw it.
+ * The round-trip property test runs this over generated inputs.
  */
 function withLookAlikes(text: string, spans: MaskSpan[], types: Iterable<string>): MaskSpan[] {
   const pattern = placeholderPattern([...types, LITERAL_TYPE]);
   if (!pattern) return spans;
-  let current = spans;
-  for (;;) {
-    const found: MaskSpan[] = [];
-    let at = 0;
-    for (const s of [...current, { type: LITERAL_TYPE, start: text.length, end: text.length }]) {
-      const piece = text.slice(at, s.start);
-      for (const m of allMatches(pattern, piece)) {
-        found.push({ type: LITERAL_TYPE, start: at + m.index, end: at + m.index + m[0].length });
-      }
-      at = s.end;
+  const found: MaskSpan[] = [];
+  let at = 0;
+  for (const s of [...spans, { type: LITERAL_TYPE, start: text.length, end: text.length }]) {
+    const piece = text.slice(at, s.start);
+    for (const m of allMatches(pattern, piece)) {
+      found.push({ type: LITERAL_TYPE, start: at + m.index, end: at + m.index + m[0].length });
     }
-    if (found.length === 0) return current;
-    current = merged([...current, ...found]);
+    at = s.end;
   }
+  return merged([...spans, ...found]);
 }
 
 /** Replace every span in `text` with its placeholder from `session`. */
