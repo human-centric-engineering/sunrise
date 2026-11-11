@@ -10,12 +10,15 @@
  * CI, and by `/pre-pr`) calls this once, then probes everything you register
  * here alongside Sunrise's own A-series objects.
  *
- * Register the Prisma-*unmodelled* objects your app adds — most commonly the
- * hand-written FK constraint behind a satellite `User` table (see
- * CUSTOMIZATION.md §5). Prisma can't see those, so without a probe a future
- * `migrate dev` can silently drop one and CI won't notice.
+ * Register the Prisma-*unmodelled* objects your app adds: custom indexes,
+ * CHECK constraints, and the hand-written FK behind a satellite `User` table
+ * built with the plain-FK pattern (CUSTOMIZATION.md §5). Prisma can't see
+ * those, so without a probe a future `migrate dev` can silently drop one and
+ * CI won't notice. A new satellite table uses a Prisma `@relation` instead,
+ * with its back-relation in `User`'s app zone; Prisma models that FK, so it
+ * needs no probe here.
  *
- * Example (the satellite-FK recipe from CUSTOMIZATION.md §5):
+ * Example (a plain-FK satellite table from CUSTOMIZATION.md §5):
  *
  *   import {
  *     registerAppDriftProbe,

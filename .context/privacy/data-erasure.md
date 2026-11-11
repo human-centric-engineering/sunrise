@@ -1520,4 +1520,4 @@ demoted or deleted). See
 - [Security Overview](../security/overview.md) — application security
 - [Auth Security](../auth/security.md) — sessions, password handling
 - `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
-- [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#4-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`
+- [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#5-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`

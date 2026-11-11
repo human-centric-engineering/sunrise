@@ -1099,8 +1099,9 @@ them alongside Sunrise's own. Prisma can't see these objects, so without a probe
 future `migrate dev` can silently `DROP` one and nothing notices. Fill in the
 auto-wired `registerAppDriftProbes()` with `registerAppDriftProbe({ … })` calls
 using the probe factories from `@/lib/db/drift-probes` (`indexExists`,
-`constraintExists`, `columnExists`). The single most common case is the satellite
-`User`-table FK below in §5. Full reference:
+`constraintExists`, `columnExists`). A model related to `User` or `Org` with a
+Prisma `@relation` needs none, since Prisma models its FK. The usual case is a
+model built before the zones with the plain-FK pattern in §5. Full reference:
 [`.context/database/prisma-unmodelled-objects.md`](./.context/database/prisma-unmodelled-objects.md#forks-registering-your-own-unmodelled-objects).
 
 **Per-user scheduled runs — ownership lives in `scope`, not `userId`.** A
@@ -1199,7 +1200,8 @@ model Org {
   merge relies on. `tests/unit/prisma/back-relation-zones.test.ts` fails on a
   core line below a marker, a fork line outside its zone, or a marker that
   changed. The tier comes from the file the model is in: `framework-*.prisma`,
-  `app.prisma` / `app-*.prisma`, or core.
+  `app.prisma` / `app-*.prisma`, or core. A subfolder named the same way
+  (`app/`, `framework-modules/`) gives every file under it that tier.
 - **Adopting the zones** (a fork that carried a block in `Org` or `User` before
   them): the sync that brings them in conflicts once where your block sits. Keep
   both markers and move your block below your tier's marker. Then retire your
@@ -1285,6 +1287,20 @@ export function registerAppDriftProbes(): void {
 `npm run db:drift-check` (CI + `/pre-pr`) now fails if the FK is dropped **or** if
 its `ON DELETE` action drifts from `CASCADE`. See
 [`.context/database/prisma-unmodelled-objects.md`](./.context/database/prisma-unmodelled-objects.md#forks-registering-your-own-unmodelled-objects).
+
+**Moving a plain-FK model to the relation** is optional, and done once per model:
+
+1. Add the `user User @relation(fields: [userId], references: [id], onDelete: …)`
+   field, with the same `onDelete` as your hand-written `ON DELETE`, and its
+   back-relation in `User`'s zone.
+2. Run `npm run db:migrate:dev` and read the migration before applying it.
+   Prisma's default name for the FK, `AppUserProfile_userId_fkey`, is the one the
+   recipe above wrote by hand, so expect the migration to change or re-create
+   that constraint, not add a second one. Whatever your FK was named, check that
+   the migration leaves exactly one FK on `userId`, with the `ON DELETE` you
+   meant.
+3. Remove the model's probe from `lib/app/db-drift.ts`. Prisma now owns the FK,
+   and the schema-level `onDelete` guard reviews its policy.
 
 Then surface the table through its own API endpoint (`app/api/v1/<resource>/`)
 and types — don't widen `User`'s public shape for app-only fields.
