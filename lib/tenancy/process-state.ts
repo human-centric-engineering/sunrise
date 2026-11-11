@@ -750,6 +750,21 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'Erasure cleanup callbacks a fork registers from code, on globalThis because instrumentation.ts and the request path are separate module graphs.',
   },
   {
+    file: 'lib/privacy/adapters/registry.ts',
+    holders: [
+      'detectors',
+      'replacedCore',
+      'policyResolvers',
+      'observers',
+      'tokenStrategySlot',
+      'coreInstalled',
+      'failure',
+      'appInit',
+    ],
+    posture: 'no-tenant-data',
+    why: "Privacy adapters registered from code, core's and the fork's, plus the install latch and the init's failure message. Per-call state (a token session's placeholder map, the privacy scope) is created per call and never held here; a persistent token strategy keeps its map in its own tables.",
+  },
+  {
     file: 'lib/privacy/subject-source-registry.ts',
     holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',
