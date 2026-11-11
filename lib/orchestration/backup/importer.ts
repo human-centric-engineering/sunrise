@@ -893,6 +893,9 @@ async function importParsed(
           ...(s.privacyProtectLocalProviders !== undefined
             ? { privacyProtectLocalProviders: s.privacyProtectLocalProviders }
             : {}),
+          ...(s.privacyEmbeddingsPolicy !== undefined
+            ? { privacyEmbeddingsPolicy: s.privacyEmbeddingsPolicy }
+            : {}),
         };
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },

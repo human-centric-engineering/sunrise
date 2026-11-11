@@ -46,6 +46,13 @@ export interface PrivacyTally {
   degraded: boolean;
   /** Ids of the adapters that failed, across the calls. */
   failedAdapters: Set<string>;
+  /** Why the stage refused calls here, if it did: `PrivacyRefusalReason` values. */
+  refusals: Set<string>;
+  /**
+   * Placeholder-shaped text in replies that no call's session issued (a model
+   * inventing `[PERSON_9]`), left visible as written. `pseudonymise` only.
+   */
+  unresolved: number;
 }
 
 export interface PrivacyScopeInit {
@@ -93,6 +100,8 @@ function emptyTally(): PrivacyTally {
     mode: null,
     degraded: false,
     failedAdapters: new Set(),
+    refusals: new Set(),
+    unresolved: 0,
   };
 }
 
@@ -231,9 +240,7 @@ function addTo(tally: PrivacyTally, record: PrivacyCallRecord): void {
   if (record.kind === 'chat') tally.calls++;
   else tally.embeddingCalls++;
   for (const [type, n] of Object.entries(record.counts)) target[type] = (target[type] ?? 0) + n;
-  if (tally.mode === null || modeStrictness(record.mode) > modeStrictness(tally.mode)) {
-    tally.mode = record.mode;
-  }
+  raiseMode(tally, record.mode);
   if (record.degraded) tally.degraded = true;
   for (const id of record.failedAdapters) tally.failedAdapters.add(id);
 }
@@ -241,6 +248,30 @@ function addTo(tally: PrivacyTally, record: PrivacyCallRecord): void {
 /** Add one call's result to `scope` and every scope it sits inside. */
 export function recordPrivacyCall(scope: PrivacyScope, record: PrivacyCallRecord): void {
   for (let s: PrivacyScope | undefined = scope; s; s = s.parent) addTo(s.tally, record);
+}
+
+function raiseMode(tally: PrivacyTally, mode: PrivacyMode): void {
+  if (tally.mode === null || modeStrictness(mode) > modeStrictness(tally.mode)) {
+    tally.mode = mode;
+  }
+}
+
+/**
+ * Record that the stage refused a call here, and why, in `scope` and every
+ * scope it sits inside: the trace shows the admin the reason. The reason is a
+ * `PrivacyRefusalReason`; never request text.
+ */
+export function recordPrivacyRefusal(scope: PrivacyScope, mode: PrivacyMode, reason: string): void {
+  for (let s: PrivacyScope | undefined = scope; s; s = s.parent) {
+    raiseMode(s.tally, mode);
+    s.tally.refusals.add(reason);
+  }
+}
+
+/** Record placeholders a reply wrote that no session issued, left visible. */
+export function recordPrivacyUnresolved(scope: PrivacyScope, unresolved: number): void {
+  if (unresolved <= 0) return;
+  for (let s: PrivacyScope | undefined = scope; s; s = s.parent) s.tally.unresolved += unresolved;
 }
 
 /**
@@ -259,5 +290,7 @@ export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined 
     embeddingCounts: { ...t.embeddingCounts },
     ...(t.degraded ? { degraded: true } : {}),
     ...(t.failedAdapters.size > 0 ? { failedAdapters: [...t.failedAdapters].sort() } : {}),
+    ...(t.refusals.size > 0 ? { refused: [...t.refusals].sort() } : {}),
+    ...(t.unresolved > 0 ? { unresolved: t.unresolved } : {}),
   };
 }

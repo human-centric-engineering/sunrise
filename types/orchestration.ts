@@ -6,6 +6,7 @@
  * evaluation, cost tracking, and provider configuration.
  */
 
+import type { EmbeddingsPolicy } from '@/lib/orchestration/privacy/settings-policy';
 import type { PrivacyMode } from '@/lib/privacy/adapters/types';
 import type {
   User,
@@ -1172,6 +1173,10 @@ export interface PrivacySummary {
   degraded?: true;
   /** Ids of the adapters that failed. */
   failedAdapters?: string[];
+  /** Why the stage refused calls, when it did (`PrivacyRefusalReason` values). Nothing was sent on those. */
+  refused?: string[];
+  /** Placeholders a reply wrote that no call issued, left visible as written. */
+  unresolved?: number;
 }
 
 /**
@@ -1735,6 +1740,11 @@ export interface OrchestrationSettings {
   privacyIgnoredEntityTypes: string[];
   /** Apply the privacy layer to `isLocal` providers too. */
   privacyProtectLocalProviders: boolean;
+  /**
+   * `allow` or `local_only`: under `pseudonymise` or stricter, `local_only`
+   * refuses an embedding call to a provider that is not `isLocal`.
+   */
+  privacyEmbeddingsPolicy: EmbeddingsPolicy;
   createdAt: Date;
   updatedAt: Date;
 }

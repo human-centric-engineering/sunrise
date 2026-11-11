@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
   parseIgnoredEntityTypes,
+  parseEmbeddingsPolicy,
   parsePrivacyMode,
 } from '@/lib/orchestration/privacy/settings-policy';
 import {
@@ -209,6 +210,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
           privacyMode: true,
           privacyIgnoredEntityTypes: true,
           privacyProtectLocalProviders: true,
+          privacyEmbeddingsPolicy: true,
         },
       })
     ),
@@ -304,12 +306,13 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
   const exportedSettings =
     settings === null
       ? null
-      : (({ privacyMode, privacyIgnoredEntityTypes, ...rest }) => {
+      : (({ privacyMode, privacyIgnoredEntityTypes, privacyEmbeddingsPolicy, ...rest }) => {
           const mode = parsePrivacyMode(privacyMode);
           return {
             ...rest,
             ...(mode !== null ? { privacyMode: mode } : {}),
             privacyIgnoredEntityTypes: parseIgnoredEntityTypes(privacyIgnoredEntityTypes),
+            privacyEmbeddingsPolicy: parseEmbeddingsPolicy(privacyEmbeddingsPolicy),
           };
         })(settings);
 

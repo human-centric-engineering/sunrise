@@ -1,0 +1,311 @@
+/**
+ * Masking one provider call's messages, and restoring what comes back (§127,
+ * t-992).
+ *
+ * The privacy stage detects once, over every text the call would send joined
+ * into one input, so a name tier C learns in one message is found in the
+ * others. This module maps what was found back onto the messages and masks
+ * them with **one** token session, in order, so numbering is by first
+ * appearance across the whole call. History is append-only, so every call of
+ * a conversation numbers the same values the same way.
+ *
+ * Nothing here mutates the caller's messages: the caller keeps the real
+ * conversation, and the next call masks it again from scratch. That is what
+ * makes the layer stateless (spec § Placeholders, *No vault*).
+ *
+ * @see .context/privacy/llm-privacy-layer.md — *Placeholders*
+ */
+import type {
+  ContentPart,
+  LlmMessage,
+  LlmResponse,
+  LlmToolCall,
+  StreamChunk,
+} from '@/lib/orchestration/llm/types';
+import type { EntityType, TokenSession } from '@/lib/privacy/adapters/types';
+import { maskText, PLACEHOLDER_INSTRUCTION, type MaskSpan } from '@/lib/privacy/pii/mask';
+import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
+import { StreamRestorer } from '@/lib/privacy/pii/stream-restore';
+
+/** Between two pieces in the joined input. A blank line, so no pattern runs across it. */
+export const PIECE_SEPARATOR = '\n\n';
+
+/** A plain object, as JSON parsing gives one: keys to walk. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Every string inside a parsed value, depth first, each key before its value,
+ * replaced by `fn`. A key is a string a model can write a value into (a map
+ * keyed by email address), so it is scanned and masked like a value.
+ */
+function mapValue(value: unknown, fn: (text: string) => string): unknown {
+  if (typeof value === 'string') return fn(value);
+  if (Array.isArray(value)) return value.map((v) => mapValue(v, fn));
+  if (isRecord(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      const key = fn(k);
+      out[key] = mapValue(v, fn);
+    }
+    return out;
+  }
+  return value;
+}
+
+function mapToolCall(call: LlmToolCall, fn: (text: string) => string): LlmToolCall {
+  const args = mapValue(call.arguments, fn);
+  return { ...call, arguments: isRecord(args) ? args : call.arguments };
+}
+
+/**
+ * The messages with every text `fn` returns in place of the original, visited
+ * in a fixed order: each message's text content (a string, or its text parts),
+ * then the strings in its tool-call arguments. Images, documents and provider
+ * reasoning blocks are left as they are: attachments are their own feature,
+ * and reasoning goes back unchanged to the provider that wrote it (its
+ * signature covers it).
+ */
+export function mapMessageTexts(
+  messages: readonly LlmMessage[],
+  fn: (text: string) => string
+): LlmMessage[] {
+  return messages.map((m) => {
+    const content: string | ContentPart[] =
+      typeof m.content === 'string'
+        ? fn(m.content)
+        : m.content.map((part) => (part.type === 'text' ? { ...part, text: fn(part.text) } : part));
+    return {
+      ...m,
+      content,
+      ...(m.toolCalls ? { toolCalls: m.toolCalls.map((c) => mapToolCall(c, fn)) } : {}),
+    };
+  });
+}
+
+/** Every text {@link mapMessageTexts} visits, in its order. */
+export function messagePieces(messages: readonly LlmMessage[]): string[] {
+  const pieces: string[] = [];
+  mapMessageTexts(messages, (text) => {
+    pieces.push(text);
+    return text;
+  });
+  return pieces;
+}
+
+/**
+ * Each piece's spans, as offsets in the piece. A span reaching across a
+ * separator is split at it, so every character it covered is still masked.
+ */
+function spansByPiece(pieces: readonly string[], spans: readonly MaskSpan[]): MaskSpan[][] {
+  const starts: number[] = [];
+  let at = 0;
+  for (const p of pieces) {
+    starts.push(at);
+    at += p.length + PIECE_SEPARATOR.length;
+  }
+  const out: MaskSpan[][] = pieces.map(() => []);
+  for (const s of spans) {
+    // The last piece starting at or before the span: a binary search, since
+    // a long tool loop has thousands of pieces.
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= s.start) lo = mid;
+      else hi = mid - 1;
+    }
+    for (let i = lo; i < pieces.length && starts[i] < s.end; i++) {
+      const start = Math.max(s.start - starts[i], 0);
+      const end = Math.min(s.end - starts[i], pieces[i].length);
+      if (start < end) out[i].push({ type: s.type, start, end });
+    }
+  }
+  return out;
+}
+
+export interface MaskedMessages {
+  messages: LlmMessage[];
+  /** Whether any text was replaced: a detected value, or a look-alike. */
+  changed: boolean;
+}
+
+/**
+ * Mask `messages` with the spans found in their joined pieces
+ * ({@link messagePieces} joined by {@link PIECE_SEPARATOR}).
+ *
+ * `escapeLookAlikes` is false for a mode that never restores (`redact`): text
+ * that only looks like a placeholder then reaches the model as written.
+ */
+export function maskMessages(
+  messages: readonly LlmMessage[],
+  spans: readonly MaskSpan[],
+  session: TokenSession,
+  declaredTypes: Iterable<EntityType>,
+  escapeLookAlikes: boolean
+): MaskedMessages {
+  const pieces = messagePieces(messages);
+  const byPiece = spansByPiece(pieces, spans);
+  const types = [...declaredTypes];
+  let changed = false;
+  let k = 0;
+  const masked = mapMessageTexts(messages, (text) => {
+    const i = k++;
+    const r = maskText(text, byPiece[i], session, types, { escapeLookAlikes });
+    if (r.text !== text) changed = true;
+    return r.text;
+  });
+  return { messages: masked, changed };
+}
+
+/**
+ * The messages with {@link PLACEHOLDER_INSTRUCTION} added to the system
+ * prompt: appended to the first system message that is the prompt (not a
+ * turn instruction), or as a system message of its own at the start.
+ */
+export function withPlaceholderInstruction(messages: readonly LlmMessage[]): LlmMessage[] {
+  const at = messages.findIndex((m) => m.role === 'system' && m.turnInstruction !== true);
+  if (at === -1) return [{ role: 'system', content: PLACEHOLDER_INSTRUCTION }, ...messages];
+  return messages.map((m, i) => {
+    if (i !== at) return m;
+    const content: string | ContentPart[] =
+      typeof m.content === 'string'
+        ? m.content.length > 0
+          ? `${m.content}${PIECE_SEPARATOR}${PLACEHOLDER_INSTRUCTION}`
+          : PLACEHOLDER_INSTRUCTION
+        : [...m.content, { type: 'text', text: PLACEHOLDER_INSTRUCTION }];
+    return { ...m, content };
+  });
+}
+
+/** What a restorer did, reported once when the response or stream is done. */
+export interface RestoreReport {
+  restored: number;
+  /** Placeholder-shaped text the session never issued, left as written. */
+  unresolved: number;
+}
+
+/**
+ * Puts the real values back into one call's reply (`pseudonymise` only).
+ *
+ * - Text: `restoreText`, or for a structured reply (`responseFormat`) by
+ *   parsing it and restoring the parsed value, so a value containing a quote
+ *   cannot break the JSON. A structured reply that does not parse is restored
+ *   as text.
+ * - Tool calls: `restoreValue` on the parsed arguments, keys included, before
+ *   the caller dispatches them, so a capability runs with real values.
+ * - Streams: a `StreamRestorer` each for the text and the display reasoning,
+ *   releasing what one holds back before any other chunk, so order is kept.
+ *   A streamed structured reply is restored as text.
+ * - Reasoning blocks are never touched: they go back to the provider as it
+ *   wrote them.
+ */
+export class CallRestorer {
+  private restored = 0;
+  private unresolved = 0;
+  private reported = false;
+
+  constructor(
+    private readonly session: TokenSession,
+    private readonly declaredTypes: readonly EntityType[],
+    private readonly structured: boolean,
+    private readonly onReport: (report: RestoreReport) => void
+  ) {}
+
+  private count(r: { restored: number; unresolved: readonly string[] }): void {
+    this.restored += r.restored;
+    this.unresolved += r.unresolved.length;
+  }
+
+  private report(): void {
+    if (this.reported) return;
+    this.reported = true;
+    this.onReport({ restored: this.restored, unresolved: this.unresolved });
+  }
+
+  private text(text: string): string {
+    if (this.structured) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = undefined;
+      }
+      if (parsed !== undefined) {
+        const r = restoreValue(parsed, this.session, this.declaredTypes);
+        this.count(r);
+        return r.restored > 0 ? JSON.stringify(r.value) : text;
+      }
+    }
+    const r = restoreText(text, this.session, this.declaredTypes);
+    this.count(r);
+    return r.text;
+  }
+
+  private toolCall(call: LlmToolCall): LlmToolCall {
+    const r = restoreValue(call.arguments, this.session, this.declaredTypes);
+    this.count(r);
+    return { ...call, arguments: isRecord(r.value) ? r.value : call.arguments };
+  }
+
+  /** A whole response. */
+  response(response: LlmResponse): LlmResponse {
+    const out: LlmResponse = {
+      ...response,
+      content: this.text(response.content),
+      ...(response.toolCalls ? { toolCalls: response.toolCalls.map((c) => this.toolCall(c)) } : {}),
+    };
+    this.report();
+    return out;
+  }
+
+  /** A stream, chunk by chunk. */
+  async *stream(source: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk> {
+    const text = new StreamRestorer(this.session, this.declaredTypes);
+    const reasoning = new StreamRestorer(this.session, this.declaredTypes);
+    const flushText = (): StreamChunk | null => {
+      const out = text.flush();
+      return out ? { type: 'text', content: out } : null;
+    };
+    const flushReasoning = (): StreamChunk | null => {
+      const out = reasoning.flush();
+      return out ? { type: 'reasoning', text: out } : null;
+    };
+    try {
+      for await (const chunk of source) {
+        if (chunk.type === 'text') {
+          const held = flushReasoning();
+          if (held) yield held;
+          const out = text.push(chunk.content);
+          if (out) yield { type: 'text', content: out };
+          continue;
+        }
+        if (chunk.type === 'reasoning') {
+          const held = flushText();
+          if (held) yield held;
+          const out = reasoning.push(chunk.text);
+          if (out) yield { type: 'reasoning', text: out };
+          continue;
+        }
+        // Anything else ends what was held: release it first, in order.
+        const heldText = flushText();
+        if (heldText) yield heldText;
+        const heldReasoning = flushReasoning();
+        if (heldReasoning) yield heldReasoning;
+        yield chunk.type === 'tool_call'
+          ? { type: 'tool_call', toolCall: this.toolCall(chunk.toolCall) }
+          : chunk;
+      }
+      // A stream that ended without a `done` chunk still owes what it held.
+      const heldText = flushText();
+      if (heldText) yield heldText;
+      const heldReasoning = flushReasoning();
+      if (heldReasoning) yield heldReasoning;
+    } finally {
+      this.restored += text.restored + reasoning.restored;
+      this.unresolved += text.unresolved.length + reasoning.unresolved.length;
+      this.report();
+    }
+  }
+}

@@ -7,6 +7,7 @@
  */
 
 import {
+  PRIVACY_BLOCKED,
   PRIVACY_REFUSED,
   PROVIDER_NOT_PERMITTED,
   SPEND_CAP_CODES,
@@ -88,7 +89,11 @@ function isPolicyRefusal(cause: unknown): boolean {
 const SPEND_CAP_REFUSALS: readonly string[] = Object.values(SPEND_CAP_CODES);
 
 /** Refusals whose own code a step keeps: the spend caps, and the LLM privacy layer's (§127). */
-const KEPT_CODE_REFUSALS: readonly string[] = [...SPEND_CAP_REFUSALS, PRIVACY_REFUSED];
+const KEPT_CODE_REFUSALS: readonly string[] = [
+  ...SPEND_CAP_REFUSALS,
+  PRIVACY_REFUSED,
+  PRIVACY_BLOCKED,
+];
 
 /**
  * The first of `codes` carried by `cause` or anything it wraps, by duck type

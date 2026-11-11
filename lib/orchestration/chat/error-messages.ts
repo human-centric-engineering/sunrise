@@ -214,6 +214,15 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: "This request was stopped before it was sent, by the deployment's privacy settings.",
     action: 'Ask an administrator to check the deployment’s LLM privacy settings.',
   },
+  // The privacy layer's `block` mode (§127): the message contained personal
+  // details and the policy sends none. Unlike `privacy_refused`, the reader
+  // can fix this one themselves.
+  privacy_blocked: {
+    title: 'Personal Details Not Sent',
+    message:
+      'This request contains personal details, such as names or contact details, that this deployment does not send to an AI provider.',
+    action: 'Remove the personal details and try again.',
+  },
   no_default_model_configured: {
     title: 'Default Model Not Set',
     message: 'A default model for this task has not been chosen yet.',

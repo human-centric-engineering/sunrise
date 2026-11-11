@@ -48,6 +48,7 @@ import {
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
 import { applyPrivacyStage, type PrivacyCoverage } from '@/lib/orchestration/llm/privacy-stage';
+import type { CallRestorer } from '@/lib/orchestration/privacy/call-masking';
 import {
   assertWithinSpendCaps,
   spendCapRefusal,
@@ -61,7 +62,7 @@ import {
   type LlmProvider,
   type ProviderTestResult,
 } from '@/lib/orchestration/llm/provider';
-import type { ProviderConfig } from '@/lib/orchestration/llm/types';
+import type { LlmResponse, ProviderConfig, StreamChunk } from '@/lib/orchestration/llm/types';
 import { VoyageProvider } from '@/lib/orchestration/llm/voyage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
@@ -406,18 +407,23 @@ const PRIVACY_COVERAGE: Record<ProviderMethodName, PrivacyCoverage> = {
 };
 
 /**
- * Run the privacy stage on a call and return the arguments to send. A method
- * the stage does not cover is sent as it is.
+ * Run the privacy stage on a call: the arguments to send, and, when the stage
+ * masked a `pseudonymise` call, the restorer its reply goes through before the
+ * caller sees it. A method the stage does not cover is sent as it is.
  */
 async function privacyStage(
   slug: string,
   isLocal: boolean,
   prop: ProviderMethodName,
   args: unknown[]
-): Promise<unknown[]> {
+): Promise<{ sent: unknown[]; restorer?: CallRestorer }> {
   const coverage = PRIVACY_COVERAGE[prop];
-  if (coverage === 'none') return args;
-  return [...(await applyPrivacyStage({ providerSlug: slug, isLocal, coverage, args }))];
+  if (coverage === 'none') return { sent: args };
+  const result = await applyPrivacyStage({ providerSlug: slug, isLocal, coverage, args });
+  return {
+    sent: [...result.args],
+    ...(result.restorer ? { restorer: result.restorer } : {}),
+  };
 }
 
 /**
@@ -562,8 +568,15 @@ function withInFlightTracking(
             await assertProviderCallPermitted(slug, context, task);
             await assertWithinSpendCaps(slug, target.isLocal === true);
             // After both gates, so a refused call is never scanned (§127).
-            const sent = await privacyStage(slug, target.isLocal === true, method, args);
-            return track(stateKey, () => fn.apply(target, sent) as Promise<unknown>);
+            const { sent, restorer } = await privacyStage(
+              slug,
+              target.isLocal === true,
+              method,
+              args
+            );
+            const response = await track(stateKey, () => fn.apply(target, sent) as Promise<unknown>);
+            // Only `chat` is masked, so only its response is ever restored.
+            return restorer ? restorer.response(response as LlmResponse) : response;
           };
         }
         case 'trackStream': {
@@ -571,8 +584,18 @@ function withInFlightTracking(
           const task = taskOfMethod(method);
           return (...args: unknown[]): AsyncIterable<unknown> =>
             gatedStream(slug, context, task, target.isLocal === true, async () => {
-              const sent = await privacyStage(slug, target.isLocal === true, method, args);
-              return trackStream(stateKey, () => fn.apply(target, sent) as AsyncIterable<unknown>);
+              const { sent, restorer } = await privacyStage(
+                slug,
+                target.isLocal === true,
+                method,
+                args
+              );
+              const stream = trackStream(
+                stateKey,
+                () => fn.apply(target, sent) as AsyncIterable<unknown>
+              );
+              // Only `chatStream` is masked, so only its chunks are ever restored.
+              return restorer ? restorer.stream(stream as AsyncIterable<StreamChunk>) : stream;
             });
         }
         case 'passthrough':

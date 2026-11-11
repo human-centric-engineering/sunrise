@@ -2,19 +2,28 @@
  * The LLM privacy stage: what the provider-manager Proxy runs on every
  * protected vendor call, after the eligibility and spend gates (§127).
  *
- * This version acts in `off` and `detect`. It resolves the call's policy,
- * scans what the call would send with every registered detector, records
- * per-type counts (never values) in the call's privacy scope and tells the
- * observers, and hands the call's arguments back **unchanged**. Masking and
- * restoring (`pseudonymise`, `redact`) and refusing (`block`) arrive with
- * t-992; until then a call whose policy asks for one of them is refused
- * rather than sent unprotected under a mode that promised protection.
+ * It resolves the call's policy, scans what the call would send with every
+ * registered detector, records per-type counts (never values) in the call's
+ * privacy scope and tells the observers, then acts per mode:
+ *
+ * - `off`, `detect` — the arguments go out unchanged.
+ * - `pseudonymise` — found values are replaced by placeholders, and the
+ *   returned {@link CallRestorer} puts them back in the reply and in tool-call
+ *   arguments before the caller sees them (t-992).
+ * - `redact` — replaced, never restored.
+ * - `block` — a chat call with anything found is refused.
+ *
+ * Embedding calls are counted and never altered, whatever the mode; under
+ * `embeddingsPolicy: local_only` and a masking mode, one to a provider that is
+ * not `isLocal` is refused instead.
  *
  * It refuses, and never sends, when it cannot say what the policy is: a
  * failed app init or core install (mode `off` included, because what was
  * rolled back may be what raised it), an unreadable stored mode, a policy
  * resolver that failed, or a bug in the stage itself. The opposite of the
- * guard-floor seams, on purpose.
+ * guard-floor seams, on purpose. Under a masking mode it also refuses when a
+ * required detector failed, rather than send the call part-masked (owner
+ * ruling, 2026-11-11).
  *
  * Nothing here logs request text or a found value.
  *
@@ -22,13 +31,26 @@
  */
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
-import { PRIVACY_REFUSED, ProviderError } from '@/lib/orchestration/llm/provider';
+import {
+  PRIVACY_BLOCKED,
+  PRIVACY_REFUSED,
+  ProviderError,
+} from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import {
+  CallRestorer,
+  maskMessages,
+  messagePieces,
+  PIECE_SEPARATOR,
+  withPlaceholderInstruction,
+} from '@/lib/orchestration/privacy/call-masking';
 import {
   createPrivacyScope,
   currentPrivacyScope,
   knownValuesOf,
   recordPrivacyCall,
+  recordPrivacyRefusal,
+  recordPrivacyUnresolved,
   type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
 import { basePolicyFromSettings } from '@/lib/orchestration/privacy/settings-policy';
@@ -68,7 +90,8 @@ export type PrivacyRefusalReason =
   | 'settings_unreadable'
   | 'policy_resolver_failed'
   | 'detector_failed'
-  | 'mode_unavailable'
+  | 'content_blocked'
+  | 'embeddings_local_only'
   | 'stage_error';
 
 const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
@@ -81,9 +104,11 @@ const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
   policy_resolver_failed:
     'The LLM privacy layer refused the call: a privacy policy resolver failed, and it may have been the one that tightened the policy. See the server log for which.',
   detector_failed:
-    'The LLM privacy layer refused the call: a required detector failed and the policy says to refuse rather than send without it.',
-  mode_unavailable:
-    'The LLM privacy layer refused the call: its policy asks for a mode this version cannot apply yet (pseudonymise, redact or block), and sending it unprotected would break that promise.',
+    'The LLM privacy layer refused the call: a required detector failed or ran out of time, and under a masking mode (or a policy that says block) a call that cannot be fully scanned is not sent. See the server log for which detector; a very large input is the usual cause.',
+  content_blocked:
+    'The LLM privacy layer refused the call: the privacy mode is block and the call contained personal data. Choose pseudonymise to send it with placeholders instead.',
+  embeddings_local_only:
+    "The LLM privacy layer refused an embedding call: the embeddings policy is local_only and the active embedding model's provider is not marked local. Use a local embedding model (see .context/orchestration/knowledge.md), or set the embeddings policy to allow.",
   stage_error:
     'The LLM privacy layer refused the call because of an internal error. Nothing was sent. See the server log.',
 };
@@ -101,12 +126,27 @@ export function refusalRemedy(reason: PrivacyRefusalReason): string {
  * operator's remedy, which names files and seams, is in the log line the
  * refusal writes ({@link refusalRemedy}).
  */
+/**
+ * What a refusal tells whoever reads it. Safe for anyone: it names a setting
+ * at most, never a file, a value or the request.
+ */
+function readerMessage(reason: PrivacyRefusalReason): string {
+  switch (reason) {
+    case 'content_blocked':
+      return 'The request was not sent: it contains personal details that this deployment does not send to an AI provider.';
+    case 'embeddings_local_only':
+      return "Embedding was refused: this deployment's privacy settings allow embeddings only with a local model (embeddings policy: local only), and the active embedding model is not local.";
+    default:
+      return "The request was stopped before it was sent, by the deployment's privacy settings.";
+  }
+}
+
 export class PrivacyRefusedError extends ProviderError {
   readonly reason: PrivacyRefusalReason;
   readonly providerSlug: string;
   constructor(reason: PrivacyRefusalReason, providerSlug: string) {
-    super("The request was stopped before it was sent, by the deployment's privacy settings.", {
-      code: PRIVACY_REFUSED,
+    super(readerMessage(reason), {
+      code: reason === 'content_blocked' ? PRIVACY_BLOCKED : PRIVACY_REFUSED,
       retriable: false,
     });
     this.name = 'PrivacyRefusedError';
@@ -124,43 +164,53 @@ export interface PrivacyStageCall {
   args: readonly unknown[];
 }
 
-/** Every string inside a parsed value, depth first: tool-call arguments. */
-function stringLeaves(value: unknown, out: string[]): void {
-  if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) for (const v of value) stringLeaves(v, out);
-  else if (value !== null && typeof value === 'object') {
-    for (const v of Object.values(value)) stringLeaves(v, out);
-  }
+/** What the stage hands back: the arguments to send, and how to restore the reply. */
+export interface PrivacyStageResult {
+  args: readonly unknown[];
+  /** Present under `pseudonymise` when something was masked: restore the reply with it. */
+  restorer?: CallRestorer;
 }
 
-function messageTexts(messages: readonly LlmMessage[]): string[] {
-  const out: string[] = [];
-  for (const m of messages) {
-    if (typeof m.content === 'string') out.push(m.content);
-    else for (const part of m.content) if (part.type === 'text') out.push(part.text);
-    // Images and documents are not scanned here: the attachments feature
-    // reads them locally. Reasoning blocks are the provider's own, sent back
-    // to the provider that wrote them.
-    for (const call of m.toolCalls ?? []) stringLeaves(call.arguments, out);
-  }
-  return out;
+/** A chat call's messages, when its first argument is a list of them. */
+function chatMessages(call: PrivacyStageCall): readonly LlmMessage[] {
+  const [first] = call.args;
+  return call.coverage === 'full' && Array.isArray(first) ? (first as LlmMessage[]) : [];
 }
 
 /**
- * The text a call would send, as pieces in order. Joined into one input, so
- * a name tier C learns in one message is found in the others.
+ * The text a call would send, as one input: a chat call's pieces in order
+ * (`messagePieces`: message text, then the strings in its tool-call
+ * arguments, keys included), or an embedding call's inputs. Joined, so a
+ * name tier C learns in one message is found in the others; masking maps
+ * the spans back onto the pieces by the same join.
  */
 function outboundText(call: PrivacyStageCall): string {
+  if (call.coverage === 'full') return messagePieces(chatMessages(call)).join(PIECE_SEPARATOR);
   const [first] = call.args;
-  let pieces: string[];
-  if (call.coverage === 'full') {
-    pieces = Array.isArray(first) ? messageTexts(first as LlmMessage[]) : [];
-  } else if (typeof first === 'string') {
-    pieces = [first];
-  } else {
-    pieces = Array.isArray(first) ? first.filter((t): t is string => typeof t === 'string') : [];
-  }
-  return pieces.filter((p) => p.length > 0).join('\n\n');
+  const pieces =
+    typeof first === 'string'
+      ? [first]
+      : Array.isArray(first)
+        ? first.filter((t): t is string => typeof t === 'string')
+        : [];
+  return pieces.filter((p) => p.length > 0).join(PIECE_SEPARATOR);
+}
+
+/** Whether `mode` replaces what it finds: `pseudonymise` and `redact`. */
+function masks(mode: PrivacyPolicy['mode']): boolean {
+  return mode === 'pseudonymise' || mode === 'redact';
+}
+
+/** `structured` when the call asks for JSON back: restored by parsing, not as text. */
+function isStructured(call: PrivacyStageCall): boolean {
+  const options = call.args[1];
+  return (
+    options !== null &&
+    typeof options === 'object' &&
+    'responseFormat' in options &&
+    options.responseFormat !== undefined &&
+    options.responseFormat !== null
+  );
 }
 
 function countByType(spans: readonly { type: EntityType }[]): Record<EntityType, number> {
@@ -224,6 +274,7 @@ function refuse(
     ...(failedAdapters.length > 0 ? { failedAdapters: [...failedAdapters] } : {}),
   });
   if (scope && mode) {
+    recordPrivacyRefusal(scope, mode, reason);
     notifyPrivacyObservers({
       ...eventBase(scope, call.providerSlug),
       mode,
@@ -237,11 +288,12 @@ function refuse(
 }
 
 /**
- * Run the stage on one call. Returns the arguments to send — in this version
- * always the ones it was given, untouched — or throws a
+ * Run the stage on one call. Returns the arguments to send, and under
+ * `pseudonymise` a restorer for the reply, or throws a
  * {@link PrivacyRefusedError}, in which case nothing may be sent.
  */
-export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonly unknown[]> {
+export async function applyPrivacyStage(call: PrivacyStageCall): Promise<PrivacyStageResult> {
+  const unchanged: PrivacyStageResult = { args: call.args };
   let scope: PrivacyScope | undefined;
   let mode: PrivacyPolicy['mode'] | undefined;
   try {
@@ -273,7 +325,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       abandoned
     );
     // The caller gave up while the resolvers ran: a cancel, not a refusal.
-    if (abandoned?.aborted) return call.args;
+    if (abandoned?.aborted) return unchanged;
     mode = policy.mode;
     if (resolverFailures.length > 0) {
       throw refuse(
@@ -285,7 +337,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       );
     }
 
-    if (policy.mode === 'off') return call.args;
+    if (policy.mode === 'off') return unchanged;
     if (call.isLocal && !policy.protectLocalProviders) {
       notifyPrivacyObservers({
         ...eventBase(scope, call.providerSlug),
@@ -295,24 +347,32 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
         failedAdapters: [],
         outcome: 'skipped',
       });
-      return call.args;
+      return unchanged;
     }
-    // An embedding call is only ever counted, whatever the mode. A chat call
-    // under a mode this version cannot apply is refused.
-    if (call.coverage === 'full' && modeStrictness(policy.mode) > modeStrictness('detect')) {
-      throw refuse('mode_unavailable', call, scope, mode);
+    // An embedding input is never masked: a masked name cannot be searched
+    // for. Under a masking mode an install that requires local embeddings
+    // refuses one to a provider that is not local instead (spec § Embeddings).
+    if (
+      call.coverage === 'count' &&
+      !call.isLocal &&
+      modeStrictness(policy.mode) >= modeStrictness('pseudonymise') &&
+      settings.privacyEmbeddingsPolicy === 'local_only'
+    ) {
+      throw refuse('embeddings_local_only', call, scope, mode);
     }
 
     // Nothing would read the result: an unscoped call (knowledge ingestion,
     // a background job) records nowhere, no observer is listening, and only a
     // `block` policy would act on a detector failing. In `detect` no call is
-    // altered, so the scan would be work for nothing.
+    // altered, so the scan would be work for nothing. Under any stricter mode
+    // the scan is what protects the call, so it always runs.
     if (
+      policy.mode === 'detect' &&
       scoped.ephemeral &&
       adapters.observers.length === 0 &&
       policy.onDetectorFailure !== 'block'
     ) {
-      return call.args;
+      return unchanged;
     }
 
     // Loaded before the deadline starts: a slow user lookup must not spend
@@ -329,13 +389,51 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
     });
     // The caller gave up: the call is about to be cancelled, so it is neither
     // counted as sent nor refused. Its own signal ends it.
-    if (abandoned?.aborted) return call.args;
+    if (abandoned?.aborted) return unchanged;
     const failedAdapters = failures.map((f) => f.adapterId);
-    if (failures.some((f) => f.required) && policy.onDetectorFailure === 'block') {
+    // A chat call under a masking mode that could not be fully scanned would
+    // go out part-masked: what the failed detector would have found, in
+    // plaintext. Refused, like a `block` policy (owner ruling, 2026-11-11).
+    // An embedding call is never masked, so a failure there changes nothing
+    // it sends.
+    const refuseOnFailure =
+      policy.onDetectorFailure === 'block' || (call.coverage === 'full' && masks(policy.mode));
+    if (failures.some((f) => f.required) && refuseOnFailure) {
       throw refuse('detector_failed', call, scope, mode, failedAdapters);
     }
 
     const counts = countByType(spans);
+    if (call.coverage === 'full' && policy.mode === 'block' && spans.length > 0) {
+      throw refuse('content_blocked', call, scope, mode, failedAdapters);
+    }
+
+    let result: PrivacyStageResult = unchanged;
+    if (call.coverage === 'full' && masks(policy.mode)) {
+      const strategy = adapters.tokenStrategy;
+      // Core always registers one; an install without one cannot mask.
+      if (strategy === null) throw new Error('no privacy token strategy registered');
+      const session = strategy.createSession({
+        scopeId: scope.scopeId,
+        ...(orgId !== undefined ? { orgId } : {}),
+      });
+      const declaredTypes = [...new Set(adapters.detectors.flatMap((d) => d.entityTypes))];
+      const restoring = policy.mode === 'pseudonymise';
+      const masked = maskMessages(chatMessages(call), spans, session, declaredTypes, restoring);
+      if (masked.changed) {
+        const target = scope;
+        result = {
+          args: [withPlaceholderInstruction(masked.messages), ...call.args.slice(1)],
+          ...(restoring
+            ? {
+                restorer: new CallRestorer(session, declaredTypes, isStructured(call), (r) =>
+                  recordPrivacyUnresolved(target, r.unresolved)
+                ),
+              }
+            : {}),
+        };
+      }
+    }
+
     recordPrivacyCall(scope, {
       kind: call.coverage === 'full' ? 'chat' : 'embedding',
       mode: policy.mode,
@@ -351,7 +449,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       failedAdapters,
       outcome: 'sent',
     });
-    return call.args;
+    return result;
   } catch (err) {
     if (err instanceof PrivacyRefusedError) throw err;
     // A bug refuses. Never sends unmasked.
