@@ -107,6 +107,27 @@ describe('runPrivacyDetectors', () => {
     ]);
   });
 
+  it('runs only the detectors named in detectorIds, and does not hand the list to them', async () => {
+    const other = vi.fn(returning([PERSON]));
+    let seen: DetectContext | undefined;
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(
+        detector('app.rules', (_input, ctx) => {
+          seen = ctx;
+          return Promise.resolve([EMAIL]);
+        })
+      );
+      registerPrivacyDetector(detector('app.names', other));
+    });
+
+    const result = await runPrivacyDetectors(TEXT, { ...CTX, detectorIds: ['app.rules'] });
+
+    expect(result.spans.map((s) => s.type)).toEqual(['EMAIL']);
+    expect(other).not.toHaveBeenCalled();
+    expect(seen).toBeDefined();
+    expect(seen).not.toHaveProperty('detectorIds');
+  });
+
   it('drops ignored types before merging, so an ignored span cannot carry another out unmasked', async () => {
     const text = 'I live at 14 Mill Lane, Leeds LS6 2AB.';
     const address = { type: 'ADDRESS', start: 10, end: 37, confidence: 0.7 };

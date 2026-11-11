@@ -59,9 +59,10 @@ export type DetectionCallContext = Omit<DetectContext, 'signal' | 'priorSpans'> 
    */
   ignoredEntityTypes?: readonly EntityType[];
   /**
-   * Run only the detectors with these ids, in registry order; all of them when
-   * absent. The output guard runs just `core.rules` this way, so an app that
-   * replaced that detector by id changes what the guard flags too.
+   * Run only the detectors with these ids, or that replaced a core detector
+   * with one of them (`replace`), in registry order; all of them when absent.
+   * The output guard runs just `core.rules` this way, so an app's replacement
+   * of that detector changes what the guard flags too.
    */
   detectorIds?: readonly string[];
 };
@@ -146,7 +147,11 @@ export async function runPrivacyDetectors(
 ): Promise<DetectionResult> {
   const { detectors: registered } = getPrivacyAdapters();
   const only = ctx.detectorIds ? new Set(ctx.detectorIds) : null;
-  const detectors = only ? registered.filter((r) => only.has(r.id)) : registered;
+  const detectors = only
+    ? registered.filter(
+        (r) => only.has(r.id) || (r.replacesCore !== undefined && only.has(r.replacesCore))
+      )
+    : registered;
   const rank = new Map(detectors.map((r, i) => [r.id, i]));
   const found: AttributedSpan[] = [];
   const failures: AdapterFailure[] = [];

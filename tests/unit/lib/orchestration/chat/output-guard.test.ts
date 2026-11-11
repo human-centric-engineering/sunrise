@@ -3,26 +3,45 @@
  *
  * Covers:
  *   - Topic boundary matching (case-insensitive, multiple matches)
- *   - Built-in PII detection (email, phone, SSN, credit card)
+ *   - Identifiers in the reply, found by the privacy layer's tier A rules
+ *     through its registry (§127, t-992), and the ones the conversation
+ *     supplied left alone
  *   - Clean output produces unflagged result
  *   - Empty boundaries list
  *   - Whitespace-only boundaries are ignored
+ *
+ * The privacy registry and its core detectors are real; the app seam is a
+ * stand-in a case can fill.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const seam = vi.hoisted(() => ({ init: vi.fn<() => void>() }));
+vi.mock('@/lib/app/privacy-adapters', () => ({ initAppPrivacyAdapters: () => seam.init() }));
+
 import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard';
+import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import {
+  __resetPrivacyAdaptersForTests,
+  registerPrivacyDetector,
+} from '@/lib/privacy/adapters/registry';
+
+beforeEach(() => {
+  __resetPrivacyAdaptersForTests();
+  seam.init.mockImplementation(() => undefined);
+});
 
 describe('scanOutput', () => {
-  it('returns unflagged for clean output with no boundaries', () => {
-    const result = scanOutput('Here is a helpful answer about your question.', []);
+  it('returns unflagged for clean output with no boundaries', async () => {
+    const result = await scanOutput('Here is a helpful answer about your question.', []);
 
     expect(result.flagged).toBe(false);
     expect(result.topicMatches).toEqual([]);
     expect(result.builtInMatches).toEqual([]);
   });
 
-  it('detects a forbidden topic keyword', () => {
-    const result = scanOutput('Our competitor Acme Corp offers a similar product.', [
+  it('detects a forbidden topic keyword', async () => {
+    const result = await scanOutput('Our competitor Acme Corp offers a similar product.', [
       'competitor',
       'pricing strategy',
     ]);
@@ -33,8 +52,8 @@ describe('scanOutput', () => {
     expect(result.topicMatches).not.toContain('pricing strategy');
   });
 
-  it('matches topic boundaries case-insensitively', () => {
-    const result = scanOutput('Let me tell you about our INTERNAL ROADMAP plans.', [
+  it('matches topic boundaries case-insensitively', async () => {
+    const result = await scanOutput('Let me tell you about our INTERNAL ROADMAP plans.', [
       'internal roadmap',
     ]);
 
@@ -43,8 +62,8 @@ describe('scanOutput', () => {
     expect(result.topicMatches).toContain('internal roadmap');
   });
 
-  it('detects multiple forbidden topics', () => {
-    const result = scanOutput(
+  it('detects multiple forbidden topics', async () => {
+    const result = await scanOutput(
       'Our competitor has better pricing than our internal roadmap suggests.',
       ['competitor', 'internal roadmap', 'salary']
     );
@@ -56,47 +75,88 @@ describe('scanOutput', () => {
     expect(result.topicMatches).toContain('internal roadmap');
   });
 
-  it('ignores empty and whitespace-only boundaries', () => {
-    const result = scanOutput('Normal helpful response.', ['', '  ', '\t']);
+  it('ignores empty and whitespace-only boundaries', async () => {
+    const result = await scanOutput('Normal helpful response.', ['', '  ', '\t']);
 
     expect(result.flagged).toBe(false);
     expect(result.topicMatches).toEqual([]);
   });
 
-  it('detects PII email pattern', () => {
-    const result = scanOutput('Contact us at john@example.com for more info.', []);
+  it('flags an email address the conversation did not supply', async () => {
+    const result = await scanOutput('Contact john@example.com for more info.', []);
 
     // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
-    expect(result.builtInMatches).toContain('pii_email');
+    expect(result.builtInMatches).toEqual(['pii_email']);
   });
 
-  it('detects PII phone number pattern', () => {
-    const result = scanOutput('Call us at (555) 123-4567 for support.', []);
+  it('flags UK identifiers by their tier A type', async () => {
+    const result = await scanOutput(
+      'Call 07911 123456, NI number TJ 33 15 36 A, card 4111 1111 1111 1111.',
+      []
+    );
 
-    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
-    expect(result.flagged).toBe(true);
-    expect(result.builtInMatches).toContain('pii_phone');
+    expect(result.builtInMatches).toEqual(
+      expect.arrayContaining(['pii_phone', 'pii_uk_nino', 'pii_card_number'])
+    );
+    expect(result.builtInMatches).toHaveLength(3);
   });
 
-  it('detects PII SSN pattern', () => {
-    const result = scanOutput('Your SSN is 123-45-6789.', []);
+  it('no longer flags a US SSN-shaped number, which the old US-only pattern did', async () => {
+    const result = await scanOutput('Reference 123-45-6789 is on the invoice.', []);
 
-    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
-    expect(result.flagged).toBe(true);
-    expect(result.builtInMatches).toContain('pii_ssn');
+    expect(result.builtInMatches).toEqual([]);
   });
 
-  it('detects PII credit card pattern', () => {
-    const result = scanOutput('Your card number is 4111 1111 1111 1111.', []);
+  it('ignores identifiers the conversation itself supplied, however they are spaced', async () => {
+    const supplied: LlmMessage[] = [
+      { role: 'system', content: 'You are a support agent.' },
+      { role: 'user', content: 'My email is Priya.Sharma@example.com and my mobile 07911123456.' },
+      { role: 'tool', content: '{"office":"0161 496 0000"}', toolCallId: 't1' },
+    ];
+    const reply =
+      'Thanks — I have priya.sharma@example.com, 07911 123 456 and the office on 0161 496 0000.';
 
-    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
-    expect(result.flagged).toBe(true);
-    expect(result.builtInMatches).toContain('pii_credit_card');
+    expect(await scanOutput(reply, [], supplied)).toEqual({
+      flagged: false,
+      topicMatches: [],
+      builtInMatches: [],
+    });
+    // One the conversation did not supply is still a leak.
+    const leaked = await scanOutput(`${reply} Or try j.doe@example.org.`, [], supplied);
+    expect(leaked.builtInMatches).toEqual(['pii_email']);
   });
 
-  it('combines topic and built-in matches', () => {
-    const result = scanOutput('Our competitor can be reached at info@competitor.com.', [
+  it('flags names no more than before: only the rules detector runs', async () => {
+    const result = await scanOutput('Albert Einstein worked at Acme Holdings Ltd.', []);
+
+    expect(result.builtInMatches).toEqual([]);
+  });
+
+  it("follows an app's replacement of the rules detector, because it runs through the registry", async () => {
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector(
+        {
+          id: 'app.rules',
+          egress: 'in_process',
+          entityTypes: ['STAFF_ID'],
+          detect: async ({ text }) => {
+            const at = text.indexOf('EMP-4471');
+            return at === -1 ? [] : [{ type: 'STAFF_ID', start: at, end: at + 8, confidence: 1 }];
+          },
+        },
+        { replace: 'core.rules' }
+      )
+    );
+
+    const result = await scanOutput('Staff EMP-4471, email john@example.com.', []);
+
+    // The app's rules replaced core's, emails included.
+    expect(result.builtInMatches).toEqual(['pii_staff_id']);
+  });
+
+  it('combines topic and built-in matches', async () => {
+    const result = await scanOutput('Our competitor can be reached at info@competitor.com.', [
       'competitor',
     ]);
 
@@ -106,8 +166,8 @@ describe('scanOutput', () => {
     expect(result.builtInMatches).toContain('pii_email');
   });
 
-  it('does not flag clean output even with boundaries defined', () => {
-    const result = scanOutput('Our product helps you manage your tasks efficiently.', [
+  it('does not flag clean output even with boundaries defined', async () => {
+    const result = await scanOutput('Our product helps you manage your tasks efficiently.', [
       'competitor',
       'internal roadmap',
       'salary',
