@@ -30,6 +30,14 @@ export const PRIVACY_MODES_AVAILABLE = [
 ] as const satisfies readonly PrivacyMode[];
 
 /**
+ * Whether `mode` replaces what it finds with placeholders: `pseudonymise` and
+ * `redact`. (`block` sends nothing it finds, so it masks nothing.)
+ */
+export function isMaskingMode(mode: PrivacyMode): boolean {
+  return mode === 'pseudonymise' || mode === 'redact';
+}
+
+/**
  * What the layer does about embedding calls (spec § Embeddings). Their input
  * is counted and never masked, because a masked name cannot be searched for.
  *

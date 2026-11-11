@@ -151,6 +151,25 @@ describe('maskMessages', () => {
   });
 });
 
+describe('maskMessages and an own __proto__ key', () => {
+  it('keeps the key, as JSON parsing gives it, rather than turning it into a prototype', () => {
+    const args = JSON.parse('{"__proto__": {"email": "jo@example.com"}, "x": 1}') as Record<
+      string,
+      unknown
+    >;
+    const messages: LlmMessage[] = [
+      { role: 'assistant', content: '', toolCalls: [{ id: 't', name: 'n', arguments: args }] },
+    ];
+    const out = mapMessageTexts(messages, (t) => t);
+    const masked = out[0].toolCalls?.[0].arguments ?? {};
+    expect(Object.keys(masked)).toEqual(['__proto__', 'x']);
+    expect(Object.getPrototypeOf(masked)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(masked, '__proto__')?.value).toEqual({
+      email: 'jo@example.com',
+    });
+  });
+});
+
 describe('withPlaceholderInstruction', () => {
   it('appends to the first prompt system message with a string body', () => {
     const out = withPlaceholderInstruction([

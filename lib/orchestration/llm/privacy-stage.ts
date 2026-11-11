@@ -49,7 +49,7 @@ import {
   recordPrivacyUnresolved,
   type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
-import { basePolicyFromSettings } from '@/lib/orchestration/privacy/settings-policy';
+import { basePolicyFromSettings, isMaskingMode } from '@/lib/orchestration/privacy/settings-policy';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
@@ -170,6 +170,18 @@ export interface PrivacyStageCall {
   args: readonly unknown[];
 }
 
+/**
+ * The call was abandoned by its caller before the scan finished, under a mode
+ * stricter than `detect`. The same shape every shipped provider throws for an
+ * aborted request, so callers classify it as the cancel it is.
+ */
+class CallAbandonedError extends ProviderError {
+  constructor() {
+    super('request aborted', { code: 'aborted', retriable: false });
+    this.name = 'CallAbandonedError';
+  }
+}
+
 /** What the stage hands back: the arguments to send, and how to restore the reply. */
 export interface PrivacyStageResult {
   args: readonly unknown[];
@@ -200,11 +212,6 @@ function outboundText(call: PrivacyStageCall): string {
         ? first.filter((t): t is string => typeof t === 'string')
         : [];
   return pieces.filter((p) => p.length > 0).join(PIECE_SEPARATOR);
-}
-
-/** Whether `mode` replaces what it finds: `pseudonymise` and `redact`. */
-function masks(mode: PrivacyPolicy['mode']): boolean {
-  return mode === 'pseudonymise' || mode === 'redact';
 }
 
 /** `structured` when the call asks for JSON back: restored by parsing, not as text. */
@@ -304,12 +311,12 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
   /**
    * The caller gave up. In `detect` the call goes back as it came, and its own
    * signal cancels it. Under a stricter mode it was never scanned, so it is
-   * not handed back at all: the caller's own abort is thrown, as the provider
-   * would have thrown it. A provider that ignored its signal would otherwise
+   * not handed back at all: the stage throws the abort every shipped provider
+   * throws (`ProviderError`, code `aborted`). A provider that ignored its signal would otherwise
    * send it unmasked. Neither counted nor refused, either way.
    */
   const cancelled = (mode: PrivacyPolicy['mode']): PrivacyStageResult => {
-    if (modeStrictness(mode) > modeStrictness('detect')) throw abandoned?.reason;
+    if (modeStrictness(mode) > modeStrictness('detect')) throw new CallAbandonedError();
     return unchanged;
   };
   let scope: PrivacyScope | undefined;
@@ -380,11 +387,13 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
 
     // Nothing would read the result: an unscoped call (knowledge ingestion,
     // a background job) records nowhere, no observer is listening, and only a
-    // `block` policy would act on a detector failing. In `detect` no call is
-    // altered, so the scan would be work for nothing. Under any stricter mode
-    // the scan is what protects the call, so it always runs.
+    // `block` policy would act on a detector failing. A call the scan cannot
+    // change — any call in `detect`, an embedding call in every mode — would be
+    // scanned for nothing, and an external detector sent its text for nothing.
+    // A chat call under a stricter mode always runs it: the scan is what
+    // protects it.
     if (
-      policy.mode === 'detect' &&
+      (policy.mode === 'detect' || call.coverage === 'count') &&
       scoped.ephemeral &&
       adapters.observers.length === 0 &&
       policy.onDetectorFailure !== 'block'
@@ -408,13 +417,15 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     // counted as sent nor refused. Its own signal ends it.
     if (abandoned?.aborted) return cancelled(policy.mode);
     const failedAdapters = failures.map((f) => f.adapterId);
-    // A chat call under a masking mode that could not be fully scanned would
-    // go out part-masked: what the failed detector would have found, in
-    // plaintext. Refused, like a `block` policy (owner ruling, 2026-11-11).
-    // An embedding call is never masked, so a failure there changes nothing
-    // it sends.
+    // A chat call under a stricter mode that could not be fully scanned would
+    // go out with what the failed detector would have found in plaintext:
+    // part-masked under `pseudonymise` and `redact`, unrefused under `block`.
+    // Refused, like a `block` failure policy (owner ruling, 2026-11-11). An
+    // embedding call is never masked, so a failure there changes nothing it
+    // sends.
     const refuseOnFailure =
-      policy.onDetectorFailure === 'block' || (call.coverage === 'full' && masks(policy.mode));
+      policy.onDetectorFailure === 'block' ||
+      (call.coverage === 'full' && modeStrictness(policy.mode) >= modeStrictness('pseudonymise'));
     if (failures.some((f) => f.required) && refuseOnFailure) {
       throw refuse('detector_failed', call, scope, mode, failedAdapters);
     }
@@ -425,7 +436,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     }
 
     let result: PrivacyStageResult = unchanged;
-    if (call.coverage === 'full' && masks(policy.mode)) {
+    if (call.coverage === 'full' && isMaskingMode(policy.mode)) {
       const strategy = adapters.tokenStrategy;
       // Core always registers one; an install without one cannot mask.
       if (strategy === null) throw new Error('no privacy token strategy registered');
@@ -435,20 +446,21 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       });
       const declaredTypes = [...new Set(adapters.detectors.flatMap((d) => d.entityTypes))];
       const restoring = policy.mode === 'pseudonymise';
+      const target = scope;
       const masked = maskMessages(chatMessages(call), spans, session, declaredTypes, restoring);
-      if (masked.changed) {
-        const target = scope;
-        result = {
-          args: [withPlaceholderInstruction(masked.messages), ...call.args.slice(1)],
-          ...(restoring
-            ? {
-                restorer: new CallRestorer(session, declaredTypes, isStructured(call), (r) =>
-                  recordPrivacyUnresolved(target, r.unresolved)
-                ),
-              }
-            : {}),
-        };
-      }
+      // The instruction goes on every call under a masking mode, masked or
+      // not, so the system prompt (the provider's cache prefix) never changes
+      // partway through a conversation when the first value appears.
+      result = {
+        args: [withPlaceholderInstruction(masked.messages), ...call.args.slice(1)],
+        ...(restoring && masked.changed
+          ? {
+              restorer: new CallRestorer(session, declaredTypes, isStructured(call), (r) =>
+                recordPrivacyUnresolved(target, r.unresolved)
+              ),
+            }
+          : {}),
+      };
     }
 
     recordPrivacyCall(scope, {
@@ -470,7 +482,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
   } catch (err) {
     if (err instanceof PrivacyRefusedError) throw err;
     // The caller's own abort, from `cancelled()`: a cancel, not a refusal.
-    if (abandoned?.aborted && err === abandoned.reason) throw err;
+    if (err instanceof CallAbandonedError) throw err;
     // A bug refuses. Never sends unmasked.
     logger.error('privacy-stage: internal error', undefined, {
       providerSlug: call.providerSlug,

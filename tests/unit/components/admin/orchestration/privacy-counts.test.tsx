@@ -22,8 +22,8 @@ describe('PrivacyCounts', () => {
   it('shows the mode, the counts by type and the calls, chat and embeddings apart', () => {
     render(<PrivacyCounts summary={SUMMARY} />);
     const line = screen.getByTestId('privacy-counts');
-    expect(line).toHaveTextContent('Privacy (detect): 1 EMAIL · 3 PERSON sent across 2 calls');
-    expect(line).toHaveTextContent('embeddings: 1 PERSON sent across 1 call');
+    expect(line).toHaveTextContent('Privacy (detect): 1 EMAIL · 3 PERSON found across 2 calls');
+    expect(line).toHaveTextContent('embeddings: 1 PERSON found across 1 call');
     expect(line).not.toHaveTextContent('degraded');
   });
 
@@ -42,7 +42,7 @@ describe('PrivacyCounts', () => {
       />
     );
     const line = screen.getByTestId('privacy-counts');
-    expect(line).toHaveTextContent('nothing sent across 1 call');
+    expect(line).toHaveTextContent('nothing found across 1 call');
     expect(line).toHaveTextContent('degraded (core.lists)');
     expect(line).not.toHaveTextContent('embeddings');
   });
@@ -62,7 +62,7 @@ describe('PrivacyCounts with only embedding calls', () => {
       />
     );
     const line = screen.getByTestId('privacy-counts');
-    expect(line).toHaveTextContent('Privacy (detect): embeddings: 2 PERSON sent across 1 call');
+    expect(line).toHaveTextContent('Privacy (detect): embeddings: 2 PERSON found across 1 call');
     expect(line).not.toHaveTextContent('0 calls');
   });
 });
@@ -116,17 +116,17 @@ describe('PrivacyCounts refusals, unresolved placeholders and verbs', () => {
     expect(screen.getByTestId('privacy-counts')).not.toHaveTextContent('unrestored');
   });
 
-  it.each([
-    ['pseudonymise', 'masked'],
-    ['redact', 'masked'],
-    ['detect', 'sent'],
-    ['block', 'sent'],
-  ] as const)('mode %s says the counted values were %s', (mode, verb) => {
-    render(<PrivacyCounts summary={{ ...base, mode }} />);
-    expect(screen.getByTestId('privacy-counts')).toHaveTextContent(
-      `1 PERSON ${verb} across 1 call`
-    );
-  });
+  // The mode is the strictest any call in the scope ran under, so a verb
+  // read from it ("masked") would overclaim for a scope that mixed modes.
+  it.each(['pseudonymise', 'redact', 'detect', 'block'] as const)(
+    'mode %s says what was found, never claiming it was masked',
+    (mode) => {
+      render(<PrivacyCounts summary={{ ...base, mode }} />);
+      const line = screen.getByTestId('privacy-counts');
+      expect(line).toHaveTextContent('1 PERSON found across 1 call');
+      expect(line).not.toHaveTextContent('masked');
+    }
+  );
 
   it('reads "no call sent" for a refusal with no calls scanned', () => {
     render(

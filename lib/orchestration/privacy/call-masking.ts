@@ -25,15 +25,11 @@ import type {
 import type { EntityType, TokenSession } from '@/lib/privacy/adapters/types';
 import { maskText, PLACEHOLDER_INSTRUCTION, type MaskSpan } from '@/lib/privacy/pii/mask';
 import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
+import { isRecord } from '@/lib/utils';
 import { StreamRestorer } from '@/lib/privacy/pii/stream-restore';
 
 /** Between two pieces in the joined input. A blank line, so no pattern runs across it. */
 export const PIECE_SEPARATOR = '\n\n';
-
-/** A plain object, as JSON parsing gives one: keys to walk. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /**
  * Every string inside a parsed value, depth first, each key before its value,
@@ -46,8 +42,14 @@ function mapValue(value: unknown, fn: (text: string) => string): unknown {
   if (isRecord(value)) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      const key = fn(k);
-      out[key] = mapValue(v, fn);
+      // Defined, not assigned: parsed JSON can carry an own `__proto__` key,
+      // which an assignment would turn into the object's prototype and lose.
+      Object.defineProperty(out, fn(k), {
+        value: mapValue(v, fn),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return out;
   }
@@ -84,13 +86,30 @@ export function mapMessageTexts(
   });
 }
 
-/** Every text {@link mapMessageTexts} visits, in its order. */
+/** The strings in a parsed value, in {@link mapValue}'s order, without copying it. */
+function collectValue(value: unknown, out: string[]): void {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) collectValue(v, out);
+  else if (isRecord(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      out.push(k);
+      collectValue(v, out);
+    }
+  }
+}
+
+/**
+ * Every text {@link mapMessageTexts} visits, in its order. Collected without
+ * copying the messages: it runs on every scanned call, over the whole history.
+ * A test holds the two orders together.
+ */
 export function messagePieces(messages: readonly LlmMessage[]): string[] {
   const pieces: string[] = [];
-  mapMessageTexts(messages, (text) => {
-    pieces.push(text);
-    return text;
-  });
+  for (const m of messages) {
+    if (typeof m.content === 'string') pieces.push(m.content);
+    else for (const part of m.content) if (part.type === 'text') pieces.push(part.text);
+    for (const call of m.toolCalls ?? []) collectValue(call.arguments, pieces);
+  }
   return pieces;
 }
 

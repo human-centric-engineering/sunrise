@@ -43,7 +43,12 @@ import {
   isLocalOnlyEmbeddingRefusal,
   PrivacyRefusedError,
 } from '@/lib/orchestration/llm/privacy-stage';
-import { isRequestFault, PRIVACY_BLOCKED, PRIVACY_REFUSED } from '@/lib/orchestration/llm/provider';
+import {
+  isRequestFault,
+  PRIVACY_BLOCKED,
+  PRIVACY_REFUSED,
+  ProviderError,
+} from '@/lib/orchestration/llm/provider';
 import type { LlmMessage, LlmResponse, StreamChunk } from '@/lib/orchestration/llm/types';
 import {
   createPrivacyScope,
@@ -195,7 +200,7 @@ describe('pseudonymise: what is sent', () => {
     });
   });
 
-  it('adds the placeholder instruction to the system prompt once, only when something was masked', async () => {
+  it('adds the placeholder instruction to the system prompt once, on every masking-mode call', async () => {
     const { result } = await inScope(() => applyPrivacyStage(chatCall()));
     const sent = sentMessages(result.args);
     expect(sent[0]).toEqual({
@@ -204,10 +209,17 @@ describe('pseudonymise: what is sent', () => {
     });
     expect(JSON.stringify(sent).split(PLACEHOLDER_INSTRUCTION)).toHaveLength(2);
 
-    // Nothing to mask: the very arguments, no line, nothing to restore.
-    const clean = [[{ role: 'user', content: 'What are your opening hours?' }], { model: 'm' }];
-    const { result: untouched } = await inScope(() => applyPrivacyStage(chatCall(clean)));
-    expect(untouched.args).toBe(clean);
+    // Nothing to mask still carries it, so the system prompt (the provider's
+    // cache prefix) does not change when the first value appears. Nothing
+    // was issued, so there is nothing to restore.
+    const question: LlmMessage = { role: 'user', content: 'What are your opening hours?' };
+    const clean: LlmMessage[] = [
+      { role: 'system', content: 'You are a helpful support agent.' },
+      question,
+    ];
+    const { result: untouched } = await inScope(() => applyPrivacyStage(chatCall([clean, {}])));
+    expect(sentMessages(untouched.args)[0]).toEqual(sent[0]);
+    expect(sentMessages(untouched.args)[1]).toEqual(question);
     expect(untouched.restorer).toBeUndefined();
   });
 
@@ -408,6 +420,16 @@ describe('a detector that fails under a masking mode (owner ruling, 2026-11-11)'
     }
   );
 
+  it('refuses under block when a required detector fails, rather than send what it missed', async () => {
+    mode('block');
+    seam.init.mockImplementation(() => failingDetector(true));
+    // Nothing the working detectors find: only the failure stands between
+    // this call and the vendor.
+    const args = [[{ role: 'user', content: 'What are your opening hours?' }], { model: 'm' }];
+    const err = await refusal(applyPrivacyStage(chatCall(args)));
+    expect(err.reason).toBe('detector_failed');
+  });
+
   it('goes ahead masked, marked degraded, when only an optional detector fails', async () => {
     seam.init.mockImplementation(() => failingDetector(false));
     const { result, scope } = await inScope(() => applyPrivacyStage(chatCall()));
@@ -425,7 +447,7 @@ describe('a detector that fails under a masking mode (owner ruling, 2026-11-11)'
 });
 
 describe('a call the caller abandons under a masking mode', () => {
-  it('throws the caller’s own abort rather than hand back unscanned arguments, and records nothing', async () => {
+  it('throws an abort rather than hand back unscanned arguments, and records nothing', async () => {
     const caller = new AbortController();
     seam.init.mockImplementation(() =>
       registerPrivacyDetector({
@@ -446,7 +468,9 @@ describe('a call the caller abandons under a masking mode', () => {
         (e: unknown) => e
       )
     );
-    expect(result).toBe(caller.signal.reason);
+    // The shape every shipped provider throws for an aborted request.
+    expect(result).toBeInstanceOf(ProviderError);
+    expect(result).toMatchObject({ code: 'aborted', retriable: false });
     expect(result).not.toBeInstanceOf(PrivacyRefusedError);
     expect(privacySummary(scope)).toBeUndefined();
   });
@@ -461,6 +485,26 @@ describe('an error inside the stage', () => {
       return undefined;
     });
     expect(privacySummary(scope)?.refused).toEqual(['stage_error']);
+  });
+});
+
+describe('an unscoped embedding call under a masking mode', () => {
+  it('is not scanned when nothing would read it: embeddings are never masked', async () => {
+    const detect = vi.fn(async () => []);
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector({
+        id: 'app.spy',
+        egress: 'external',
+        entityTypes: ['PERSON'],
+        detect,
+      })
+    );
+    await expect(applyPrivacyStage(embedCall(false))).resolves.toEqual({ args: [[NAME]] });
+    expect(detect).not.toHaveBeenCalled();
+
+    // A scope reads it, so a scoped one is still counted.
+    await inScope(() => applyPrivacyStage(embedCall(false)));
+    expect(detect).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -31,8 +31,10 @@ import {
   EMBEDDINGS_POLICIES,
   type EmbeddingsPolicy,
   parseEmbeddingsPolicy,
+  parsePrivacyMode,
   PRIVACY_MODES_AVAILABLE,
 } from '@/lib/orchestration/privacy/settings-policy';
+import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -167,9 +169,14 @@ const EMBEDDINGS_POLICY_LABELS: Record<EmbeddingsPolicy, string> = {
   local_only: 'Local providers only',
 };
 
-/** Whether `mode` protects what is sent, so embeddings sent as they are become a gap. */
+/**
+ * Whether `mode` protects what is sent (`pseudonymise` or stricter), so
+ * embeddings sent as they are become a gap. The stage's own test for the
+ * `local_only` refusal.
+ */
 function protects(mode: string): boolean {
-  return mode === 'pseudonymise' || mode === 'redact' || mode === 'block';
+  const known = parsePrivacyMode(mode);
+  return known !== null && modeStrictness(known) >= modeStrictness('pseudonymise');
 }
 
 /**
