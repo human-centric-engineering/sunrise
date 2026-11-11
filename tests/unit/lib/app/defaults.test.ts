@@ -493,8 +493,10 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       const adapters = getPrivacyAdapters();
       expect(adapters.appInitFailure).toBeNull();
       expect(adapters.coreFailure).toBeNull();
-      expect(adapters.detectors.map((r) => r.detector.id)).toEqual(
-        core.detectors.map((d) => d.detector.id)
+      // Sorted, because the registry orders detectors by egress, not by the
+      // order core declares them.
+      expect(adapters.detectors.map((r) => r.id).sort()).toEqual(
+        core.detectors.map((d) => d.detector.id).sort()
       );
       expect(adapters.detectors.every((r) => r.core)).toBe(true);
       expect(adapters.tokenStrategy?.id ?? null).toBe(core.tokenStrategy?.id ?? null);

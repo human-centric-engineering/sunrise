@@ -29,20 +29,27 @@ export function stricterMode(a: PrivacyMode, b: PrivacyMode): PrivacyMode {
 }
 
 /**
- * What a resolver may return. Validated, because a resolver is fork code and
- * a value that is not a policy must fail the resolver rather than be read as
- * one. Unknown keys are refused for the same reason: a misspelt field would
- * otherwise be a tightening that silently did nothing.
+ * A whole policy: what the stage's base must be. Checked at the boundary,
+ * because an unknown mode would otherwise rank as looser than `off`.
  */
-export const privacyPolicyPatchSchema = z
+export const privacyPolicySchema = z
   .object({
     mode: z.enum(PRIVACY_MODES_BY_STRICTNESS),
     ignoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)),
     protectLocalProviders: z.boolean(),
     onDetectorFailure: z.enum(DETECTOR_FAILURE_ACTIONS),
   })
-  .partial()
-  .strict() satisfies z.ZodType<Partial<PrivacyPolicy>>;
+  .strict() satisfies z.ZodType<PrivacyPolicy>;
+
+/**
+ * What a resolver may return. Validated, because a resolver is fork code and
+ * a value that is not a policy must fail the resolver rather than be read as
+ * one. Unknown keys are refused for the same reason: a misspelt field would
+ * otherwise be a tightening that silently did nothing.
+ */
+export const privacyPolicyPatchSchema = privacyPolicySchema.partial() satisfies z.ZodType<
+  Partial<PrivacyPolicy>
+>;
 
 /**
  * Fails to compile when `PrivacyPolicy` gains or loses a field the schema does

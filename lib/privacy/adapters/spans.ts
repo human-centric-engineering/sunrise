@@ -116,13 +116,15 @@ export function resolveOverlaps(
   const flush = () => {
     if (group.length === 0) return;
     const best = group.reduce((a, b) => (moreSpecific(b, a, rank) ? b : a));
-    merged.push({
-      type: best.type,
-      start: group[0].start,
-      end: groupEnd,
-      confidence: best.confidence,
-      source: best.source,
-    });
+    merged.push(
+      Object.freeze({
+        type: best.type,
+        start: group[0].start,
+        end: groupEnd,
+        confidence: best.confidence,
+        source: best.source,
+      })
+    );
     group = [];
   };
 

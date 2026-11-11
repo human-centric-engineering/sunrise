@@ -162,6 +162,45 @@ describe('runPrivacyDetectors', () => {
     expect(knownValues[0].value).toBe('Priya Shah');
   });
 
+  it('withholds known values from an external detector, which would otherwise learn more than the text says', async () => {
+    const knownValues = [{ type: 'EMAIL', value: 'jane@example.com' }];
+    const seen: Record<string, readonly unknown[]> = {};
+    const watching =
+      (id: string): PrivacyDetector['detect'] =>
+      (_input, ctx) => {
+        seen[id] = ctx.knownValues;
+        return Promise.resolve([]);
+      };
+    seam.init.mockImplementation(() => {
+      registerPrivacyDetector(detector('acme.local', watching('acme.local')));
+      registerPrivacyDetector({
+        ...detector('acme.presidio', watching('acme.presidio')),
+        egress: 'self_hosted',
+      });
+      registerPrivacyDetector({
+        ...detector('acme.cloud', watching('acme.cloud')),
+        egress: 'external',
+      });
+    });
+
+    await runPrivacyDetectors('what is the weather', { ...CTX, knownValues });
+
+    expect(seen['acme.local']).toEqual(knownValues);
+    expect(seen['acme.presidio']).toEqual(knownValues);
+    expect(seen['acme.cloud']).toEqual([]);
+  });
+
+  it('returns merged spans frozen, so nothing downstream can shrink what gets masked', async () => {
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector(detector('acme.x', returning([EMAIL, PERSON])))
+    );
+
+    const { spans } = await runPrivacyDetectors(TEXT, CTX);
+
+    expect(spans).toHaveLength(2);
+    expect(spans.every((span) => Object.isFrozen(span))).toBe(true);
+  });
+
   it('uses nothing from a malformed result and reports it, with its required flag', async () => {
     seam.init.mockImplementation(() => {
       registerPrivacyDetector(detector('acme.bad', returning([EMAIL, { ...PERSON, end: 999 }])), {
@@ -405,6 +444,32 @@ describe('resolvePrivacyPolicy', () => {
 
     expect(signal?.aborted).toBe(true);
     expect(result.failures).toEqual([{ adapterId: 'acme.db', required: true, reason: 'timeout' }]);
+  });
+
+  it('refuses a base policy that is not a policy, rather than ranking an unknown mode below off', async () => {
+    seam.init.mockImplementation(() => undefined);
+
+    await expect(
+      resolvePrivacyPolicy({ ...POLICY, mode: 'pseudonymize' as PrivacyPolicy['mode'] }, INPUT)
+    ).rejects.toThrow('the base policy is not a valid policy');
+  });
+
+  it('names a failing resolver by the id it registered with, whatever its object says later', async () => {
+    let calls = 0;
+    seam.init.mockImplementation(() =>
+      registerPrivacyPolicyResolver({
+        get id() {
+          return calls++ === 0 ? 'acme.real' : 'acme.impostor';
+        },
+        resolve: () => {
+          throw new Error('no');
+        },
+      })
+    );
+
+    const result = await resolvePrivacyPolicy(POLICY, INPUT);
+
+    expect(result.failures.map((f) => f.adapterId)).toEqual(['acme.real']);
   });
 
   it('reports a resolver that returns something that is not a policy', async () => {

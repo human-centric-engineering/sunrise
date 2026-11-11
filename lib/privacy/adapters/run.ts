@@ -15,7 +15,11 @@
  * @see .context/privacy/llm-privacy-layer.md — *When an adapter fails*
  */
 import { logger } from '@/lib/logging';
-import { tightenPolicy, privacyPolicyPatchSchema } from '@/lib/privacy/adapters/policy';
+import {
+  privacyPolicyPatchSchema,
+  privacyPolicySchema,
+  tightenPolicy,
+} from '@/lib/privacy/adapters/policy';
 import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
 import { MalformedSpansError, resolveOverlaps, validateSpans } from '@/lib/privacy/adapters/spans';
 import type {
@@ -126,7 +130,9 @@ function errorName(err: unknown): string {
  * A detector that times out, throws, or returns anything {@link validateSpans}
  * rejects contributes nothing, and is listed in `failures` with its
  * `required` flag. If the whole call is abandoned (`ctx.signal`), the
- * remaining detectors are reported `aborted` without being run.
+ * remaining detectors are reported `aborted` without being run. Each
+ * detector's timeout bounds that detector only: the caller bounds the whole
+ * pass by passing a deadline as `ctx.signal` (`AbortSignal.timeout()`).
  */
 export async function runPrivacyDetectors(
   text: string,
@@ -143,9 +149,14 @@ export async function runPrivacyDetectors(
     ...rest,
     knownValues: Object.freeze(rest.knownValues.map((v) => Object.freeze({ ...v }))),
   };
+  // An external detector is another processor. It is sent the text it must
+  // scan and nothing more: known values may not appear in the text at all, so
+  // handing them over would disclose more than the call itself does.
+  const externalCtx = { ...callCtx, knownValues: Object.freeze([]) };
 
   for (const registration of detectors) {
-    const { detector, id, required, timeoutMs, entityTypes } = registration;
+    const { detector, id, egress, required, timeoutMs, entityTypes } = registration;
+    const base = egress === 'external' ? externalCtx : callCtx;
     if (outer?.aborted) {
       failures.push({ adapterId: id, required, reason: 'aborted' });
       continue;
@@ -154,7 +165,7 @@ export async function runPrivacyDetectors(
       // The spans are frozen by validateSpans; the array is frozen here.
       const priorSpans = Object.freeze([...found]);
       const result = await raceAdapter(
-        (signal) => detector.detect({ text }, { ...callCtx, signal, priorSpans }),
+        (signal) => detector.detect({ text }, { ...base, signal, priorSpans }),
         timeoutMs,
         outer
       );
@@ -199,10 +210,16 @@ export async function resolvePrivacyPolicy(
   signal?: AbortSignal
 ): Promise<PolicyResult> {
   const { policyResolvers } = getPrivacyAdapters();
-  let policy = base;
+  // The base comes from settings, which the stage reads and is responsible
+  // for. An invalid one is a bug, and a bug refuses: an unknown mode would
+  // otherwise rank as looser than `off`.
+  const checked = privacyPolicySchema.safeParse(base);
+  if (!checked.success)
+    throw new Error('resolvePrivacyPolicy: the base policy is not a valid policy');
+  let policy: PrivacyPolicy = checked.data;
   const failures: AdapterFailure[] = [];
   const frozenInput = Object.freeze({ ...input });
-  for (const { resolver, timeoutMs } of policyResolvers) {
+  for (const { resolver, id, timeoutMs } of policyResolvers) {
     try {
       // A copy, frozen: the policy so far is the thing a resolver must not be
       // able to loosen, and mutating the object it was handed would do that.
@@ -219,18 +236,18 @@ export async function resolvePrivacyPolicy(
       if (patch === undefined || patch === null) continue;
       const parsed = privacyPolicyPatchSchema.safeParse(patch);
       if (!parsed.success) {
-        failures.push({ adapterId: resolver.id, required: true, reason: 'malformed' });
+        failures.push({ adapterId: id, required: true, reason: 'malformed' });
         logger.warn('privacy-adapters: policy resolver returned a value that is not a policy', {
-          adapterId: resolver.id,
+          adapterId: id,
         });
         continue;
       }
       policy = tightenPolicy(policy, parsed.data);
     } catch (err) {
       const reason = classify(err, signal);
-      failures.push({ adapterId: resolver.id, required: true, reason });
+      failures.push({ adapterId: id, required: true, reason });
       logger.warn('privacy-adapters: policy resolver failed', {
-        adapterId: resolver.id,
+        adapterId: id,
         reason,
         errorName: errorName(err),
       });
@@ -252,12 +269,12 @@ export function notifyPrivacyObservers(event: PrivacyEvent): void {
     counts: Object.freeze({ ...event.counts }),
     failedAdapters: Object.freeze([...event.failedAdapters]),
   });
-  for (const observer of observers) {
+  for (const { observer, id } of observers) {
     void Promise.resolve()
       .then(() => observer.observe(copy))
       .catch((err: unknown) => {
         logger.warn('privacy-adapters: observer failed', {
-          adapterId: observer.id,
+          adapterId: id,
           errorName: errorName(err),
         });
       });

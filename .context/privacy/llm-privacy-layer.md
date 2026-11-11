@@ -183,6 +183,10 @@ export function initAppPrivacyAdapters(): void {
 A detector declares its `id`, its `egress` (`in_process` | `self_hosted` |
 `external`), an optional `jurisdiction`, and every `entityTypes` value it may
 report. `detect(input, ctx)` returns spans; `ctx.signal` aborts at the timeout.
+`ctx.knownValues` carries what the layer already knows about the people in the
+call, **except for an `external` detector, which gets none**: another processor
+is sent the text it must scan and nothing more, because a known value may not
+appear in the text at all.
 
 **Don't** pass a service's offsets straight through:
 
@@ -257,7 +261,10 @@ number beat a generic number, and a known value beat a list guess.
 The runner reports; the stage decides. Each adapter runs under its own timeout
 (default `DEFAULT_DETECTOR_TIMEOUT_MS`, at most `MAX_DETECTOR_TIMEOUT_MS`),
 enforced through its abort signal, and the run settles at the timeout even if
-the adapter ignores the signal.
+the adapter ignores the signal. Detectors run in sequence, so a per-detector
+timeout bounds one detector, not the pass: the stage bounds the pass by passing
+a deadline as the call's signal (`AbortSignal.timeout()`), and detectors left
+when it fires are reported `aborted`.
 
 | Failure                                                     | Reported as                            | What the stage does                                                     |
 | ----------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |

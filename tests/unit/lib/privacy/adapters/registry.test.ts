@@ -473,6 +473,20 @@ describe('validation of what an app registers', () => {
       /must name the models it stores in/,
     ],
     [
+      'a persistent strategy whose flag answers differently on a second read',
+      () => {
+        let reads = 0;
+        const shifty = {
+          ...strategy('acme.shifty'),
+          get persistent() {
+            return reads++ === 0;
+          },
+        } as unknown as PrivacyTokenStrategy;
+        registerPrivacyTokenStrategy(shifty);
+      },
+      /must name the models it stores in/,
+    ],
+    [
       'a token strategy that does not declare persistence',
       () =>
         registerPrivacyTokenStrategy({

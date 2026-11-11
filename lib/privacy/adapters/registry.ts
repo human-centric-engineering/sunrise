@@ -95,7 +95,17 @@ export interface PolicyResolverRegistrationOptions {
 /** A registered policy resolver, as the registry holds it. Frozen. */
 export interface PolicyResolverRegistration {
   readonly resolver: PrivacyPolicyResolver;
+  /** The id as validated; read this, not `resolver.id`. */
+  readonly id: string;
   readonly timeoutMs: number;
+  readonly core: boolean;
+}
+
+/** A registered observer, as the registry holds it. Frozen. */
+export interface ObserverRegistration {
+  readonly observer: PrivacyObserver;
+  /** The id as validated; read this, not `observer.id`. */
+  readonly id: string;
   readonly core: boolean;
 }
 
@@ -110,7 +120,7 @@ export interface PrivacyAdapterSnapshot {
   tokenStrategy: PrivacyTokenStrategy | null;
   /** In registration order, core first. */
   policyResolvers: readonly PolicyResolverRegistration[];
-  observers: readonly PrivacyObserver[];
+  observers: readonly ObserverRegistration[];
   /** Core detectors an app replaced, by id. */
   replacedCoreDetectors: readonly string[];
   /**
@@ -132,7 +142,7 @@ const detectors = new Map<string, DetectorRegistration>();
 /** Replaced core detector id → the id of the detector that replaced it. */
 const replacedCore = new Map<string, string>();
 const policyResolvers = new Map<string, PolicyResolverRegistration>();
-const observers = new Map<string, PrivacyObserver>();
+const observers = new Map<string, ObserverRegistration>();
 /** One slot, held in a Map so the gate can snapshot and restore it like the rest. */
 const tokenStrategySlot = new Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>();
 
@@ -150,7 +160,7 @@ interface Snapshot {
   detectors: Map<string, DetectorRegistration>;
   replacedCore: Map<string, string>;
   policyResolvers: Map<string, PolicyResolverRegistration>;
-  observers: Map<string, PrivacyObserver>;
+  observers: Map<string, ObserverRegistration>;
   tokenStrategySlot: Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>;
 }
 
@@ -349,8 +359,9 @@ function setTokenStrategy(strategy: PrivacyTokenStrategy, core: boolean): void {
   if (persistent !== true && persistent !== false) {
     throw new Error(`${kind} ${id}: persistent must be declared true or false`);
   }
-  if (strategy.persistent) {
-    const storesIn: unknown = strategy.storesIn;
+  // `persistent` is read once, above; a getter must not answer differently here.
+  if (persistent) {
+    const storesIn: unknown = 'storesIn' in strategy ? strategy.storesIn : undefined;
     if (
       !Array.isArray(storesIn) ||
       storesIn.length === 0 ||
@@ -381,7 +392,7 @@ function addPolicyResolver(
   if (policyResolvers.has(id)) throw new Error(`${kind} ${id}: already registered`);
   checkFunction(kind, id, 'resolve', typeof resolver.resolve === 'function');
   const timeoutMs = checkTimeout(kind, id, options.timeoutMs);
-  policyResolvers.set(id, Object.freeze({ resolver, timeoutMs, core }));
+  policyResolvers.set(id, Object.freeze({ resolver, id, timeoutMs, core }));
 }
 
 function addObserver(observer: PrivacyObserver, core: boolean): void {
@@ -389,7 +400,7 @@ function addObserver(observer: PrivacyObserver, core: boolean): void {
   const id = checkId(kind, observer.id, core);
   if (observers.has(id)) throw new Error(`${kind} ${id}: already registered`);
   checkFunction(kind, id, 'observe', typeof observer.observe === 'function');
-  observers.set(id, observer);
+  observers.set(id, Object.freeze({ observer, id, core }));
 }
 
 // ---------------------------------------------------------------------------
@@ -445,13 +456,11 @@ const EGRESS_ORDER: Record<AdapterEgress, number> = { in_process: 0, self_hosted
 /** Everything the privacy layer runs. Loads core and the app's init on first call. */
 export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
   ensureLoaded();
-  const ranksAsCore = (r: DetectorRegistration) => r.core || r.replacesCore !== undefined;
   const ordered = [...detectors.values()]
     .map((registration, index) => ({ registration, index }))
     .sort(
       (a, b) =>
         EGRESS_ORDER[a.registration.egress] - EGRESS_ORDER[b.registration.egress] ||
-        Number(ranksAsCore(b.registration)) - Number(ranksAsCore(a.registration)) ||
         a.index - b.index
     )
     .map(({ registration }) => registration);
