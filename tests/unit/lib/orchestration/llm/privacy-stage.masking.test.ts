@@ -171,9 +171,7 @@ describe('pseudonymise: what is sent', () => {
   it('sends no seeded value, anywhere in the call, and leaves the caller’s messages alone', async () => {
     const original = messages();
     const before = structuredClone(original);
-    const { result } = await inScope(() =>
-      applyPrivacyStage(chatCall([original, { model: 'm' }]))
-    );
+    const { result } = await inScope(() => applyPrivacyStage(chatCall([original, { model: 'm' }])));
 
     const sent = JSON.stringify(result.args);
     for (const value of SEEDED) expect(sent).not.toContain(value);
@@ -265,7 +263,11 @@ describe('pseudonymise: what comes back', () => {
 
     const restored = result.restorer?.response(
       response(`Thanks ${person}, I'll write to ${email}.`, [
-        { id: 'c1', name: 'send_email', arguments: { to: email, cc: [email], meta: { [email]: 1 } } },
+        {
+          id: 'c1',
+          name: 'send_email',
+          arguments: { to: email, cc: [email], meta: { [email]: 1 } },
+        },
       ])
     );
 

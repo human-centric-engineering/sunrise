@@ -8,6 +8,10 @@
  * privacy scope. A refused call never reaches the vendor and is never counted
  * in flight.
  *
+ * Under `pseudonymise` the vendor receives placeholders only, and what it
+ * sends back — text, streamed text, tool-call arguments — reaches the caller
+ * restored (t-992).
+ *
  * The last case is the one #1138 is about: a provider call made from another
  * module graph (the capability dispatcher's) inside a chat turn must read the
  * turn's scope, not fall back to an ephemeral one.
@@ -30,6 +34,19 @@ vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
     privacyProtectLocalProviders: false,
   })),
 }));
+
+/** Makes masking throw: a bug inside the stage. */
+const masking = vi.hoisted(() => ({ fail: false }));
+vi.mock('@/lib/orchestration/privacy/call-masking', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/orchestration/privacy/call-masking')>();
+  return {
+    ...real,
+    maskMessages: (...args: Parameters<typeof real.maskMessages>) => {
+      if (masking.fail) throw new Error('masking broke');
+      return real.maskMessages(...args);
+    },
+  };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -118,6 +135,7 @@ beforeEach(() => {
   __resetInFlightCountersForTests();
   __resetPrivacyAdaptersForTests();
   privacy.mode = 'detect';
+  masking.fail = false;
 });
 
 describe.each(['off', 'detect'])('mode %s', (mode) => {
@@ -262,5 +280,109 @@ describe('a call from another module graph inside a chat turn (#1138)', () => {
     );
 
     expect(privacySummary(scope)).toMatchObject({ calls: 1, counts: { EMAIL: 1 } });
+  });
+});
+
+/** The placeholder a received request gave `EMAIL`. */
+function emailPlaceholder(args: unknown[]): string {
+  const m = /\[EMAIL_\d+\]/.exec(JSON.stringify(args));
+  if (!m) throw new Error('no email placeholder in the request');
+  return m[0];
+}
+
+describe('pseudonymise through the Proxy (t-992)', () => {
+  /** A vendor that writes the placeholder it was sent back into its reply and a tool call. */
+  function echoingProvider() {
+    const received: unknown[][] = [];
+    const provider = {
+      name: 'probe',
+      isLocal: false,
+      chat: vi.fn(async (...args: unknown[]) => {
+        received.push(args);
+        const p = emailPlaceholder(args);
+        return {
+          content: `I will write to ${p}.`,
+          toolCalls: [{ id: 'c1', name: 'send_email', arguments: { to: p } }],
+          model: 'm',
+          finishReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      }),
+      chatStream: async function* (...args: unknown[]) {
+        received.push(args);
+        const p = emailPlaceholder(args);
+        yield { type: 'text' as const, content: `Writing to ${p.slice(0, 3)}` };
+        yield { type: 'text' as const, content: `${p.slice(3)} now.` };
+        yield {
+          type: 'tool_call' as const,
+          toolCall: { id: 'c1', name: 'send_email', arguments: { to: p } },
+        };
+        yield {
+          type: 'done' as const,
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'tool_use' as const,
+        };
+      },
+      embed: vi.fn(),
+      embedMany: vi.fn(),
+      transcribe: vi.fn(),
+      listModels: vi.fn(async () => []),
+      testConnection: vi.fn(async () => ({ ok: true, models: [] })),
+    } as unknown as LlmProvider;
+    return { provider, received };
+  }
+
+  beforeEach(() => {
+    privacy.mode = 'pseudonymise';
+  });
+
+  it('sends chat placeholders only, and hands the caller the reply and tool call restored', async () => {
+    const { provider, received } = echoingProvider();
+    registerProviderInstance('probe', provider);
+    const llm = await getProvider('probe');
+
+    const { result } = await inTurn(() => llm.chat(conversation(), { model: 'm' }));
+
+    expect(JSON.stringify(received)).not.toContain(EMAIL);
+    expect(result.content).toBe(`I will write to ${EMAIL}.`);
+    expect(result.toolCalls).toEqual([{ id: 'c1', name: 'send_email', arguments: { to: EMAIL } }]);
+  });
+
+  it('sends chatStream placeholders only, and streams the reply and tool call restored', async () => {
+    const { provider, received } = echoingProvider();
+    registerProviderInstance('probe', provider);
+    const llm = await getProvider('probe');
+
+    const { result: chunks } = await inTurn(() =>
+      drain(llm.chatStream(conversation(), { model: 'm' }))
+    );
+
+    expect(JSON.stringify(received)).not.toContain(EMAIL);
+    const text = chunks
+      .flatMap((c) =>
+        (c as { type: string }).type === 'text' ? [(c as { content: string }).content] : []
+      )
+      .join('');
+    expect(text).toBe(`Writing to ${EMAIL} now.`);
+    expect(chunks).toContainEqual({
+      type: 'tool_call',
+      toolCall: { id: 'c1', name: 'send_email', arguments: { to: EMAIL } },
+    });
+  });
+
+  it('refuses on an error inside the stage, and never calls the vendor', async () => {
+    masking.fail = true;
+    const { provider, received } = echoingProvider();
+    registerProviderInstance('probe', provider);
+    const llm = await getProvider('probe');
+
+    await expect(inTurn(() => llm.chat(conversation(), { model: 'm' }))).rejects.toBeInstanceOf(
+      PrivacyRefusedError
+    );
+    await expect(
+      inTurn(() => drain(llm.chatStream(conversation(), { model: 'm' })))
+    ).rejects.toMatchObject({ reason: 'stage_error' });
+    expect(received).toEqual([]);
+    expect(provider.chat).not.toHaveBeenCalled();
   });
 });
