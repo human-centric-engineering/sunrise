@@ -36,7 +36,9 @@
  *
  * A model's tier is read from the file that defines it, by the naming the
  * reserved tiers already use: `framework-*.prisma` is the framework tier,
- * `app.prisma` and `app-*.prisma` the app tier, every other file core. In
+ * `app.prisma` and `app-*.prisma` the app tier, every other file core. A
+ * subfolder named the same way (`app/`, `framework-modules/`) gives every file
+ * under it that tier, since Prisma loads subfolders of prisma/schema too. In
  * Sunrise no fork-tier model exists, so both zones are empty by construction.
  *
  * @see prisma/schema/tenancy.prisma · prisma/schema/auth.prisma
@@ -56,19 +58,29 @@ const APP_MARKER =
 
 type Tier = 'core' | 'framework' | 'app';
 
-/** The zone a model's back-relation belongs in, from the file that defines it. */
+/**
+ * The zone a model's back-relation belongs in, from the file that defines it.
+ * `file` is relative to prisma/schema. Prisma loads `.prisma` files from
+ * subfolders too, so a tier-named folder (`framework-*` / `app` / `app-*`)
+ * gives its whole tree that tier; outside one, the file's own name decides.
+ */
 function tierOfFile(file: string): Tier {
-  if (/^framework-.+\.prisma$/.test(file)) return 'framework';
-  if (/^app(-.+)?\.prisma$/.test(file)) return 'app';
+  const segments = file.split(/[\\/]/);
+  for (const name of [segments[0], segments[segments.length - 1]]) {
+    const stem = name.replace(/\.prisma$/, '');
+    if (/^framework-.+$/.test(stem)) return 'framework';
+    if (/^app(-.+)?$/.test(stem)) return 'app';
+  }
   return 'core';
 }
 
 /** The body lines of `model <name> { … }` in `source`, or null when absent. */
 function modelBody(source: string, name: string): string[] | null {
   const lines = source.split('\n');
-  const start = lines.findIndex((l) => new RegExp(`^model ${name}\\s*\\{`).test(l));
+  const start = lines.findIndex((l) => l.startsWith(`model ${name} `) || l === `model ${name}{`);
   if (start === -1) return null;
   const end = lines.findIndex((l, i) => i > start && /^\}/.test(l));
+  if (end === -1) throw new Error(`model ${name} has no closing brace at column 0`);
   return lines.slice(start + 1, end);
 }
 
@@ -105,9 +117,12 @@ function zoneViolations(body: string[], tierOf: Map<string, Tier>): string[] {
     if (tier === undefined || tier === zone) continue;
     problems.push(
       tier === 'core'
-        ? `\`${name} ${type}\` relates a core model but sits in the ${zone} zone. Core's ` +
-            `back-relations go in core's list above the framework marker; place it by hand, ` +
-            `since \`prisma format\` appends missing ones at the end of the model.`
+        ? `\`${name} ${type}\` relates a core model but sits in the ${zone} zone. The zones ` +
+            `hold back-relations to fork-tier models only. If core added it, move it into core's ` +
+            `list above the framework marker by hand, since \`prisma format\` appends missing ` +
+            `ones at the end of the model. If your fork added it, it pairs with your edit to a ` +
+            `core model, which is already a divergence: put it in core's list and give it a ` +
+            `ledger row with that edit.`
         : `\`${name} ${type}\` relates ${tier === 'app' ? 'an app' : 'a framework'}-tier model but sits ${
             zone === 'core' ? 'in core’s list' : `in the ${zone} zone`
           }. Move it below the ${tier} zone marker. A fork adopting the zones moves its ` +
@@ -120,7 +135,8 @@ function zoneViolations(body: string[], tierOf: Map<string, Tier>): string[] {
 /** Every model in prisma/schema, with the tier of the file that defines it. */
 function readModelTiers(): Map<string, Tier> {
   const tiers = new Map<string, Tier>();
-  for (const file of readdirSync(SCHEMA_DIR).filter((f) => f.endsWith('.prisma'))) {
+  const files = readdirSync(SCHEMA_DIR, { recursive: true, encoding: 'utf8' });
+  for (const file of files.filter((f) => f.endsWith('.prisma'))) {
     const source = readFileSync(join(SCHEMA_DIR, file), 'utf8');
     for (const m of source.matchAll(/^model (\w+)\s*\{/gm)) tiers.set(m[1], tierOfFile(file));
   }
@@ -207,6 +223,21 @@ describe('fork back-relation zones on Org and User (sunrise#859)', () => {
       expect(tierOfFile('tenancy.prisma')).toBe('core');
       expect(tierOfFile('platform.prisma')).toBe('core');
       expect(tierOfFile('application.prisma')).toBe('core');
+    });
+
+    it('reads the tier from a tier-named folder, since Prisma loads subfolders', () => {
+      expect(tierOfFile('app/widgets.prisma')).toBe('app');
+      expect(tierOfFile('app-questionnaire/forms.prisma')).toBe('app');
+      expect(tierOfFile('framework-modules/modules.prisma')).toBe('framework');
+      expect(tierOfFile('misc/framework-modules.prisma')).toBe('framework');
+      expect(tierOfFile('application/widgets.prisma')).toBe('core');
+    });
+
+    it('fails loudly on a model with no closing brace instead of dropping lines', () => {
+      expect(() => modelBody('model Org {\n  id String @id\n', 'Org')).toThrow(
+        'model Org has no closing brace'
+      );
+      expect(modelBody('model Orgs {\n}\n', 'Org')).toBeNull();
     });
   });
 });
