@@ -67,6 +67,77 @@ describe('PrivacyCounts with only embedding calls', () => {
   });
 });
 
+describe('PrivacyCounts refusals, unresolved placeholders and verbs', () => {
+  const base: PrivacySummary = {
+    mode: 'detect',
+    calls: 1,
+    counts: { PERSON: 1 },
+    embeddingCalls: 0,
+    embeddingCounts: {},
+  };
+
+  it('spells a known refusal reason out', () => {
+    render(<PrivacyCounts summary={{ ...base, refused: ['content_blocked'] }} />);
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      'refused: personal data found (block mode)'
+    );
+  });
+
+  it('shows an unknown reason as itself, and joins several', () => {
+    render(
+      <PrivacyCounts summary={{ ...base, refused: ['content_blocked', 'brand_new_reason'] }} />
+    );
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      'personal data found (block mode); brand_new_reason'
+    );
+  });
+
+  it('does not treat an inherited property name as a known reason', () => {
+    render(<PrivacyCounts summary={{ ...base, refused: ['toString'] }} />);
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent('refused: toString');
+  });
+
+  it('shows no refusal text when none were refused', () => {
+    render(<PrivacyCounts summary={{ ...base, refused: [] }} />);
+    expect(screen.queryByTestId('privacy-refused')).toBeNull();
+  });
+
+  it('pluralises unresolved placeholders, and omits the clause for zero or absent', () => {
+    const { rerender } = render(<PrivacyCounts summary={{ ...base, unresolved: 2 }} />);
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent(
+      '2 placeholders left unrestored'
+    );
+    rerender(<PrivacyCounts summary={{ ...base, unresolved: 1 }} />);
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('1 placeholder left unrestored');
+    expect(screen.getByTestId('privacy-counts')).not.toHaveTextContent('placeholders left');
+    rerender(<PrivacyCounts summary={{ ...base, unresolved: 0 }} />);
+    expect(screen.getByTestId('privacy-counts')).not.toHaveTextContent('unrestored');
+    rerender(<PrivacyCounts summary={base} />);
+    expect(screen.getByTestId('privacy-counts')).not.toHaveTextContent('unrestored');
+  });
+
+  it.each([
+    ['pseudonymise', 'masked'],
+    ['redact', 'masked'],
+    ['detect', 'sent'],
+    ['block', 'sent'],
+  ] as const)('mode %s says the counted values were %s', (mode, verb) => {
+    render(<PrivacyCounts summary={{ ...base, mode }} />);
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent(
+      `1 PERSON ${verb} across 1 call`
+    );
+  });
+
+  it('reads "no call sent" for a refusal with no calls scanned', () => {
+    render(
+      <PrivacyCounts
+        summary={{ ...base, mode: 'block', calls: 0, counts: {}, refused: ['content_blocked'] }}
+      />
+    );
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('Privacy (block): no call sent');
+  });
+});
+
 describe('the conversation trace', () => {
   function message(metadata: Record<string, unknown> | null) {
     return {
