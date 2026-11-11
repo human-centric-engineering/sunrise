@@ -391,7 +391,9 @@ message is safe for anyone, because a workflow executor copies it to the SSE
 client. It is a request fault: never retried (an `ExecutorError` with it in
 its cause chain takes its code and is not retriable), never failed over to
 another provider, never counted against a circuit breaker. A call the caller
-abandoned during the scan is neither counted nor refused.
+abandoned during the scan is neither counted nor refused: in `detect` it goes
+back as it came, and its own signal cancels it; under a stricter mode it was
+never scanned, so the caller's own abort is thrown instead of handing it back.
 
 **Nothing logs request text or a found value.** Detectors and resolvers each get
 a frozen copy of what they are handed, so none can change what the next one or
