@@ -16,13 +16,19 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import {
+  CallRestorer,
   mapMessageTexts,
   maskMessages,
   messagePieces,
   PIECE_SEPARATOR,
   withPlaceholderInstruction,
 } from '@/lib/orchestration/privacy/call-masking';
-import type { ContentPart, LlmMessage } from '@/lib/orchestration/llm/types';
+import type {
+  ContentPart,
+  LlmMessage,
+  LlmResponse,
+  StreamChunk,
+} from '@/lib/orchestration/llm/types';
 import {
   __resetPrivacyAdaptersForTests,
   getPrivacyAdapters,
@@ -189,5 +195,128 @@ describe('withPlaceholderInstruction', () => {
     expect(out[0]).toEqual({ role: 'system', content: PLACEHOLDER_INSTRUCTION });
     expect(input).toHaveLength(2);
     expect(input[0].content).toBe('turn');
+  });
+});
+
+describe('CallRestorer', () => {
+  /** A session that has issued [PERSON_1] for Priya Sharma. */
+  function issued(): TokenSession {
+    const sess = session();
+    sess.placeholderFor('PERSON', 'Priya Sharma');
+    return sess;
+  }
+
+  function response(content: string): LlmResponse {
+    return {
+      content,
+      usage: { inputTokens: 1, outputTokens: 1 },
+      model: 'm',
+      finishReason: 'stop',
+    };
+  }
+
+  async function run(restorer: CallRestorer, ...items: StreamChunk[]): Promise<StreamChunk[]> {
+    async function* source() {
+      for (const item of items) yield item;
+    }
+    const out: StreamChunk[] = [];
+    for await (const c of restorer.stream(source())) out.push(c);
+    return out;
+  }
+
+  const done: StreamChunk = {
+    type: 'done',
+    usage: { inputTokens: 1, outputTokens: 1 },
+    finishReason: 'stop',
+  };
+
+  it('hands a structured reply with nothing to restore back byte for byte, not re-serialised', () => {
+    const restorer = new CallRestorer(issued(), [], true, () => undefined);
+    const text = '{ "a" : 1,\n  "b": [ 2 ] }';
+    expect(restorer.response(response(text)).content).toBe(text);
+  });
+
+  it('restores a structured reply that does not parse as text', () => {
+    const restorer = new CallRestorer(issued(), [], true, () => undefined);
+    expect(restorer.response(response('Dear [PERSON_1], {oops')).content).toBe(
+      'Dear Priya Sharma, {oops'
+    );
+  });
+
+  it('reports once, with what it restored and what it could not', () => {
+    const report = vi.fn();
+    const restorer = new CallRestorer(issued(), [], false, report);
+    restorer.response(response('[PERSON_1] and [PERSON_7]'));
+    restorer.response(response('[PERSON_1]'));
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith({ restored: 1, unresolved: 1 });
+  });
+
+  it('releases reasoning it held back before the text that follows it, in order', async () => {
+    const out = await run(
+      new CallRestorer(issued(), [], false, () => undefined),
+      { type: 'reasoning', text: 'Thinking about [PERS' },
+      { type: 'text', content: 'Hello' },
+      done
+    );
+    // The held "[PERS" can no longer become a placeholder once text starts.
+    expect(out).toEqual([
+      { type: 'reasoning', text: 'Thinking about ' },
+      { type: 'reasoning', text: '[PERS' },
+      { type: 'text', content: 'Hello' },
+      done,
+    ]);
+  });
+
+  it('releases text it held back before reasoning that follows it, in order', async () => {
+    const out = await run(
+      new CallRestorer(issued(), [], false, () => undefined),
+      { type: 'text', content: 'Hi PERSON_1' },
+      { type: 'reasoning', text: 'more thought' },
+      done
+    );
+    expect(out).toEqual([
+      { type: 'text', content: 'Hi ' },
+      { type: 'text', content: 'Priya Sharma' },
+      { type: 'reasoning', text: 'more thought' },
+      done,
+    ]);
+  });
+
+  // The bare form: the stream holds it back, as more digits could follow.
+  // (A lone "[" is never consumed: it may be the model's own Markdown.)
+  it('releases held text and held reasoning before a done chunk, text first', async () => {
+    const out = await run(
+      new CallRestorer(issued(), [], false, () => undefined),
+      { type: 'reasoning', text: 'see PERSON_1' },
+      { type: 'text', content: 'for PERSON_1' },
+      done
+    );
+    expect(out.map((c) => c.type)).toEqual(['reasoning', 'reasoning', 'text', 'text', 'done']);
+    expect(out.flatMap((c) => (c.type === 'text' ? [c.content] : [])).join('')).toBe(
+      'for Priya Sharma'
+    );
+    expect(out.flatMap((c) => (c.type === 'reasoning' ? [c.text] : [])).join('')).toBe(
+      'see Priya Sharma'
+    );
+  });
+
+  it('releases held reasoning when a stream ends with no done chunk', async () => {
+    const out = await run(new CallRestorer(issued(), [], false, () => undefined), {
+      type: 'reasoning',
+      text: 'about PERSON_1',
+    });
+    expect(out.flatMap((c) => (c.type === 'reasoning' ? [c.text] : [])).join('')).toBe(
+      'about Priya Sharma'
+    );
+  });
+
+  it('keeps arguments a restore turned into something other than an object as they were', () => {
+    const restorer = new CallRestorer(issued(), [], false, () => undefined);
+    const out = restorer.response({
+      ...response(''),
+      toolCalls: [{ id: 'c', name: 'n', arguments: { who: '[PERSON_1]' } }],
+    });
+    expect(out.toolCalls?.[0].arguments).toEqual({ who: 'Priya Sharma' });
   });
 });
