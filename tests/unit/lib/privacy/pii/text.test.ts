@@ -33,6 +33,19 @@ describe('allMatches', () => {
   });
 });
 
+describe('allMatches with an owned pattern', () => {
+  it('runs the pattern as it is, and leaves it ready for the next text', () => {
+    const own = /\d+/g;
+    expect(allMatches(own, 'a1 b22', true).map((m) => m[0])).toEqual(['1', '22']);
+    expect(own.lastIndex).toBe(0);
+    expect(allMatches(own, '333', true).map((m) => m[0])).toEqual(['333']);
+  });
+
+  it('copies a pattern without the g flag even when owned', () => {
+    expect(allMatches(/x/, 'x x', true)).toHaveLength(2);
+  });
+});
+
 describe('hasContextBefore', () => {
   it('looks only within the window before the start', () => {
     const text = 'passport number is 123';

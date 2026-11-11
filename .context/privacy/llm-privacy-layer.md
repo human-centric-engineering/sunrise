@@ -19,7 +19,7 @@ has merged; this table says what exists.
 | -------------------------------------------------------------------------------------- | ------ | --------- |
 | Adapter contracts, registry, span validation, overlaps, runner, `lib/app/` seam        | t-988  | **Built** |
 | Local detection tiers A–C, synthetic UK corpus and its precision/recall gate           | t-989  | **Built** |
-| Placeholders: stateless token strategy, mask and restore, streams, tool-call arguments | t-990  | Planned   |
+| Placeholders: stateless token strategy, mask and restore, streams, tool-call arguments | t-990  | **Built** |
 | The Proxy stage in `detect` mode, the privacy scope, global settings, per-type counts  | t-991  | Planned   |
 | `pseudonymise`, `redact` and `block`; embeddings policy; output-guard change           | t-992  | Planned   |
 | Agent override, org floor, protected terms                                             | t-1010 | Planned   |
@@ -40,6 +40,9 @@ has merged; this table says what exists.
 | Notify observers               | `notifyPrivacyObservers(event)` — `lib/privacy/adapters/run.ts`             |
 | The contracts                  | `lib/privacy/adapters/types.ts` (type-only, safe to import from `lib/app/`) |
 | Sunrise's own default adapters | `lib/privacy/adapters/core-defaults.ts`                                     |
+| Mask detected spans            | `maskText(text, spans, session, declaredTypes)` — `mask.ts`                 |
+| Restore a reply, or tool args  | `restoreText()`, `restoreValue()` — `lib/privacy/pii/restore.ts`            |
+| Restore a stream               | `new StreamRestorer(session)` — `lib/privacy/pii/stream-restore.ts`         |
 
 ## What it protects
 
@@ -479,29 +482,88 @@ What it misses, by design or not yet:
 - **Two-letter names** ("Jo"): below the variant length, to keep ordinary
   words out.
 
-## Placeholders (t-990)
+## Placeholders
 
-- **Format.** Typed and numbered (`PERSON_1`, `ORG_2`), so the model can still
-  tell who is who. The bracket style is chosen by testing which one the shipped
-  providers reproduce most reliably, and recorded here.
-- **Numbering by first appearance.** History is append-only, so earlier turns
-  mask the same way on every call and provider prompt caching keeps working.
-- **No vault.** Every call sends the full conversation, and providers are called
-  statelessly (`store: false`; no `previous_response_id`, no batch API). The map
-  is rebuilt from each call's own input and discarded. If Sunrise ever adopts
-  provider-side state, that change must add a persistent strategy, with its
-  `SUBJECT_DATA_SOURCES` row and erasure path.
-- **Streaming.** A placeholder split across chunks is held back until complete.
-- **Tool calls.** Arguments are restored before the dispatcher runs them; tool
-  results are masked on the next outbound call. Capabilities need not know the
-  layer exists.
-- **Lenient restore.** Tolerates a missing bracket, a possessive, a placeholder
-  inside JSON. An unresolved placeholder is left visible and counted, never
-  guessed.
-- **Prompt line.** When masking is active, a short line tells the model the
-  placeholders are stand-ins to copy exactly.
-- **Output guard.** It ignores values the conversation itself supplied, and uses
-  tier A's recognisers instead of its own US-only patterns (t-992).
+The default token strategy is `core.stateless` (`lib/privacy/pii/token-strategy.ts`).
+An app replaces it with `registerPrivacyTokenStrategy()`.
+
+- **Format: `[PERSON_1]`.** Typed and numbered, so the model can still tell
+  who is who. Measured on 2026-11-11 with four shipped models (Claude Haiku
+  4.5, Claude Sonnet 4.6, GPT-4o-mini, GPT-5-mini). Each was given a masked
+  support message and asked to write a reply and a JSON object using six
+  placeholders, three times for each of six styles. Every style was copied
+  exactly every time a model used it (102–108 mentions per style). So the
+  choice rests on collisions: `{{…}}` and `{…}` are Sunrise's own workflow
+  template syntax; `<…>` reads as an HTML or XML tag, which a renderer may
+  strip and which Claude prompts use for structure; bare `PERSON_1` collides
+  with identifiers in code; `⟦…⟧` is unusual. `[…]` shows as written in
+  Markdown, unless a `(url)` follows it.
+- **Numbering by first appearance**, per type. One value gets one
+  placeholder whatever type it is reported as. Values are compared exactly,
+  so restoring gives back exactly what was masked. History is append-only,
+  so earlier turns mask the same way on every call, and provider prompt
+  caching keeps working. A property test checks this over growing histories.
+- **No vault.** Every call sends the full conversation, and providers are
+  called statelessly. The map is rebuilt from each call's own input and
+  discarded. The t-990 check found no `store: true`, no
+  `previous_response_id` and no batch API in `lib/orchestration/llm/`; the
+  Responses path sends `store: false`. A code-execution container is reused
+  only within one reply's tool loop, where numbering is the same anyway. If
+  Sunrise ever adopts provider-side state, that change must add a persistent
+  strategy, with its `SUBJECT_DATA_SOURCES` row and erasure path.
+- **Text that already looks like a placeholder is masked too**, as
+  `[LITERAL_n]`. Otherwise a user who typed "PERSON_1", or a document that
+  contains it, would have it restored into someone's name. The search runs on
+  each stretch of text between spans on its own, so a span that cuts through
+  one, or masking that would create one ("PERSON_1x" with "x" detected), is
+  caught. The stage passes every type the registered detectors declare
+  (`declaredTypes`, required), so a look-alike of a fork's own type is masked
+  even before the first real value of that type appears. Look-alikes are
+  counted in `literals`, apart from the per-type detection counts.
+- **A replacement strategy must write `[TYPE_n]`** (`formatPlaceholder()`).
+  Restoring, its leniency and look-alike masking all read that grammar. The
+  registry tries a strategy that stores nothing once at registration, for
+  `PERSON` and `LITERAL` and without an `orgId` (which is optional), and
+  refuses one that writes another form or cannot map a placeholder back.
+  A persistent strategy is not tried, because its sessions may write to its
+  tables; it must follow the same form. `LITERAL` is reserved: a detector
+  that declares it is refused.
+- **A mode that never restores** (`redact`) passes `escapeLookAlikes: false`,
+  so text that only looks like a placeholder, such as a template's
+  "[PERSON_2]", reaches the model as written. A property test checks that `restoreText(maskText(x)) = x` over
+  generated inputs.
+- **Lenient restore.** `PERSON_1`, `[PERSON_1`, `PERSON_1]`, `[PERSON_1]'s`
+  and a placeholder inside a JSON string all restore. Brackets are consumed
+  only as a pair: a lone one is the model's own (`[Contact PERSON_1](mailto:…)`
+  is a Markdown link), so it stays. A link whose text is exactly a
+  placeholder, `[EMAIL_1](mailto:EMAIL_1)`, restores as plain text, because
+  masked user text such as "James Hart(CEO)" looks the same. Values go in as they
+  are: restore JSON by parsing it and using `restoreValue()`, never as raw
+  text, because a value containing a quote would break it. Only a placeholder the
+  session issued is replaced. Any other, such as a made-up `[PERSON_9]` or a
+  renumbered `PERSON_01`, is left visible and returned in `unresolved`,
+  never guessed. `MY_PERSON_1` and `PERSON_12` are not `PERSON_1`.
+- **Streaming.** `StreamRestorer` holds back the end of the text while it
+  could still become a placeholder: an opening bracket, or a run of capitals
+  starting a word. It holds at most 64 characters. It carries one character
+  of context, so a stream restores exactly as the whole text would however
+  it was split. Tests split every fixture at every position. It looks at only
+  the last 65 characters on each chunk. A placeholder-shaped run longer than
+  64 characters is released, so its `unresolved` entry can differ from
+  restoring the whole text; the emitted text does not.
+- **Tool calls.** `restoreValue()` restores every string in the parsed
+  arguments, at any depth, keys included, before the dispatcher runs them. A
+  restored key that another key already spells keeps its placeholder and is
+  reported. It runs on the parsed object, not on JSON text, so a value
+  containing a quote cannot break the JSON. It returns `unknown`, because the
+  capability validates its arguments as it always does. Tool results are
+  masked on the next outbound call. Capabilities need not know the layer
+  exists.
+- **Prompt line.** `PLACEHOLDER_INSTRUCTION` (`mask.ts`) is the line the
+  stage adds when masking is active: placeholders are stand-ins, and they
+  should be copied exactly.
+- **Output guard.** It ignores values the conversation itself supplied, and
+  uses tier A's recognisers instead of its own US-only patterns (t-992).
 
 A persistent strategy stores personal data: it declares `persistent: true` and
 names its models in `storesIn`, and the registry refuses one that does not.

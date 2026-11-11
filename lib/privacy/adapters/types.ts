@@ -173,6 +173,12 @@ export interface TokenSession {
   /**
    * The placeholder for `value`. The same value returns the same placeholder
    * for the life of the session.
+   *
+   * **Written as `[TYPE_n]`** — `formatPlaceholder()` in
+   * `lib/privacy/pii/token-strategy.ts`. Restoring, its leniency (a missing
+   * bracket, a possessive) and the masking of text that already looks like a
+   * placeholder all read that grammar, so a strategy that writes another form
+   * would have its placeholders reach the user unrestored.
    */
   placeholderFor(type: EntityType, value: string): string;
   /** The value behind a placeholder this session issued, or `undefined`. */

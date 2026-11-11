@@ -3,7 +3,7 @@
  * with, registered through the same registry an app uses.
  *
  * The three local detection tiers are here (t-989): rules, known values, and
- * word lists. Still to come: the stateless token strategy (t-990), and the
+ * word lists; and the stateless token strategy (t-990). Still to come: the
  * settings-backed policy resolver and metadata observer (t-991). Each adds its
  * adapter here and nowhere else, so core's detectors are reached only through
  * the registry — `tests/unit/lib/privacy/pii/registry-only.test.ts` fails on
@@ -27,6 +27,7 @@ import type {
 import { knownValuesDetector } from '@/lib/privacy/pii/known-values';
 import { listsDetector } from '@/lib/privacy/pii/lists';
 import { rulesDetector } from '@/lib/privacy/pii/rules';
+import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
 
 export interface CorePrivacyAdapters {
   /** Always registered as required: a core detector failing is a bug, and a bug refuses the call. */
@@ -43,7 +44,7 @@ export function corePrivacyAdapters(): CorePrivacyAdapters {
       { detector: knownValuesDetector() },
       { detector: listsDetector() },
     ],
-    tokenStrategy: null,
+    tokenStrategy: statelessTokenStrategy(),
     policyResolvers: [],
     observers: [],
   };

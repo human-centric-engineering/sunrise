@@ -779,6 +779,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'Patterns compiled once from string parts; every match runs on a fresh copy (allMatches), so no lastIndex is shared between calls or tenants.',
   },
   {
+    file: 'lib/privacy/pii/stream-restore.ts',
+    holders: ['PENDING_TAIL'],
+    posture: 'no-tenant-data',
+    why: 'A non-global pattern compiled once from the placeholder format; exec() on it keeps no state between calls. Per-stream state lives on each StreamRestorer instance.',
+  },
+  {
     file: 'lib/privacy/subject-source-registry.ts',
     holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',

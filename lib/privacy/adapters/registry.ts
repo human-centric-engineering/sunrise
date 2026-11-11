@@ -26,6 +26,7 @@ import { initAppPrivacyAdapters } from '@/lib/app/privacy-adapters';
 import { createAppInitGate, describeThrown, restoreMap } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 import { corePrivacyAdapters } from '@/lib/privacy/adapters/core-defaults';
+import { formatPlaceholder, LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 import {
   ADAPTER_EGRESS_VALUES,
   ENTITY_TYPE_PATTERN,
@@ -291,6 +292,11 @@ function addDetector(
     if (typeof type !== 'string' || !ENTITY_TYPE_PATTERN.test(type)) {
       throw new Error(`${kind} ${id}: entity type ${String(type)} is not a valid name`);
     }
+    // Reserved for text that only looked like a placeholder: a detection under
+    // it would be counted as a look-alike and numbered with them.
+    if (type === LITERAL_TYPE) {
+      throw new Error(`${kind} ${id}: entity type ${LITERAL_TYPE} is reserved`);
+    }
     entityTypes.push(type);
   }
   const required: unknown = options.required;
@@ -351,6 +357,28 @@ function checkTimeout(kind: string, id: string, requested: number | undefined): 
   return timeoutMs;
 }
 
+function checkPlaceholderForm(kind: string, id: string, strategy: PrivacyTokenStrategy): void {
+  // `orgId` is optional in the contract, so a strategy must work without one.
+  // Two types: a detected one, and LITERAL, which masking always uses.
+  for (const type of ['PERSON', LITERAL_TYPE]) {
+    let placeholder: string;
+    let back: string | undefined;
+    try {
+      const session = strategy.createSession({ scopeId: 'privacy-registry-check' });
+      placeholder = session.placeholderFor(type, 'check');
+      back = session.valueFor(placeholder);
+    } catch (err) {
+      throw new Error(`${kind} ${id}: creating a session failed (${describeThrown(err)})`);
+    }
+    const n = /_(\d+)/.exec(placeholder)?.[1];
+    if (n === undefined || placeholder !== formatPlaceholder(type, n) || back !== 'check') {
+      throw new Error(
+        `${kind} ${id}: placeholders must be written as ${formatPlaceholder('PERSON', 1)} and map back to their value`
+      );
+    }
+  }
+}
+
 function setTokenStrategy(strategy: PrivacyTokenStrategy, core: boolean): void {
   const kind = 'privacy token strategy';
   const id = checkId(kind, strategy.id, core);
@@ -359,6 +387,11 @@ function setTokenStrategy(strategy: PrivacyTokenStrategy, core: boolean): void {
   if (persistent !== true && persistent !== false) {
     throw new Error(`${kind} ${id}: persistent must be declared true or false`);
   }
+  // Restore reads placeholders as `[TYPE_n]`. A strategy that stores nothing
+  // is tried once, so one writing another form fails here, loudly, rather
+  // than leaving every reply unrestored. A persistent one is not tried: its
+  // sessions may write to its tables. It must follow the same form.
+  if (!persistent) checkPlaceholderForm(kind, id, strategy);
   // `persistent` is read once, above; a getter must not answer differently here.
   if (persistent) {
     const storesIn: unknown = 'storesIn' in strategy ? strategy.storesIn : undefined;

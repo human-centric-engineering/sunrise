@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: placeholders (§127, t-990).** Core now registers a
+  default token strategy, `core.stateless`, which an app can replace with
+  `registerPrivacyTokenStrategy()`. It issues typed, numbered placeholders
+  (`[PERSON_1]`) from a fresh map per call that nothing stores; a
+  replacement must write placeholders in the same `[TYPE_n]` form. New in
+  `lib/privacy/pii/`: `maskText()` (which takes the declared entity types),
+  `restoreText()`, `restoreValue()` (for tool-call arguments) and
+  `StreamRestorer`. Nothing calls them yet, so
+  behaviour is unchanged. See `.context/privacy/llm-privacy-layer.md`
+  (*Placeholders*).
+
 - **LLM privacy layer: local detection (§127, t-989).** Core now registers
   three default privacy detectors, all in-process and required:
   `core.rules` (UK and international identifiers, checksum-validated where

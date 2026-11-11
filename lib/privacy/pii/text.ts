@@ -34,13 +34,19 @@ export function hasContextBefore(
 /**
  * Every match of `pattern` in `text`, each with its index. Runs on a copy of
  * the pattern, so a shared global RegExp's `lastIndex` never carries from one
- * call into the next.
+ * call into the next — unless `owned`: a global pattern the caller built for
+ * this one job (a restore, a mask) runs as it is, saving a compile per call,
+ * and is left with `lastIndex` 0. Never pass `owned` for a shared pattern.
  */
-export function allMatches(pattern: RegExp, text: string): RegExpExecArray[] {
-  const re = new RegExp(
-    pattern.source,
-    pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
-  );
+export function allMatches(pattern: RegExp, text: string, owned = false): RegExpExecArray[] {
+  const re =
+    owned && pattern.global
+      ? pattern
+      : new RegExp(
+          pattern.source,
+          pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
+        );
+  re.lastIndex = 0;
   const out: RegExpExecArray[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -48,6 +54,7 @@ export function allMatches(pattern: RegExp, text: string): RegExpExecArray[] {
     // An empty match would otherwise loop forever.
     if (m[0] === '') re.lastIndex++;
   }
+  re.lastIndex = 0;
   return out;
 }
 
