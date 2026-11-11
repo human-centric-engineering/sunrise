@@ -242,6 +242,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'connects to this test.',
   },
   {
+    path: 'tests/unit/prisma/back-relation-zones.test.ts',
+    reason:
+      'parses `prisma/schema/*.prisma` off disk and fails when a back-relation on `Org` or ' +
+      "`User` sits outside its tier's zone, or a zone marker changed (#859). The change " +
+      'that breaks it is a schema edit, often `prisma format` appending a core line into ' +
+      'the app zone, and a `.prisma` file reaches no test through the module graph.',
+  },
+  {
     path: 'tests/unit/prisma/auth-schema-parity.test.ts',
     reason:
       'reads `prisma/schema/auth.prisma` off disk and compares it against ' +
