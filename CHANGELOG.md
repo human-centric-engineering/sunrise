@@ -18,6 +18,37 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: `pseudonymise`, `redact` and `block`, and the
+  embeddings policy (§127, t-992).** The settings API, the settings page and
+  a config restore now accept all five privacy modes. Under `pseudonymise`
+  a chat call's message text and tool-call arguments go to the provider with
+  placeholders such as `[PERSON_1]`, and the reply, streamed text and
+  tool-call arguments come back from `getProvider()` restored, so callers
+  and capabilities see real values and need no change. `redact` masks and
+  never restores. `block` refuses a chat call with anything found, with the
+  new request-fault code `privacy_blocked` (`PRIVACY_BLOCKED`, apart from
+  `privacy_refused` because the reader can fix it). Under `pseudonymise` and
+  `redact` a required detector that fails or times out refuses the call
+  rather than send it part-masked, and a call made outside any scope is
+  always scanned. **Migration:** `AiOrchestrationSettings` gains
+  `privacyEmbeddingsPolicy` (`allow`, the default for every row, or
+  `local_only`): under `local_only` and a mode of `pseudonymise` or
+  stricter, an embedding call to a provider not marked local is refused
+  (`isLocalOnlyEmbeddingRefusal()`): a reply's embedding is skipped,
+  `search_knowledge_base` returns the tool error `embeddings_local_only`,
+  and an upload fails with a message naming the setting. The settings page
+  warns when protection is on and embeddings still go to a provider that is
+  not local; `GET …/knowledge/embedding-status` now returns
+  `providerIsLocal`. `PrivacySummary` gains `refused` and `unresolved`. The
+  output guard's identifier check now uses the privacy layer's UK rules
+  (through the registry, so an app's replacement of `core.rules` applies)
+  in place of its four US-centric patterns, ignores identifiers the
+  conversation itself supplied, and is async: `scanOutput()` returns a
+  promise and takes the sent messages as a third argument. Its labels are
+  `pii_<type>` (`pii_credit_card` is now `pii_card_number`; a US SSN is no
+  longer flagged). `runPrivacyDetectors()` takes `detectorIds`. See
+  `.context/privacy/llm-privacy-layer.md`.
+
 - **LLM privacy layer: the stage on every vendor call, in `detect` mode
   (§127, t-991).** **Migration:** `AiOrchestrationSettings` gains
   `privacyMode`, `privacyIgnoredEntityTypes` and

@@ -7,7 +7,7 @@ Post-response content policy enforcement for assistant output. Complements the i
 Scans assistant responses for:
 
 1. **Topic boundary violations** — per-agent forbidden keywords/phrases stored in `AiAgent.topicBoundaries`
-2. **PII leaks** — built-in patterns for email addresses, phone numbers, SSNs, and credit card numbers
+2. **Identifier leaks** — email addresses, phone numbers, NI and NHS numbers, card and bank details, passports, keys and the rest of the LLM privacy layer's tier A rules (`core.rules`), run through the privacy registry. An identifier the conversation itself supplied — the user's own email repeated back, a phone number a tool returned, a value the privacy layer restored — is not flagged. Labels are `pii_<type>` (`pii_email`, `pii_uk_nino`, `pii_card_number`, …). See [LLM Privacy Layer](../privacy/llm-privacy-layer.md).
 
 ### Configuration
 
@@ -48,13 +48,17 @@ In `block` mode, the assistant text has already been streamed to the client (SSE
 lib/orchestration/chat/output-guard.ts
 ```
 
-Key exports: `scanOutput(content, topicBoundaries) → OutputScanResult` and `scanCitations(content, citations) → CitationScanResult`.
+Key exports: `scanOutput(content, topicBoundaries, supplied?) → Promise<OutputScanResult>` and `scanCitations(content, citations) → CitationScanResult`.
+
+`supplied` is the messages the call sent the model (system prompt, user turns, tool results); an identifier found in them is not flagged in the reply. Values are compared without case, spaces, or the punctuation identifiers are written with, so `07911 123 456` matches `07911123456`.
+
+**Which detector runs.** Only `core.rules`, or the app detector registered with `replace: 'core.rules'` (`runPrivacyDetectors(text, { detectorIds })`), so an app's replacement applies here too. Names (tier C) are not checked: a famous name would be flagged, and `block` discards the reply. A US SSN-shaped number is no longer flagged; the old four patterns were US-centric. A scan that runs out of time (2 s) flags nothing rather than hold the turn.
 
 ```typescript
 interface OutputScanResult {
   flagged: boolean;
   topicMatches: string[]; // which forbidden topics matched
-  builtInMatches: string[]; // which PII patterns matched
+  builtInMatches: string[]; // pii_<type> for each identifier type the conversation did not supply
 }
 
 interface CitationScanResult {
