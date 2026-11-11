@@ -1198,13 +1198,14 @@ model Org {
   needs no [ledger](#the-divergence-ledger) row.
 - **Don't reword or move the markers.** They are the unchanged lines the
   merge relies on. `tests/unit/prisma/back-relation-zones.test.ts` fails on a
-  core field below a marker, a fork line outside its zone, a marker that
-  changed, or a missing blank line before the `@@` attributes. The tier comes
+  core field or block attribute below a marker, a fork line outside its zone,
+  a marker that changed, or a missing blank line before the `@@` attributes. The tier comes
   from the file the model is in, by the rule every schema guard shares
   (`scripts/ci/schema-files.ts`): Sunrise's own files are core; a file or
-  folder named `framework` or `framework-*` is the framework tier; any other
-  file, at any depth, is the app tier. So `billing.prisma` and
-  `app/widgets.prisma` are both your app's.
+  folder directly in `prisma/schema` named `framework` or `framework-*` is
+  the framework tier, with everything under it; any other file, at any depth,
+  is the app tier. So `billing.prisma`, `app/widgets.prisma` and
+  `app/framework-adapters/sync.prisma` are all your app's.
 - **Adopting the zones** (a fork that carried a block in `Org` or `User` before
   them): the sync that brings them in conflicts once where your block sits. Keep
   both markers and move your block below your tier's marker. Then retire your

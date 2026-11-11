@@ -27,8 +27,9 @@ release process.
   sync merges without a conflict, and filling a zone is not a
   divergence-ledger row. `prisma format` already places a leaf's missing
   back-relations in the app zone. The new
-  `tests/unit/prisma/back-relation-zones.test.ts` fails on a core line below
-  a marker, a fork line outside its zone, or a reworded marker. **On the sync
+  `tests/unit/prisma/back-relation-zones.test.ts` fails on a core field or
+  block attribute below a marker, a fork line outside its zone, a missing
+  blank line before the `@@` attributes, or a reworded marker. **On the sync
   that brings this in**, a fork that carries a block of back-relations
   resolves one conflict: keep both markers and move its block below its
   tier's marker (a framework fork's below the framework marker). Then retire
@@ -132,8 +133,9 @@ release process.
   model there could ship missing from the subject-access export with the
   suite green. Every guard now reads the schema through
   `scripts/ci/schema-files.ts`, which walks the whole tree and holds the one
-  tier rule: `CORE_SCHEMA_FILES` is core, a file or folder named `framework`
-  or `framework-*` is the framework tier, and any other file is the app tier.
+  tier rule: `CORE_SCHEMA_FILES` is core, a top-level file or folder named
+  `framework` or `framework-*` is the framework tier, and any other file is
+  the app tier.
   **On the sync that brings this in**, a fork keeping models in a subfolder may
   see the export, org-export or classification guards fail on them for the
   first time. Declare them the way the failure says.

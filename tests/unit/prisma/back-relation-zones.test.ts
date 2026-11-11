@@ -45,8 +45,8 @@
  *
  * A model's tier is the tier of the file that defines it, from
  * `schemaTierOf` in `scripts/ci/schema-files.ts`, the same rule every schema
- * guard uses: core is the `CORE_SCHEMA_FILES` allowlist, a file under a
- * `framework` / `framework-*` name is the framework tier's, and any other file,
+ * guard uses: core is the `CORE_SCHEMA_FILES` allowlist, a top-level file or
+ * folder named `framework` / `framework-*` is the framework tier's, and any other file,
  * at any depth, is the app tier's. In Sunrise no fork-tier model exists, so
  * both zones are empty by construction.
  *
