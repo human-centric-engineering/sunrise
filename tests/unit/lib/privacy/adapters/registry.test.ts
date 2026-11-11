@@ -466,6 +466,20 @@ describe('validation of what an app registers', () => {
       /must be written as \[PERSON_1\]/,
     ],
     [
+      'a token strategy that writes only some types as [TYPE_n]',
+      () =>
+        registerPrivacyTokenStrategy({
+          id: 'acme.partial',
+          persistent: false,
+          createSession: () => ({
+            placeholderFor: (type: string) => (type === 'PERSON' ? '[PERSON_1]' : `{${type}}`),
+            valueFor: () => 'check',
+            entries: () => [],
+          }),
+        }),
+      /must be written as \[PERSON_1\]/,
+    ],
+    [
       'a token strategy whose placeholders do not map back',
       () =>
         registerPrivacyTokenStrategy({

@@ -106,7 +106,9 @@ describe('StreamRestorer', () => {
     // long the stream has run.
     const exec = vi.spyOn(RegExp.prototype, 'exec');
     const restorer = new StreamRestorer(session());
-    for (let i = 0; i < 500; i++) restorer.push('some ordinary words here, AND CAPS ');
+    // Long chunks: with short ones the text checked is short anyway.
+    const chunk = 'some ordinary words here, '.repeat(20) + 'AND CAPS';
+    for (let i = 0; i < 50; i++) restorer.push(chunk);
     restorer.flush();
     const holdChecks = exec.mock.calls.filter((_, k) => {
       const re: unknown = exec.mock.contexts[k];
