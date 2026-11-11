@@ -4,7 +4,7 @@
  * GET /api/v1/admin/orchestration/knowledge/embedding-status
  *
  * Returns how many chunks have embeddings, and whether this install can
- * actually embed right now.
+ * actually embed right now, and whether the provider it would use is local.
  *
  * NOT lightweight, and deliberately so. `hasActiveProvider` runs the embedding
  * resolver — up to four more queries plus one eligibility evaluation per arm
@@ -20,11 +20,11 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { prisma } from '@/lib/db/client';
-import { resolveEmbeddingAvailability } from '@/lib/orchestration/knowledge/embedder';
+import { resolveEmbeddingStatus } from '@/lib/orchestration/knowledge/embedder';
 
 export const GET = withAdminAuth(
   async (_request) => {
-    const [total, embeddedRows, providerState] = await Promise.all([
+    const [total, embeddedRows, status] = await Promise.all([
       prisma.aiKnowledgeChunk.count(),
       prisma.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count FROM ai_knowledge_chunk WHERE embedding IS NOT NULL
@@ -36,8 +36,9 @@ export const GET = withAdminAuth(
       // rule. On a fork whose rule refuses every arm, the row check reports
       // `true` and the admin UI enables "Generate Embeddings" for a run that
       // cannot succeed.
-      resolveEmbeddingAvailability(),
+      resolveEmbeddingStatus(),
     ]);
+    const providerState = status.availability;
 
     const embedded = Number(embeddedRows[0]?.count ?? 0);
 
@@ -51,6 +52,9 @@ export const GET = withAdminAuth(
       // that are" need opposite remedies and the boolean prints only the first.
       hasActiveProvider: providerState === 'ok',
       providerState,
+      // Whether that provider is marked local; `null` when none resolves. The
+      // privacy settings warn when protection is on and it is not (§127).
+      providerIsLocal: status.providerIsLocal,
     });
   },
   {

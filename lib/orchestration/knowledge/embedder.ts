@@ -480,22 +480,35 @@ export type EmbeddingAvailability =
  * check it is and do not put it on a per-request path.
  */
 export async function resolveEmbeddingAvailability(): Promise<EmbeddingAvailability> {
+  return (await resolveEmbeddingStatus()).availability;
+}
+
+/**
+ * {@link resolveEmbeddingAvailability}, plus whether the provider embedding
+ * would use is marked local: `null` when none resolves. The LLM privacy
+ * layer's settings page warns when protection is on and embeddings still go
+ * to a provider that is not (§127, spec § Embeddings). One resolve for both.
+ */
+export async function resolveEmbeddingStatus(): Promise<{
+  availability: EmbeddingAvailability;
+  providerIsLocal: boolean | null;
+}> {
   try {
-    await resolveProvider();
-    return 'ok';
+    const provider = await resolveProvider();
+    return { availability: 'ok', providerIsLocal: provider.isLocal };
   } catch (err) {
     if (err instanceof NoProviderConfiguredError) {
       logger.info('No embedding provider configured', { reason: err.message });
-      return 'none_configured';
+      return { availability: 'none_configured', providerIsLocal: null };
     }
     if (err instanceof NoEligibleProviderError) {
       logger.warn('Every embedding provider was refused by the app eligibility rule', {
         reason: err.message,
       });
-      return 'none_permitted';
+      return { availability: 'none_permitted', providerIsLocal: null };
     }
     logger.error('Could not determine embedding availability', err, {});
-    return 'unknown';
+    return { availability: 'unknown', providerIsLocal: null };
   }
 }
 
