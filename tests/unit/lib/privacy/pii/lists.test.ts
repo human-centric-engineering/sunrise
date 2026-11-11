@@ -204,10 +204,12 @@ describe('signatures', () => {
   });
 
   it('finds the writer in CRLF text', () => {
-    expect(found('Thanks,\r\nMarcus Achterberg\r\n')).toEqual([['PERSON', 'Marcus Achterberg']]);
-    const text = 'Hi,\r\nAll good.\r\nKind regards,\r\nPriya Sharma\r\nSales';
-    const [name] = findListSpans(text).filter((s) => text.slice(s.start, s.end) === 'Priya Sharma');
-    expect(name).toBeDefined();
+    // A lone surname: only the signature rule finds it, so this fails if CRLF
+    // lines stop matching.
+    for (const eol of ['\n', '\r\n']) {
+      const text = `All good.${eol}Kind regards,${eol}Sharma${eol}Sales`;
+      expect(confidenceOf(text, 'Sharma')).toBe(LIST_CONFIDENCE.signature);
+    }
   });
 
   it('does not take a team or a product for the writer', () => {
