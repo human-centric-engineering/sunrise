@@ -35,7 +35,13 @@ export function sessionPattern(session: TokenSession): RegExp | null {
   ]);
 }
 
-/** Restore every placeholder in `text` that `session` issued. */
+/**
+ * Restore every placeholder in `text` that `session` issued.
+ *
+ * Values go in as they are. For JSON — tool-call arguments, a structured
+ * reply — parse first and use `restoreValue()`: a value containing a quote
+ * restored into raw JSON text would break it, or add a key.
+ */
 export function restoreText(text: string, session: TokenSession): RestoreResult {
   return restoreAfter('', text, session);
 }

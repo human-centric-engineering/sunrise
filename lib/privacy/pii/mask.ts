@@ -85,15 +85,25 @@ function withLookAlikes(text: string, spans: MaskSpan[], types: Iterable<string>
   return merged([...spans, ...found]);
 }
 
-/** Replace every span in `text` with its placeholder from `session`. */
+/**
+ * Replace every span in `text` with its placeholder from `session`.
+ *
+ * `declaredTypes` is every type the registered detectors may report. The stage
+ * passes it (`getPrivacyAdapters().detectors`), so a look-alike of a fork's
+ * own type is masked even in a message masked before the first real value of
+ * that type: otherwise "US_SSN_1" typed in an early message would be restored
+ * into the SSN a later message supplied. Core's types are always included.
+ */
 export function maskText(
   text: string,
   spans: readonly MaskSpan[],
-  session: TokenSession
+  session: TokenSession,
+  declaredTypes: Iterable<EntityType> = []
 ): MaskResult {
   const detected = merged(spans.filter((s) => s.start < s.end));
   const types = new Set<string>([
     ...CORE_ENTITY_TYPES,
+    ...declaredTypes,
     ...detected.map((s) => s.type),
     ...session.entries().map((e) => e.type),
   ]);

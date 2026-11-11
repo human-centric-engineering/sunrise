@@ -516,10 +516,14 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   contains it, would have it restored into someone's name. The search runs on
   each stretch of text between spans on its own, so a span that cuts through
   one, or masking that would create one ("PERSON_1x" with "x" detected), is
-  caught. A property test checks that `restoreText(maskText(x)) = x` over
+  caught. The stage passes every type the registered detectors declare, so a
+  look-alike of a fork's own type is masked even before the first real value
+  of that type appears. A property test checks that `restoreText(maskText(x)) = x` over
   generated inputs.
 - **Lenient restore.** `PERSON_1`, `[PERSON_1`, `PERSON_1]`, `[PERSON_1]'s`
-  and a placeholder inside a JSON string all restore. Only a placeholder the
+  and a placeholder inside a JSON string all restore. Values go in as they
+  are: restore JSON by parsing it and using `restoreValue()`, never as raw
+  text, because a value containing a quote would break it. Only a placeholder the
   session issued is replaced. Any other, such as a made-up `[PERSON_9]` or a
   renumbered `PERSON_01`, is left visible and returned in `unresolved`,
   never guessed. `MY_PERSON_1` and `PERSON_12` are not `PERSON_1`.

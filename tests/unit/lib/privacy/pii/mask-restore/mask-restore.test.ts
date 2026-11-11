@@ -122,6 +122,18 @@ describe('maskText', () => {
     expect(restoreText(made.text, s2).text).toBe('PERSON_1x');
   });
 
+  it('masks a look-alike of a declared type before any value of that type appears', () => {
+    // A fork's detector declares US_SSN. An early message carries the
+    // look-alike; a later one in the same call carries a real SSN.
+    const s = newSession();
+    const early = maskText('Ref: US_SSN_1', [], s, ['US_SSN']);
+    maskText('SSN 123-45-6789', [{ type: 'US_SSN', start: 4, end: 15 }], s, ['US_SSN']);
+    expect(early.text).toBe('Ref: [LITERAL_1]');
+    expect(restoreText('Your ref US_SSN_1 and [LITERAL_1]', s).text).toBe(
+      'Your ref 123-45-6789 and US_SSN_1'
+    );
+  });
+
   it('leaves identifiers that only resemble a placeholder alone', () => {
     const s = newSession();
     expect(maskText('MY_PERSON_1 HTTP_2 UTF_8', [], s).text).toBe('MY_PERSON_1 HTTP_2 UTF_8');
