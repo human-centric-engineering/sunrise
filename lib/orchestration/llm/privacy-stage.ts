@@ -88,12 +88,27 @@ const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
     'The LLM privacy layer refused the call because of an internal error. Nothing was sent. See the server log.',
 };
 
-/** A provider call the privacy stage refused. Nothing was sent. */
+/** What an operator should do about a refusal: for the log, never the reader. */
+export function refusalRemedy(reason: PrivacyRefusalReason): string {
+  return OPERATOR_MESSAGES[reason];
+}
+
+/**
+ * A provider call the privacy stage refused. Nothing was sent.
+ *
+ * The message is safe to show anyone: a workflow executor copies an error's
+ * message into the `ExecutorError` that reaches the SSE client. The
+ * operator's remedy, which names files and seams, is in the log line the
+ * refusal writes ({@link refusalRemedy}).
+ */
 export class PrivacyRefusedError extends ProviderError {
   readonly reason: PrivacyRefusalReason;
   readonly providerSlug: string;
   constructor(reason: PrivacyRefusalReason, providerSlug: string) {
-    super(OPERATOR_MESSAGES[reason], { code: PRIVACY_REFUSED, retriable: false });
+    super("The request was stopped before it was sent, by the deployment's privacy settings.", {
+      code: PRIVACY_REFUSED,
+      retriable: false,
+    });
     this.name = 'PrivacyRefusedError';
     this.reason = reason;
     this.providerSlug = providerSlug;
@@ -203,6 +218,7 @@ function refuse(
 ): PrivacyRefusedError {
   logger.warn('privacy-stage: refusing a provider call', {
     reason,
+    remedy: refusalRemedy(reason),
     providerSlug: call.providerSlug,
     ...(scope ? { scopeId: scope.scopeId } : {}),
     ...(failedAdapters.length > 0 ? { failedAdapters: [...failedAdapters] } : {}),
@@ -235,27 +251,27 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
     if (adapters.appInitFailure !== null) throw refuse('app_init_failed', call, undefined, mode);
 
     const settings = await getOrchestrationSettings();
-    // Absent (not `null`) only on a settings shape from before the column,
-    // which `hydrateSettings` reads as `off` too. `null` is a stored value
-    // that is not a mode, and refuses.
-    const base = basePolicyFromSettings({
-      privacyMode: settings.privacyMode === undefined ? 'off' : settings.privacyMode,
-      privacyIgnoredEntityTypes: settings.privacyIgnoredEntityTypes ?? [],
-      privacyProtectLocalProviders: settings.privacyProtectLocalProviders === true,
-    });
+    // `hydrateSettings` has already read an absent column as `off`; a stored
+    // value that is not a mode is `null`, and refuses.
+    const base = basePolicyFromSettings(settings);
     const scoped = scopeFor();
     scope = scoped.scope;
     if (base === null) throw refuse('settings_unreadable', call, scope, mode);
 
     // Resolvers run even when the base is `off`: one may raise it.
     const orgId = orgOf(scope);
-    const { policy, failures: resolverFailures } = await resolvePrivacyPolicy(base, {
-      ...(orgId !== undefined ? { orgId } : {}),
-      ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
-      ...(scope.userId !== undefined ? { userId: scope.userId } : {}),
-      providerSlug: call.providerSlug,
-      isLocalProvider: call.isLocal,
-    });
+    const abandoned = callerSignal(call);
+    const { policy, failures: resolverFailures } = await resolvePrivacyPolicy(
+      base,
+      {
+        ...(orgId !== undefined ? { orgId } : {}),
+        ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+        ...(scope.userId !== undefined ? { userId: scope.userId } : {}),
+        providerSlug: call.providerSlug,
+        isLocalProvider: call.isLocal,
+      },
+      abandoned
+    );
     mode = policy.mode;
     if (resolverFailures.length > 0) {
       throw refuse(
@@ -297,16 +313,21 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<readonl
       return call.args;
     }
 
+    // Loaded before the deadline starts: a slow user lookup must not spend
+    // the detectors' time.
+    const knownValues = await knownValuesOf(scope);
     const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
-    const abandoned = callerSignal(call);
     const { spans, failures } = await runPrivacyDetectors(outboundText(call), {
       scopeId: scope.scopeId,
       ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
-      knownValues: await knownValuesOf(scope),
+      knownValues,
       ignoredEntityTypes: policy.ignoredEntityTypes,
       signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
     });
+    // The caller gave up: the call is about to be cancelled, so it is neither
+    // counted as sent nor refused. Its own signal ends it.
+    if (abandoned?.aborted) return call.args;
     const failedAdapters = failures.map((f) => f.adapterId);
     if (failures.some((f) => f.required) && policy.onDetectorFailure === 'block') {
       throw refuse('detector_failed', call, scope, mode, failedAdapters);

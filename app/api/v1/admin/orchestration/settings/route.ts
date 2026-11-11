@@ -375,6 +375,15 @@ export const PATCH = withAdminAuth(
           ...(updateData.escalationConfig !== undefined
             ? { escalationConfig: updateData.escalationConfig }
             : {}),
+          // So is a first save of the privacy settings: left out, the row
+          // would take the column default (`detect`) whatever was chosen.
+          ...(body.privacyMode !== undefined ? { privacyMode: body.privacyMode } : {}),
+          ...(body.privacyIgnoredEntityTypes !== undefined
+            ? { privacyIgnoredEntityTypes: body.privacyIgnoredEntityTypes }
+            : {}),
+          ...(body.privacyProtectLocalProviders !== undefined
+            ? { privacyProtectLocalProviders: body.privacyProtectLocalProviders }
+            : {}),
         },
         update: updateData,
       });

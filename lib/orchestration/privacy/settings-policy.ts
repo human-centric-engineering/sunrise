@@ -59,9 +59,11 @@ export interface PrivacySettings {
  * call degraded. A resolver can raise it to `block`.
  */
 export function basePolicyFromSettings(settings: PrivacySettings): PrivacyPolicy | null {
-  if (settings.privacyMode === null) return null;
+  // Checked again, not trusted: anything that is not a mode gives no policy.
+  const mode = parsePrivacyMode(settings.privacyMode);
+  if (mode === null) return null;
   return {
-    mode: settings.privacyMode,
+    mode,
     ignoredEntityTypes: [...settings.privacyIgnoredEntityTypes],
     protectLocalProviders: settings.privacyProtectLocalProviders,
     onDetectorFailure: 'fallback',

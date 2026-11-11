@@ -563,6 +563,24 @@ describe('Admin Orchestration — /settings', () => {
       });
     });
 
+    it('writes the privacy settings on a first save that creates the row, not the column default', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      const privacy = {
+        privacyMode: 'off',
+        privacyIgnoredEntityTypes: ['DATE'],
+        privacyProtectLocalProviders: true,
+      };
+
+      const res = await PATCH(makePatch(privacy));
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.create).toMatchObject(privacy);
+      expect(args?.update).toMatchObject(privacy);
+    });
+
     it('updates voiceInputGloballyEnabled back to true', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
         makeSettingsRow({ voiceInputGloballyEnabled: true }) as never

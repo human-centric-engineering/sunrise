@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
+import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 
 export const agentBackupSchema = z.object({
   name: z.string(),
@@ -185,6 +186,11 @@ const settingsBackupSchema = z.object({
   maxConversationsPerUser: z.number().nullable(),
   maxMessagesPerConversation: z.number().nullable(),
   escalationConfig: z.unknown().nullable(),
+  // LLM privacy layer (§127). Absent on a backup from before them, and then
+  // left alone on restore rather than reset.
+  privacyMode: z.enum(PRIVACY_MODES_BY_STRICTNESS).optional(),
+  privacyIgnoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)).max(100).optional(),
+  privacyProtectLocalProviders: z.boolean().optional(),
 });
 
 /**

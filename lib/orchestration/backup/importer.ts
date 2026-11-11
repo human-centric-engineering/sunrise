@@ -873,6 +873,17 @@ async function importParsed(
           );
         }
         noteKept(escalationAddresses(escalationConfig));
+        // The privacy settings a backup carries; one from before them leaves
+        // the current values alone (§127).
+        const privacySettings = {
+          ...(s.privacyMode !== undefined ? { privacyMode: s.privacyMode } : {}),
+          ...(s.privacyIgnoredEntityTypes !== undefined
+            ? { privacyIgnoredEntityTypes: s.privacyIgnoredEntityTypes }
+            : {}),
+          ...(s.privacyProtectLocalProviders !== undefined
+            ? { privacyProtectLocalProviders: s.privacyProtectLocalProviders }
+            : {}),
+        };
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },
           create: {
@@ -894,6 +905,7 @@ async function importParsed(
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
             escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            ...privacySettings,
           },
           update: {
             defaultModels: s.defaultModels as Prisma.InputJsonValue,
@@ -913,6 +925,7 @@ async function importParsed(
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
             escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            ...privacySettings,
           },
         });
         result.settingsUpdated = true;

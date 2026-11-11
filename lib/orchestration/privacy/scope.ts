@@ -178,6 +178,18 @@ export function currentPrivacyScope(): PrivacyScope | undefined {
   return privacyScopeStore.getStore();
 }
 
+/**
+ * Run `fn` outside any privacy scope, for fire-and-forget work a turn starts
+ * but does not wait for (embedding its messages for search). Its calls would
+ * otherwise land in the turn's tally at a time nobody controls, before or
+ * after the turn writes its counts, so the same turn could record different
+ * numbers. Only the privacy store is left; the tenant context and the
+ * paid-call hold carry on.
+ */
+export function outsidePrivacyScope<T>(fn: () => T): T {
+  return privacyScopeStore.exit(fn);
+}
+
 /** Run `fn` with `scope` as the privacy scope for everything it does. */
 export function runInPrivacyScope<T>(scope: PrivacyScope, fn: () => T): T {
   return privacyScopeStore.run(scope, fn);

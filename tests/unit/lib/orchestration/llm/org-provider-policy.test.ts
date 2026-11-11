@@ -32,19 +32,13 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-// The privacy stage reads the install's privacy settings on every chat and
-// embedding call (§127), and refuses a call when it cannot. This file's
-// database mock has no settings row, so the settings read is stubbed: mode
-// `off`, no global budget. The stage itself runs, and makes no change in
-// `off`; it has its own tests (`privacy-stage.test.ts`).
+// The privacy stage reads the install's settings on every call; this file's
+// database mock has none. See `tests/helpers/privacy-settings.ts`.
 vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
-  getOrchestrationSettings: vi.fn(async () => ({
-    globalMonthlyBudgetUsd: null,
-    privacyMode: 'off',
-    privacyIgnoredEntityTypes: [],
-    privacyProtectLocalProviders: false,
-  })),
+  getOrchestrationSettings: vi.fn(async () =>
+    (await import('@/tests/helpers/privacy-settings')).privacyOffSettings()
+  ),
 }));
 
 vi.mock('@/lib/logging', () => ({

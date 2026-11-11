@@ -10,6 +10,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import { outsidePrivacyScope } from '@/lib/orchestration/privacy/scope';
 
 /**
  * Queue an async embedding for a persisted message.
@@ -26,12 +27,16 @@ export function queueMessageEmbedding(
 ): void {
   if (content.length < 20) return;
 
-  void generateAndStoreEmbedding(messageId, content, attribution).catch((err: unknown) => {
-    logger.warn('Message embedding failed', {
-      messageId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  // Outside the turn's privacy scope: this runs after the turn has moved on,
+  // so its embedding call is not one of the turn's (§127).
+  void outsidePrivacyScope(() => generateAndStoreEmbedding(messageId, content, attribution)).catch(
+    (err: unknown) => {
+      logger.warn('Message embedding failed', {
+        messageId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  );
 }
 
 export interface BackfillResult {

@@ -36,7 +36,8 @@ release process.
   classified in `PRIVACY_COVERAGE` as well as `METHOD_DISPOSITION`. A fork's
   own long-running work can enter a privacy scope with `withPrivacyScope()`
   (`lib/orchestration/privacy/scope.ts`) so its calls are counted together.
-  See `.context/privacy/llm-privacy-layer.md`.
+  The config backup carries the three settings. See
+  `.context/privacy/llm-privacy-layer.md`.
 
 - **LLM privacy layer: placeholders (§127, t-990).** Core now registers a
   default token strategy, `core.stateless`, which an app can replace with

@@ -23,6 +23,10 @@ import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
+  parseIgnoredEntityTypes,
+  parsePrivacyMode,
+} from '@/lib/orchestration/privacy/settings-policy';
+import {
   narrowProviderTools,
   narrowServiceTier,
   narrowVerbosity,
@@ -57,153 +61,160 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
   const sharedOr = <T>(empty: T, read: () => Promise<T>): Promise<T> =>
     includeShared ? read() : Promise.resolve(empty);
 
-  const [agents, capabilities, workflows, webhooks, knowledgeTags, settings] = await Promise.all([
-    prisma.aiAgent.findMany({
-      where: { isSystem: false },
-      select: {
-        name: true,
-        slug: true,
-        description: true,
-        systemInstructions: true,
-        model: true,
-        provider: true,
-        fallbackProviders: true,
-        temperature: true,
-        maxTokens: true,
-        monthlyBudgetUsd: true,
-        maxCostPerTurnUsd: true,
-        visibility: true,
-        isActive: true,
-        metadata: true,
-        knowledgeAccessMode: true,
-        knowledgeRetrievalMode: true,
-        knowledgeTriggerKeywords: true,
-        topicBoundaries: true,
-        brandVoiceInstructions: true,
-        rateLimitRpm: true,
-        inputGuardMode: true,
-        outputGuardMode: true,
-        citationGuardMode: true,
-        maxHistoryTokens: true,
-        maxHistoryMessages: true,
-        retentionDays: true,
-        providerConfig: true,
-        widgetConfig: true,
-        // Discriminator + profile-inheritance + attachment + runtime-prompt
-        // fields. Previously absent from this select, so a config backup
-        // silently dropped them on round-trip (a judge agent restored as chat,
-        // persona/guardrails/toggles lost). Restored here for full fidelity.
-        kind: true,
-        reasoningEffort: true,
-        stopSequences: true,
-        topP: true,
-        verbosity: true,
-        parallelToolCalls: true,
-        serviceTier: true,
-        providerTools: true,
-        persona: true,
-        guardrails: true,
-        personaMode: true,
-        voiceMode: true,
-        guardrailsMode: true,
-        enableVoiceInput: true,
-        enableImageInput: true,
-        enableDocumentInput: true,
-        runtimePromptManaged: true,
-        runtimePromptNote: true,
-        grantedTags: { select: { tag: { select: { slug: true } } } },
-        grantedDocuments: { select: { document: { select: { slug: true } } } },
-      },
-    }),
-    sharedOr([], () =>
-      prisma.aiCapability.findMany({
+  const [agents, capabilities, workflows, webhooks, knowledgeTags, settingsRow] = await Promise.all(
+    [
+      prisma.aiAgent.findMany({
         where: { isSystem: false },
         select: {
           name: true,
           slug: true,
           description: true,
-          category: true,
-          functionDefinition: true,
-          executionType: true,
-          executionHandler: true,
-          executionConfig: true,
-          requiresApproval: true,
-          rateLimit: true,
+          systemInstructions: true,
+          model: true,
+          provider: true,
+          fallbackProviders: true,
+          temperature: true,
+          maxTokens: true,
+          monthlyBudgetUsd: true,
+          maxCostPerTurnUsd: true,
+          visibility: true,
           isActive: true,
-        },
-      })
-    ),
-    // The built-in templates are served from code, not backed up (§116
-    // t-727): a TEMPLATE row holding a built-in slug is a seed-era copy of
-    // one. A row with that slug that is an ordinary workflow (a retired row
-    // an install switched back on, or one an admin converted) is theirs, and
-    // is backed up like any other. A system workflow (the provider-model
-    // audit) is the seed's, as system agents and capabilities are, and is
-    // left out by its flag AND by its reserved slug: the importer refuses
-    // that slug whatever the row type, so a row holding it could never be
-    // restored, and a bundle must not carry what it cannot restore.
-    prisma.aiWorkflow.findMany({
-      where: {
-        isSystem: false,
-        slug: { notIn: [...SYSTEM_WORKFLOW_SLUGS] },
-        NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } },
-      },
-      select: {
-        name: true,
-        slug: true,
-        description: true,
-        publishedVersion: { select: { snapshot: true } },
-        patternsUsed: true,
-        isActive: true,
-        isTemplate: true,
-        metadata: true,
-      },
-    }),
-    prisma.aiWebhookSubscription.findMany({
-      select: {
-        channel: true,
-        url: true,
-        emailAddress: true,
-        events: true,
-        description: true,
-        // Exclude secret — never export secrets
-        isActive: true,
-      },
-    }),
-    sharedOr([], () =>
-      prisma.knowledgeTag.findMany({
-        select: {
-          slug: true,
-          name: true,
-          description: true,
-        },
-      })
-    ),
-    sharedOr(null, () =>
-      prisma.aiOrchestrationSettings.findUnique({
-        where: { slug: 'global' },
-        select: {
-          defaultModels: true,
-          globalMonthlyBudgetUsd: true,
-          searchConfig: true,
-          defaultApprovalTimeoutMs: true,
-          approvalDefaultAction: true,
+          metadata: true,
+          knowledgeAccessMode: true,
+          knowledgeRetrievalMode: true,
+          knowledgeTriggerKeywords: true,
+          topicBoundaries: true,
+          brandVoiceInstructions: true,
+          rateLimitRpm: true,
           inputGuardMode: true,
           outputGuardMode: true,
           citationGuardMode: true,
-          webhookRetentionDays: true,
-          webhookDlqRetentionDays: true,
-          costLogRetentionDays: true,
-          auditLogRetentionDays: true,
-          executionRetentionDays: true,
-          evaluationRetentionDays: true,
-          maxConversationsPerUser: true,
-          maxMessagesPerConversation: true,
-          escalationConfig: true,
+          maxHistoryTokens: true,
+          maxHistoryMessages: true,
+          retentionDays: true,
+          providerConfig: true,
+          widgetConfig: true,
+          // Discriminator + profile-inheritance + attachment + runtime-prompt
+          // fields. Previously absent from this select, so a config backup
+          // silently dropped them on round-trip (a judge agent restored as chat,
+          // persona/guardrails/toggles lost). Restored here for full fidelity.
+          kind: true,
+          reasoningEffort: true,
+          stopSequences: true,
+          topP: true,
+          verbosity: true,
+          parallelToolCalls: true,
+          serviceTier: true,
+          providerTools: true,
+          persona: true,
+          guardrails: true,
+          personaMode: true,
+          voiceMode: true,
+          guardrailsMode: true,
+          enableVoiceInput: true,
+          enableImageInput: true,
+          enableDocumentInput: true,
+          runtimePromptManaged: true,
+          runtimePromptNote: true,
+          grantedTags: { select: { tag: { select: { slug: true } } } },
+          grantedDocuments: { select: { document: { select: { slug: true } } } },
         },
-      })
-    ),
-  ]);
+      }),
+      sharedOr([], () =>
+        prisma.aiCapability.findMany({
+          where: { isSystem: false },
+          select: {
+            name: true,
+            slug: true,
+            description: true,
+            category: true,
+            functionDefinition: true,
+            executionType: true,
+            executionHandler: true,
+            executionConfig: true,
+            requiresApproval: true,
+            rateLimit: true,
+            isActive: true,
+          },
+        })
+      ),
+      // The built-in templates are served from code, not backed up (§116
+      // t-727): a TEMPLATE row holding a built-in slug is a seed-era copy of
+      // one. A row with that slug that is an ordinary workflow (a retired row
+      // an install switched back on, or one an admin converted) is theirs, and
+      // is backed up like any other. A system workflow (the provider-model
+      // audit) is the seed's, as system agents and capabilities are, and is
+      // left out by its flag AND by its reserved slug: the importer refuses
+      // that slug whatever the row type, so a row holding it could never be
+      // restored, and a bundle must not carry what it cannot restore.
+      prisma.aiWorkflow.findMany({
+        where: {
+          isSystem: false,
+          slug: { notIn: [...SYSTEM_WORKFLOW_SLUGS] },
+          NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } },
+        },
+        select: {
+          name: true,
+          slug: true,
+          description: true,
+          publishedVersion: { select: { snapshot: true } },
+          patternsUsed: true,
+          isActive: true,
+          isTemplate: true,
+          metadata: true,
+        },
+      }),
+      prisma.aiWebhookSubscription.findMany({
+        select: {
+          channel: true,
+          url: true,
+          emailAddress: true,
+          events: true,
+          description: true,
+          // Exclude secret — never export secrets
+          isActive: true,
+        },
+      }),
+      sharedOr([], () =>
+        prisma.knowledgeTag.findMany({
+          select: {
+            slug: true,
+            name: true,
+            description: true,
+          },
+        })
+      ),
+      sharedOr(null, () =>
+        prisma.aiOrchestrationSettings.findUnique({
+          where: { slug: 'global' },
+          select: {
+            defaultModels: true,
+            globalMonthlyBudgetUsd: true,
+            searchConfig: true,
+            defaultApprovalTimeoutMs: true,
+            approvalDefaultAction: true,
+            inputGuardMode: true,
+            outputGuardMode: true,
+            citationGuardMode: true,
+            webhookRetentionDays: true,
+            webhookDlqRetentionDays: true,
+            costLogRetentionDays: true,
+            auditLogRetentionDays: true,
+            executionRetentionDays: true,
+            evaluationRetentionDays: true,
+            maxConversationsPerUser: true,
+            maxMessagesPerConversation: true,
+            escalationConfig: true,
+            // LLM privacy layer (§127): without them a restore would start in
+            // the column defaults, scanning calls an operator had turned off.
+            privacyMode: true,
+            privacyIgnoredEntityTypes: true,
+            privacyProtectLocalProviders: true,
+          },
+        })
+      ),
+    ]
+  );
 
   // Flatten the published version snapshot back to the wire shape that the
   // importer expects: a single `workflowDefinition` per workflow. The version
@@ -288,6 +299,21 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
     ...w,
     channel: w.channel === 'email' ? ('email' as const) : ('webhook' as const),
   }));
+
+  // The privacy settings as the layer reads them (§127): a stored mode that
+  // is not one is left out, so a restore leaves the target's mode alone, and
+  // ignored types that are not a list of type names export as none ignored.
+  const settings =
+    settingsRow === null
+      ? null
+      : (({ privacyMode, privacyIgnoredEntityTypes, ...rest }) => {
+          const mode = parsePrivacyMode(privacyMode);
+          return {
+            ...rest,
+            ...(mode !== null ? { privacyMode: mode } : {}),
+            privacyIgnoredEntityTypes: parseIgnoredEntityTypes(privacyIgnoredEntityTypes),
+          };
+        })(settingsRow);
 
   return {
     schemaVersion: 3 as const,

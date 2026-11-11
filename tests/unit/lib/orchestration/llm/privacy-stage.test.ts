@@ -134,12 +134,11 @@ describe('mode off', () => {
     expect(observe).not.toHaveBeenCalled();
   });
 
-  it('reads a settings shape from before the column as off', async () => {
+  it('refuses settings with no privacy mode at all, rather than guess one', async () => {
+    // `hydrateSettings` gives every real row a mode; only a malformed settings
+    // object lacks one, and the stage does not read that as off.
     settings.read.mockResolvedValue({ globalMonthlyBudgetUsd: null });
-    const args = [messages(), { model: 'm' }];
-    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
-    expect(result).toBe(args);
-    expect(privacySummary(scope)).toBeUndefined();
+    expect((await refusal(applyPrivacyStage(chatCall()))).reason).toBe('settings_unreadable');
   });
 
   it('still lets a resolver raise the mode', async () => {
@@ -266,26 +265,44 @@ describe('mode detect', () => {
     expect(detect).toHaveBeenCalledTimes(2);
   });
 
-  it('stops the scan when the caller abandons the call, marking it degraded', async () => {
+  it('stops the scan when the caller abandons the call, and neither counts nor refuses it', async () => {
     const caller = new AbortController();
-    seam.init.mockImplementation(() =>
-      registerPrivacyDetector({
-        id: 'app.slow',
-        egress: 'in_process',
-        entityTypes: ['PERSON'],
-        detect: (_input, ctx) =>
-          new Promise((_resolve, reject) => {
-            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')));
-            caller.abort();
-          }),
-      })
-    );
+    const events: PrivacyEvent[] = [];
+    seam.init.mockImplementation(() => {
+      registerPrivacyObserver({ id: 'app.obs', observe: (e) => void events.push(e) });
+      registerPrivacyDetector(
+        {
+          id: 'app.slow',
+          egress: 'in_process',
+          entityTypes: ['PERSON'],
+          detect: (_input, ctx) =>
+            new Promise((_resolve, reject) => {
+              ctx.signal.addEventListener('abort', () => reject(new Error('aborted')));
+              caller.abort();
+            }),
+        },
+        { required: true }
+      );
+      // Even a policy that refuses on a failed detector: a cancel is not one.
+      registerPrivacyPolicyResolver({
+        id: 'app.strict',
+        resolve: () => ({ onDetectorFailure: 'block' }),
+      });
+    });
+    const args = [messages(), { model: 'm', signal: caller.signal }];
     const started = Date.now();
-    const { scope } = await inScope(() =>
-      applyPrivacyStage(chatCall([messages(), { model: 'm', signal: caller.signal }]))
-    );
+
+    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+
     expect(Date.now() - started).toBeLessThan(900);
-    expect(privacySummary(scope)).toMatchObject({ degraded: true, failedAdapters: ['app.slow'] });
+    expect(result).toBe(args);
+    expect(privacySummary(scope)).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(events).toEqual([]);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'privacy-stage: refusing a provider call',
+      expect.anything()
+    );
   });
 });
 
@@ -426,6 +443,50 @@ describe('refusals', () => {
     await refusal(applyPrivacyStage(chatCall()));
     await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([expect.objectContaining({ outcome: 'refused', counts: {} })]);
+  });
+});
+
+describe('what a refusal says', () => {
+  it("tells the reader only that it stopped, and puts the operator's remedy in the log", async () => {
+    seam.init.mockImplementation(() => {
+      throw new Error('app init broke');
+    });
+    const err = await refusal(applyPrivacyStage(chatCall()));
+    // A workflow executor copies the message to the SSE client.
+    expect(err.message).not.toMatch(/initAppPrivacyAdapters|lib\/app|server log/);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'privacy-stage: refusing a provider call',
+      expect.objectContaining({
+        reason: 'app_init_failed',
+        remedy: expect.stringContaining('initAppPrivacyAdapters'),
+      })
+    );
+  });
+});
+
+describe('the pass deadline', () => {
+  it('starts after the known values are loaded, so a slow lookup cannot spend it', async () => {
+    const order: string[] = [];
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    timeout.mockImplementation(() => {
+      order.push('deadline');
+      return new AbortController().signal;
+    });
+    const scope = createPrivacyScope({
+      scopeId: 's',
+      loadKnownValues: async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        order.push('known values loaded');
+        return [];
+      },
+    });
+    try {
+      await runInPrivacyScope(scope, () => applyPrivacyStage(chatCall()));
+    } finally {
+      timeout.mockRestore();
+    }
+    expect(order.indexOf('known values loaded')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('known values loaded')).toBeLessThan(order.indexOf('deadline'));
   });
 });
 

@@ -332,10 +332,14 @@ when it fires are reported `aborted`.
 | The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted        |
 
 Every refusal ships its remedy: the user sees a plain message
-(`privacy_refused` in `chat/error-messages.ts`), and the admin sees the reason
-in the error and the log. A refusal is a `PrivacyRefusedError` with code
-`privacy_refused`, a request fault: never retried, never failed over to
-another provider, never counted against a circuit breaker.
+(`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
+reason and its remedy (`refusalRemedy()`) in the refusal's log line. A refusal
+is a `PrivacyRefusedError` with code `privacy_refused` and a `reason`; its
+message is safe for anyone, because a workflow executor copies it to the SSE
+client. It is a request fault: never retried (an `ExecutorError` with it in
+its cause chain takes its code and is not retriable), never failed over to
+another provider, never counted against a circuit breaker. A call the caller
+abandoned during the scan is neither counted nor refused.
 
 **Nothing logs request text or a found value.** Detectors and resolvers each get
 a frozen copy of what they are handed, so none can change what the next one or

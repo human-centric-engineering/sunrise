@@ -39,7 +39,7 @@ The card says the layer lowers exposure and is not anonymisation. A stored mode
 the page cannot show (one a later version wrote, or an unreadable one) is
 named in a warning and sent back only if the admin chooses another, so saving
 anything else leaves it alone. A fork detector's own type that the row ignores
-is kept on save. These fields are not in the config backup. See
+is kept on save. The config backup carries all three; restoring a backup from before them leaves the current values alone. See
 [LLM Privacy Layer](../privacy/llm-privacy-layer.md).
 
 #### Limits
