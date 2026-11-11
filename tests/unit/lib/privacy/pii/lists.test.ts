@@ -157,6 +157,11 @@ describe('people', () => {
     expect(confidenceOf('Dear Ngozi, thanks', 'Ngozi')).toBe(LIST_CONFIDENCE.cuedUnknownName);
   });
 
+  it('does not learn the words of a cued run that no name list has', () => {
+    const text = 'Dear Customer Services,\nThe Customer is here.';
+    expect(found(text)).toEqual([['PERSON', 'Customer Services']]);
+  });
+
   it('needs a known first name after a weak cue', () => {
     expect(found('A note from Siobhan.')).toEqual([['PERSON', 'Siobhan']]);
     expect(found('A note from Accounts.')).toEqual([]);
@@ -277,6 +282,22 @@ describe('listsDetector', () => {
     time(200); // warm-up
     const small = Math.max(time(500), 1);
     const large = time(8000);
+    expect(large / small).toBeLessThan(80);
+  });
+
+  it('grows linearly with the number of names it learns', () => {
+    // Each learned name part used to be its own scan of the whole text.
+    const names = (n: number) =>
+      Array.from({ length: n }, (_, i) => `Dear Olivia Zq${i.toString(36)}x, `).join('');
+    const time = (n: number) => {
+      const text = names(n);
+      const t0 = performance.now();
+      findListSpans(text);
+      return performance.now() - t0;
+    };
+    time(100);
+    const small = Math.max(time(250), 1);
+    const large = time(4000);
     expect(large / small).toBeLessThan(80);
   });
 

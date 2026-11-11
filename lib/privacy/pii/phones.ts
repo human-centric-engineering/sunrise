@@ -27,7 +27,10 @@ export interface PhoneCandidate {
  * A run of digits, spaces, brackets and dashes, optionally after a `+` or an
  * opening bracket ("(07700) 900184").
  */
-const PHONE_SHAPED = /(?<![\d+(])(?:\+|\()?\d[\d ()-]{7,18}\d(?!\d)/g;
+const PHONE_SHAPED = /(?<![\d+(])(?:\+|\()?\d[\d ()-]{7,40}\d(?!\d)/g;
+
+/** The fewest digits a phone number in text has. */
+const MIN_DIGITS = 9;
 
 /** Every phone number in `text`, valid ones first. */
 export function phoneCandidates(text: string): PhoneCandidate[] {
@@ -39,12 +42,46 @@ export function phoneCandidates(text: string): PhoneCandidate[] {
   }));
   const valid = [...out];
   for (const m of allMatches(PHONE_SHAPED, text)) {
-    const end = m.index + m[0].length;
-    if (overlapsAny(m.index, end, valid)) continue;
-    const parsed = parsePhoneNumberFromString(m[0], 'GB');
-    if (parsed?.isPossible()) {
-      out.push({ start: m.index, end, e164: parsed.number, valid: false });
+    out.push(...possibleInRun(text, m.index, m[0], valid));
+  }
+  return out;
+}
+
+/**
+ * The possible numbers in one phone-shaped run. The pattern allows spaces, so
+ * two numbers written one after the other ("07700 900123 07700 900456") are
+ * one run, and the run as a whole is no number at all. The run is split at
+ * its spaces and read left to right, taking at each group the longest
+ * stretch of groups that is a possible number and overlaps no valid one.
+ */
+function possibleInRun(
+  text: string,
+  runStart: number,
+  run: string,
+  valid: readonly PhoneCandidate[]
+): PhoneCandidate[] {
+  const groups = allMatches(/[^ ]+/g, run).map((g) => ({
+    start: runStart + g.index,
+    end: runStart + g.index + g[0].length,
+  }));
+  const out: PhoneCandidate[] = [];
+  let i = 0;
+  while (i < groups.length) {
+    let taken = -1;
+    for (let j = groups.length - 1; j >= i; j--) {
+      const start = groups[i].start;
+      const end = groups[j].end;
+      const candidate = text.slice(start, end);
+      if ((candidate.match(/\d/g) ?? []).length < MIN_DIGITS) break;
+      if (overlapsAny(start, end, valid)) continue;
+      const parsed = parsePhoneNumberFromString(candidate, 'GB');
+      if (parsed?.isPossible()) {
+        out.push({ start, end, e164: parsed.number, valid: false });
+        taken = j;
+        break;
+      }
     }
+    i = taken === -1 ? i + 1 : taken + 1;
   }
   return out;
 }

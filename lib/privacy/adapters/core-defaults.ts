@@ -10,7 +10,8 @@
  * any other caller.
  *
  * Order matters within an egress: each detector is handed what the earlier
- * ones found, and tier C drops a guess that lies wholly inside one.
+ * ones found, and tier C drops a guess that earlier spans already cover
+ * entirely (every character of it masked already).
  *
  * Every core id starts with `core.`; the registry refuses that prefix from an
  * app, so an app can replace a core adapter only by naming it.

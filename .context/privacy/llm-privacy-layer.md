@@ -398,9 +398,22 @@ visible replaces `core.lists`.
 
 The detectors are synchronous. Each gives the event loop a turn after each
 piece of work and then checks its signal, so a timeout that expires during a
-piece is reported as a timeout, never accepted late. All three are linear in
-the text: together about 0.3 s for 540 KB (a 128k-token context) on a laptop.
-At around 2 MB, tier A passes its default 1 s timeout, and because core's
+piece is reported as a timeout, never accepted late.
+
+Each tier is linear in the text, and the cost of names and known values does
+not multiply by it. Tier C marks learned names by token lookup. Tier B runs a
+value's patterns only around occurrences of its rarest word, and skips a value
+the text never mentions after one look-up. Measured on a laptop:
+
+| Input                                            | Time              |
+| ------------------------------------------------ | ----------------- |
+| 111 KB with 2,000 distinct full names (tier C)   | 22 ms             |
+| 111 KB, 200 known people all mentioned (tier B)  | 29 ms             |
+| 111 KB, 200 known people none mentioned (tier B) | 4 ms              |
+| 540 KB, about a 128k-token context (all three)   | 0.3 s             |
+| 2 MB (all three)                                 | 1 s, tier A ≈ 1 s |
+
+At around 2 MB, tier A reaches its default 1 s timeout, and because core's
 detectors are required, the call is refused. **The stage (t-991) must decide
 what a very large input does**: pass a larger `timeoutMs`, or scan per message.
 A timer cannot interrupt one piece of synchronous work, so a single piece still

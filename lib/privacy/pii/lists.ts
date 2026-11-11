@@ -432,11 +432,17 @@ function learnable(word: string): boolean {
   return word.length >= 3 && !ALLOWLIST.has(lower) && !STARTERS.has(lower) && !TITLES.has(lower);
 }
 
-/** Record a person's name and learn its parts. */
+/**
+ * Record a person's name, and learn its parts when one of them is in a name
+ * list: "Dear Customer Services" is masked, but teaching "Customer" as a name
+ * would mask every later "Customer" in the conversation.
+ */
 function addPerson(found: Found, tokens: Token[], from: number, to: number, confidence: number) {
   found.spans.push(span('PERSON', tokens[from].start, tokens[to - 1].end, confidence));
   if (to - from < 2) return;
-  for (const t of tokens.slice(from, to)) {
+  const run = tokens.slice(from, to);
+  if (!run.some((t) => isFirstName(t.lower) || isSurname(t.lower))) return;
+  for (const t of run) {
     if (learnable(t.text)) found.nameParts.add(t.text);
   }
 }
@@ -555,21 +561,39 @@ function signatures(text: string, found: Found): void {
  * parts. An occurrence inside something already found (the full name it was
  * learned from) adds nothing, so it is skipped.
  */
-function learned(text: string, found: Found): void {
+function learned(text: string, tokens: Token[], found: Found): void {
   const alreadyFound = coverage(found.spans);
-  const mark = (literal: string, type: EntityType, confidence: number) => {
-    const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}])${escapeRegExp(literal)}(?![\\p{L}\\p{N}])`,
-      'gu'
-    );
-    for (const m of allMatches(pattern, text)) {
-      const end = m.index + m[0].length;
-      if (alreadyFound(m.index, end)) continue;
-      found.spans.push(span(type, m.index, end, confidence));
-    }
+  const push = (type: EntityType, start: number, end: number, confidence: number) => {
+    if (!alreadyFound(start, end)) found.spans.push(span(type, start, end, confidence));
   };
-  for (const [form, confidence] of found.orgForms) mark(form, 'ORG', confidence);
-  for (const part of found.nameParts) mark(part, 'PERSON', LIST_CONFIDENCE.learnedName);
+  // One-word forms and name parts by token lookup, and every longer company
+  // form in one pattern: a scan of the whole text per learned word made this
+  // tier cost (names × text length).
+  // Keyed with runs of whitespace collapsed, as the pattern matches them.
+  const collapse = (form: string) => form.split(/\s+/).join(' ');
+  const longForms = new Map<string, number>();
+  for (const [form, confidence] of found.orgForms) {
+    if (/\s/.test(form)) longForms.set(collapse(form), confidence);
+  }
+  for (const t of tokens) {
+    const orgConfidence = found.orgForms.get(t.text);
+    if (orgConfidence !== undefined) push('ORG', t.start, t.end, orgConfidence);
+    else if (found.nameParts.has(t.text)) {
+      push('PERSON', t.start, t.end, LIST_CONFIDENCE.learnedName);
+    }
+  }
+  if (longForms.size === 0) return;
+  const alternatives = [...longForms.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map((form) => form.split(' ').map(escapeRegExp).join('\\s+'));
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}])(?:${alternatives.join('|')})(?![\\p{L}\\p{N}])`,
+    'gu'
+  );
+  for (const m of allMatches(pattern, text)) {
+    const confidence = longForms.get(collapse(m[0])) ?? LIST_CONFIDENCE.orgShortForm;
+    push('ORG', m.index, m.index + m[0].length, confidence);
+  }
 }
 
 /**
@@ -579,8 +603,9 @@ function learned(text: string, found: Found): void {
  * because a prior span can cover part of a name that is not the one it
  * found: with the user's own "James" masked by tier B, skipping it would
  * leave a colleague's "James Patel" with nothing to start from, and "Patel"
- * would go out. Only a span lying wholly inside a prior span is dropped
- * afterwards, as one that adds nothing.
+ * would go out. Only a span that prior spans already cover entirely is
+ * dropped afterwards, as one that adds nothing: every character of it is
+ * masked anyway.
  */
 export function findListSpans(
   text: string,
@@ -592,7 +617,7 @@ export function findListSpans(
   addresses(text, tokens, found);
   people(text, tokens, found);
   signatures(text, found);
-  learned(text, found);
+  learned(text, tokens, found);
   const covered = coverage(priorSpans);
   return found.spans.filter((s) => !covered(s.start, s.end));
 }

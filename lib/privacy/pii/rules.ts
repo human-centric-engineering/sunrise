@@ -402,7 +402,8 @@ const PREFIXED_SECRETS: readonly RegExp[] = [
 const CREDENTIAL_NAME =
   '(?:password|passwd|pwd|passcode|pin|secret|api[_ -]?key|access[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|token)';
 const ASSIGNED_SECRET = new RegExp(
-  `\\b${CREDENTIAL_NAME}\\s*[:=]\\s*["']?([^\\s"'\`,;]{6,})`,
+  // `["']?` before the separator for a quoted key: {"password": "…"}.
+  `\\b${CREDENTIAL_NAME}["']?\\s*[:=]\\s*["']?([^\\s"'\`,;]{6,})`,
   'gi'
 );
 /**

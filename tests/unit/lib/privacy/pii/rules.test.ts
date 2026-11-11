@@ -319,6 +319,13 @@ describe('secrets', () => {
     expect(texts(R.secrets, 'password: Abc12! ok')).toEqual(['Abc12!']);
   });
 
+  it('reports a value under a quoted key, as in JSON', () => {
+    expect(texts(R.secrets, '{"password": "hunter22x", "client_secret":"s3cr3tvalue"}')).toEqual([
+      'hunter22x',
+      's3cr3tvalue',
+    ]);
+  });
+
   it('ignores a value too short to be a credential', () => {
     expect(texts(R.secrets, 'password: abc')).toEqual([]);
   });

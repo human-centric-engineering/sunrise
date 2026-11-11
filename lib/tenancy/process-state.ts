@@ -774,7 +774,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/pii/rules.ts',
-    holders: ['IPV4', 'DATE'],
+    holders: ['IPV4', 'DATE', 'ASSIGNED_SECRET', 'STATED_SECRET'],
     posture: 'no-tenant-data',
     why: 'Patterns compiled once from string parts; every match runs on a fresh copy (allMatches), so no lastIndex is shared between calls or tenants.',
   },

@@ -17,6 +17,20 @@ describe('phoneCandidates', () => {
     expect(found('Mobile 07700 900123')).toEqual([['07700 900123', '+447700900123', false]]);
   });
 
+  it('finds two possible numbers written one after the other', () => {
+    expect(found('call 07700 900123 07700 900456')).toEqual([
+      ['07700 900123', '+447700900123', false],
+      ['07700 900456', '+447700900456', false],
+    ]);
+  });
+
+  it('finds a possible number beside a valid one in the same run', () => {
+    expect(found('ring 020 7946 0958 07700 900123').map(([t]) => t)).toEqual([
+      '020 7946 0958',
+      '07700 900123',
+    ]);
+  });
+
   it('does not report a valid number twice', () => {
     expect(found('Ring 020 7946 0958')).toHaveLength(1);
   });

@@ -60,6 +60,17 @@ describe('findKnownValueSpans — people', () => {
     ]);
   });
 
+  it('keeps a word-like first name capitalised in the reordered forms too', () => {
+    expect(found('Hart may call later', [person('May Hart')])).toEqual([
+      ['PERSON', 'Hart', VARIANT_CONFIDENCE],
+    ]);
+    expect(found('Filed as Hart May', [person('May Hart')])).toContainEqual([
+      'PERSON',
+      'Hart May',
+      VARIANT_CONFIDENCE,
+    ]);
+  });
+
   it('does not match inside a longer word', () => {
     expect(found('Hartley and Jamesons', [person('James Hart')])).toEqual([]);
   });
@@ -125,6 +136,17 @@ describe('findKnownValueSpans — what it refuses', () => {
 
   it('finds nothing when it knows nothing', () => {
     expect(found('James Hart', [])).toEqual([]);
+  });
+});
+
+describe('findKnownValueSpans — cost', () => {
+  it('costs little for known values the text never mentions', () => {
+    // Every value used to run all of its patterns over the whole text.
+    const text = 'nothing relevant here at all. '.repeat(4000);
+    const many = Array.from({ length: 300 }, (_, i) => person(`Firstname${i} Surname${i}`));
+    const t0 = performance.now();
+    expect(findKnownValueSpans(text, many)).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(250);
   });
 });
 
