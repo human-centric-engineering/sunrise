@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: an agent's own mode, an org's floor and protected
+  terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
+  (nullable, `null` for every existing agent: inherit), a core field-registry
+  field on the agent form, in config backups and agent export, and
+  org-owned on a platform agent. `Org.settings` gains a platform-owned
+  `privacy` slice, `{ minimumMode, protectedTerms }`, read and written with
+  `readOrgPrivacy()` / `writeOrgPrivacy()` (`lib/tenancy/org-settings.ts`)
+  and through the new `GET`/`PUT /api/v1/admin/orgs/[id]/privacy`
+  (platform admins), with a form on the org page. Both modes only tighten:
+  a call runs under the strictest of the install's mode, the agent's and the
+  org's, and `off` is not a value either takes. Protected terms (people and
+  organisations) reach tier B as known values. Both reach a call through
+  core's first policy resolver, **`core.scope-settings`**, registered like
+  every core adapter; **a fork that registers resolvers** keeps it unless it
+  replaces it by that id. A stored agent mode or org slice that cannot be
+  read refuses the call (`policy_resolver_failed`). A workflow `agent_call`
+  or `chat_turn` step now runs its agent's calls in a child privacy scope
+  carrying the agent (`agentPrivacyScope()`), so **a fork's resolver now
+  sees `PolicyInput.agentId` on those calls**, where before it saw none.
 - **LLM privacy layer: `pseudonymise`, `redact` and `block`, and the
   embeddings policy (§127, t-992).** The settings API, the settings page and
   a config restore now accept all five privacy modes. Under `pseudonymise`

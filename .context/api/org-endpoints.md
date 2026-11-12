@@ -38,6 +38,7 @@ the per-admin export sub-cap noted below.
 | `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
 | `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -522,6 +523,35 @@ in `details.unknownProviders`, with the message also as
 `details.errors: [{ path: 'approved', message }]` so a form reads it like any
 validation error; or a malformed body) · `400 INSTALL_ORG_IMMUTABLE`
 (a `PUT` naming the install org, which may use every provider) ·
+`404 ORG_NOT_FOUND` · `409 CONFLICT` (another write to the org's settings
+landed at the same time; nothing was written, so retry).
+
+### An org's LLM privacy settings
+
+```
+GET /api/v1/admin/orgs/[id]/privacy
+PUT /api/v1/admin/orgs/[id]/privacy
+```
+
+The org's privacy floor and the names it always protects (§127 t-1010). A
+`PUT` replaces both: `{ minimumMode, protectedTerms }`, where `minimumMode` is
+`detect`, `pseudonymise`, `redact`, `block` or `null` (none), and
+`protectedTerms` is a list of `{ value, type }` with `type` `PERSON` or `ORG`
+and `value` 3 to 200 characters, at most 500, the same name twice (ignoring
+case) kept once. Both keys are required, so a replace cannot drop one by
+leaving it out. It writes an `org.privacy.replace` audit row with the floor
+and how many terms it replaced, never the names.
+
+Both return `{ orgId, saved, unreadable, minimumMode, protectedTerms }`.
+`saved` is false until the org first saves, which is when the org page
+suggests its own name as a term. `unreadable` is true when the stored slice
+does not parse: the privacy layer then refuses every AI call made for the
+org until it is saved again. The floor only raises the mode a call runs
+under, and both apply from the next chat turn or workflow step. See
+[LLM privacy layer → What is built (t-1010)](../privacy/llm-privacy-layer.md#what-is-built-t-1010).
+
+**Error Responses**: `400 VALIDATION_ERROR` (a missing key, `off` as the
+floor, a term too short or of another type, an unknown key) ·
 `404 ORG_NOT_FOUND` · `409 CONFLICT` (another write to the org's settings
 landed at the same time; nothing was written, so retry).
 

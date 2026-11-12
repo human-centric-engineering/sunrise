@@ -1,6 +1,6 @@
 /**
  * `Org.settings` — the platform's own slices of it (§108 t-713, §116 t-724,
- * §120 t-742, §110 t-788).
+ * §120 t-742, §110 t-788, §127 t-1010).
  *
  * The column has existed since §106 and nothing read or wrote it. This module
  * is the whole of what the platform keeps there: a `retention` slice naming

@@ -22,7 +22,7 @@ has merged; this table says what exists.
 | Placeholders: stateless token strategy, mask and restore, streams, tool-call arguments | t-990  | **Built** |
 | The Proxy stage in `detect` mode, the privacy scope, global settings, per-type counts  | t-991  | **Built** |
 | `pseudonymise`, `redact` and `block`; embeddings policy; output-guard change           | t-992  | **Built** |
-| Agent override, org floor, protected terms                                             | t-1010 | Planned   |
+| Agent mode, org floor (minimum mode), protected terms                                  | t-1010 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
@@ -47,6 +47,8 @@ has merged; this table says what exists.
 | Mask a call, restore its reply | `maskMessages()`, `CallRestorer` — `lib/orchestration/privacy/call-masking.ts`      |
 | Tell a local-only refusal      | `isLocalOnlyEmbeddingRefusal(err)` — `lib/orchestration/llm/privacy-stage.ts`       |
 | Enter a scope for some work    | `withPrivacyScope()` / `runInPrivacyScope()` — `lib/orchestration/privacy/scope.ts` |
+| Run one named agent's calls    | `runInPrivacyScope(agentPrivacyScope(agent.id), …)` — `scope.ts`                    |
+| The agent's and org's settings | `scopePrivacySettings()` — `lib/orchestration/privacy/scope-settings.ts`            |
 | Read a scope's counts          | `privacySummary(scope)` — the `PrivacySummary` written to metadata                  |
 
 ## What it protects
@@ -88,8 +90,9 @@ The stage sits in the provider-manager Proxy (`withInFlightTracking` in
 `assertProviderCallPermitted` and `assertWithinSpendCaps`. Every vendor call
 Sunrise core makes already passes through it, so no caller changes.
 
-1. Resolve the policy: global settings, then the agent override, then the org
-   floor, then any app resolver — each can only tighten.
+1. Resolve the policy: global settings, then the agent's mode and the org
+   floor (core's resolver, `core.scope-settings`), then any app resolver —
+   each can only tighten.
 2. `off`: forward the call untouched. Local providers are skipped unless the
    policy protects them.
 3. Detect: run every detector over the outbound text (messages, system prompt,
@@ -153,6 +156,61 @@ The stage runs in `off` and `detect`.
   `options.signal` when the caller abandons it; detectors still running then
   are reported `aborted`, and the call goes ahead degraded unless the policy
   says `block`.
+
+### What is built (t-1010)
+
+An agent and an org can each require more protection than the install gives.
+
+- **Only tighter.** An agent's mode (`AiAgent.privacyMode`) and an org's
+  floor (`Org.settings.privacy.minimumMode`) are each one of `detect`,
+  `pseudonymise`, `redact` or `block`, or `null` to inherit; `off` is not a
+  choice, because it would say nothing (`PRIVACY_TIGHTENING_MODES`). A call
+  runs under the strictest of the install's mode, the agent's and the org's,
+  in any order. The agent field is called an override elsewhere in this spec;
+  it overrides the install's mode only upward. An HR agent beside a public
+  FAQ agent is the install in `detect` and the HR agent in `pseudonymise`.
+- **Through the registry.** Core's first policy resolver,
+  `core.scope-settings` (`scopeSettingsResolver()`), registered in
+  `core-defaults.ts`, raises the mode from the call's `PolicyInput.agentId`
+  and `orgId`. An app replaces it by id. The install's own mode needs no
+  resolver: it is the base the stage starts from.
+- **Read once per scope.** The agent's column and the org's slice are read on
+  the first call in a scope and kept on it (`PrivacyScope.scopeSettings`),
+  like the token session; nothing is cached at module level. A change applies
+  from the next turn or step, and a turn never changes mode partway through
+  its tool loop. A call with no scope reads each time. The stage runs the
+  resolvers inside the call's scope, ephemeral or not, so the resolver and
+  the protected-terms read share one read.
+- **Fails closed.** A stored agent mode that is not one of those four, or an
+  org slice that does not parse, throws inside the resolver, so the call is
+  refused (`policy_resolver_failed`), `off` included. The warning names the
+  agent or org and where to save it again; never the value.
+- **Protected terms** are names an org always wants protected, each a
+  `PERSON` or an `ORG`, at least three characters (tier B skips shorter), at
+  most 500, the same name twice kept once. The stage adds them to the scope's
+  known values, so tier B finds them and the ways people write them, and the
+  mode decides what happens: counted, masked or refused.
+- **Every named-agent run carries its agent.** A workflow `agent_call` step
+  (and so an orchestrator's delegation, which runs one) and a `chat_turn`
+  step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a
+  child of the step's scope with the agent bound, whose counts roll up into
+  the step's. A child, not the step's scope bound to the agent, because an
+  orchestrator runs delegations to different agents at once on one step
+  scope. A chat turn binds its agent on the turn's scope, as before.
+- **Where it is set.** The agent form's Model tab (LLM privacy mode), through
+  the core field registry; an org-owned field on a platform agent, so an
+  org's choice survives every release. The org page (`/admin/orgs/[id]`,
+  "LLM privacy"), through `GET`/`PUT /api/v1/admin/orgs/[id]/privacy`:
+  platform-admin only, like the provider policy, with both keys required on a
+  replace. The form suggests the org's own name as a first term until the
+  org saves; saving an empty set is stored, so the suggestion does not come
+  back. The admin audit log keeps the floor and how many terms, never the
+  names.
+- **Export and erasure.** The org export reads the org row whole
+  (`exportOrgData()`, no `select`), so `settings.privacy` leaves with the
+  org; `eraseOrg()` deletes the row. A config backup and an agent export carry
+  the agent's mode; a stored value that is not a mode exports as none, as the
+  settings' mode is left out.
 
 ### What is built (t-992)
 
@@ -248,7 +306,7 @@ something through an adapter, neither can core.
 | ----------------------- | -------------------------------------------------- | -------------------- | ------------------------------------------------------------ |
 | `PrivacyDetector`       | finds spans in text                                | many; results merged | `core.rules`, `core.known-values`, `core.lists`              |
 | `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)                           |
-| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | none yet: settings are the base; agent, org floor (t-1010)   |
+| `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | `core.scope-settings`: agent mode, org floor (t-1010)        |
 | `PrivacyObserver`       | receives counts and ids per call                   | many                 | none: core's counts reach metadata through the scope (t-991) |
 
 Two more slots arrive with the features that use them: `SensitivityClassifier`
@@ -402,6 +460,7 @@ when it fires are reported `aborted`.
 | A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)  |
 | `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the reader starts a new conversation |
 | An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                |
+| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value  |
 | A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose    |
 | The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted          |
 
@@ -442,13 +501,13 @@ tightening that did nothing) and combined, never trusted to tighten by itself.
 
 ### Settings
 
-| Setting           | Where                             | Values                  | Default                                     | Task          |
-| ----------------- | --------------------------------- | ----------------------- | ------------------------------------------- | ------------- |
-| Mode              | global, agent override, org floor | the five modes          | `off` on upgrade, `detect` on a new install | t-991, t-1010 |
-| Entity types      | global                            | per-type on or off      | identifiers on; `DATE` and `LOCATION` off   | t-991         |
-| Local providers   | global                            | protect or skip         | skip                                        | t-991         |
-| Protected terms   | org (`Org.settings`)              | names always masked     | empty, with the org's own name pre-filled   | t-1010        |
-| Embeddings policy | global                            | `allow` \| `local_only` | `allow`                                     | t-992         |
+| Setting           | Where                             | Values                                                          | Default                                                            | Task          |
+| ----------------- | --------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------ | ------------- |
+| Mode              | global, agent override, org floor | the five modes globally; the four but `off` for an agent or org | `off` on upgrade, `detect` on a new install; agent and org inherit | t-991, t-1010 |
+| Entity types      | global                            | per-type on or off                                              | identifiers on; `DATE` and `LOCATION` off                          | t-991         |
+| Local providers   | global                            | protect or skip                                                 | skip                                                               | t-991         |
+| Protected terms   | org (`Org.settings`)              | names always masked, each a person or an organisation           | empty; the form suggests the org's own name until the org saves    | t-1010        |
+| Embeddings policy | global                            | `allow` \| `local_only`                                         | `allow`                                                            | t-992         |
 
 The global values are columns on `AiOrchestrationSettings` (one row per
 install): `privacyMode`, `privacyIgnoredEntityTypes`,
@@ -460,10 +519,14 @@ settings page and a config restore accept the modes in
 `PRIVACY_MODES_AVAILABLE`, all five since t-992; the page saves a stored mode it
 cannot show only if the admin chooses another. A
 stored mode that is not a mode reads as `null`, and the stage refuses every
-call until one is chosen. The org floor and protected terms are a slice of `Org.settings` read
-and written through `lib/tenancy/org-settings.ts`, like the provider policy and
-quotas. Every field gets a `<FieldHelp>`; the agent field goes through the core
-field registry (`lib/orchestration/agents/agent-field-registry.ts`).
+call until one is chosen. The org floor and protected terms are the `privacy`
+slice of `Org.settings` (`{ minimumMode, protectedTerms }`), read and written
+through `lib/tenancy/org-settings.ts` (`readOrgPrivacy()`, `writeOrgPrivacy()`)
+like the provider policy and quotas, and read whole, failing closed, like the
+provider policy. The agent's mode is the `privacyMode` column on `AiAgent`,
+declared in the core field registry
+(`lib/orchestration/agents/agent-field-registry.ts`). Every field gets a
+`<FieldHelp>`. See _What is built (t-1010)_.
 
 ## Detection
 
@@ -627,7 +690,8 @@ What it misses, by design or not yet:
 - **Companies without a legal suffix** ("Brightwater Dental Group") unless
   they are known values.
 - **A protected term written differently from its value** ("Kittiwake" for
-  "Project Kittiwake"): t-1010 should store the form people write.
+  "Project Kittiwake"): a term is stored as the admin types it, so each form
+  people write is a term of its own.
 - **Two-letter names** ("Jo"): below the variant length, to keep ordinary
   words out.
 
@@ -791,6 +855,10 @@ spend caps; it also exempts it from this layer.
   with real values, and under `local_only` the search and the reply
   embedding are refused. It also runs `off` and checks the request is
   unchanged.
+- `tests/unit/lib/orchestration/privacy/scope-settings.test.ts` runs every
+  (global, agent, org) mode combination through the real stage and expects
+  the strictest, by `PRIVACY_MODES_BY_STRICTNESS`, the one ordering; it fails
+  if the floor replaces the mode instead of raising it.
 - The registry and runner tests (`tests/unit/lib/privacy/adapters/`) mock both
   the app seam and core's defaults: their subject is the registry and the
   runner, not core's detectors, which have their own tests.
