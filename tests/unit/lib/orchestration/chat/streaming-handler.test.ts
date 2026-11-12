@@ -37,7 +37,16 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    aiMessage: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), count: vi.fn() },
+    aiMessage: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      count: vi.fn(),
+      update: vi.fn(),
+    },
+    // Leaving a privacy-refused turn out of history (t-1014) writes its rows
+    // in one transaction.
+    $transaction: vi.fn((writes: Promise<unknown>[]) => Promise.all(writes)),
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
@@ -5161,6 +5170,26 @@ describe('rolling conversation summarization', () => {
       expect(first).toHaveLength(100);
     });
 
+    it("never feeds a privacy-refused turn's rows to the summariser (t-1014)", async () => {
+      // A `block` refusal leaves its turn's rows out of history. The summariser
+      // reads the same rows, so a summary can never carry the refused details
+      // forward into every later turn.
+      mockSummariser();
+      capAgent(500);
+      const rows = makeHistoryMessages(450);
+      for (let i = 101; i <= 160; i++)
+        (rows[i] as { metadata: unknown }).metadata = { excludedFromHistory: 'privacy_blocked' };
+
+      await runTurn('conv-refused', rows, STORED);
+
+      const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+      const summarised = summarize.mock.calls.flatMap((call: unknown[]) =>
+        (call[0] as { content: string }[]).map((m) => m.content)
+      );
+      expect(summarised[0]).toBe('Message 161');
+      for (let i = 101; i <= 160; i++) expect(summarised).not.toContain(`Message ${i}`);
+    });
+
     it('announces the gap, and keeps the summary, when the summariser is down', async () => {
       // 349 rows follow the pin but only the newest 200 can be shown. The summary
       // cannot be advanced, so it is kept as it is, nothing is persisted, and the
@@ -9142,5 +9171,211 @@ describe('the privacy scope a chat turn enters', () => {
     expect(error).toMatchObject({ code: 'privacy_refused' });
     // The reader is told it stopped, not the operator's reason.
     expect(error?.message).not.toContain('initAppPrivacyAdapters');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A turn the privacy layer refused under `block` (§127 t-1014)
+// ---------------------------------------------------------------------------
+
+describe('a turn the privacy layer refused under block', () => {
+  interface StoredRow {
+    id: string;
+    conversationId: string;
+    role: string;
+    content: string;
+    toolCallId: string | null;
+    metadata: unknown;
+    createdAt: Date;
+  }
+
+  /**
+   * One conversation's rows in memory, written and read through the handler's
+   * own calls, so the second turn's history is the one the real loaders build
+   * from what the first turn wrote.
+   */
+  function conversationStore() {
+    const rows: StoredRow[] = [];
+    let clock = Date.parse('2026-11-12T10:00:00Z');
+    vi.mocked(prisma.aiMessage.create).mockImplementation((async ({
+      data,
+    }: {
+      data: Record<string, unknown>;
+    }) => {
+      const row = makeMessage({ ...data, id: `row-${rows.length}`, createdAt: new Date(clock++) });
+      rows.push(row);
+      return row;
+    }) as never);
+    vi.mocked(prisma.aiMessage.findMany).mockImplementation((async ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: { conversationId: string };
+      orderBy: Array<{ createdAt?: 'asc' | 'desc' }>;
+      take: number;
+    }) => {
+      const inOrder = rows.filter((r) => r.conversationId === where.conversationId);
+      if (orderBy[0]?.createdAt === 'desc') inOrder.reverse();
+      return inOrder.slice(0, take);
+    }) as never);
+    vi.mocked(prisma.aiMessage.update).mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { metadata: unknown };
+    }) => {
+      const row = rows.find((r) => r.id === where.id)!;
+      row.metadata = data.metadata;
+      return { id: row.id };
+    }) as never);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(makeConversation() as never);
+    return rows;
+  }
+
+  const REFUSED = 'My neighbour Jane Holloway at 14 Mill Lane keeps parking in my space';
+  const LOOKED_UP = 'Jane Holloway, 14 Mill Lane, 07700 900123';
+
+  /** Turn one looks something up, then its next call is refused; turn two streams. */
+  function refusingThenAnsweringProvider() {
+    let call = 0;
+    const provider = {
+      ...mockProvider([]),
+      chatStream: vi.fn(async function* () {
+        call += 1;
+        if (call === 1) {
+          yield {
+            type: 'tool_call',
+            toolCall: { id: 'tc-lookup', name: 'search_knowledge_base', arguments: { q: 'x' } },
+          };
+          yield {
+            type: 'done',
+            usage: { inputTokens: 5, outputTokens: 2 },
+            finishReason: 'tool_use',
+          };
+          return;
+        }
+        if (call === 2) throw new PrivacyRefusedError('content_blocked', 'anthropic');
+        yield { type: 'text', content: 'Happy to help with parking rules.' };
+        yield { type: 'done', usage: { inputTokens: 5, outputTokens: 4 }, finishReason: 'stop' };
+      }),
+    };
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    } as never);
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { found: LOOKED_UP },
+    });
+    return provider;
+  }
+
+  it('lets the next turn go on without anything the refused turn persisted', async () => {
+    const rows = conversationStore();
+    const provider = refusingThenAnsweringProvider();
+
+    const first = (await collect(
+      streamChat({ ...baseRequest, conversationId: 'conv-1', message: REFUSED })
+    )) as Array<{ type: string; code?: string }>;
+    expect(first.find((e) => e.type === 'error')).toMatchObject({ code: 'privacy_blocked' });
+
+    const second = (await collect(
+      streamChat({
+        ...baseRequest,
+        conversationId: 'conv-1',
+        message: 'What are the parking rules?',
+      })
+    )) as Array<{ type: string }>;
+
+    expect(second.some((e) => e.type === 'error')).toBe(false);
+    expect(second.some((e) => e.type === 'done')).toBe(true);
+    // The third call is turn two's (turn one made two).
+    const sent = JSON.stringify(vi.mocked(provider.chatStream).mock.calls[2]);
+    expect(sent).toContain('What are the parking rules?');
+    // Not the refused message, not the tool's result, not the tool call.
+    expect(sent).not.toContain('Jane Holloway');
+    expect(sent).not.toContain('Mill Lane');
+    expect(sent).not.toContain('tc-lookup');
+    // The refused turn wrote its user message, the assistant's tool call and
+    // the tool's result before the refusal; every one is marked.
+    const refusedTurn = rows.filter(
+      (r) =>
+        r.createdAt <
+        rows.find(
+          (m) => m.role === 'assistant' && (m.metadata as { error?: boolean } | null)?.error
+        )!.createdAt
+    );
+    expect(refusedTurn.map((r) => r.role)).toEqual(['user', 'assistant', 'tool']);
+    for (const row of refusedTurn) {
+      expect(row.metadata).toMatchObject({ excludedFromHistory: 'privacy_blocked' });
+    }
+  });
+
+  it('keeps the refused rows, and what they already carried, for the transcript', async () => {
+    const rows = conversationStore();
+    refusingThenAnsweringProvider();
+
+    await collect(
+      streamChat({
+        ...baseRequest,
+        conversationId: 'conv-1',
+        message: REFUSED,
+        messageMetadata: { source: 'widget' },
+      })
+    );
+
+    // Marked, not deleted: the transcript and audit trail still have them.
+    const user = rows.find((r) => r.role === 'user');
+    expect(user?.content).toBe(REFUSED);
+    expect(user?.metadata).toEqual({
+      app: { source: 'widget' },
+      excludedFromHistory: 'privacy_blocked',
+    });
+    const toolCall = rows.find(
+      (r) => r.role === 'assistant' && !(r.metadata as { error?: boolean }).error
+    );
+    expect(toolCall?.metadata).toMatchObject({
+      toolCalls: [expect.objectContaining({ id: 'tc-lookup' })],
+      excludedFromHistory: 'privacy_blocked',
+    });
+    // Each write is confined to the caller's own conversation (owner layer).
+    for (const [args] of vi.mocked(prisma.aiMessage.update).mock.calls) {
+      expect((args as { where: unknown }).where).toMatchObject({ conversation: { userId: 'u1' } });
+    }
+  });
+
+  it('marks nothing on any other refusal', async () => {
+    const rows = conversationStore();
+    const provider = {
+      ...mockProvider([]),
+      // eslint-disable-next-line require-yield
+      chatStream: vi.fn(async function* () {
+        throw new PrivacyRefusedError('app_init_failed', 'anthropic');
+      }),
+    };
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-1', message: 'Hello' }));
+
+    // `privacy_refused` is the operator's to fix; the message was not the cause.
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to mark
+    expect(rows.find((r) => r.role === 'user')?.metadata).toBeNull();
+  });
+
+  it('still ends the turn with its refusal when the marking fails', async () => {
+    conversationStore();
+    refusingThenAnsweringProvider();
+    vi.mocked(prisma.aiMessage.update).mockRejectedValue(new Error('connection reset'));
+
+    const events = (await collect(
+      streamChat({ ...baseRequest, conversationId: 'conv-1', message: REFUSED })
+    )) as Array<{ type: string; code?: string }>;
+
+    expect(events.find((e) => e.type === 'error')).toMatchObject({ code: 'privacy_blocked' });
   });
 });

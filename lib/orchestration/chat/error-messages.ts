@@ -215,17 +215,17 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     action: 'Ask an administrator to check the deployment’s LLM privacy settings.',
   },
   // The privacy layer's `block` mode (§127): something in what would have
-  // been sent — the message, the conversation so far, a tool's result —
-  // contained personal details, and the policy sends none. The message stays
-  // in the conversation and every later turn resends it, so retrying there
-  // cannot work: the remedy is a new conversation. Not always the reader's
-  // own details, so an administrator is the other way out.
+  // been sent — the message, a tool's result — contained personal details,
+  // and the policy sends none. The refused turn is left out of what later
+  // turns resend (t-1014), so asking again without them works in the same
+  // conversation. Not always the reader's own details (a tool's result, the
+  // agent's own instructions), so an administrator is the other way out.
   privacy_blocked: {
     title: 'Personal Details Not Sent',
     message:
-      'This conversation contains personal details, such as names or contact details, that this deployment does not send to an AI provider.',
+      'Your message, or something the assistant looked up for it, contains personal details, such as names or contact details, that this deployment does not send to an AI provider.',
     action:
-      "Start a new conversation without them. If you didn't include any, ask an administrator.",
+      "Ask again without them, here in this conversation. If you didn't include any, ask an administrator.",
   },
   no_default_model_configured: {
     title: 'Default Model Not Set',

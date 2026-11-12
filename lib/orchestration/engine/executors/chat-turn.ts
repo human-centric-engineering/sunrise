@@ -57,6 +57,7 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { modelParamOptions } from '@/lib/orchestration/llm/model-params';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
+import { isLeftOutOfHistory } from '@/lib/orchestration/chat/message-builder';
 import {
   LATEST_AGENT_VERSION_ID_INCLUDE,
   readAgentConsistently,
@@ -110,7 +111,8 @@ export async function executeChatTurn(
           where: { role: { in: [...ROLES_TO_LOAD] } },
           orderBy: { createdAt: 'desc' },
           take: historyLimit,
-          select: { role: true, content: true },
+          // `metadata` for the rows a privacy refusal left out of history.
+          select: { role: true, content: true, metadata: true },
         },
       },
     }),
@@ -208,8 +210,12 @@ export async function executeChatTurn(
   const systemPrompt = composeSystemPromptString(resolvedPrompt);
 
   // 5. Prior messages, read with the conversation in step 2.
-  //    Newest-first to honour `take`; flip to chronological.
-  const priorMessagesAsc = [...conversation.messages].reverse();
+  //    Newest-first to honour `take`; flip to chronological. Without the
+  //    rows of a turn the privacy layer refused under `block` (§127 t-1014):
+  //    resending them would be refused again, every step.
+  const priorMessagesAsc = conversation.messages
+    .filter((m) => !isLeftOutOfHistory(m.metadata))
+    .reverse();
 
   // 6. Build the messages array.
   const messages: LlmMessage[] = [];

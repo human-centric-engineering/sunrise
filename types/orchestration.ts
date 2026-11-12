@@ -1247,6 +1247,16 @@ export interface MessageMetadata {
   error?: boolean;
   errorCode?: string;
   /**
+   * Set on every row a chat turn persisted when the privacy layer refused the
+   * turn under `block` (§127 t-1014): its user message, and any assistant
+   * tool-call and tool-result rows from earlier iterations of the tool loop.
+   * The rows stay in the transcript and the audit trail; every reader that
+   * resends a conversation to a provider leaves them out
+   * (`isLeftOutOfHistory`), so the next turn does not carry the details the
+   * policy refused, and the conversation can go on.
+   */
+  excludedFromHistory?: 'privacy_blocked';
+  /**
    * Set on the assistant message persisted when the streaming chat
    * handler aborts a turn before the LLM signalled completion. The
    * conversation row still reflects what was streamed; this marker
