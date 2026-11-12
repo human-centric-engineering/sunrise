@@ -9509,6 +9509,14 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
       (async ({ where }: { where: { id: string } }) =>
         rows.find((r) => r.id === where.id) ?? null) as never
     );
+    vi.mocked(prisma.aiMessage.count).mockImplementation(
+      (async ({ where }: { where: { conversationId: string; createdAt?: { lte: Date } } }) =>
+        rows.filter(
+          (r) =>
+            r.conversationId === where.conversationId &&
+            (!where.createdAt || r.createdAt <= where.createdAt.lte)
+        ).length) as never
+    );
     vi.mocked(prisma.aiMessage.update).mockImplementation((({
       where,
       data,
@@ -9613,8 +9621,8 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
       message: getUserFacingError('privacy_blocked_earlier').message,
     });
     expect(marked(earlier)).toBe('privacy_blocked');
-    // What held nothing stays in history.
-    expect(marked(reply)).toBeUndefined();
+    // Its reply goes with it, so no answer is resent without its question.
+    expect(marked(reply)).toBe('privacy_blocked');
     // The refused turn is left out, as every refused turn is.
     const refusedQuestion = rows.find((r) => r.content === 'What are the parking rules?');
     expect(marked(refusedQuestion)).toBe('privacy_blocked');
@@ -9623,7 +9631,7 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     expect(errorOf(answered)).toBeUndefined();
     const sent = lastSent(provider);
     expect(sent).not.toContain(DETAIL);
-    expect(sent).toContain('Thanks, noted.');
+    expect(sent).not.toContain('Thanks, noted.');
     // Once, from this turn: the refused copy was left out.
     expect(sent.split('What are the parking rules?')).toHaveLength(2);
   });
@@ -9647,7 +9655,7 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     expect(lastSent(provider)).not.toContain(DETAIL);
   });
 
-  it('discards a summary that holds personal details, and the next turn goes on without it', async () => {
+  it('replaces a summary that holds personal details with a note of what it no longer describes', async () => {
     const pinned = { id: '', createdAt: new Date(0) };
     const store = conversationStore();
     const before = store.add({ role: 'user', content: 'Where can I park?' });
@@ -9659,8 +9667,11 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     const provider = blockingProvider();
 
     expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_blocked_earlier');
-    expect(store.conv.summary).toBeNull();
-    expect(store.conv.summaryUpToMessageId).toBeNull();
+    // The two rows up to the pin; the pin stays, so they are never read again.
+    expect(store.conv.summary).toBe(
+      '(up to 2 earlier messages may not be described in this summary.)\n\n'
+    );
+    expect(store.conv.summaryUpToMessageId).toBe(pinned.id);
     // Owner-scoped, and only if the pin is still the one the turn read.
     expect(vi.mocked(prisma.aiConversation.updateMany)).toHaveBeenCalledWith({
       where: expect.objectContaining({
@@ -9668,7 +9679,14 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
         userId: 'u1',
         summaryUpToMessageId: pinned.id,
       }),
-      data: { summary: null, summaryUpToMessageId: null },
+      data: { summary: store.conv.summary },
+    });
+    expect(vi.mocked(prisma.aiMessage.count)).toHaveBeenCalledWith({
+      where: {
+        conversationId: 'conv-1',
+        conversation: { userId: 'u1' },
+        createdAt: { lte: covered.createdAt },
+      },
     });
     // No row held the details, so none was marked for them.
     expect(marked(before)).toBeUndefined();
@@ -9677,9 +9695,22 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     expect(errorOf(await turn('And at weekends?'))).toBeUndefined();
     const sent = lastSent(provider);
     expect(sent).not.toContain(DETAIL);
-    expect(sent).not.toContain('Conversation summary');
-    // The rows the summary covered are read again.
-    expect(sent).toContain('In bay 4.');
+    // The model is told what it no longer has; the rows the summary covered
+    // stay behind the pin, and what follows it is sent.
+    expect(sent).toContain('up to 2 earlier messages may not be described');
+    expect(sent).not.toContain('In bay 4.');
+    expect(sent).toContain('Thanks.');
+  });
+
+  it('clears a summary whose pin row has gone, since there is no pin to keep', async () => {
+    const store = conversationStore();
+    store.conv.summary = `The user, ${DETAIL}, asked where to park.`;
+    store.conv.summaryUpToMessageId = 'row-gone';
+    blockingProvider();
+
+    expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_blocked_earlier');
+    expect(store.conv.summary).toBeNull();
+    expect(store.conv.summaryUpToMessageId).toBeNull();
   });
 
   it('leaves a summary alone that another turn wrote since this one read it', async () => {

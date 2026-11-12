@@ -122,8 +122,8 @@ import {
 import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
   placePrivacyRefusal,
+  type BuiltChatRequest,
   type PlacedPrivacyRefusal,
-  type SentChatCall,
 } from '@/lib/orchestration/chat/privacy-refusal';
 import { isJsonObject } from '@/lib/privacy/config-recipients';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
@@ -375,6 +375,15 @@ function rowsAfterPin(pin: HistoryPin) {
   };
 }
 
+/** What a turn built its first call from, and the summary pin it read (t-1017). */
+type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null };
+
+/** A refusal of a call the turn made itself, and how many messages that call carried. */
+interface StageRefusal {
+  error: PrivacyRefusedError;
+  messageCount: number;
+}
+
 /** What a read from the pin returns. */
 interface HistoryFromPin {
   rows: AiMessage[];
@@ -586,12 +595,11 @@ export class StreamingChatHandler {
     };
     // What the turn built its request from, and the summary pin it read, so a
     // refusal under `block` can tell which part held the details (t-1017).
-    let builtRequest: (Omit<SentChatCall, 'messageCount'> & { summaryPin: string | null }) | null =
-      null;
+    let builtRequest: BuiltTurnRequest | null = null;
     // The refusal of a call this turn made itself, with how many messages it
     // sent. Only its location is trusted: another call's indices are not
     // positions in these messages.
-    let stageRefusal: { error: PrivacyRefusedError; messageCount: number } | null = null;
+    let stageRefusal: StageRefusal | null = null;
     try {
       registerBuiltInCapabilities();
 
@@ -1442,7 +1450,7 @@ export class StreamingChatHandler {
       let messages: LlmMessage[] = initialMessages;
       builtRequest = {
         sources: initialSources,
-        historyRowIds: history.map((m) => m.id),
+        historyRows: history.map((m) => ({ id: m.id, role: m.role })),
         summaryPin: conversationSummary ? casPin : null,
       };
 
@@ -3228,7 +3236,7 @@ export class StreamingChatHandler {
             log
           );
           if (placed?.summary && builtRequest) {
-            await this.discardSummary(conversationId, request.userId, builtRequest.summaryPin, log);
+            await this.forgetSummary(conversationId, request.userId, builtRequest.summaryPin, log);
           }
           if (placed) {
             // Where, never what: the kinds of source and how many rows.
@@ -3415,8 +3423,8 @@ export class StreamingChatHandler {
    */
   private placeBlockedTurn(
     err: ProviderError,
-    built: (Omit<SentChatCall, 'messageCount'> & { summaryPin: string | null }) | null,
-    refusal: { error: PrivacyRefusedError; messageCount: number } | null
+    built: BuiltTurnRequest | null,
+    refusal: StageRefusal | null
   ): PlacedPrivacyRefusal | null {
     if (!built || !refusal || refusal.error !== err) return null;
     return placePrivacyRefusal(refusal.error.found, {
@@ -3431,8 +3439,10 @@ export class StreamingChatHandler {
    * row the refusal found personal details in (t-1017). That also heals an
    * earlier refused turn whose own marking failed. They stay in the
    * transcript and the audit trail. Best effort, like the error marker. If
-   * the write fails, nothing retries it here; the next refusal finds the same
-   * rows and marks them, and until then nothing is sent.
+   * the write fails, nothing retries it here. Nothing is sent while the rows
+   * are resent, and the next refusal that can say where it found the details
+   * (a chat call this handler made) finds the rows that are still in the
+   * prompt and marks them.
    *
    * The metadata is read back here rather than taken from what the turn
    * wrote, so anything set on a row before this read (a fork's hook on
@@ -3477,19 +3487,25 @@ export class StreamingChatHandler {
   }
 
   /**
-   * Discard a stored summary the privacy layer found personal details in
+   * Forget a stored summary the privacy layer found personal details in
    * (t-1017; owner ruling 2026-11-12: the conversation carries on and
    * forgets). Under `block` it can never be sent again, and it cannot be
    * rebuilt from itself: the summariser's call would carry it and be refused.
-   * The pin goes with it, so the next turn reads the newest rows and
-   * summarises again from what it can send.
+   *
+   * Its text is replaced by the gap note alone ("up to N earlier messages may
+   * not be described"), N counting every row up to the pin, and the pin is
+   * kept. So the rows it covered are never read again (re-read, any that hold
+   * details would be refused again, in the prompt or, past the cap, in a
+   * summariser call nothing can place), the model is told what it no longer
+   * has, and later folds carry the note forward as they carry any gap.
+   * Without a pin there is nothing to keep, and the summary is cleared.
    *
    * Only if the pin is still the one this turn read: a concurrent turn that
    * moved it wrote a summary of its own, and this turn knows nothing about
    * that one. Best effort, like the marking: if it fails, the next refusal
    * finds the same summary.
    */
-  private async discardSummary(
+  private async forgetSummary(
     conversationId: string | null,
     userId: string,
     pin: string | null,
@@ -3497,12 +3513,27 @@ export class StreamingChatHandler {
   ): Promise<void> {
     if (!conversationId) return;
     try {
+      const owned = { conversationId, conversation: conversationOwner(userId) };
+      const pinRow = pin
+        ? await prisma.aiMessage.findFirst({
+            where: { id: pin, ...owned },
+            select: { createdAt: true },
+          })
+        : null;
+      const covered = pinRow
+        ? await prisma.aiMessage.count({
+            where: { ...owned, createdAt: { lte: pinRow.createdAt } },
+          })
+        : 0;
       await prisma.aiConversation.updateMany({
         where: { id: conversationId, ...conversationOwner(userId), summaryUpToMessageId: pin },
-        data: { summary: null, summaryUpToMessageId: null },
+        data:
+          pinRow && covered > 0
+            ? { summary: withGapNote('', covered) }
+            : { summary: null, summaryUpToMessageId: null },
       });
     } catch (err) {
-      log.warn('Failed to discard a privacy-refused conversation summary', {
+      log.warn('Failed to forget a privacy-refused conversation summary', {
         conversationId,
         error: err instanceof Error ? err.message : String(err),
       });

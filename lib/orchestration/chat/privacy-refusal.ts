@@ -11,9 +11,11 @@
  *   The turn's rows are left out (t-1014); asking again without the details
  *   works.
  * - **earlier** — an earlier row, or the stored summary, written before the
- *   mode was `block` or by a turn whose own marking failed. Those rows are
- *   left out too, and the summary is discarded (owner ruling 2026-11-12: the
- *   conversation carries on and forgets), so asking again works.
+ *   mode was `block` or by a turn whose own marking failed. The exchanges
+ *   those rows are in are left out too, and the summary is replaced by a
+ *   note of how many messages it no longer describes (owner ruling
+ *   2026-11-12: the conversation carries on and forgets), so asking again
+ *   works.
  * - **setup** — the system prompt, the entity context, the user's memories or
  *   an opening the server wrote. Nothing the reader can change; they are told
  *   to ask an administrator.
@@ -38,9 +40,14 @@ export type SetupSource = 'system_prompt' | 'context' | 'memories' | 'opening_tu
 
 export interface PlacedPrivacyRefusal {
   code: PrivacyBlockedChatCode;
-  /** Earlier rows that held personal details: to be left out of later history. */
+  /**
+   * Earlier rows to leave out of later history: every row of each earlier
+   * exchange that held personal details, from its user message to the row
+   * before the next one, so no reply is resent without its question, or a
+   * question without its reply.
+   */
   earlierRowIds: string[];
-  /** Whether the stored summary held personal details: to be discarded. */
+  /** Whether the stored summary held personal details: to be replaced by a note. */
   summary: boolean;
   /** The parts of the setup that held personal details, each once. */
   setup: SetupSource[];
@@ -48,14 +55,27 @@ export interface PlacedPrivacyRefusal {
   turn: boolean;
 }
 
-/** What the handler knows about the call it made. */
-export interface SentChatCall {
-  /** How many messages the call carried. */
-  messageCount: number;
+/** What the handler built a turn's first call from, before the tool loop added to it. */
+export interface BuiltChatRequest {
   /** The built prefix's sources; messages past it were added by the tool loop this turn. */
   sources: readonly MessageSource[];
-  /** The id of each row in the history the builder was given, by index. */
-  historyRowIds: readonly string[];
+  /** Each row of the history the builder was given, by index, oldest first. */
+  historyRows: readonly { id: string; role: string }[];
+}
+
+/** What the handler knows about the call it made. */
+export interface SentChatCall extends BuiltChatRequest {
+  /** How many messages the call carried. */
+  messageCount: number;
+}
+
+/** The rows of the exchange `index` is in: from its user message to the row before the next. */
+function exchangeOf(rows: BuiltChatRequest['historyRows'], index: number): number[] {
+  let start = index;
+  while (start > 0 && rows[start].role !== 'user') start--;
+  let end = index + 1;
+  while (end < rows.length && rows[end].role !== 'user') end++;
+  return Array.from({ length: end - start }, (_, k) => start + k);
 }
 
 /**
@@ -68,7 +88,7 @@ export function placePrivacyRefusal(
   sent: SentChatCall
 ): PlacedPrivacyRefusal | null {
   if (!found || found.messageCount !== sent.messageCount) return null;
-  const earlierRowIds: string[] = [];
+  const earlierRows = new Set<number>();
   const setup = new Set<SetupSource>();
   let summary = false;
   let turn = false;
@@ -85,9 +105,8 @@ export function placePrivacyRefusal(
         turn = true;
         break;
       case 'history': {
-        const id = sent.historyRowIds[source.historyIndex];
-        if (id === undefined) return null;
-        earlierRowIds.push(id);
+        if (sent.historyRows[source.historyIndex] === undefined) return null;
+        for (const i of exchangeOf(sent.historyRows, source.historyIndex)) earlierRows.add(i);
         break;
       }
       case 'summary':
@@ -97,6 +116,7 @@ export function placePrivacyRefusal(
         setup.add(source.kind);
     }
   }
+  const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
   // An empty location is not a place: nothing to leave out but the turn.
   if (!turn && !summary && earlierRowIds.length === 0 && setup.size === 0) return null;
   // The setup wins: whatever else is left out, asking again cannot work until

@@ -343,8 +343,9 @@ A chat turn refused under `block` no longer stops the conversation.
     back. Nothing in core writes a message after creating it.
   - The write is confined to the caller's conversation (the owner layer).
   - It is best effort, like the error marker. If it fails, nothing retries
-    it then: the next turn resends the details and is refused, and that
-    refusal finds the rows and marks them (t-1017). Nothing is sent.
+    it then. Nothing is sent while the rows are resent, and the next
+    refusal that can say where it found the details (a chat call the handler
+    made) finds the rows still in the prompt and marks them (t-1017).
   - No other refusal marks anything: `privacy_refused` is the operator's to
     fix, and the message did not cause it.
 - **Every reader that resends a conversation leaves the rows out**, through
@@ -399,24 +400,33 @@ That happened when the details were in:
   t-1014 does (`lib/orchestration/chat/privacy-refusal.ts`).
 - **What is left out, and what the reader is told:**
 
-  | Where the details were                                         | Left out of later history                             | Code                      | The reader is told                 |
-  | -------------------------------------------------------------- | ----------------------------------------------------- | ------------------------- | ---------------------------------- |
-  | This turn: the message, or a tool result                       | The turn's rows                                       | `privacy_blocked`         | Ask again without them             |
-  | An earlier row, or the stored summary                          | Those rows and the turn's; the summary and its pin go | `privacy_blocked_earlier` | Ask again; it may not remember all |
-  | The system prompt, entity context, memories or an opening turn | Anything else that held them, and the turn's rows     | `privacy_blocked_setup`   | Ask an administrator               |
+  | Where the details were                                         | Left out of later history                                        | Code                      | The reader is told                 |
+  | -------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- | ---------------------------------- |
+  | This turn: the message, or a tool result                       | The turn's rows                                                  | `privacy_blocked`         | Ask again without them             |
+  | An earlier row, or the stored summary                          | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
+  | The system prompt, entity context, memories or an opening turn | Anything else that held them, and the turn's rows                | `privacy_blocked_setup`   | Ask an administrator               |
 
   The setup wins when it is one of several: asking again cannot work until
   an administrator changes it. The log line ("Chat turn refused for personal
   details") names the kinds of source and how many rows, never a value.
 
-- **The summary is discarded** (owner ruling 2026-11-12: the conversation
+- **An earlier row takes its exchange with it**: from its user message to
+  the row before the next one. So no reply is resent without its question,
+  or a question without its reply.
+- **The summary is forgotten** (owner ruling 2026-11-12: the conversation
   carries on and forgets). Under `block` it can never be sent again, and it
   cannot be rebuilt from itself: the summariser's call would carry it and
-  be refused. The pin goes with it, only if it is still the one the turn
-  read, so a summary a concurrent turn wrote is kept. The next turn reads
-  the newest rows and summarises again from what it can send. A row the old
-  summary covered that held details too comes back into the window and
-  causes one more refusal, which leaves it out.
+  be refused. Its text becomes the gap note alone ("up to N earlier
+  messages may not be described in this summary", N counting every row up
+  to the pin), and the pin stays:
+  - the rows it covered are never read again. Re-read, any that held
+    details would be refused again, in the prompt or, past the cap, in a
+    summariser call nothing can place;
+  - the model is told what it no longer has, and later folds carry the note
+    forward as they carry any gap;
+  - only if the pin is still the one the turn read, so a summary a
+    concurrent turn wrote is kept. A summary whose pin row has gone is
+    cleared.
 - **A judge** (`judge_call`) does not retry `privacy_blocked_setup`; it
   does retry `privacy_blocked_earlier`, since the refusal left out what
   caused it.
