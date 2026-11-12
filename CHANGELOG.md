@@ -318,6 +318,21 @@ release process.
   deletes `.eslintcache`, and on a large fork the next cold whole-tree lint can
   abort with exit 134.
 
+- **Production CSP: the no-eval rule is documented and tested on the built
+  header, and `server-only` modules load in unit tests** (t-1020, #864). An
+  eval-using client dependency passes in development and fails only in
+  production. `.context/security/overview.md` now says why, where it usually
+  comes from, how to find the chunk with `npx next analyze`, and to fix the
+  import rather than the policy. `vitest.config.ts` aliases `server-only` to an
+  empty stub, so marking a module `import 'server-only'` no longer costs its
+  tests. New tests assert the built production header, with and without a
+  nonce, never contains `unsafe-eval`, and a fork listing it in
+  `lib/app/csp.ts` is dropped. **Forks:** if you carry the `server-only` alias,
+  its stub or the built-string test as edits, take upstream's and drop yours.
+  If you carry an `ANALYZE=true` `@next/bundle-analyzer` wrap in
+  `next.config.js`, it does not analyse a Turbopack build. Use
+  `npx next analyze`.
+
 ### Changed
 
 - **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`
