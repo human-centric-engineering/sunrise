@@ -37,11 +37,17 @@ import { scopeSettingsResolver } from '@/lib/orchestration/privacy/scope-setting
  */
 export const CORE_RULES_DETECTOR_ID = RULES_DETECTOR_ID;
 
+/**
+ * How long core's agent-and-org resolver may take: two primary-key reads,
+ * but on the first call of a scope, so a cold or busy pool counts.
+ */
+export const SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS = 5_000;
+
 export interface CorePrivacyAdapters {
   /** Always registered as required: a core detector failing is a bug, and a bug refuses the call. */
   detectors: readonly { detector: PrivacyDetector; timeoutMs?: number }[];
   tokenStrategy: PrivacyTokenStrategy | null;
-  policyResolvers: readonly PrivacyPolicyResolver[];
+  policyResolvers: readonly { resolver: PrivacyPolicyResolver; timeoutMs?: number }[];
   observers: readonly PrivacyObserver[];
 }
 
@@ -55,7 +61,12 @@ export function corePrivacyAdapters(): CorePrivacyAdapters {
     tokenStrategy: statelessTokenStrategy(),
     // The agent's mode and the org's minimum (t-1010). The install's own mode
     // is the base the stage starts from, so it needs no resolver.
-    policyResolvers: [scopeSettingsResolver()],
+    // Longer than the default: it reads the agent and the org from the
+    // database, once per scope, and a resolver that times out refuses the
+    // call, so a cold connection must not refuse a turn's first call.
+    policyResolvers: [
+      { resolver: scopeSettingsResolver(), timeoutMs: SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS },
+    ],
     observers: [],
   };
 }

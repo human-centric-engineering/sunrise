@@ -557,10 +557,12 @@ export function AgentForm({
   // Set, but not a mode this version knows: the agent's calls are refused
   // until one is chosen, and a save that leaves the field alone keeps it.
   const [privacyModeChosen, setPrivacyModeChosen] = useState(false);
+  // The stored value, not the prop: a version restore replaces it.
+  const [storedPrivacyMode, setStoredPrivacyMode] = useState<string | null>(
+    agent?.privacyMode ?? null
+  );
   const storedPrivacyModeUnknown =
-    agent?.privacyMode !== null &&
-    agent?.privacyMode !== undefined &&
-    !isTighteningMode(agent.privacyMode);
+    storedPrivacyMode !== null && !isTighteningMode(storedPrivacyMode);
   const currentVisibility = watch('visibility');
   const currentProfileId = watch('profileId');
   const currentPersona = watch('persona');
@@ -2538,6 +2540,9 @@ export function AgentForm({
                       enableImageInput: fresh.enableImageInput ?? false,
                       enableDocumentInput: fresh.enableDocumentInput ?? false,
                     });
+                    // The restored row's privacy mode is the stored one now.
+                    setStoredPrivacyMode(fresh.privacyMode ?? null);
+                    setPrivacyModeChosen(false);
                     // MUST clear authorship. `reset` replaces the form values
                     // but not this state, so without it a provider the operator
                     // picked-but-did-not-save left `authored.provider` true

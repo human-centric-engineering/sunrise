@@ -261,6 +261,10 @@ export const ORG_PROTECTED_TERM_TYPES = ['PERSON', 'ORG'] as const;
 /** The most terms one org may protect. Tier B's cost does not multiply by them. */
 export const MAX_ORG_PROTECTED_TERMS = 500;
 
+/** A protected term's length bounds: tier B skips anything under three characters. */
+export const ORG_PROTECTED_TERM_MIN_LENGTH = 3;
+export const ORG_PROTECTED_TERM_MAX_LENGTH = 200;
+
 /**
  * One name an org wants masked in every LLM call it makes: a client, a member
  * of staff, a project codename that is a person's name. Tier B
@@ -272,8 +276,14 @@ export const orgProtectedTermSchema = z
     value: z
       .string()
       .trim()
-      .min(3, 'A protected term needs at least 3 characters')
-      .max(200, 'A protected term must be at most 200 characters'),
+      .min(
+        ORG_PROTECTED_TERM_MIN_LENGTH,
+        `A protected term needs at least ${ORG_PROTECTED_TERM_MIN_LENGTH} characters`
+      )
+      .max(
+        ORG_PROTECTED_TERM_MAX_LENGTH,
+        `A protected term must be at most ${ORG_PROTECTED_TERM_MAX_LENGTH} characters`
+      ),
     type: z.enum(ORG_PROTECTED_TERM_TYPES),
   })
   .strict();

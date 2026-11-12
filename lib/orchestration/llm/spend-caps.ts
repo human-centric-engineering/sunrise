@@ -389,9 +389,6 @@ const OPERATOR_MESSAGES: Record<SpendCap, string> = {
     'This platform has reached its global monthly AI budget, so the call to a paid provider was refused. A platform admin can raise the global cap in the orchestration settings, or the work can use a local model.',
 };
 
-/** The org the current call is made for (`orgIdForCall`, shared with the privacy floor). */
-const orgOfCall = orgIdForCall;
-
 /**
  * The refusal a paid call to `providerSlug` would meet now, or `null` when it
  * may go ahead. Never throws: provider selection asks this of each candidate
@@ -407,7 +404,7 @@ export async function spendCapRefusal(
   isLocal: boolean
 ): Promise<SpendCapExceededError | null> {
   if (isLocal) return null;
-  const orgId = orgOfCall();
+  const orgId = orgIdForCall();
   const [global, org] = await Promise.all([
     globalCapStateOrSkip({ providerSlug }),
     orgCapStateOrSkip(orgId, { providerSlug }),

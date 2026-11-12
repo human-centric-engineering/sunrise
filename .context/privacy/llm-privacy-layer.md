@@ -172,7 +172,11 @@ An agent and an org can each require more protection than the install gives.
 - **Through the registry.** Core's first policy resolver,
   `core.scope-settings` (`scopeSettingsResolver()`), registered in
   `core-defaults.ts`, raises the mode from the call's `PolicyInput.agentId`
-  and `orgId`. An app replaces it by id. The install's own mode needs no
+  and `orgId`. An app replaces it by id; the protected terms are not the
+  resolver's, so they still apply. Its timeout is 5 s
+  (`SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS`), not the default 1 s: it reads the
+  database on a scope's first call, and a resolver that times out refuses
+  the call. The install's own mode needs no
   resolver: it is the base the stage starts from.
 - **Read once per scope.** The agent's column and the org's slice are read on
   the first call in a scope and kept on it (`PrivacyScope.scopeSettings`),
@@ -189,7 +193,10 @@ An agent and an org can each require more protection than the install gives.
   `PERSON` or an `ORG`, at least three characters (tier B skips shorter), at
   most 500, the same name twice kept once. The stage adds them to the scope's
   known values, so tier B finds them and the ways people write them, and the
-  mode decides what happens: counted, masked or refused.
+  mode decides what happens: counted, masked or refused. A type the install
+  ignores is not ignored for an org that protects names of it: its own terms
+  would otherwise be dropped, and fewer ignored types is the stricter
+  policy.
 - **The org is the install org at `single`** when nothing else names one:
   the stage takes the scope's org, else the tenant context's, else at
   `single` `INSTALL_ORG_ID`, as the spend caps do. A request on an admin API
@@ -205,8 +212,10 @@ An agent and an org can each require more protection than the install gives.
   scope's counts (`recordsNowhere`), so the stage skips the scan it skips
   for a call with no scope. While the provider that resolves is not local,
   the backfill leaves such agents' replies out of its query, or it would pick
-  the same newest refused ones every tick and never reach the rest; a
-  refusal it does meet counts as `skipped`, not `failed`.
+  the same newest refused ones every tick and never reach the rest. It always
+  leaves out an agent whose stored mode is not a mode, which refuses every
+  call. Any privacy refusal it does meet counts as `skipped`, not `failed`:
+  the stage has already logged why.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a
@@ -228,8 +237,10 @@ An agent and an org can each require more protection than the install gives.
 - **Export and erasure.** The org export reads the org row whole
   (`exportOrgData()`, no `select`), so `settings.privacy` leaves with the
   org; `eraseOrg()` deletes the row. A config backup and an agent export carry
-  the agent's mode; a stored value that is not a mode exports as none, as the
-  settings' mode is left out. A restore or an agent import from before
+  the agent's mode; a stored value that is not a mode is left out, as the
+  settings' mode is, so restoring it keeps the target's own. A version
+  restore takes any stored string, so a version saved while the agent held
+  one stays restorable and leaves it refusing until a mode is chosen. A restore or an agent import from before
   t-1010 has no mode for the agent, and an overwrite then keeps the agent's
   own, as the settings' mode is kept: an omission never loosens it.
 

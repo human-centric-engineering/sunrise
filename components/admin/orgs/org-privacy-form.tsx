@@ -34,7 +34,12 @@ import {
   PRIVACY_TIGHTENING_MODES,
   type PrivacyTighteningMode,
 } from '@/lib/orchestration/privacy/settings-policy';
-import type { OrgProtectedTerm } from '@/lib/validations/tenancy';
+import {
+  MAX_ORG_PROTECTED_TERMS,
+  ORG_PROTECTED_TERM_MAX_LENGTH,
+  ORG_PROTECTED_TERM_MIN_LENGTH,
+  type OrgProtectedTerm,
+} from '@/lib/validations/tenancy';
 
 /** `GET /api/v1/admin/orgs/[id]/privacy`, as the route reports it. */
 export interface OrgPrivacyView {
@@ -55,9 +60,6 @@ export interface OrgPrivacyFormProps {
 
 const NO_MINIMUM = '__none__';
 
-/** Tier B skips anything shorter, so the API refuses it (`orgProtectedTermSchema`). */
-const MIN_TERM_LENGTH = 3;
-
 const TERM_TYPE_LABELS: Record<OrgProtectedTerm['type'], string> = {
   PERSON: 'Person',
   ORG: 'Organisation',
@@ -66,7 +68,11 @@ const TERM_TYPE_LABELS: Record<OrgProtectedTerm['type'], string> = {
 /** The terms to show: the stored ones, or the org's own name before a first save. */
 function initialTerms(privacy: OrgPrivacyView, orgName: string): OrgProtectedTerm[] {
   if (privacy.saved || privacy.unreadable) return privacy.protectedTerms;
-  return orgName.trim().length >= 3 ? [{ value: orgName.trim(), type: 'ORG' }] : [];
+  const name = orgName.trim();
+  return name.length >= ORG_PROTECTED_TERM_MIN_LENGTH &&
+    name.length <= ORG_PROTECTED_TERM_MAX_LENGTH
+    ? [{ value: name, type: 'ORG' }]
+    : [];
 }
 
 export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyFormProps) {
@@ -90,8 +96,16 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
     if (value.length === 0) return;
     // The API's own rules, said where the term was typed rather than as a
     // failed save of the whole list.
-    if (value.length < MIN_TERM_LENGTH) {
-      setTermError(`A protected term needs at least ${MIN_TERM_LENGTH} characters`);
+    if (value.length < ORG_PROTECTED_TERM_MIN_LENGTH) {
+      setTermError(`A protected term needs at least ${ORG_PROTECTED_TERM_MIN_LENGTH} characters`);
+      return;
+    }
+    if (value.length > ORG_PROTECTED_TERM_MAX_LENGTH) {
+      setTermError(`A protected term must be at most ${ORG_PROTECTED_TERM_MAX_LENGTH} characters`);
+      return;
+    }
+    if (terms.length >= MAX_ORG_PROTECTED_TERMS) {
+      setTermError(`At most ${MAX_ORG_PROTECTED_TERMS} protected terms`);
       return;
     }
     const lower = value.toLowerCase();

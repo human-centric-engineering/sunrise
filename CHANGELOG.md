@@ -30,13 +30,25 @@ release process.
   a call runs under the strictest of the install's mode, the agent's and the
   org's, and `off` is not a value either takes. Protected terms (people and
   organisations) reach tier B as known values. Both reach a call through
-  core's first policy resolver, **`core.scope-settings`**, registered like
-  every core adapter; **a fork that registers resolvers** keeps it unless it
-  replaces it by that id. A stored agent mode or org slice that cannot be
-  read refuses the call (`policy_resolver_failed`). A workflow `agent_call`
-  or `chat_turn` step now runs its agent's calls in a child privacy scope
-  carrying the agent (`agentPrivacyScope()`), so **a fork's resolver now
-  sees `PolicyInput.agentId` on those calls**, where before it saw none.
+  core's first policy resolver, **`core.scope-settings`** (timeout 5 s),
+  registered like every core adapter; **a fork that registers resolvers**
+  keeps it unless it replaces it by that id, which replaces how the agent's
+  and org's modes are applied but not the protected terms: the stage reads
+  those itself, as it reads the user's own name. A stored agent mode or org
+  slice that cannot be read refuses the call (`policy_resolver_failed`). An
+  org that protects names of a type the install ignores has that type
+  scanned for its calls. **What a fork's resolver and observer see
+  changes:** a workflow `agent_call` or `chat_turn` step now runs its
+  agent's calls in a child privacy scope carrying the agent
+  (`agentPrivacyScope()`), so `PolicyInput.agentId` is set on them; at
+  `single`, a call with no org in context (an admin API key's request) now
+  carries the install org as `PolicyInput.orgId` and `PrivacyEvent.orgId`,
+  where it carried none; and resolvers run inside the call's privacy scope,
+  an unscoped call's ephemeral one included. `orgIdForCall()`
+  (`lib/tenancy/context.ts`) is the org a call is governed by, shared by
+  the spend caps and the privacy stage. A reply's embedding runs under its
+  agent's mode, and `backfillMissingEmbeddings()` returns `skipped`, the
+  replies the privacy layer refused.
 - **LLM privacy layer: `pseudonymise`, `redact` and `block`, and the
   embeddings policy (§127, t-992).** The settings API, the settings page and
   a config restore now accept all five privacy modes. Under `pseudonymise`

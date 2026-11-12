@@ -501,7 +501,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(adapters.detectors.every((r) => r.core)).toBe(true);
       expect(adapters.tokenStrategy?.id ?? null).toBe(core.tokenStrategy?.id ?? null);
       expect(adapters.policyResolvers.map((r) => r.resolver.id)).toEqual(
-        core.policyResolvers.map((r) => r.id)
+        core.policyResolvers.map((r) => r.resolver.id)
       );
       expect(adapters.observers.map((o) => o.id)).toEqual(core.observers.map((o) => o.id));
       expect(adapters.replacedCoreDetectors).toEqual([]);

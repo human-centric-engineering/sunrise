@@ -274,9 +274,11 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         ? (knowledgeRetrievalMode as (typeof retrievalModes)[number])
         : ('model' as const),
       kind: kind === 'judge' ? ('judge' as const) : ('chat' as const),
-      // A stored mode that is not one is exported as none, as the settings'
-      // mode is left out below; the source agent refuses until one is chosen.
-      privacyMode: isTighteningMode(privacyMode) ? privacyMode : null,
+      // A stored mode that is not one is left out, as the settings' mode is
+      // below: a restore then keeps the target agent's own mode, rather than
+      // read an explicit none and loosen it. The source agent refuses every
+      // call until a mode is chosen.
+      ...(privacyMode === null || isTighteningMode(privacyMode) ? { privacyMode } : {}),
       personaMode: narrowMode(personaMode),
       voiceMode: narrowMode(voiceMode),
       guardrailsMode: narrowMode(guardrailsMode),

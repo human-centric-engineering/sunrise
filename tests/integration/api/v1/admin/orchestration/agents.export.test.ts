@@ -345,7 +345,7 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       expect(body.data.agents[0].widgetConfig).toBeNull();
     });
 
-    it("exports an agent's LLM privacy mode, and none for a stored value that is not a mode (§127 t-1010)", async () => {
+    it("exports an agent's LLM privacy mode, and leaves out a stored value that is not a mode (§127 t-1010)", async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
         { ...makeDbAgent(AGENT_ID_1, 'agent-one'), privacyMode: 'block' },
@@ -353,8 +353,10 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       ] as never);
 
       const response = await POST(makeRequest({ agentIds: [AGENT_ID_1, AGENT_ID_2] }));
-      const body = await parseJson<{ data: { agents: { privacyMode: unknown }[] } }>(response);
-      expect(body.data.agents.map((a) => a.privacyMode)).toEqual(['block', null]);
+      const body = await parseJson<{ data: { agents: Record<string, unknown>[] } }>(response);
+      expect(body.data.agents[0].privacyMode).toBe('block');
+      // Left out, so an overwriting import keeps the target agent's own mode.
+      expect(body.data.agents[1]).not.toHaveProperty('privacyMode');
     });
   });
 

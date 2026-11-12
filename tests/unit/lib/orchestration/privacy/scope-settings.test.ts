@@ -28,9 +28,10 @@ const db = vi.hoisted((): ScriptedDb => ({
   orgReads: 0,
   failNext: false,
 }));
-const settings = vi.hoisted((): { mode: string; embeddings: string } => ({
+const settings = vi.hoisted((): { mode: string; embeddings: string; ignored: string[] } => ({
   mode: 'off',
   embeddings: 'allow',
+  ignored: ['DATE', 'LOCATION'],
 }));
 const tenancy = vi.hoisted((): { TENANCY_MODE: string } => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: tenancy }));
@@ -60,7 +61,7 @@ vi.mock('@/lib/app/privacy-adapters', () => ({ initAppPrivacyAdapters: () => und
 vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: async () => ({
     privacyMode: settings.mode,
-    privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
+    privacyIgnoredEntityTypes: settings.ignored,
     privacyProtectLocalProviders: false,
     privacyEmbeddingsPolicy: settings.embeddings,
   }),
@@ -137,6 +138,7 @@ beforeEach(() => {
   });
   settings.mode = 'off';
   settings.embeddings = 'allow';
+  settings.ignored = ['DATE', 'LOCATION'];
   tenancy.TENANCY_MODE = 'multi';
 });
 
@@ -318,6 +320,28 @@ describe('protected terms', () => {
     expect(privacySummary(s)?.counts ?? {}).toEqual({});
   });
 
+  it('are counted even when the install ignores their type: the org asked for them', async () => {
+    settings.mode = 'detect';
+    settings.ignored = ['DATE', 'LOCATION', 'ORG'];
+    db.orgSettings = orgPrivacy(null, [{ value: 'Brightwater', type: 'ORG' }]);
+    const s = scope();
+
+    await run(s, MESSAGE);
+
+    expect(privacySummary(s)?.counts).toEqual({ ORG: 1 });
+  });
+
+  it('leave an ignored type ignored for an org that protects no name of it', async () => {
+    settings.mode = 'detect';
+    settings.ignored = ['DATE', 'LOCATION', 'PERSON'];
+    db.orgSettings = orgPrivacy(null, [{ value: 'Brightwater', type: 'ORG' }]);
+    const s = scope();
+
+    await run(s, [{ role: 'user', content: 'Brightwater wrote to Dr Priya Sharma.' }]);
+
+    expect(privacySummary(s)?.counts.PERSON).toBeUndefined();
+  });
+
   it('are masked under pseudonymise', async () => {
     settings.mode = 'pseudonymise';
     db.orgSettings = orgPrivacy(null, [{ value: 'Brightwater', type: 'ORG' }]);
@@ -325,6 +349,23 @@ describe('protected terms', () => {
     const { args } = await run(scope(), MESSAGE);
 
     expect(JSON.stringify(args)).not.toContain('Brightwater');
+  });
+});
+
+describe('the resolver', () => {
+  it('is registered with a timeout long enough for a cold database read', async () => {
+    const { getPrivacyAdapters } = await import('@/lib/privacy/adapters/registry');
+    const { SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS } =
+      await import('@/lib/privacy/adapters/core-defaults');
+    const { SCOPE_SETTINGS_RESOLVER_ID } =
+      await import('@/lib/orchestration/privacy/scope-settings');
+
+    const core = getPrivacyAdapters().policyResolvers.find(
+      (r) => r.id === SCOPE_SETTINGS_RESOLVER_ID
+    );
+
+    expect(core?.timeoutMs).toBe(SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS);
+    expect(SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS).toBeGreaterThan(1_000);
   });
 });
 

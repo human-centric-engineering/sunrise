@@ -228,7 +228,9 @@ function installCoreOnce(): void {
       addDetector(detector, { required: true, timeoutMs }, true);
     }
     if (core.tokenStrategy) setTokenStrategy(core.tokenStrategy, true);
-    for (const resolver of core.policyResolvers) addPolicyResolver(resolver, {}, true);
+    for (const { resolver, timeoutMs } of core.policyResolvers) {
+      addPolicyResolver(resolver, timeoutMs === undefined ? {} : { timeoutMs }, true);
+    }
     for (const observer of core.observers) addObserver(observer, true);
   } catch (err) {
     coreFailure = `a core privacy adapter failed to install: ${describeThrown(err)}`;

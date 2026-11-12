@@ -17,11 +17,15 @@ import {
   protectsContent,
 } from '@/lib/orchestration/privacy/settings-policy';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
+import {
+  isLocalOnlyEmbeddingRefusal,
+  PrivacyRefusedError,
+} from '@/lib/orchestration/llm/privacy-stage';
 import {
   createPrivacyScope,
   outsidePrivacyScope,
   runInPrivacyScope,
+  type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
 
 /**
@@ -32,13 +36,23 @@ import {
  * the turn has moved on, and its counts must not change after it wrote them.
  * Nothing reads its counts, so the stage does not scan for them.
  */
-function inAgentScope<T>(agentId: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+function inAgentScope<T>(
+  agentId: string | null | undefined,
+  fn: () => Promise<T>,
+  scopes?: Map<string, PrivacyScope>
+): Promise<T> {
   if (!agentId) return fn();
-  const scope = createPrivacyScope({
-    scopeId: `message-embedding:agent:${agentId}`,
-    agentId,
-    recordsNowhere: true,
-  });
+  // One scope per agent across a backfill batch, so its settings are read
+  // once for the batch rather than once per message.
+  let scope = scopes?.get(agentId);
+  if (!scope) {
+    scope = createPrivacyScope({
+      scopeId: `message-embedding:agent:${agentId}`,
+      agentId,
+      recordsNowhere: true,
+    });
+    scopes?.set(agentId, scope);
+  }
   return runInPrivacyScope(scope, fn);
 }
 
@@ -83,7 +97,7 @@ export function queueMessageEmbedding(
 export interface BackfillResult {
   processed: number;
   failed: number;
-  /** Refused by the `local_only` embeddings policy: expected, not a failure. */
+  /** Refused by the privacy layer (the `local_only` policy, say): a decision, not a failure. */
   skipped: number;
 }
 
@@ -126,13 +140,18 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
     WHERE m.role = 'assistant'
       AND LENGTH(m.content) > 20
       AND e.id IS NULL
-      AND NOT (
-        ${leaveOutProtected}
-        AND EXISTS (
-          SELECT 1 FROM ai_agent a
-          WHERE a.id = c."agentId"
-            AND a."privacyMode" IN (${Prisma.join(MODES_REFUSING_REMOTE_EMBEDDINGS)})
-        )
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_agent a
+        WHERE a.id = c."agentId"
+          AND (
+            (${leaveOutProtected}
+              AND a."privacyMode" IN (${Prisma.join(MODES_REFUSING_REMOTE_EMBEDDINGS)}))
+            -- A stored mode that is not a mode refuses every call the agent
+            -- makes until one is chosen: left out too, or its replies would
+            -- fill every batch.
+            OR (a."privacyMode" IS NOT NULL
+              AND a."privacyMode" NOT IN (${Prisma.join(PRIVACY_TIGHTENING_MODES)}))
+          )
       )
     ORDER BY m."createdAt" DESC
     LIMIT ${batchSize}
@@ -143,14 +162,16 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
   let processed = 0;
   let failed = 0;
   let skipped = 0;
+  const scopes = new Map<string, PrivacyScope>();
   for (const msg of missing) {
     try {
-      await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content));
+      await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content), scopes);
       processed++;
     } catch (err) {
-      // The install requires local embeddings and this one was refused, as
-      // `queueMessageEmbedding` treats it: expected, so not a warning.
-      if (isLocalOnlyEmbeddingRefusal(err)) {
+      // Refused by the privacy layer: a decision, not an embedding failure,
+      // and the stage has already said why (an unreadable org slice names the
+      // org and its remedy). The message stays unembedded and is asked again.
+      if (err instanceof PrivacyRefusedError) {
         skipped++;
         continue;
       }

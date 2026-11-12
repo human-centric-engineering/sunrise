@@ -159,6 +159,34 @@ describe('OrgPrivacyForm', () => {
     expect(screen.getByText('No protected terms.')).toBeInTheDocument();
   });
 
+  it('refuses a term over 200 characters where it was typed', async () => {
+    const user = renderForm();
+
+    await user.click(screen.getByRole('textbox', { name: 'New protected term' }));
+    await user.paste('x'.repeat(201));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByTestId('org-privacy-term-error')).toHaveTextContent(
+      'at most 200 characters'
+    );
+    expect(screen.getByText('No protected terms.')).toBeInTheDocument();
+  });
+
+  it('refuses a term past the 500th', async () => {
+    const full = Array.from({ length: 500 }, (_, i) => ({
+      value: `Client ${i}`,
+      type: 'PERSON' as const,
+    }));
+    const user = renderForm(view({ protectedTerms: full }));
+
+    await user.type(screen.getByRole('textbox', { name: 'New protected term' }), 'One More');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByTestId('org-privacy-term-error')).toHaveTextContent(
+      'At most 500 protected terms'
+    );
+  });
+
   it('refuses the same name twice, ignoring case', async () => {
     const user = renderForm(view({ protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }] }));
 

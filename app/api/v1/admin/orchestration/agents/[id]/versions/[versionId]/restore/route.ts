@@ -67,12 +67,18 @@ import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provide
  * value meaning "resolve at runtime" (see the `AiAgent` column comments), held
  * by any version saved while the agent was on inherit, so restoring one puts
  * the agent back on inherit. The PATCH body still can't set it.
+ *
+ * `privacyMode` takes any string (§127 t-1010). A version saved while the
+ * agent held a mode this release does not know holds that value; refusing it
+ * would make every other field in the version unrecoverable, and restoring it
+ * keeps the agent where it was: every call refused until a mode is chosen.
  */
 const versionSnapshotSchema = updateAgentObjectSchema.extend({
   metadata: z.unknown().optional(),
   providerConfig: z.unknown().optional(),
   provider: z.union([z.literal(''), updateAgentObjectSchema.shape.provider.unwrap()]).optional(),
   model: z.union([z.literal(''), updateAgentObjectSchema.shape.model.unwrap()]).optional(),
+  privacyMode: z.string().max(64).nullable().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(

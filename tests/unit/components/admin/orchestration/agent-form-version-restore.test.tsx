@@ -188,6 +188,34 @@ describe('AgentForm — save after a version restore', () => {
     await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
   });
 
+  it("follows a restore's privacy mode when the agent held one this version does not know (§127 t-1010)", async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(makeAgent({ privacyMode: 'redact' }));
+    vi.mocked(apiClient.patch).mockResolvedValue({ id: 'agent-1' });
+    const user = userEvent.setup();
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeAgent({ privacyMode: 'strict_block' })}
+        providers={PROVIDERS}
+        models={MODELS}
+      />
+    );
+
+    await user.click(screen.getByRole('tab', { name: /versions/i }));
+    await user.click(screen.getByRole('button', { name: /simulate restore/i }));
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // The restored mode is the stored one now: sent, not withheld as unknown.
+    await waitFor(() =>
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ body: expect.objectContaining({ privacyMode: 'redact' }) })
+      )
+    );
+  });
+
   it('a restored agent can still be saved', async () => {
     // The regression: `reset()` omitted ten fields, seven of them required
     // enums/booleans, so this save silently did nothing at all.

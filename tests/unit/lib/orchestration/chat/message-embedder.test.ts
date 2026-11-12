@@ -294,6 +294,52 @@ describe('backfillMissingEmbeddings', () => {
       expect(sqlText).toContain('a."privacyMode" IN');
     });
 
+    it('always leave out an agent whose stored mode is not a mode: it refuses every call', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+
+      await backfillMissingEmbeddings();
+
+      const strings = vi.mocked(prisma.$queryRaw).mock.calls[0][0];
+      const sqlText = Array.isArray(strings) ? strings.join('?') : '';
+      expect(sqlText).toContain('a."privacyMode" IS NOT NULL');
+      expect(sqlText).toContain('a."privacyMode" NOT IN');
+    });
+
+    it('count any privacy refusal as skipped, not failed: the stage has said why', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        {
+          id: 'msg-40',
+          content: 'A reply from an org whose settings cannot be read',
+          agentId: null,
+        },
+      ]);
+      vi.mocked(embedText).mockRejectedValueOnce(
+        new PrivacyRefusedError('policy_resolver_failed', 'openai')
+      );
+
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 1 });
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("read an agent's settings once for the batch: one scope per agent", async () => {
+      const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
+      const scopes: unknown[] = [];
+      vi.mocked(embedText).mockImplementation(async () => {
+        scopes.push(currentPrivacyScope());
+        return FAKE_EMBED_RESULT;
+      });
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: 'msg-50', content: 'The first of two replies by one agent', agentId: 'agent-hr' },
+        { id: 'msg-51', content: 'The second of two replies by one agent', agentId: 'agent-hr' },
+        { id: 'msg-52', content: 'A reply by another agent altogether', agentId: 'agent-faq' },
+      ]);
+
+      await backfillMissingEmbeddings();
+
+      expect(scopes[0]).toBe(scopes[1]);
+      expect(scopes[2]).not.toBe(scopes[0]);
+    });
+
     it.each([
       ['the policy allows any provider', 'allow', false],
       ['the provider is local', 'local_only', true],

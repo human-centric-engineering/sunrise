@@ -436,6 +436,14 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       scopeSettings.protectedTerms.length === 0
         ? scopeValues
         : [...scopeValues, ...scopeSettings.protectedTerms];
+    // An org that names people or companies to protect is not ignoring that
+    // type: the install's ignored types would otherwise drop its own
+    // protected terms. Fewer ignored types is the stricter policy.
+    const protectedTypes = new Set(scopeSettings.protectedTerms.map((t) => t.type));
+    const ignoredEntityTypes =
+      protectedTypes.size === 0
+        ? policy.ignoredEntityTypes
+        : policy.ignoredEntityTypes.filter((type) => !protectedTypes.has(type));
     const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
     const pieces = call.coverage === 'full' ? messagePieces(chatMessages(call)) : null;
     const { spans, failures } = await runPrivacyDetectors(outboundText(call, pieces), {
@@ -443,7 +451,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
       knownValues,
-      ignoredEntityTypes: policy.ignoredEntityTypes,
+      ignoredEntityTypes,
       signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
     });
     // The caller gave up during the scan: the call was never fully scanned.

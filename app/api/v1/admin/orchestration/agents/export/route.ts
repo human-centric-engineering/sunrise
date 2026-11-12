@@ -137,10 +137,13 @@ export const POST = withAdminAuth(
           inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
           outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
           citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
-          // A stored mode that is not one exports as none, as the settings
-          // backup leaves one out: the source agent refuses every call until
-          // a mode is chosen, and an import inherits the install's.
-          privacyMode: isTighteningMode(agent.privacyMode) ? agent.privacyMode : null,
+          // A stored mode that is not one is left out, as the settings backup
+          // leaves one out: an overwriting import then keeps the target
+          // agent's own mode, and a new agent inherits the install's. The
+          // source agent refuses every call until a mode is chosen.
+          ...(agent.privacyMode === null || isTighteningMode(agent.privacyMode)
+            ? { privacyMode: agent.privacyMode }
+            : {}),
           maxHistoryTokens: agent.maxHistoryTokens,
           maxHistoryMessages: agent.maxHistoryMessages,
           retentionDays: agent.retentionDays,
