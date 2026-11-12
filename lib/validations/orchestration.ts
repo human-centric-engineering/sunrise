@@ -40,6 +40,7 @@ import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/
 import {
   EMBEDDINGS_POLICIES,
   PRIVACY_MODES_AVAILABLE,
+  PRIVACY_TIGHTENING_MODES,
 } from '@/lib/orchestration/privacy/settings-policy';
 
 // ============================================================================
@@ -219,6 +220,7 @@ export const createAgentObjectSchema = z.object({
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -420,6 +422,7 @@ export const updateAgentObjectSchema = z.object({
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -1355,6 +1358,7 @@ export const bundledAgentSchema = z.object({
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),

@@ -32,6 +32,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
+import { isTighteningMode } from '@/lib/orchestration/privacy/settings-policy';
 import {
   narrowProviderTools,
   narrowServiceTier,
@@ -136,6 +137,10 @@ export const POST = withAdminAuth(
           inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
           outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
           citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
+          // A stored mode that is not one exports as none, as the settings
+          // backup leaves one out: the source agent refuses every call until
+          // a mode is chosen, and an import inherits the install's.
+          privacyMode: isTighteningMode(agent.privacyMode) ? agent.privacyMode : null,
           maxHistoryTokens: agent.maxHistoryTokens,
           maxHistoryMessages: agent.maxHistoryMessages,
           retentionDays: agent.retentionDays,

@@ -239,6 +239,7 @@ export const POST = withAdminAuth(
             inputGuardMode: body.inputGuardMode ?? null,
             outputGuardMode: body.outputGuardMode ?? null,
             citationGuardMode: body.citationGuardMode ?? null,
+            privacyMode: body.privacyMode ?? null,
             maxHistoryTokens: body.maxHistoryTokens ?? null,
             maxHistoryMessages: body.maxHistoryMessages ?? null,
             retentionDays: body.retentionDays ?? null,

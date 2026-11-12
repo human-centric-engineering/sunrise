@@ -318,6 +318,13 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'Citation guard', tab: 'Model', order: 210 },
   },
+  // How this agent's calls are protected in one org (§127, t-1010): an org's
+  // choice to protect its instance survives every release, as its budget does.
+  privacyMode: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'LLM privacy mode', tab: 'Model', order: 215 },
+  },
   topicBoundaries: {
     platformAgent: 'code',
     versioned: true,

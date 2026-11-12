@@ -47,8 +47,10 @@ import {
   recordPrivacyCall,
   recordPrivacyRefusal,
   recordPrivacyUnresolved,
+  runInPrivacyScope,
   type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
+import { scopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
 import {
   basePolicyFromSettings,
   isMaskingMode,
@@ -336,18 +338,23 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     scope = scoped.scope;
     if (base === null) throw refuse('settings_unreadable', call, scope, mode);
 
-    // Resolvers run even when the base is `off`: one may raise it.
+    // Resolvers run even when the base is `off`: one may raise it. Inside the
+    // call's scope, ephemeral or not, so core's resolver keeps what it reads
+    // on the scope this call records into (`scopePrivacySettings`).
     const orgId = orgOf(scope);
-    const { policy, failures: resolverFailures } = await resolvePrivacyPolicy(
-      base,
-      {
-        ...(orgId !== undefined ? { orgId } : {}),
-        ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
-        ...(scope.userId !== undefined ? { userId: scope.userId } : {}),
-        providerSlug: call.providerSlug,
-        isLocalProvider: call.isLocal,
-      },
-      abandoned
+    const resolving = scope;
+    const { policy, failures: resolverFailures } = await runInPrivacyScope(resolving, () =>
+      resolvePrivacyPolicy(
+        base,
+        {
+          ...(orgId !== undefined ? { orgId } : {}),
+          ...(resolving.agentId !== undefined ? { agentId: resolving.agentId } : {}),
+          ...(resolving.userId !== undefined ? { userId: resolving.userId } : {}),
+          providerSlug: call.providerSlug,
+          isLocalProvider: call.isLocal,
+        },
+        abandoned
+      )
     );
     // The caller gave up while the resolvers ran: a cancel, not a refusal.
     // The caller gave up while the resolvers ran. Thrown whatever the mode:
@@ -406,8 +413,22 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     }
 
     // Loaded before the deadline starts: a slow user lookup must not spend
-    // the detectors' time.
-    const knownValues = await knownValuesOf(scope);
+    // the detectors' time. The org's protected terms (t-1010) are known
+    // values too; read once per scope, with the modes the resolver read.
+    const [scopeValues, scopeSettings] = await Promise.all([
+      knownValuesOf(scope),
+      scopePrivacySettings(
+        {
+          ...(orgId !== undefined ? { orgId } : {}),
+          ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+        },
+        scope
+      ),
+    ]);
+    const knownValues =
+      scopeSettings.protectedTerms.length === 0
+        ? scopeValues
+        : [...scopeValues, ...scopeSettings.protectedTerms];
     const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
     const pieces = call.coverage === 'full' ? messagePieces(chatMessages(call)) : null;
     const { spans, failures } = await runPrivacyDetectors(outboundText(call, pieces), {

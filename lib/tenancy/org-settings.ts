@@ -9,7 +9,8 @@
  * reconciled against (see {@link readPlatformAgentsMarker}), and a `providers`
  * slice naming the providers a platform admin approved the org for (see
  * {@link readOrgProviderPolicy}), and a `quotas` slice holding the org's own
- * caps (see {@link readOrgQuotas}). Everything else in that JSON belongs to
+ * caps (see {@link readOrgQuotas}), and a `privacy` slice holding its LLM
+ * privacy minimum and protected terms (see {@link readOrgPrivacy}). Everything else in that JSON belongs to
  * whoever put it there — a fork's own org-level config — and every write path
  * below preserves it rather than replacing the object.
  *
@@ -55,9 +56,11 @@ import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
   ORG_QUOTA_KEYS,
   ORG_RETENTION_KEYS,
+  orgPrivacySettingsSchema,
   orgProviderPolicySchema,
   orgQuotasSchema,
   orgRetentionSchema,
+  type OrgPrivacySettings,
   type OrgProviderPolicy,
   type OrgQuotas,
   type OrgRetentionSlice,
@@ -425,6 +428,68 @@ export async function writeOrgQuotas(
   const replaced = await writeSettingsSlice(orgId, ORG_QUOTAS_KEY, stored, db);
   if (replaced === null) return null;
   return { previous: readOrgQuotas(replaced.settings, { orgId }), stored: stored ?? {} };
+}
+
+/** The key the org's LLM privacy settings live under in `Org.settings` (§127, t-1010). */
+export const ORG_PRIVACY_KEY = 'privacy';
+
+/** What an org that has never saved its privacy settings holds: no minimum, no terms. */
+const NO_ORG_PRIVACY: OrgPrivacySettings = { minimumMode: null, protectedTerms: [] };
+
+/**
+ * An org's privacy slice: `saved` says whether it was ever saved, so the form
+ * can offer the org's own name as a first term only to an org that has not
+ * chosen yet. `unreadable` carries what was wrong with a stored slice.
+ */
+export type OrgPrivacyRead =
+  { ok: true; saved: boolean; value: OrgPrivacySettings } | { ok: false; issues: string[] };
+
+/**
+ * Read an org's LLM privacy settings out of its `settings` (§127, t-1010).
+ *
+ * **Fails closed, like the provider policy.** An unreadable slice is not read
+ * as "no minimum and no terms": that would send the org's calls looser than it
+ * asked, with the names it protects in plain text. The caller decides what
+ * closed means: the privacy stage refuses the call, and the admin route says
+ * the slice is unreadable so it can be saved again. The whole slice is
+ * validated as one value, because half of it is looser than what was written.
+ */
+export function readOrgPrivacy(settings: unknown): OrgPrivacyRead {
+  if (!isJsonObject(settings)) return { ok: true, saved: false, value: NO_ORG_PRIVACY };
+  const slice = settings[ORG_PRIVACY_KEY];
+  if (slice === undefined || slice === null) {
+    return { ok: true, saved: false, value: NO_ORG_PRIVACY };
+  }
+  const parsed = orgPrivacySettingsSchema.safeParse(slice);
+  if (parsed.success) return { ok: true, saved: true, value: parsed.data };
+  return { ok: false, issues: parsed.error.issues.map((i) => i.path.join('.') || '(root)') };
+}
+
+/**
+ * Replace an org's LLM privacy settings, preserving every other key in
+ * `settings`, and return what it replaced.
+ *
+ * Stored even when it names nothing, so an org that removed every term is
+ * not offered its own name again. Validated with `orgPrivacySettingsSchema`,
+ * so an invalid value throws a `ZodError` and nothing is written. Through
+ * {@link writeSettingsSlice}: a clash with a concurrent settings write throws
+ * `P2034` ({@link isSettingsWriteConflict}).
+ *
+ * Nothing caches it: the privacy stage reads it once per privacy scope (a
+ * chat turn, a workflow step), so it applies from the next one.
+ *
+ * @returns the previous read and the stored settings, or `null` when the org
+ *   does not exist.
+ */
+export async function writeOrgPrivacy(
+  orgId: string,
+  privacy: OrgPrivacySettings,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{ previous: OrgPrivacyRead; stored: OrgPrivacySettings } | null> {
+  const stored = orgPrivacySettingsSchema.parse(privacy);
+  const replaced = await writeSettingsSlice(orgId, ORG_PRIVACY_KEY, stored, db);
+  if (replaced === null) return null;
+  return { previous: readOrgPrivacy(replaced.settings), stored };
 }
 
 /**

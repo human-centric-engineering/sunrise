@@ -10,6 +10,7 @@ import { cuidSchema, paginationQuerySchema, slugSchema } from '@/lib/validations
 import { emailSchema } from '@/lib/validations/auth';
 import { ORG_ROLES, ORG_STATUSES, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
+import { PRIVACY_TIGHTENING_MODES } from '@/lib/orchestration/privacy/settings-policy';
 
 /**
  * `POST /api/v1/orgs/switch` body.
@@ -253,6 +254,67 @@ export type OrgQuotas = z.infer<typeof orgQuotasSchema>;
 
 /** The caps an org's `quotas` slice may name, for the per-key read. */
 export const ORG_QUOTA_KEYS = ['monthlyBudgetUsd', 'requestsPerMinute'] as const;
+
+/** The kinds of name an org may protect: people and organisations (§127, t-1010). */
+export const ORG_PROTECTED_TERM_TYPES = ['PERSON', 'ORG'] as const;
+
+/** The most terms one org may protect. Tier B's cost does not multiply by them. */
+export const MAX_ORG_PROTECTED_TERMS = 500;
+
+/**
+ * One name an org wants masked in every LLM call it makes: a client, a member
+ * of staff, a project codename that is a person's name. Tier B
+ * (`core.known-values`) finds it and the ways people write it, by its type.
+ * At least three characters, because tier B skips anything shorter.
+ */
+export const orgProtectedTermSchema = z
+  .object({
+    value: z
+      .string()
+      .trim()
+      .min(3, 'A protected term needs at least 3 characters')
+      .max(200, 'A protected term must be at most 200 characters'),
+    type: z.enum(ORG_PROTECTED_TERM_TYPES),
+  })
+  .strict();
+
+export type OrgProtectedTerm = z.infer<typeof orgProtectedTermSchema>;
+
+/**
+ * One org's LLM privacy settings, as stored in `Org.settings.privacy` and as
+ * `PUT /api/v1/admin/orgs/[id]/privacy` takes them (§127, t-1010).
+ *
+ * - `minimumMode` — the mode every call made for this org runs at least at.
+ *   It only tightens the install's mode and an agent's: the strictest of the
+ *   three applies. `null` sets no minimum. `off` is not a choice, because a
+ *   minimum of `off` says nothing.
+ * - `protectedTerms` — names always masked. The same name twice (ignoring
+ *   case) is kept once.
+ *
+ * Both keys are required on a PUT, as `jurisdictions` is on the provider
+ * policy: a replace that left one out would silently drop it. `.strict()`
+ * on read too, and the read fails closed (`readOrgPrivacy`): a key it does
+ * not know may be a protection it would otherwise ignore.
+ */
+export const orgPrivacySettingsSchema = z
+  .object({
+    minimumMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable(),
+    protectedTerms: z
+      .array(orgProtectedTermSchema)
+      .max(MAX_ORG_PROTECTED_TERMS, `At most ${MAX_ORG_PROTECTED_TERMS} protected terms`)
+      .transform((terms) => {
+        const seen = new Set<string>();
+        return terms.filter((term) => {
+          const key = `${term.type}:${term.value.toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }),
+  })
+  .strict();
+
+export type OrgPrivacySettings = z.infer<typeof orgPrivacySettingsSchema>;
 
 /**
  * The platform-owned slices of `Org.settings` a PATCH may write.

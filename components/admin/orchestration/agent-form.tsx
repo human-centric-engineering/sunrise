@@ -20,6 +20,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
+import {
+  isTighteningMode,
+  PRIVACY_MODE_LABELS,
+  PRIVACY_TIGHTENING_MODES,
+} from '@/lib/orchestration/privacy/settings-policy';
 import { AlertCircle, Check, Loader2, Save, Scale, Shield } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -147,6 +152,7 @@ const agentFormSchema = z
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
     maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
     maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
     retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
@@ -486,6 +492,7 @@ export function AgentForm({
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
       citationGuardMode: (agent?.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
+      privacyMode: isTighteningMode(agent?.privacyMode) ? agent.privacyMode : null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
       maxHistoryMessages: agent?.maxHistoryMessages ?? null,
       retentionDays: agent?.retentionDays ?? null,
@@ -546,6 +553,7 @@ export function AgentForm({
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
+  const currentPrivacyMode = watch('privacyMode');
   const currentVisibility = watch('visibility');
   const currentProfileId = watch('profileId');
   const currentPersona = watch('persona');
@@ -1958,6 +1966,40 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="grid gap-2 rounded-md border p-3">
+              <Label htmlFor="privacyMode">
+                LLM privacy mode{' '}
+                <FieldHelp title="LLM privacy mode">
+                  How this agent&apos;s calls to an AI provider protect personal details: names,
+                  contact details, account and ID numbers. It can only make protection stricter. The
+                  install&apos;s mode (Settings &rarr; LLM privacy) and the organisation&apos;s
+                  minimum still apply, and whichever of the three is strictest wins. Use it for an
+                  agent that handles personal data, such as HR or support, while the rest of the
+                  install stays lighter. Leave on &ldquo;Use the install&apos;s mode&rdquo; to
+                  inherit it.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentPrivacyMode ?? '__global__'}
+                disabled={locked('privacyMode')}
+                onValueChange={(v) =>
+                  setValue('privacyMode', isTighteningMode(v) ? v : null, { shouldValidate: true })
+                }
+              >
+                <SelectTrigger id="privacyMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use the install&apos;s mode</SelectItem>
+                  {PRIVACY_TIGHTENING_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {PRIVACY_MODE_LABELS[mode]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
@@ -2426,6 +2468,7 @@ export function AgentForm({
                         (fresh.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
                       citationGuardMode:
                         (fresh.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
+                      privacyMode: isTighteningMode(fresh.privacyMode) ? fresh.privacyMode : null,
                       maxHistoryTokens: fresh.maxHistoryTokens ?? null,
                       maxHistoryMessages: fresh.maxHistoryMessages ?? null,
                       retentionDays: fresh.retentionDays ?? null,

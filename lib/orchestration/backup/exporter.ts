@@ -25,6 +25,7 @@ import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
   parseIgnoredEntityTypes,
   parseEmbeddingsPolicy,
+  isTighteningMode,
   parsePrivacyMode,
 } from '@/lib/orchestration/privacy/settings-policy';
 import {
@@ -89,6 +90,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         inputGuardMode: true,
         outputGuardMode: true,
         citationGuardMode: true,
+        privacyMode: true,
         maxHistoryTokens: true,
         maxHistoryMessages: true,
         retentionDays: true,
@@ -260,6 +262,7 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
       verbosity,
       serviceTier,
       providerTools,
+      privacyMode,
       ...rest
     } = a;
     return {
@@ -271,6 +274,9 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         ? (knowledgeRetrievalMode as (typeof retrievalModes)[number])
         : ('model' as const),
       kind: kind === 'judge' ? ('judge' as const) : ('chat' as const),
+      // A stored mode that is not one is exported as none, as the settings'
+      // mode is left out below; the source agent refuses until one is chosen.
+      privacyMode: isTighteningMode(privacyMode) ? privacyMode : null,
       personaMode: narrowMode(personaMode),
       voiceMode: narrowMode(voiceMode),
       guardrailsMode: narrowMode(guardrailsMode),

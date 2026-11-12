@@ -102,6 +102,7 @@ model AiAgent {
   inputGuardMode            String? // "log_only" | "warn_and_continue" | "block"; null = use global default
   outputGuardMode           String? // "log_only" | "warn_and_continue" | "block"; null = use global default
   citationGuardMode         String? // "log_only" | "warn_and_continue" | "block"; null = use global default. Flags responses that fail to cite retrieved sources or that cite hallucinated markers.
+  privacyMode               String? // LLM privacy layer (§127): "detect" | "pseudonymise" | "redact" | "block"; null = the install's mode. Only ever tightens it: the stricter of this, the global mode and the org floor applies.
   maxHistoryTokens          Int? // override token-aware history truncation; null = use model context window
   maxHistoryMessages        Int? // override the per-agent message-count cap for conversation history; null = use platform default (MAX_HISTORY_MESSAGES). 0 = stateless (no prior messages re-sent each turn).
   retentionDays             Int? // auto-delete conversations older than N days; null = keep forever

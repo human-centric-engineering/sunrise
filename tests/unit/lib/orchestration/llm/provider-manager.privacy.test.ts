@@ -21,7 +21,12 @@ import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/db/client', () => ({
-  prisma: { aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() } },
+  prisma: {
+    aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() },
+    // The agent's mode and the org's minimum (t-1010): neither set here.
+    aiAgent: { findUnique: vi.fn(async () => null) },
+    org: { findUnique: vi.fn(async () => null) },
+  },
 }));
 
 const privacy = vi.hoisted((): { mode: string | null } => ({ mode: 'detect' }));

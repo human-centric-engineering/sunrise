@@ -420,6 +420,7 @@ async function importParsed(
               inputGuardMode: agent.inputGuardMode,
               outputGuardMode: agent.outputGuardMode,
               citationGuardMode: agent.citationGuardMode,
+              privacyMode: agent.privacyMode,
               maxHistoryTokens: agent.maxHistoryTokens,
               maxHistoryMessages: agent.maxHistoryMessages,
               retentionDays: agent.retentionDays,

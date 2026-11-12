@@ -3,9 +3,9 @@
  * with, registered through the same registry an app uses.
  *
  * The three local detection tiers are here (t-989): rules, known values, and
- * word lists; and the stateless token strategy (t-990). Still to come: the
- * settings-backed policy resolver and metadata observer (t-991). Each adds its
- * adapter here and nowhere else, so core's detectors are reached only through
+ * word lists; the stateless token strategy (t-990); and the resolver that
+ * applies an agent's mode and an org's minimum (t-1010). Each core adapter is
+ * added here and nowhere else, so core's detectors are reached only through
  * the registry — `tests/unit/lib/privacy/pii/registry-only.test.ts` fails on
  * any other caller.
  *
@@ -28,6 +28,7 @@ import { knownValuesDetector } from '@/lib/privacy/pii/known-values';
 import { listsDetector } from '@/lib/privacy/pii/lists';
 import { RULES_DETECTOR_ID, rulesDetector } from '@/lib/privacy/pii/rules';
 import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
+import { scopeSettingsResolver } from '@/lib/orchestration/privacy/scope-settings';
 
 /**
  * Tier A's id, for a caller that runs it alone through the runner
@@ -52,7 +53,9 @@ export function corePrivacyAdapters(): CorePrivacyAdapters {
       { detector: listsDetector() },
     ],
     tokenStrategy: statelessTokenStrategy(),
-    policyResolvers: [],
+    // The agent's mode and the org's minimum (t-1010). The install's own mode
+    // is the base the stage starts from, so it needs no resolver.
+    policyResolvers: [scopeSettingsResolver()],
     observers: [],
   };
 }

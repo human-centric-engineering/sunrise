@@ -229,6 +229,7 @@ describe('AgentForm — General tab', () => {
         inputGuardMode: null,
         outputGuardMode: null,
         citationGuardMode: null,
+        privacyMode: null,
         maxHistoryTokens: null,
         maxHistoryMessages: null,
         retentionDays: null,

@@ -9,7 +9,10 @@ import { z } from 'zod';
 
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
-import { EMBEDDINGS_POLICIES } from '@/lib/orchestration/privacy/settings-policy';
+import {
+  EMBEDDINGS_POLICIES,
+  PRIVACY_TIGHTENING_MODES,
+} from '@/lib/orchestration/privacy/settings-policy';
 import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 
 export const agentBackupSchema = z.object({
@@ -103,6 +106,9 @@ export const agentBackupSchema = z.object({
   inputGuardMode: z.string().nullable().optional().default(null),
   outputGuardMode: z.string().nullable().optional().default(null),
   citationGuardMode: z.string().nullable().optional().default(null),
+  // A mode it does not know would refuse every call the agent makes; refused
+  // at the restore instead. Absent on a backup from before t-1010: inherit.
+  privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional().default(null),
   maxHistoryTokens: z.number().nullable().optional().default(null),
   maxHistoryMessages: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),

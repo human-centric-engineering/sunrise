@@ -157,6 +157,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     inputGuardMode: null,
     outputGuardMode: null,
     citationGuardMode: null,
+    privacyMode: null,
     rateLimitRpm: null,
     knowledgeCategories: [],
     knowledgeAccessMode: 'full',
