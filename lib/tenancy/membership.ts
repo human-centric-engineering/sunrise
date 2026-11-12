@@ -264,8 +264,9 @@ function withInstallFloor(
  * install-org floor at `single` (#872), exactly as the decision would. The one
  * thing lost is the first-owner bootstrap ({@link takesFirstOwnership}), which
  * needs the owner count — so the failure only ever narrows a role, never
- * widens one. A first member left as MEMBER leaves the org with no owner, which a platform
- * admin repairs on the members route (it may grant OWNER); that beats a
+ * widens one. A first member left as MEMBER leaves the org with no owner,
+ * which a platform admin repairs on the members route (it may grant OWNER),
+ * or the next non-staff member to join takes; that beats a
  * membership in the wrong org. An invitation naming no org keeps the
  * install-org rule, judged on the role the invitation grants (t-669).
  *

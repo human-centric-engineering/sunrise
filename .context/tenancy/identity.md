@@ -174,8 +174,8 @@ and refuses at `multi` ([context.md](./context.md)). It is deliberately **not** 
 contributor: that registry is the fork's seam and runs last; this is a core
 invariant and runs first.
 
-**When deciding fails.** The decision reads the invited org's member count
-(for the first-member-is-OWNER bootstrap), and a failure there is logged at
+**When deciding fails.** The decision reads the invited org's owner count
+(for the first-owner bootstrap), and a failure there is logged at
 `error` and never blocks the signup. The before hook then records
 `undecidedMembershipsForNewUser(user, invitation)`: the invitation's org with
 the role it names, default `MEMBER`, plus the install-org floor at `single`,
