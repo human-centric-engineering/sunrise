@@ -124,6 +124,7 @@ import {
   placePrivacyRefusal,
   type BuiltChatRequest,
   type PlacedPrivacyRefusal,
+  type SentMemory,
 } from '@/lib/orchestration/chat/privacy-refusal';
 import { isJsonObject } from '@/lib/privacy/config-recipients';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
@@ -375,8 +376,11 @@ function rowsAfterPin(pin: HistoryPin) {
   };
 }
 
-/** What a turn built its first call from, and the summary pin it read (t-1017). */
-type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null };
+/**
+ * What a turn built its first call from, the summary pin it read (t-1017), and
+ * the agent whose memories it sent (t-1018).
+ */
+type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null; agentId: string };
 
 /** What a read from the pin returns. */
 interface HistoryFromPin {
@@ -1390,7 +1394,7 @@ export class StreamingChatHandler {
               where: { userId: request.userId, agentId: agent.id },
               orderBy: { updatedAt: 'desc' },
               take: 50,
-              select: { key: true, value: true },
+              select: { id: true, key: true, value: true, updatedAt: true },
             }),
         getCapabilityDefinitions(agent.id),
       ]);
@@ -1451,6 +1455,8 @@ export class StreamingChatHandler {
             row.role === 'assistant' && row.content.length > 0 && !row.toolCalls?.length,
         })),
         summaryPin: conversationSummary ? casPin : null,
+        agentId: agent.id,
+        memories: memoryRows.map((m) => ({ id: m.id, updatedAt: m.updatedAt })),
       };
 
       const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
@@ -3220,12 +3226,13 @@ export class StreamingChatHandler {
         // fallbacks — or a request fault like `truncated_no_output`, which
         // now ends the turn here rather than failing over — leaves the user
         // message unanswered on reload.
-        // Refused under `block` (§127 t-1014, t-1017): every later turn would
-        // resend what held the details and be refused again. Leave out of
-        // later history this turn's rows and any earlier row that held them,
-        // and discard a summary that held them; all of it stays in the
-        // transcript. Details in the assistant's setup are not ours to leave
-        // out: the reader is told to ask an administrator.
+        // Refused under `block` (§127 t-1014, t-1017, t-1018): every later
+        // turn would resend what held the details and be refused again. Leave
+        // out of later history this turn's rows and any earlier row that held
+        // them, and discard a summary that held them; all of it stays in the
+        // transcript. Delete a memory that held them: it is sent in every
+        // conversation with this agent. Details in the assistant's setup are
+        // not ours to leave out: the reader is told to ask an administrator.
         if (err.code === PRIVACY_BLOCKED) {
           const placed = this.placeBlockedTurn(err, builtRequest, refusedCallMessageCount);
           await this.leaveRowsOutOfHistory(
@@ -3237,6 +3244,9 @@ export class StreamingChatHandler {
           if (placed?.summary && builtRequest) {
             await this.forgetSummary(conversationId, request.userId, builtRequest.summaryPin, log);
           }
+          if (placed && placed.memories.length > 0 && builtRequest) {
+            await this.forgetMemories(placed.memories, builtRequest.agentId, request.userId, log);
+          }
           if (placed) {
             // Where, never what: the kinds of source and how many rows.
             log.warn('Chat turn refused for personal details', {
@@ -3245,6 +3255,7 @@ export class StreamingChatHandler {
               turn: placed.turn,
               earlierRows: placed.earlierRowIds.length,
               summary: placed.summary,
+              memories: placed.memories.length,
               setup: placed.setup,
             });
           }
@@ -3533,6 +3544,49 @@ export class StreamingChatHandler {
     } catch (err) {
       log.warn('Failed to forget a privacy-refused conversation summary', {
         conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Delete the user's memories the privacy layer found personal details in
+   * (t-1018; owner ruling 2026-11-12: carry on and forget). Each is sent in
+   * every conversation the user has with this agent, so under `block` every
+   * turn would be refused, and nothing else can remove one: the capability
+   * that writes them needs an LLM call, and no page or API deletes them.
+   *
+   * Only a memory still as this turn read it: one rewritten since (a
+   * concurrent turn's `write_user_memory`) is not the one that was refused,
+   * and is kept. Best effort, like the marking: if it fails, the next refusal
+   * finds the same memory.
+   */
+  private async forgetMemories(
+    memories: readonly SentMemory[],
+    agentId: string,
+    userId: string,
+    log: typeof logger
+  ): Promise<void> {
+    try {
+      const { count } = await prisma.aiUserMemory.deleteMany({
+        where: {
+          userId,
+          agentId,
+          OR: memories.map(({ id, updatedAt }) => ({ id, updatedAt })),
+        },
+      });
+      // Rewritten since this turn read it, or already gone: kept, and the
+      // next refusal finds it if it still holds details. Counts only.
+      if (count < memories.length) {
+        log.warn('Some privacy-refused user memories were not deleted', {
+          memories: memories.length,
+          deleted: count,
+        });
+      }
+    } catch (err) {
+      // A count, never a key or a value.
+      log.warn('Failed to forget privacy-refused user memories', {
+        memories: memories.length,
         error: err instanceof Error ? err.message : String(err),
       });
     }

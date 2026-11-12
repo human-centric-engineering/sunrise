@@ -68,6 +68,14 @@ describe('companies', () => {
     expect(spans.filter((s) => s.start === 0)).toEqual([
       { type: 'ORG', start: 0, end: 20, confidence: LIST_CONFIDENCE.orgWithSuffix },
     ]);
+    // Each form found elsewhere is marked learned; the full name is not (t-1018).
+    for (const s of spans) {
+      expect([text.slice(s.start, s.end), s.learned === true]).toEqual([
+        text.slice(s.start, s.end),
+        s.start !== 0,
+      ]);
+    }
+    expect(spans.filter((s) => s.learned === true).length).toBeGreaterThanOrEqual(2);
   });
 
   it('does not learn a head word that is a first name', () => {
@@ -201,6 +209,13 @@ describe('people', () => {
       ['PERSON', 'Moss'],
     ]);
     expect(confidenceOf(text, 'Moss')).toBe(LIST_CONFIDENCE.learnedName);
+    // Personal only because of the full name: a refusal under `block` places
+    // the full name, not this (t-1018).
+    const spans = findListSpans(text);
+    expect(spans.find((s) => text.slice(s.start, s.end) === 'Moss')?.learned).toBe(true);
+    expect(spans.find((s) => text.slice(s.start, s.end) === 'Kieran Moss')).not.toHaveProperty(
+      'learned'
+    );
   });
 });
 

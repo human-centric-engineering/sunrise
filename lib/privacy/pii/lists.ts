@@ -565,12 +565,16 @@ function signatures(text: string, found: Found): void {
 /**
  * Mark every other occurrence of what was learned: short forms and name
  * parts. An occurrence inside something already found (the full name it was
- * learned from) adds nothing, so it is skipped.
+ * learned from) adds nothing, so it is skipped. Each is marked `learned`: it
+ * is personal only because of what was found elsewhere, so a refusal under
+ * `block` places the full name, not this (t-1018).
  */
 function learned(text: string, tokens: Token[], found: Found): void {
   const alreadyFound = coverage(found.spans);
   const push = (type: EntityType, start: number, end: number, confidence: number) => {
-    if (!alreadyFound(start, end)) found.spans.push(span(type, start, end, confidence));
+    if (!alreadyFound(start, end)) {
+      found.spans.push({ ...span(type, start, end, confidence), learned: true });
+    }
   };
   // One-word forms and name parts by token lookup, and every longer company
   // form in one pattern: a scan of the whole text per learned word made this

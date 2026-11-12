@@ -120,6 +120,17 @@ describe('getUserFacingError', () => {
     expect(setup.message).toMatch(/assistant's setup/);
     expect(setup.action).toMatch(/administrator/);
     expect(setup.action).toMatch(/Rephrasing won't help/);
+    // A memory is its own case now (t-1018), with a remedy the reader has.
+    expect(setup.message).not.toMatch(/remembers/i);
+  });
+
+  it('tells the reader a memory holding details was forgotten, and that asking again works (t-1018)', () => {
+    const memory = getUserFacingError('privacy_blocked_memory');
+    expect(memory.message).toMatch(/remembered about you/);
+    expect(memory.message).toMatch(/has now forgotten it/);
+    expect(memory.action).toMatch(/^Ask again/);
+    // Nobody can delete a memory by hand, so an administrator is no remedy.
+    expect(memory.action).not.toMatch(/administrator|new conversation/i);
   });
 
   it('returns distinct messages for input_blocked vs output_blocked', () => {

@@ -47,7 +47,8 @@ vi.mock('@/lib/db/client', () => ({
     // Leaving a privacy-refused turn out of history (t-1014) writes its rows
     // in one transaction.
     $transaction: vi.fn((writes: Promise<unknown>[]) => Promise.all(writes)),
-    aiUserMemory: { findMany: vi.fn() },
+    // A memory a refusal under `block` found details in is deleted (t-1018).
+    aiUserMemory: { findMany: vi.fn(), deleteMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
     aiEvaluationSession: { findFirst: vi.fn() },
@@ -9436,7 +9437,7 @@ describe('a turn the privacy layer refused under block', () => {
   });
 });
 
-describe('a block caused by something earlier, or by the setup (t-1017)', () => {
+describe('a block caused by something earlier, the setup or a memory (t-1017, t-1018)', () => {
   interface StoredRow {
     id: string;
     conversationId: string;
@@ -9598,6 +9599,47 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     return provider;
   }
 
+  /**
+   * The user's memories of this agent, read and deleted through the handler's
+   * own calls: the delete honours its owner and its compare-and-set on when
+   * each memory was last written.
+   */
+  function memoryStore(entries: Array<{ key: string; value: string }>) {
+    const memories = entries.map((m, i) => ({
+      id: `mem-${i}`,
+      userId: 'u1',
+      agentId: 'agent-1',
+      ...m,
+      updatedAt: new Date(Date.parse('2026-11-01T00:00:00Z') + i),
+    }));
+    vi.mocked(prisma.aiUserMemory.findMany).mockImplementation((async ({
+      where,
+    }: {
+      where: { userId: string; agentId: string };
+    }) =>
+      memories.filter((m) => m.userId === where.userId && m.agentId === where.agentId)) as never);
+    vi.mocked(prisma.aiUserMemory.deleteMany).mockImplementation((async ({
+      where,
+    }: {
+      where: { userId?: string; agentId?: string; OR: Array<{ id: string; updatedAt?: Date }> };
+    }) => {
+      // As Prisma reads a filter: a field left out matches anything.
+      const doomed = memories.filter(
+        (m) =>
+          (where.userId === undefined || m.userId === where.userId) &&
+          (where.agentId === undefined || m.agentId === where.agentId) &&
+          where.OR.some(
+            (w) =>
+              w.id === m.id &&
+              (w.updatedAt === undefined || w.updatedAt.getTime() === m.updatedAt.getTime())
+          )
+      );
+      for (const m of doomed) memories.splice(memories.indexOf(m), 1);
+      return { count: doomed.length };
+    }) as never);
+    return memories;
+  }
+
   type Event = { type: string; code?: string; message?: string };
   const turn = async (message: string): Promise<Event[]> =>
     (await collect(streamChat({ ...baseRequest, conversationId: 'conv-1', message }))) as Event[];
@@ -9750,60 +9792,162 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     expect(store.conv.summaryUpToMessageId).toBe(newer.id);
   });
 
-  it.each([
-    [
-      'the system prompt',
-      () =>
-        vi
-          .mocked(prisma.aiAgent.findFirst)
-          .mockResolvedValue(makeAgent({ systemInstructions: `Escalate to ${DETAIL}.` }) as never),
-      'system_prompt',
-    ],
-    [
-      'the user’s memories',
-      () =>
-        vi
-          .mocked(prisma.aiUserMemory.findMany)
-          .mockResolvedValue([{ key: 'name', value: DETAIL }] as never),
-      'memories',
-    ],
-  ])(
-    'tells the reader to ask an administrator when %s holds the details, and marks no earlier row',
-    async (_where, arrange, source) => {
-      const store = conversationStore();
-      const earlier = store.add({ role: 'user', content: 'Where can I park?' });
-      store.conv.summary = 'The user asked where to park.';
-      store.conv.summaryUpToMessageId = earlier.id;
-      arrange();
-      blockingProvider();
-      // No request id: the handler logs on the root logger.
-      const log = logger;
+  it('tells the reader to ask an administrator when the system prompt holds the details, and marks, forgets and deletes nothing else', async () => {
+    const store = conversationStore();
+    const earlier = store.add({ role: 'user', content: 'Where can I park?' });
+    store.conv.summary = 'The user asked where to park.';
+    store.conv.summaryUpToMessageId = earlier.id;
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+      makeAgent({ systemInstructions: `Escalate to ${DETAIL}.` }) as never
+    );
+    // A memory holding them too is kept: until an administrator changes the
+    // setup, deleting it cannot help, and cannot be undone.
+    const memories = memoryStore([{ key: 'contact', value: DETAIL }]);
+    blockingProvider();
+    // No request id: the handler logs on the root logger.
+    const log = logger;
 
-      const events = await turn('And at weekends?');
+    const events = await turn('And at weekends?');
 
-      expect(errorOf(events)).toEqual({
-        type: 'error',
-        code: 'privacy_blocked_setup',
-        message: getUserFacingError('privacy_blocked_setup').message,
-      });
-      expect(marked(earlier)).toBeUndefined();
-      expect(store.conv.summary).toBe('The user asked where to park.');
-      // The refused turn itself is left out, as every refused turn is.
-      expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
-        'privacy_blocked'
-      );
-      // The log says where, never what.
-      expect(log.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
-        conversationId: 'conv-1',
-        code: 'privacy_blocked_setup',
-        turn: false,
-        earlierRows: 0,
-        summary: false,
-        setup: [source],
-      });
-      expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain(DETAIL);
-    }
-  );
+    expect(errorOf(events)).toEqual({
+      type: 'error',
+      code: 'privacy_blocked_setup',
+      message: getUserFacingError('privacy_blocked_setup').message,
+    });
+    expect(marked(earlier)).toBeUndefined();
+    expect(store.conv.summary).toBe('The user asked where to park.');
+    expect(memories.map((m) => m.key)).toEqual(['contact']);
+    // The refused turn itself is left out, as every refused turn is.
+    expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
+      'privacy_blocked'
+    );
+    // The log says where, never what.
+    expect(log.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
+      conversationId: 'conv-1',
+      code: 'privacy_blocked_setup',
+      turn: false,
+      earlierRows: 0,
+      summary: false,
+      memories: 0,
+      setup: ['system_prompt'],
+    });
+    expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain(DETAIL);
+  });
+
+  it('deletes a memory holding the details, keeps the others, and the next turn goes on (t-1018)', async () => {
+    // Remembered while the mode was `detect`: sent in every conversation with
+    // this agent since, and refused in every one of them now.
+    const store = conversationStore();
+    const earlier = store.add({ role: 'user', content: 'Where can I park?' });
+    store.add({ role: 'assistant', content: 'Bay 4.' });
+    const memories = memoryStore([
+      { key: 'full_name', value: DETAIL },
+      { key: 'language', value: 'French' },
+    ]);
+    const provider = blockingProvider();
+    const log = logger;
+
+    const refused = await turn('And at weekends?');
+
+    expect(errorOf(refused)).toEqual({
+      type: 'error',
+      code: 'privacy_blocked_memory',
+      message: getUserFacingError('privacy_blocked_memory').message,
+    });
+    expect(memories.map((m) => m.key)).toEqual(['language']);
+    // Scoped to the user and the agent: the owner layer does not check a
+    // `deleteMany`, so this filter is the only thing that does.
+    expect(prisma.aiUserMemory.deleteMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'u1',
+        agentId: 'agent-1',
+        OR: [{ id: 'mem-0', updatedAt: new Date('2026-11-01T00:00:00Z') }],
+      },
+    });
+    // Nothing else is forgotten for it.
+    expect(marked(earlier)).toBeUndefined();
+    expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
+      'privacy_blocked'
+    );
+    // Where, never what: a count, not a key or a value.
+    expect(log.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
+      conversationId: 'conv-1',
+      code: 'privacy_blocked_memory',
+      turn: false,
+      earlierRows: 0,
+      summary: false,
+      memories: 1,
+      setup: [],
+    });
+    const said = JSON.stringify([refused, vi.mocked(log.warn).mock.calls]);
+    expect(said).not.toContain(DETAIL);
+    expect(said).not.toContain('full_name');
+
+    const answered = await turn('And at weekends?');
+    expect(errorOf(answered)).toBeUndefined();
+    const sent = lastSent(provider);
+    expect(sent).not.toContain(DETAIL);
+    expect(sent).toContain('- language: French');
+    expect(sent).toContain('Bay 4.');
+  });
+
+  it('leaves out an earlier exchange before deleting a memory, then the memory, then goes on (t-1018)', async () => {
+    // Raised to `block` on a live conversation: the name is in an earlier
+    // message and in what the agent remembered from it.
+    const store = conversationStore();
+    const earlier = store.add({ role: 'user', content: `I'm ${DETAIL}.` });
+    const memories = memoryStore([{ key: 'full_name', value: DETAIL }]);
+    blockingProvider();
+
+    expect(errorOf(await turn('Where can I park?'))?.code).toBe('privacy_blocked_earlier');
+    expect(marked(earlier)).toBe('privacy_blocked');
+    // Kept: deleting cannot be undone, and the next attempt shows whether it
+    // holds the details on its own.
+    expect(memories).toHaveLength(1);
+
+    expect(errorOf(await turn('Where can I park?'))?.code).toBe('privacy_blocked_memory');
+    expect(memories).toHaveLength(0);
+
+    expect(errorOf(await turn('Where can I park?'))).toBeUndefined();
+  });
+
+  it('keeps a memory rewritten since the turn read it (t-1018)', async () => {
+    conversationStore();
+    const memories = memoryStore([{ key: 'full_name', value: DETAIL }]);
+    // A concurrent turn's write_user_memory, between the read and the delete.
+    blockingProvider(() => {
+      memories[0].value = 'Prefers bay 4';
+      memories[0].updatedAt = new Date('2026-11-12T12:00:00Z');
+    });
+
+    expect(errorOf(await turn('Where can I park?'))?.code).toBe('privacy_blocked_memory');
+    expect(memories.map((m) => m.value)).toEqual(['Prefers bay 4']);
+    // Said in the log, with counts only.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Some privacy-refused user memories were not deleted',
+      {
+        memories: 1,
+        deleted: 0,
+      }
+    );
+  });
+
+  it('still answers with the memory code when the delete fails, and logs no value (t-1018)', async () => {
+    conversationStore();
+    memoryStore([{ key: 'full_name', value: DETAIL }]);
+    vi.mocked(prisma.aiUserMemory.deleteMany).mockRejectedValue(new Error('connection reset'));
+    blockingProvider();
+    const log = logger;
+
+    expect(errorOf(await turn('Where can I park?'))?.code).toBe('privacy_blocked_memory');
+    expect(log.warn).toHaveBeenCalledWith('Failed to forget privacy-refused user memories', {
+      memories: 1,
+      error: 'connection reset',
+    });
+    const logged = JSON.stringify(vi.mocked(log.warn).mock.calls);
+    expect(logged).not.toContain(DETAIL);
+    expect(logged).not.toContain('full_name');
+  });
 
   it('places a tool result the turn fetched as this turn, on a later pass of the tool loop', async () => {
     const { rows } = conversationStore();
@@ -9842,6 +9986,7 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
       turn: true,
       earlierRows: 0,
       summary: false,
+      memories: 0,
       setup: [],
     });
     const turnRows = rows.filter((r) => !(r.metadata as { error?: boolean } | null)?.error);

@@ -37,7 +37,8 @@ export class MalformedSpansError extends Error {
  * - `confidence` is a finite number in `[0, 1]`.
  *
  * Unknown extra fields are dropped rather than rejected, so a service that
- * returns more than it is asked for still works.
+ * returns more than it is asked for still works. `learned` is kept when it
+ * is exactly `true`, and dropped otherwise.
  */
 export function validateSpans(
   result: unknown,
@@ -52,7 +53,7 @@ export function validateSpans(
   for (let i = 0; i < result.length; i++) {
     const raw: unknown = result[i];
     if (!isRecord(raw)) throw new MalformedSpansError(adapterId, `span ${i} is not an object`);
-    const { type, start, end, confidence } = raw;
+    const { type, start, end, confidence, learned } = raw;
     if (typeof type !== 'string' || !ENTITY_TYPE_PATTERN.test(type)) {
       throw new MalformedSpansError(adapterId, `span ${i} has an invalid type`);
     }
@@ -82,8 +83,20 @@ export function validateSpans(
       throw new MalformedSpansError(adapterId, `span ${i} has an invalid confidence`);
     }
     // Frozen here, once: every later reader (the next detector's priorSpans,
-    // the merge) gets a span nobody can change.
-    spans.push(Object.freeze({ type, start, end, confidence, source: adapterId }));
+    // the merge) gets a span nobody can change. `learned` only when exactly
+    // true: anything else is a span found where it stands, which is what a
+    // refusal acts on, so a malformed flag can only make placement do what
+    // it did before the flag existed.
+    spans.push(
+      Object.freeze({
+        type,
+        start,
+        end,
+        confidence,
+        source: adapterId,
+        ...(learned === true ? { learned: true } : {}),
+      })
+    );
   }
   return spans;
 }
@@ -123,6 +136,9 @@ export function resolveOverlaps(
         end: groupEnd,
         confidence: best.confidence,
         source: best.source,
+        // Learned only if every member was: one found where it stands makes
+        // the whole union a finding of that message's own.
+        ...(group.every((s) => s.learned === true) ? { learned: true } : {}),
       })
     );
     group = [];

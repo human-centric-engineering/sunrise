@@ -43,10 +43,10 @@ release process.
   - Two new chat `error` event codes, each with its own words in
     `getUserFacingError()`: `privacy_blocked_earlier` (an earlier message or
     the stored summary held them, and has been left out: ask again) and
-    `privacy_blocked_setup` (the system prompt, entity context or the
-    user's memories: ask an administrator). **A client that handles
-    `privacy_blocked` should handle both.** `judge_call` never retries
-    `privacy_blocked_setup`.
+    `privacy_blocked_setup` (the system prompt or entity context: ask an
+    administrator; the user's memories are t-1018's, below). **A client
+    that handles `privacy_blocked` should handle both.** `judge_call` never
+    retries `privacy_blocked_setup`.
   - When only something earlier held them, the chat handler also marks with
     `excludedFromHistory` every row of each earlier exchange that held them,
     and replaces a stored summary that held them with its gap note alone,
@@ -54,6 +54,24 @@ release process.
     again.
   - `buildMessagesAndBreakdown()` also returns `sources`, where each message
     came from.
+- **LLM privacy layer: a memory that holds personal details no longer locks
+  its user out of an agent under `block` (§127, t-1018).**
+  - The memory is deleted, and the turn ends with a new chat `error` event
+    code, `privacy_blocked_memory`, whose words in `getUserFacingError()`
+    tell the reader to ask again. **A client that handles `privacy_blocked`
+    should handle it too.**
+  - **Detector contract:** `DetectedSpan` gains an optional `learned`, true
+    when a detector matched a span only because it learned the value from
+    elsewhere in the same text (tier C sets it on a surname or company short
+    form after the full name). It is masked and refused as before; the
+    location on a `block` refusal leaves it out, so a message is blamed only
+    for details of its own. **A fork's detector** that learns values this
+    way should set it; one that does not behaves as before.
+  - `buildMessagesAndBreakdown()` sends the user's memories as a heading and
+    then one system message per memory, not one message, with a new
+    `memory` source (`{ kind: 'memory', memoryIndex }`) for each. **A fork
+    that reads the built messages** and looks for the `[User memories]`
+    block finds only the heading in that message.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected
   terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
   (nullable, `null` for every existing agent: inherit), a core field-registry

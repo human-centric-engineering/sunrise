@@ -25,6 +25,7 @@ has merged; this table says what exists.
 | Agent mode, org floor (minimum mode), protected terms                                  | t-1010 | **Built** |
 | A turn refused under `block` is left out of later history                              | t-1014 | **Built** |
 | A `block` caused by an earlier message, the summary or the setup: placed and told      | t-1017 | **Built** |
+| A `block` caused by a memory: the memory is deleted, and the user carries on           | t-1018 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
@@ -392,27 +393,35 @@ That happened when the details were in:
   many were found.
 - **The handler knows where each message came from.**
   `buildMessagesAndBreakdown()` returns a source per message: the system
-  prompt, the entity context, the memories, the summary, a note the builder
-  wrote, a history row (by its index in what it was given), an opening turn
-  or the user's message. A message past those was added by the tool loop
+  prompt, the entity context, the memories' heading, a memory (by its index,
+  t-1018), the summary, a note the builder wrote, a history row (by its
+  index in what it was given), an opening turn or the user's message. A message past those was added by the tool loop
   this turn. The handler trusts a location only from a refusal of a call it
   made itself, for as many messages as it sent; otherwise it does what
   t-1014 does (`lib/orchestration/chat/privacy-refusal.ts`).
 - **What is left out, and what the reader is told:**
 
-  | Where the details were                                         | Left out of later history                                        | Code                      | The reader is told                 |
-  | -------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- | ---------------------------------- |
-  | This turn: the message, or a tool result                       | The turn's rows                                                  | `privacy_blocked`         | Ask again without them             |
-  | An earlier row, or the stored summary                          | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
-  | The system prompt, entity context, memories or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
+  | Where the details were                               | Left out of later history                                        | Code                      | The reader is told                 |
+  | ---------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- | ---------------------------------- |
+  | This turn: the message, or a tool result             | The turn's rows                                                  | `privacy_blocked`         | Ask again without them             |
+  | An earlier row, or the stored summary                | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
+  | One of the user's memories (t-1018, below)           | The turn's rows; the memory is deleted                           | `privacy_blocked_memory`  | Ask again; it has forgotten it     |
+  | The system prompt, entity context or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
 
   **One case wins, and only it acts**: this turn, then the setup, then
-  anything earlier. Detection runs over the whole call, so a name this turn
-  introduces is found in the setup, earlier rows and the summary, all of
-  which passed every scan before; sending the reader to an administrator,
-  or forgetting them, would be for nothing. If they hold details of their
-  own, the next attempt finds them, and places them. The log line ("Chat turn refused for personal details") names the
-  kinds of source and how many rows, never a value.
+  anything earlier, then a memory (t-1018). The rest are placed by the next
+  attempt, if they still hold details. **A message is named only for
+  details of its own** (t-1018): detection runs over the whole call, and
+  tier C marks a surname or a company's short form wherever it appears once
+  it has seen the full name, but the location leaves those learned matches
+  out (`DetectedSpan.learned`, see _Spans_). So a name this turn introduces
+  does not blame earlier rows, and a full name in a memory does not blame a
+  persona that only repeats the surname, which would refuse every turn
+  with nothing for an administrator to find. A known first name standing
+  alone is a finding of its own (tier C reports it at 0.5), so a persona
+  "You are Max" is the setup's to change. The log line ("Chat turn refused
+  for personal details") names the kinds of source and how many rows,
+  never a value.
 
 - **An earlier row takes its exchange with it**: from where it begins to
   where the next one does. An exchange begins at a user message, or at an
@@ -446,12 +455,67 @@ That happened when the details were in:
     hold details. Degraded, not locked.
   - **The embed widget** shows its own fixed words for every error, as it
     did for `privacy_blocked`.
-  - **Memories that hold details** refuse every turn that user has with that
-    agent, and nothing can delete a memory: the "ask an administrator" copy
-    names no remedy there. Filed as t-1018.
+  - **Memories that hold details** were placed as the setup, so they refused
+    every turn that user had with that agent and named no remedy. They have
+    their own case now: see t-1018, below.
   - **An earlier exchange is left out without a note** in the prompt, as a
     refused turn is (t-1014). The transcript keeps it, and the reader is
     told the assistant may not remember everything.
+
+### What is built (t-1018)
+
+A memory that holds personal details no longer locks its user out of the
+agent. A memory (`AiUserMemory`, written by the `write_user_memory`
+capability) is sent in every conversation the user has with that agent. One
+written before the mode was `block` (an agent's mode or an org's floor
+raised after it remembered a name is enough) refused every turn, as
+`privacy_blocked_setup`. That told the reader to ask an administrator, who
+had nothing to change: no page or API deletes a memory, and the capability
+that writes one needs an LLM call `block` refuses.
+
+- **Each memory is its own message.** The builder sends the fixed heading
+  ("[User memories] …"), then one system message per memory, so the
+  stage's location names the memory. The text is the block the model was
+  always sent, split at its lines, and the token breakdown counts the
+  joined text; each part is framed as a message of its own. Anthropic
+  takes them as separate system text blocks (the cache breakpoint is on the
+  first), and OpenAI-compatible providers as separate system messages.
+- **The memory is deleted** (owner ruling 2026-11-12: carry on and forget,
+  as with the summary in t-1017). The turn is refused once as
+  `privacy_blocked_memory`. The reader is told the assistant has forgotten
+  something it remembered about them, and to ask again, and asking again
+  works. The other memories are kept. If the mode is lowered later, the
+  agent does not get the memory back; it learns it again if the user says
+  it. Nothing needs to be stored to make this work, so the model, the
+  export and the erasure are unchanged.
+- **It is a compare-and-set** on when the memory was last written, so a
+  memory a concurrent turn rewrote since this turn read it is kept. The
+  delete is scoped to the user and the agent. It is best effort, like the
+  marking: if it fails, the next refusal finds the same memory. A delete
+  that fails, or that keeps a memory rewritten since, is logged with
+  counts only.
+- **It comes last**: this turn, then the setup, then anything earlier, then
+  a memory. Deleting can't be undone and reaches every conversation, so
+  while the setup holds details of its own nothing is deleted (it would
+  not help until an administrator changes the setup), and an earlier row
+  that holds them is left out first. A conversation raised to `block` with
+  the name in both an earlier message and a memory is refused twice, as
+  `privacy_blocked_earlier` and then `privacy_blocked_memory`, and goes on.
+- **Only a memory that holds details of its own is deleted.** A surname
+  or company short form the detector only learned from another message is
+  left out of the location, so a memory that merely repeats a name found
+  elsewhere is kept, and a persona that only repeats a remembered surname
+  does not lock the user out (`DetectedSpan.learned`).
+- **The log** counts memories, and names no key or value.
+- **The setup's copy** now names only the setup ("The assistant's setup
+  contains personal details …"): memories have their own.
+- **A judge** (`judge_call`) retries `privacy_blocked_memory`, since the
+  refusal deleted what caused it.
+- **Not changed:**
+  - **A memory older than the 50 newest** is not sent with the turn, so
+    nothing places it. Read back by `read_user_memory`, its result is a
+    tool result, placed as this turn (`privacy_blocked`). Degraded, not
+    locked: the model has to ask for that memory by key again.
 
 ### Modes
 
@@ -583,7 +647,17 @@ span is accepted when:
 - `confidence` is a finite number in `[0, 1]`.
 
 One bad span rejects the whole result: the detector is reported `malformed` and
-contributes nothing. Extra fields are dropped. The type pattern matters because
+contributes nothing. Extra fields are dropped, except `learned`, kept when it is
+exactly `true` (t-1018).
+
+**`learned`** says the detector matched a span only because it learned the value
+from elsewhere in the same text: tier C sets it on a surname or a company's
+short form marked after the full name. The span is masked and refused like any
+other. A refusal under `block` leaves it out when it says which messages held
+details, so the message the value was learned from is placed, not every message
+that repeats it. Leave it out for a value found where it stands; anything but
+`true` counts as that, so a wrong flag can only place as before it existed. A
+merged span is learned only when every member was. The type pattern matters because
 the type becomes part of the placeholder the model reads (`PERSON_1`); free text
 there would be a prompt-injection path.
 
@@ -618,21 +692,21 @@ timeout bounds one detector, not the pass: the stage bounds the pass by passing
 a deadline as the call's signal (`AbortSignal.timeout()`), and detectors left
 when it fires are reported `aborted`.
 
-| Failure                                                     | Reported as                            | What the stage does                                                                                                 |
-| ----------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                                                             |
-| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded                                             |
-| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                                                                 |
-| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                                                              |
-| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                                                             |
-| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                                                             |
-| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                                                           |
-| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)                                            |
-| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history, and so is what earlier held it (t-1017) |
-| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                                                          |
-| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value                                            |
-| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose                                              |
-| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted                                                    |
+| Failure                                                     | Reported as                            | What the stage does                                                                                                                                              |
+| ----------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                                                                                                          |
+| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded                                                                                          |
+| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                                                                                                              |
+| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                                                                                                           |
+| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                                                                                                          |
+| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                                                                                                          |
+| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                                                                                                        |
+| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)                                                                                         |
+| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history, and so is what earlier held it (t-1017) or a memory that held it is deleted (t-1018) |
+| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                                                                                                       |
+| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value                                                                                         |
+| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose                                                                                           |
+| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted                                                                                                 |
 
 Every refusal ships its remedy: the user sees a plain message
 (`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
@@ -765,7 +839,7 @@ What it learns, it learns from one `detect` input and forgets after: a company
 found with its suffix marks its short form elsewhere in that text, and a full
 name marks its parts (matched capitalised). **The stage should therefore pass
 a call's messages as one input**, or a name learned in one message will not
-mark the next.
+mark the next. Each match it learned is marked `learned` (see _Spans_).
 
 A street word that is also a common surname (Green, Hill, Park) counts as part
 of a name; numbered, or after an address cue, the street is still an address,
