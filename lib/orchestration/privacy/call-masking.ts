@@ -146,6 +146,30 @@ function spansByPiece(pieces: readonly string[], spans: readonly MaskSpan[]): Ma
   return out;
 }
 
+/**
+ * The indices of the messages that hold any of `spans` (offsets in their
+ * joined pieces), in order. Positions only, never what was found: a refusal
+ * under `block` carries them so its caller can tell which part of what it sent
+ * held personal details (§127 t-1017).
+ */
+export function messagesHoldingSpans(
+  messages: readonly LlmMessage[],
+  spans: readonly MaskSpan[],
+  pieces: readonly string[] = messagePieces(messages)
+): number[] {
+  if (spans.length === 0) return [];
+  const byPiece = spansByPiece(pieces, spans);
+  const out: number[] = [];
+  let k = 0;
+  messages.forEach((m, index) => {
+    // The same count `messagePieces` collects for this message.
+    const own = messagePieces([m]).length;
+    if (byPiece.slice(k, k + own).some((s) => s.length > 0)) out.push(index);
+    k += own;
+  });
+  return out;
+}
+
 export interface MaskedMessages {
   messages: LlmMessage[];
   /** Whether any text was replaced: a detected value, or a look-alike. */

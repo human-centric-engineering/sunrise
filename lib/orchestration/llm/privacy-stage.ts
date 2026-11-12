@@ -37,6 +37,7 @@ import {
   CallRestorer,
   maskMessages,
   messagePieces,
+  messagesHoldingSpans,
   PIECE_SEPARATOR,
   withPlaceholderInstruction,
 } from '@/lib/orchestration/privacy/call-masking';
@@ -142,10 +143,25 @@ function readerMessage(reason: PrivacyRefusalReason): string {
   }
 }
 
+/**
+ * Where a `content_blocked` refusal of a chat call found personal details:
+ * positions in the messages it was given, never what it found (§127 t-1017).
+ * The caller that built the messages can tell which part of them held the
+ * details, and so whether asking again can work.
+ */
+export interface PrivacyFindingLocation {
+  /** How many messages the refused call carried, so a caller can check they are the ones it sent. */
+  messageCount: number;
+  /** The indices of those messages that held a finding, in order. */
+  messageIndices: readonly number[];
+}
+
 export class PrivacyRefusedError extends ProviderError {
   readonly reason: PrivacyRefusalReason;
   readonly providerSlug: string;
-  constructor(reason: PrivacyRefusalReason, providerSlug: string) {
+  /** Set on a `content_blocked` refusal of a chat call; absent otherwise. */
+  readonly found?: PrivacyFindingLocation;
+  constructor(reason: PrivacyRefusalReason, providerSlug: string, found?: PrivacyFindingLocation) {
     super(readerMessage(reason), {
       code: reason === 'content_blocked' ? PRIVACY_BLOCKED : PRIVACY_REFUSED,
       retriable: false,
@@ -153,6 +169,7 @@ export class PrivacyRefusedError extends ProviderError {
     this.name = 'PrivacyRefusedError';
     this.reason = reason;
     this.providerSlug = providerSlug;
+    if (found) this.found = found;
   }
 }
 
@@ -291,7 +308,8 @@ function refuse(
   call: PrivacyStageCall,
   scope: PrivacyScope | undefined,
   mode: PrivacyPolicy['mode'] | undefined,
-  failedAdapters: readonly string[] = []
+  failedAdapters: readonly string[] = [],
+  found?: PrivacyFindingLocation
 ): PrivacyRefusedError {
   // A local-only refusal is the configuration working, once per embedding
   // the install asks for: info, so it does not bury real warnings.
@@ -318,7 +336,7 @@ function refuse(
       outcome: 'refused',
     });
   }
-  return new PrivacyRefusedError(reason, call.providerSlug);
+  return new PrivacyRefusedError(reason, call.providerSlug, found);
 }
 
 /**
@@ -473,7 +491,11 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
 
     const counts = countByType(spans);
     if (call.coverage === 'full' && policy.mode === 'block' && spans.length > 0) {
-      throw refuse('content_blocked', call, scope, mode, failedAdapters);
+      const messages = chatMessages(call);
+      throw refuse('content_blocked', call, scope, mode, failedAdapters, {
+        messageCount: messages.length,
+        messageIndices: messagesHoldingSpans(messages, spans, pieces ?? undefined),
+      });
     }
 
     let result: PrivacyStageResult = unchanged;

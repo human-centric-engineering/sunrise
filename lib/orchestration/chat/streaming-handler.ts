@@ -119,6 +119,12 @@ import {
   buildMessagesAndBreakdown,
   isLeftOutOfHistory,
 } from '@/lib/orchestration/chat/message-builder';
+import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
+import {
+  placePrivacyRefusal,
+  type BuiltChatRequest,
+  type PlacedPrivacyRefusal,
+} from '@/lib/orchestration/chat/privacy-refusal';
 import { isJsonObject } from '@/lib/privacy/config-recipients';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
@@ -369,6 +375,9 @@ function rowsAfterPin(pin: HistoryPin) {
   };
 }
 
+/** What a turn built its first call from, and the summary pin it read (t-1017). */
+type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null };
+
 /** What a read from the pin returns. */
 interface HistoryFromPin {
   rows: AiMessage[];
@@ -578,6 +587,13 @@ export class StreamingChatHandler {
       turnRowIds.push(row.id);
       return row;
     };
+    // What the turn built its request from, and the summary pin it read, so a
+    // refusal under `block` can tell which part held the details (t-1017).
+    let builtRequest: BuiltTurnRequest | null = null;
+    // How many messages the turn's own chat call carried when the privacy
+    // stage refused it. Set only there: another call's location is not a
+    // position in these messages.
+    let refusedCallMessageCount: number | null = null;
     try {
       registerBuiltInCapabilities();
 
@@ -1401,7 +1417,11 @@ export class StreamingChatHandler {
         agent.profile
       );
 
-      const { messages: initialMessages, breakdown: initialBreakdown } = buildMessagesAndBreakdown({
+      const {
+        messages: initialMessages,
+        sources: initialSources,
+        breakdown: initialBreakdown,
+      } = buildMessagesAndBreakdown({
         systemInstructions: resolvedPrompt.systemInstructions,
         contextBlock,
         history: historyRows,
@@ -1422,6 +1442,16 @@ export class StreamingChatHandler {
         omittedBeforeHistory,
       });
       let messages: LlmMessage[] = initialMessages;
+      builtRequest = {
+        sources: initialSources,
+        historyRows: historyRows.map((row, i) => ({
+          id: history[i].id,
+          role: row.role,
+          finishedReply:
+            row.role === 'assistant' && row.content.length > 0 && !row.toolCalls?.length,
+        })),
+        summaryPin: conversationSummary ? casPin : null,
+      };
 
       const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
         name: def.name,
@@ -1738,6 +1768,9 @@ export class StreamingChatHandler {
                 setSpanStatus(llmSpan, { code: 'ok' });
               } catch (streamErr) {
                 streamRetries++;
+                if (streamErr instanceof PrivacyRefusedError) {
+                  refusedCallMessageCount = messages.length;
+                }
 
                 // Whatever the provider told us this failed call cost, record
                 // it — before deciding what to do about the failure, so every
@@ -3187,12 +3220,38 @@ export class StreamingChatHandler {
         // fallbacks — or a request fault like `truncated_no_output`, which
         // now ends the turn here rather than failing over — leaves the user
         // message unanswered on reload.
-        // Refused under `block` (§127 t-1014): the details are in something
-        // this turn persisted, and every later turn would resend them and be
-        // refused again. Leave the turn out of later history; it stays in the
-        // transcript, and the user can ask again without them.
+        // Refused under `block` (§127 t-1014, t-1017): every later turn would
+        // resend what held the details and be refused again. Leave out of
+        // later history this turn's rows and any earlier row that held them,
+        // and discard a summary that held them; all of it stays in the
+        // transcript. Details in the assistant's setup are not ours to leave
+        // out: the reader is told to ask an administrator.
         if (err.code === PRIVACY_BLOCKED) {
-          await this.leaveTurnOutOfHistory(turnRowIds, conversationId, request.userId, log);
+          const placed = this.placeBlockedTurn(err, builtRequest, refusedCallMessageCount);
+          await this.leaveRowsOutOfHistory(
+            [...turnRowIds, ...(placed?.earlierRowIds ?? [])],
+            conversationId,
+            request.userId,
+            log
+          );
+          if (placed?.summary && builtRequest) {
+            await this.forgetSummary(conversationId, request.userId, builtRequest.summaryPin, log);
+          }
+          if (placed) {
+            // Where, never what: the kinds of source and how many rows.
+            log.warn('Chat turn refused for personal details', {
+              conversationId,
+              code: placed.code,
+              turn: placed.turn,
+              earlierRows: placed.earlierRowIds.length,
+              summary: placed.summary,
+              setup: placed.setup,
+            });
+          }
+          const code = placed?.code ?? PRIVACY_BLOCKED;
+          await persistErrorMarker(code);
+          yield errorEvent(code, getUserFacingError(code).message);
+          return;
         }
         await persistErrorMarker(err.code);
         // A spend cap ends with the words a refusal before the turn uses.
@@ -3357,12 +3416,31 @@ export class StreamingChatHandler {
   }
 
   /**
-   * Mark the rows of a turn the privacy layer refused under `block` so every
-   * later history read leaves them out (§127 t-1014). They stay in the
-   * transcript and the audit trail. Best effort, like the error marker. If the
-   * write fails, nothing retries it: the conversation is where it was before
-   * t-1014, every later turn resending the details and being refused, so
-   * nothing is sent, but it cannot go on.
+   * Where a refusal under `block` found the details, when the refused call is
+   * one this turn made and the stage said where (t-1017). Null otherwise, and
+   * then only the turn's own rows are left out, as in t-1014.
+   */
+  private placeBlockedTurn(
+    err: ProviderError,
+    built: BuiltTurnRequest | null,
+    refusedCallMessageCount: number | null
+  ): PlacedPrivacyRefusal | null {
+    if (!built || refusedCallMessageCount === null || !(err instanceof PrivacyRefusedError)) {
+      return null;
+    }
+    return placePrivacyRefusal(err.found, { ...built, messageCount: refusedCallMessageCount });
+  }
+
+  /**
+   * Mark rows so every later history read leaves them out (§127 t-1014): the
+   * rows of a turn the privacy layer refused under `block`, and any earlier
+   * row the refusal found personal details in (t-1017). That also heals an
+   * earlier refused turn whose own marking failed. They stay in the
+   * transcript and the audit trail. Best effort, like the error marker. If
+   * the write fails, nothing retries it here. Nothing is sent while the rows
+   * are resent, and the next refusal that can say where it found the details
+   * (a chat call this handler made) finds the rows that are still in the
+   * prompt and marks them.
    *
    * The metadata is read back here rather than taken from what the turn
    * wrote, so anything set on a row before this read (a fork's hook on
@@ -3371,7 +3449,7 @@ export class StreamingChatHandler {
    * update: a write or removal in the moment between the two is lost, or
    * rolls the batch back. Nothing in core writes a message after creating it.
    */
-  private async leaveTurnOutOfHistory(
+  private async leaveRowsOutOfHistory(
     ids: string[],
     conversationId: string | null,
     userId: string,
@@ -3399,8 +3477,62 @@ export class StreamingChatHandler {
         )
       );
     } catch (err) {
-      log.warn('Failed to leave a privacy-refused turn out of history', {
+      log.warn('Failed to leave privacy-refused rows out of history', {
         messageIds: ids,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Forget a stored summary the privacy layer found personal details in
+   * (t-1017; owner ruling 2026-11-12: the conversation carries on and
+   * forgets). Under `block` it can never be sent again, and it cannot be
+   * rebuilt from itself: the summariser's call would carry it and be refused.
+   *
+   * Its text is replaced by the gap note alone ("up to N earlier messages may
+   * not be described"), N counting every row up to the pin, and the pin is
+   * kept. So the rows it covered are never read again (re-read, any that hold
+   * details would be refused again, in the prompt or, past the cap, in a
+   * summariser call nothing can place), the model is told what it no longer
+   * has, and later folds carry the note forward as they carry any gap.
+   * Without a pin there is nothing to keep, and the summary is cleared.
+   *
+   * Only if the pin is still the one this turn read: a concurrent turn that
+   * moved it wrote a summary of its own, and this turn knows nothing about
+   * that one. Best effort, like the marking: if it fails, the next refusal
+   * finds the same summary.
+   */
+  private async forgetSummary(
+    conversationId: string | null,
+    userId: string,
+    pin: string | null,
+    log: typeof logger
+  ): Promise<void> {
+    if (!conversationId) return;
+    try {
+      const owned = { conversationId, conversation: conversationOwner(userId) };
+      const pinRow = pin
+        ? await prisma.aiMessage.findFirst({
+            where: { id: pin, ...owned },
+            select: { createdAt: true },
+          })
+        : null;
+      const covered = pinRow
+        ? await prisma.aiMessage.count({
+            where: { ...owned, createdAt: { lte: pinRow.createdAt } },
+          })
+        : 0;
+      await prisma.aiConversation.updateMany({
+        where: { id: conversationId, ...conversationOwner(userId), summaryUpToMessageId: pin },
+        data:
+          pinRow && covered > 0
+            ? { summary: withGapNote('', covered) }
+            : { summary: null, summaryUpToMessageId: null },
+      });
+    } catch (err) {
+      log.warn('Failed to forget a privacy-refused conversation summary', {
+        conversationId,
         error: err instanceof Error ? err.message : String(err),
       });
     }

@@ -220,7 +220,7 @@ describe('executeJudgeCall', () => {
         expect(err).toMatchObject({ stepId: 'jc1', code: 'provider_error', retriable: true });
       });
 
-      it.each(['truncated_no_output', 'provider_not_permitted'])(
+      it.each(['truncated_no_output', 'provider_not_permitted', 'privacy_blocked'])(
         'never retries the provider request fault %s',
         async (errorCode) => {
           const err = await failureOf({ score: null, errorCode });
@@ -235,6 +235,7 @@ describe('executeJudgeCall', () => {
         'conversation_length_cap_reached',
         'budget_exceeded',
         'input_blocked',
+        'privacy_blocked_setup',
       ])('never retries the deterministic chat refusal %s', async (errorCode) => {
         const err = await failureOf({ score: null, errorCode });
         expect(err).toMatchObject({ code: errorCode, retriable: false });
@@ -247,6 +248,11 @@ describe('executeJudgeCall', () => {
           expect(err).toMatchObject({ code: errorCode, retriable: true });
         }
       );
+
+      it('retries privacy_blocked_earlier: the refusal left out what caused it (t-1017)', async () => {
+        const err = await failureOf({ score: null, errorCode: 'privacy_blocked_earlier' });
+        expect(err).toMatchObject({ code: 'privacy_blocked_earlier', retriable: true });
+      });
     });
 
     it('names the failure by its code, and keeps the chat error’s own words out', async () => {

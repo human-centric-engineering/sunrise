@@ -106,6 +106,22 @@ describe('getUserFacingError', () => {
     expect(blocked.message).not.toMatch(/conversation contains/i);
   });
 
+  it('tells the reader an earlier part of the conversation was left out, and that asking again works (t-1017)', () => {
+    const earlier = getUserFacingError('privacy_blocked_earlier');
+    expect(earlier.message).toMatch(/earlier messages in this conversation/i);
+    expect(earlier.action).toMatch(/^Ask again/);
+    // The assistant has forgotten that part (owner ruling 2026-11-12), and says so.
+    expect(earlier.action).toMatch(/may not remember/);
+    expect(earlier.action).not.toMatch(/administrator|new conversation/i);
+  });
+
+  it('sends the reader to an administrator when the details are in the setup (t-1017)', () => {
+    const setup = getUserFacingError('privacy_blocked_setup');
+    expect(setup.message).toMatch(/assistant's setup/);
+    expect(setup.action).toMatch(/administrator/);
+    expect(setup.action).toMatch(/Rephrasing won't help/);
+  });
+
   it('returns distinct messages for input_blocked vs output_blocked', () => {
     const input = getUserFacingError('input_blocked');
     const output = getUserFacingError('output_blocked');

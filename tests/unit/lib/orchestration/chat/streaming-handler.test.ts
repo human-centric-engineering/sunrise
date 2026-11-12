@@ -267,6 +267,7 @@ const { SpendCapExceededError, assertWithinSpendCaps } =
   await import('@/lib/orchestration/llm/spend-caps');
 const { ProviderCallRefusedError } = await import('@/lib/orchestration/llm/provider-eligibility');
 const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
+const { getUserFacingError } = await import('@/lib/orchestration/chat/error-messages');
 const {
   createPrivacyScope,
   currentPrivacyScope,
@@ -9432,5 +9433,461 @@ describe('a turn the privacy layer refused under block', () => {
     )) as Array<{ type: string; code?: string }>;
 
     expect(events.find((e) => e.type === 'error')).toMatchObject({ code: 'privacy_blocked' });
+  });
+});
+
+describe('a block caused by something earlier, or by the setup (t-1017)', () => {
+  interface StoredRow {
+    id: string;
+    conversationId: string;
+    role: string;
+    content: string;
+    toolCallId: string | null;
+    metadata: unknown;
+    createdAt: Date;
+  }
+  interface Pin {
+    createdAt: Date;
+    id: string;
+  }
+
+  const DETAIL = 'Jane Holloway';
+
+  /**
+   * One conversation, its rows and its summary in memory, written and read
+   * through the handler's own calls: the loaders' pin, exclusion and order
+   * are honoured, so each turn's history is the one the real loaders build.
+   */
+  function conversationStore() {
+    const rows: StoredRow[] = [];
+    const conv: Omit<ReturnType<typeof makeConversation>, 'summary' | 'summaryUpToMessageId'> & {
+      summary: string | null;
+      summaryUpToMessageId: string | null;
+    } = makeConversation();
+    let clock = Date.parse('2026-11-12T10:00:00Z');
+    let nextId = 0;
+    const state = { failWrites: false };
+    const add = (data: Record<string, unknown>): StoredRow => {
+      const row = makeMessage({ ...data, id: `row-${nextId++}`, createdAt: new Date(clock++) });
+      rows.push(row);
+      return row;
+    };
+    vi.mocked(prisma.aiMessage.create).mockImplementation((async ({
+      data,
+    }: {
+      data: Record<string, unknown>;
+    }) => add(data)) as never);
+    const after = (r: StoredRow, pin: Pin): boolean =>
+      r.createdAt > pin.createdAt ||
+      (r.createdAt.getTime() === pin.createdAt.getTime() && r.id > pin.id);
+    vi.mocked(prisma.aiMessage.findMany).mockImplementation((async ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: {
+        conversationId: string;
+        id?: { in: string[] };
+        NOT?: { id: string };
+        OR?: [{ createdAt: { gt: Date } }, { createdAt: Date; id: { gt: string } }];
+      };
+      orderBy?: Array<{ createdAt?: 'asc' | 'desc' }>;
+      take?: number;
+    }) => {
+      const pin = where.OR ? { createdAt: where.OR[0].createdAt.gt, id: where.OR[1].id.gt } : null;
+      const inOrder = rows.filter(
+        (r) =>
+          r.conversationId === where.conversationId &&
+          (!where.id || where.id.in.includes(r.id)) &&
+          (!where.NOT || r.id !== where.NOT.id) &&
+          (!pin || after(r, pin))
+      );
+      if (orderBy?.[0]?.createdAt === 'desc') inOrder.reverse();
+      return inOrder.slice(0, take ?? inOrder.length);
+    }) as never);
+    vi.mocked(prisma.aiMessage.findFirst).mockImplementation(
+      (async ({ where }: { where: { id: string } }) =>
+        rows.find((r) => r.id === where.id) ?? null) as never
+    );
+    vi.mocked(prisma.aiMessage.count).mockImplementation(
+      (async ({ where }: { where: { conversationId: string; createdAt?: { lte: Date } } }) =>
+        rows.filter(
+          (r) =>
+            r.conversationId === where.conversationId &&
+            (!where.createdAt || r.createdAt <= where.createdAt.lte)
+        ).length) as never
+    );
+    vi.mocked(prisma.aiMessage.update).mockImplementation((({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { metadata: unknown };
+    }) => ({
+      then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
+        return Promise.resolve()
+          .then(() => {
+            if (state.failWrites) throw new Error('connection reset');
+            const row = rows.find((r) => r.id === where.id);
+            if (!row) throw new Error('P2025: record to update not found');
+            row.metadata = data.metadata;
+            return { id: row.id };
+          })
+          .then(resolve, reject);
+      },
+    })) as never);
+    vi.mocked(prisma.$transaction).mockImplementation((async (writes: Promise<unknown>[]) => {
+      const before = rows.map((r) => [r, r.metadata] as const);
+      try {
+        return await Promise.all(writes);
+      } catch (err) {
+        for (const [row, metadata] of before) row.metadata = metadata;
+        throw err;
+      }
+    }) as never);
+    vi.mocked(prisma.aiConversation.findFirst).mockImplementation((async () => ({
+      ...conv,
+    })) as never);
+    // A compare-and-set on the pin, as the handler's summary writes are.
+    vi.mocked(prisma.aiConversation.updateMany).mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: { summaryUpToMessageId?: string | null };
+      data: Record<string, unknown>;
+    }) => {
+      if (
+        'summaryUpToMessageId' in where &&
+        where.summaryUpToMessageId !== conv.summaryUpToMessageId
+      ) {
+        return { count: 0 };
+      }
+      Object.assign(conv, data);
+      return { count: 1 };
+    }) as never);
+    return { rows, conv, add, state };
+  }
+
+  /**
+   * Stands in for the privacy stage under `block`: refuses any call with the
+   * detail in it, saying which messages held it, as the stage does (its own
+   * tests pin how it finds them). Otherwise answers.
+   */
+  function blockingProvider(beforeRefusing?: () => void) {
+    const provider = {
+      ...mockProvider([]),
+      chatStream: vi.fn(async function* (
+        messages: unknown[]
+      ): AsyncGenerator<Record<string, unknown>> {
+        const holding = messages.flatMap((m, i) => (JSON.stringify(m).includes(DETAIL) ? [i] : []));
+        if (holding.length > 0) {
+          beforeRefusing?.();
+          throw new PrivacyRefusedError('content_blocked', 'anthropic', {
+            messageCount: messages.length,
+            messageIndices: holding,
+          });
+        }
+        yield { type: 'text', content: 'Here are the parking rules.' };
+        yield { type: 'done', usage: { inputTokens: 5, outputTokens: 4 }, finishReason: 'stop' };
+      }),
+    };
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    } as never);
+    return provider;
+  }
+
+  type Event = { type: string; code?: string; message?: string };
+  const turn = async (message: string): Promise<Event[]> =>
+    (await collect(streamChat({ ...baseRequest, conversationId: 'conv-1', message }))) as Event[];
+  const errorOf = (events: Event[]) => events.find((e) => e.type === 'error');
+  const lastSent = (provider: { chatStream: Mock }) =>
+    JSON.stringify(provider.chatStream.mock.calls[provider.chatStream.mock.calls.length - 1]);
+  const marked = (row: StoredRow | undefined) =>
+    (row?.metadata as { excludedFromHistory?: string } | null)?.excludedFromHistory;
+
+  it('leaves out an earlier row written before the block, and the next turn goes on', async () => {
+    // Written while the mode was `detect`: sent then, refused now.
+    const { rows, add } = conversationStore();
+    const earlier = add({ role: 'user', content: `My name is ${DETAIL}.` });
+    const reply = add({ role: 'assistant', content: 'Thanks, noted.' });
+    const provider = blockingProvider();
+
+    const refused = await turn('What are the parking rules?');
+    expect(errorOf(refused)).toEqual({
+      type: 'error',
+      code: 'privacy_blocked_earlier',
+      message: getUserFacingError('privacy_blocked_earlier').message,
+    });
+    expect(marked(earlier)).toBe('privacy_blocked');
+    // Its reply goes with it, so no answer is resent without its question.
+    expect(marked(reply)).toBe('privacy_blocked');
+    // The refused turn is left out, as every refused turn is.
+    const refusedQuestion = rows.find((r) => r.content === 'What are the parking rules?');
+    expect(marked(refusedQuestion)).toBe('privacy_blocked');
+
+    const answered = await turn('What are the parking rules?');
+    expect(errorOf(answered)).toBeUndefined();
+    const sent = lastSent(provider);
+    expect(sent).not.toContain(DETAIL);
+    expect(sent).not.toContain('Thanks, noted.');
+    // Once, from this turn: the refused copy was left out.
+    expect(sent.split('What are the parking rules?')).toHaveLength(2);
+  });
+
+  it('leaves out an earlier exchange whole, through its approval marker to its reply', async () => {
+    // A pending approval writes an empty assistant row mid-turn; it is not a
+    // finished reply, so the reply after it is the same exchange.
+    const { add } = conversationStore();
+    const question = add({ role: 'user', content: `Book a slot for ${DETAIL}.` });
+    const call = add({
+      role: 'assistant',
+      content: '',
+      metadata: { toolCalls: [{ id: 'tc-b', name: 'run_workflow', arguments: {} }] },
+    });
+    const result = add({ role: 'tool', content: '{"pending":true}', toolCallId: 'tc-b' });
+    const marker = add({ role: 'assistant', content: '', metadata: { pendingApproval: {} } });
+    const reply = add({ role: 'assistant', content: 'Waiting for approval.' });
+    blockingProvider();
+
+    expect(errorOf(await turn('Any news?'))?.code).toBe('privacy_blocked_earlier');
+    for (const row of [question, call, result, marker, reply]) {
+      expect(marked(row)).toBe('privacy_blocked');
+    }
+  });
+
+  it('marks a refused turn whose own marking failed, at the next refusal', async () => {
+    const { rows, state } = conversationStore();
+    const provider = blockingProvider();
+
+    state.failWrites = true;
+    expect(errorOf(await turn(`I'm ${DETAIL}, can I park here?`))?.code).toBe('privacy_blocked');
+    const first = rows.find((r) => r.content.includes(DETAIL));
+    expect(marked(first)).toBeUndefined();
+
+    // Nothing retried it, so the next turn resends it and is refused: for
+    // something earlier, which it now leaves out.
+    state.failWrites = false;
+    expect(errorOf(await turn('Can I park here?'))?.code).toBe('privacy_blocked_earlier');
+    expect(marked(first)).toBe('privacy_blocked');
+
+    expect(errorOf(await turn('Can I park here?'))).toBeUndefined();
+    expect(lastSent(provider)).not.toContain(DETAIL);
+  });
+
+  it('replaces a summary that holds personal details with a note of what it no longer describes', async () => {
+    const pinned = { id: '', createdAt: new Date(0) };
+    const store = conversationStore();
+    const before = store.add({ role: 'user', content: 'Where can I park?' });
+    const covered = store.add({ role: 'assistant', content: 'In bay 4.' });
+    Object.assign(pinned, { id: covered.id, createdAt: covered.createdAt });
+    store.conv.summary = `The user, ${DETAIL}, asked where to park.`;
+    store.conv.summaryUpToMessageId = covered.id;
+    store.add({ role: 'user', content: 'Thanks.' });
+    const provider = blockingProvider();
+
+    expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_blocked_earlier');
+    // The two rows up to the pin; the pin stays, so they are never read again.
+    expect(store.conv.summary).toBe(
+      '(up to 2 earlier messages may not be described in this summary.)\n\n'
+    );
+    expect(store.conv.summaryUpToMessageId).toBe(pinned.id);
+    // Owner-scoped, and only if the pin is still the one the turn read.
+    expect(vi.mocked(prisma.aiConversation.updateMany)).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 'conv-1',
+        userId: 'u1',
+        summaryUpToMessageId: pinned.id,
+      }),
+      data: { summary: store.conv.summary },
+    });
+    expect(vi.mocked(prisma.aiMessage.count)).toHaveBeenCalledWith({
+      where: {
+        conversationId: 'conv-1',
+        conversation: { userId: 'u1' },
+        createdAt: { lte: covered.createdAt },
+      },
+    });
+    // No row held the details, so none was marked for them.
+    expect(marked(before)).toBeUndefined();
+    expect(marked(covered)).toBeUndefined();
+
+    expect(errorOf(await turn('And at weekends?'))).toBeUndefined();
+    const sent = lastSent(provider);
+    expect(sent).not.toContain(DETAIL);
+    // The model is told what it no longer has; the rows the summary covered
+    // stay behind the pin, and what follows it is sent.
+    expect(sent).toContain('up to 2 earlier messages may not be described');
+    expect(sent).not.toContain('In bay 4.');
+    expect(sent).toContain('Thanks.');
+  });
+
+  it('clears a summary whose pin row has gone, since there is no pin to keep', async () => {
+    const store = conversationStore();
+    store.conv.summary = `The user, ${DETAIL}, asked where to park.`;
+    store.conv.summaryUpToMessageId = 'row-gone';
+    blockingProvider();
+
+    expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_blocked_earlier');
+    expect(store.conv.summary).toBeNull();
+    expect(store.conv.summaryUpToMessageId).toBeNull();
+  });
+
+  it('leaves a summary alone that another turn wrote since this one read it', async () => {
+    const store = conversationStore();
+    const covered = store.add({ role: 'assistant', content: 'In bay 4.' });
+    store.conv.summary = `The user, ${DETAIL}, asked where to park.`;
+    store.conv.summaryUpToMessageId = covered.id;
+    const newer = store.add({ role: 'assistant', content: 'Bay 5 at weekends.' });
+    blockingProvider(() => {
+      store.conv.summary = 'A concurrent turn’s own summary.';
+      store.conv.summaryUpToMessageId = newer.id;
+    });
+
+    expect(errorOf(await turn('And at night?'))?.code).toBe('privacy_blocked_earlier');
+    expect(store.conv.summary).toBe('A concurrent turn’s own summary.');
+    expect(store.conv.summaryUpToMessageId).toBe(newer.id);
+  });
+
+  it.each([
+    [
+      'the system prompt',
+      () =>
+        vi
+          .mocked(prisma.aiAgent.findFirst)
+          .mockResolvedValue(makeAgent({ systemInstructions: `Escalate to ${DETAIL}.` }) as never),
+      'system_prompt',
+    ],
+    [
+      'the user’s memories',
+      () =>
+        vi
+          .mocked(prisma.aiUserMemory.findMany)
+          .mockResolvedValue([{ key: 'name', value: DETAIL }] as never),
+      'memories',
+    ],
+  ])(
+    'tells the reader to ask an administrator when %s holds the details, and marks no earlier row',
+    async (_where, arrange, source) => {
+      const store = conversationStore();
+      const earlier = store.add({ role: 'user', content: 'Where can I park?' });
+      store.conv.summary = 'The user asked where to park.';
+      store.conv.summaryUpToMessageId = earlier.id;
+      arrange();
+      blockingProvider();
+      // No request id: the handler logs on the root logger.
+      const log = logger;
+
+      const events = await turn('And at weekends?');
+
+      expect(errorOf(events)).toEqual({
+        type: 'error',
+        code: 'privacy_blocked_setup',
+        message: getUserFacingError('privacy_blocked_setup').message,
+      });
+      expect(marked(earlier)).toBeUndefined();
+      expect(store.conv.summary).toBe('The user asked where to park.');
+      // The refused turn itself is left out, as every refused turn is.
+      expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
+        'privacy_blocked'
+      );
+      // The log says where, never what.
+      expect(log.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
+        conversationId: 'conv-1',
+        code: 'privacy_blocked_setup',
+        turn: false,
+        earlierRows: 0,
+        summary: false,
+        setup: [source],
+      });
+      expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain(DETAIL);
+    }
+  );
+
+  it('places a tool result the turn fetched as this turn, on a later pass of the tool loop', async () => {
+    const { rows } = conversationStore();
+    const provider = blockingProvider();
+    // The first pass asks for a lookup; the tool's result brings the detail in.
+    const answers = provider.chatStream.getMockImplementation()!;
+    let pass = 0;
+    provider.chatStream.mockImplementation(async function* (messages: unknown[]) {
+      pass += 1;
+      if (pass === 1) {
+        yield {
+          type: 'tool_call',
+          toolCall: { id: 'tc-1', name: 'search_knowledge_base', arguments: { q: 'x' } },
+        };
+        yield {
+          type: 'done',
+          usage: { inputTokens: 5, outputTokens: 2 },
+          finishReason: 'tool_use',
+        };
+        return;
+      }
+      yield* answers(messages);
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { found: DETAIL },
+    });
+
+    const events = await turn('Who is in bay 4?');
+
+    expect(errorOf(events)?.code).toBe('privacy_blocked');
+    // Placed, not a fallback: the refused call carried the tool loop's rows.
+    expect(logger.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
+      conversationId: 'conv-1',
+      code: 'privacy_blocked',
+      turn: true,
+      earlierRows: 0,
+      summary: false,
+      setup: [],
+    });
+    const turnRows = rows.filter((r) => !(r.metadata as { error?: boolean } | null)?.error);
+    expect(turnRows.map((r) => r.role)).toEqual(['user', 'assistant', 'tool']);
+    for (const row of turnRows) expect(marked(row)).toBe('privacy_blocked');
+  });
+
+  it('leaves earlier rows and the summary alone when this turn holds the details too', async () => {
+    // Detection runs over the whole call: a name this turn introduces is found
+    // in earlier rows that passed every scan before. They are not forgotten
+    // for it; the reader asks again without the name.
+    const store = conversationStore();
+    const earlier = store.add({ role: 'user', content: `Ask ${DETAIL} about bay 4.` });
+    store.conv.summary = `The user mentioned ${DETAIL}.`;
+    store.conv.summaryUpToMessageId = earlier.id;
+    const after = store.add({ role: 'assistant', content: 'Will do.' });
+    blockingProvider();
+
+    expect(errorOf(await turn(`Is ${DETAIL} in today?`))?.code).toBe('privacy_blocked');
+    expect(marked(after)).toBeUndefined();
+    expect(store.conv.summary).toBe(`The user mentioned ${DETAIL}.`);
+    expect(marked(store.rows.find((r) => r.content === `Is ${DETAIL} in today?`))).toBe(
+      'privacy_blocked'
+    );
+  });
+
+  it('leaves out only the turn when the location is not for the call it sent', async () => {
+    const { add } = conversationStore();
+    const earlier = add({ role: 'user', content: `My name is ${DETAIL}.` });
+    const provider = {
+      ...mockProvider([]),
+      // eslint-disable-next-line require-yield
+      chatStream: vi.fn(async function* (messages: unknown[]) {
+        // A location for a call of another length: not positions in these messages.
+        throw new PrivacyRefusedError('content_blocked', 'anthropic', {
+          messageCount: messages.length + 1,
+          messageIndices: [1],
+        });
+      }),
+    };
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    expect(errorOf(await turn('Can I park here?'))?.code).toBe('privacy_blocked');
+    expect(marked(earlier)).toBeUndefined();
   });
 });

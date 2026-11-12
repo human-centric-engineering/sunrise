@@ -74,6 +74,7 @@ import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt
 import { driveJudgeAgent } from '@/lib/orchestration/evaluations/judge-driver';
 import { judgeCallConfigSchema } from '@/lib/validations/orchestration';
 import { isRequestFaultCode } from '@/lib/orchestration/llm/provider';
+import { PRIVACY_BLOCKED_SETUP } from '@/lib/orchestration/chat/privacy-refusal';
 
 /** The step's code when the judge returns `score: null` with no `errorCode`. */
 export const JUDGE_NOT_APPLICABLE = 'judge_not_applicable';
@@ -86,9 +87,13 @@ export const JUDGE_SCORE_OUT_OF_RANGE = 'judge_score_out_of_range';
  * depends on what the judge says: a missing or inactive judge, a malformed
  * request, the caller's conversation caps (each judge call opens a
  * conversation under the run's user), the per-agent budget, and the input
- * guard, which judges the same input the same way. The output guard, the
- * citation guard and the tool-loop cap are left out on purpose: each is one
- * sample of the judge's reply, and a resample can clear it.
+ * guard, which judges the same input the same way, and personal details in
+ * the judge's own setup under the privacy layer's `block` (§127 t-1017). The
+ * output guard, the citation guard and the tool-loop cap are left out on
+ * purpose: each is one sample of the judge's reply, and a resample can clear
+ * it. So is a `block` refusal for something earlier in the conversation: the
+ * refusal leaves that out, so the next attempt can succeed. (`privacy_blocked`
+ * itself is a request fault: the same input is refused again.)
  */
 const PERMANENT_CHAT_REFUSALS = new Set([
   'agent_not_found',
@@ -97,6 +102,7 @@ const PERMANENT_CHAT_REFUSALS = new Set([
   'conversation_length_cap_reached',
   'budget_exceeded',
   'input_blocked',
+  PRIVACY_BLOCKED_SETUP,
 ]);
 
 /**

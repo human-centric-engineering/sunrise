@@ -522,6 +522,15 @@ describe('block', () => {
     expect(privacySummary(scope)).toMatchObject({ mode: 'block', refused: ['content_blocked'] });
   });
 
+  it('says which messages held something, and never what (t-1017)', async () => {
+    mode('block');
+    const { result: err } = await inScope(() => refusal(applyPrivacyStage(chatCall())));
+    // The user's message and the assistant's tool-call arguments; not the
+    // system prompt or the tool's result.
+    expect(err.found).toEqual({ messageCount: 4, messageIndices: [1, 2] });
+    for (const value of SEEDED) expect(JSON.stringify(err.found)).not.toContain(value);
+  });
+
   it('sends a call with nothing found, untouched', async () => {
     mode('block');
     const args = [[{ role: 'user', content: 'What are your opening hours?' }], { model: 'm' }];
