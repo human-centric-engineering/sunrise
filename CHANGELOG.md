@@ -60,6 +60,10 @@ release process.
     code, `privacy_blocked_memory`, whose words in `getUserFacingError()`
     tell the reader to ask again. **A client that handles `privacy_blocked`
     should handle it too.**
+  - `privacy_blocked_setup` is now the last case, not the second: when an
+    earlier message, the summary or a memory also held the details, the
+    turn is `privacy_blocked_earlier` or `privacy_blocked_memory`, and the
+    next turn shows whether the setup holds them on its own.
   - `buildMessagesAndBreakdown()` sends the user's memories as a heading and
     then one system message per memory, not one message, with a new
     `memory` source (`{ kind: 'memory', memoryIndex }`) for each. **A fork

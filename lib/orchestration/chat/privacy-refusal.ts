@@ -16,14 +16,14 @@
  *   note of how many messages it no longer describes (owner ruling
  *   2026-11-12: the conversation carries on and forgets), so asking again
  *   works.
- * - **setup** — the system prompt, the entity context, or an opening the
- *   server wrote. Nothing the reader can change; they are told to ask an
- *   administrator.
  * - **a memory** — something the agent remembered about this user, written
  *   before the mode was `block`. It is sent in every conversation the user
  *   has with the agent, and nothing else can remove it, so the memory is
  *   deleted (t-1018; owner ruling 2026-11-12: carry on and forget) and asking
  *   again works.
+ * - **setup** — the system prompt, the entity context, or an opening the
+ *   server wrote. Nothing the reader can change; they are told to ask an
+ *   administrator.
  *
  * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*, *(t-1018)*
  */
@@ -52,6 +52,15 @@ export type PrivacyBlockedChatCode =
  */
 export type SetupSource = 'system_prompt' | 'context' | 'memories' | 'opening_turn' | 'note';
 
+/**
+ * One of the user's memories a turn sent: which row, and when it was last
+ * written, so deleting it can skip one rewritten since (t-1018).
+ */
+export interface SentMemory {
+  id: string;
+  updatedAt: Date;
+}
+
 export interface PlacedPrivacyRefusal {
   code: PrivacyBlockedChatCode;
   /**
@@ -64,7 +73,7 @@ export interface PlacedPrivacyRefusal {
   /** Whether the stored summary held personal details: to be replaced by a note. */
   summary: boolean;
   /** The user's memories that held personal details, each once: to be deleted. */
-  memoryIds: string[];
+  memories: SentMemory[];
   /** The parts of the setup that held personal details, each once. */
   setup: SetupSource[];
   /** Whether something this turn sent (its message, or a tool result) held them. */
@@ -81,8 +90,8 @@ export interface BuiltChatRequest {
    * tool calls. (An empty one is a marker, such as a pending approval's.)
    */
   historyRows: readonly { id: string; role: string; finishedReply: boolean }[];
-  /** The id of each of the user's memories the builder was given, by index. */
-  memoryIds: readonly string[];
+  /** Each of the user's memories the builder was given, by index. */
+  memories: readonly SentMemory[];
 }
 
 /** What the handler knows about the call it made. */
@@ -147,7 +156,7 @@ export function placePrivacyRefusal(
         summary = true;
         break;
       case 'memory':
-        if (sent.memoryIds[source.memoryIndex] === undefined) return null;
+        if (sent.memories[source.memoryIndex] === undefined) return null;
         memories.add(source.memoryIndex);
         break;
       default:
@@ -166,20 +175,26 @@ export function placePrivacyRefusal(
   // their own, the next attempt finds them and places them.
   // - This turn first: asking again without the details works, or shows
   //   what else holds them.
-  // - Then the setup: asking again cannot work until an administrator
-  //   changes it.
   // - Then anything earlier, which is left out, so asking again works.
-  // - Then a memory, which is deleted. Last because that cannot be undone and
-  //   reaches every conversation the user has with the agent: a name it only
-  //   matched because an earlier row taught it is not found once that row
-  //   is left out.
-  const none = { earlierRowIds: [], summary: false, memoryIds: [], setup: [] };
+  // - Then a memory, which is deleted. After anything earlier because that
+  //   cannot be undone and reaches every conversation the user has with the
+  //   agent: a name it only matched because an earlier row taught it is not
+  //   found once that row is left out.
+  // - The setup last: nothing removed here can change it, so it is the one
+  //   case that ends in an administrator. Ahead of the others, a name it
+  //   only matched because a memory or an earlier row taught it ("You are
+  //   Max" beside a remembered "Max Turner") would refuse every turn, with
+  //   nothing for the administrator to find. Behind them, the next attempt
+  //   shows whether it holds details of its own.
+  const none = { earlierRowIds: [], summary: false, memories: [], setup: [] };
   if (turn) return { ...none, code: PRIVACY_BLOCKED, turn };
-  if (setup.size > 0) return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
   if (summary || earlierRows.size > 0) {
     const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
     return { ...none, code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, turn };
   }
-  const memoryIds = [...memories].sort((a, b) => a - b).map((i) => sent.memoryIds[i]);
-  return { ...none, code: PRIVACY_BLOCKED_MEMORY, memoryIds, turn };
+  if (memories.size > 0) {
+    const placed = [...memories].sort((a, b) => a - b).map((i) => sent.memories[i]);
+    return { ...none, code: PRIVACY_BLOCKED_MEMORY, memories: placed, turn };
+  }
+  return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
 }

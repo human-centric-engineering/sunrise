@@ -124,6 +124,7 @@ import {
   placePrivacyRefusal,
   type BuiltChatRequest,
   type PlacedPrivacyRefusal,
+  type SentMemory,
 } from '@/lib/orchestration/chat/privacy-refusal';
 import { isJsonObject } from '@/lib/privacy/config-recipients';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
@@ -377,14 +378,9 @@ function rowsAfterPin(pin: HistoryPin) {
 
 /**
  * What a turn built its first call from, the summary pin it read (t-1017), and
- * for the memories it sent (t-1018): whose they are, and when each was last
- * written, by the same index as `memoryIds`.
+ * the agent whose memories it sent (t-1018).
  */
-type BuiltTurnRequest = BuiltChatRequest & {
-  summaryPin: string | null;
-  agentId: string;
-  memoryUpdatedAt: readonly Date[];
-};
+type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null; agentId: string };
 
 /** What a read from the pin returns. */
 interface HistoryFromPin {
@@ -1460,8 +1456,7 @@ export class StreamingChatHandler {
         })),
         summaryPin: conversationSummary ? casPin : null,
         agentId: agent.id,
-        memoryIds: memoryRows.map((m) => m.id),
-        memoryUpdatedAt: memoryRows.map((m) => m.updatedAt),
+        memories: memoryRows.map((m) => ({ id: m.id, updatedAt: m.updatedAt })),
       };
 
       const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
@@ -3249,8 +3244,8 @@ export class StreamingChatHandler {
           if (placed?.summary && builtRequest) {
             await this.forgetSummary(conversationId, request.userId, builtRequest.summaryPin, log);
           }
-          if (placed && placed.memoryIds.length > 0 && builtRequest) {
-            await this.forgetMemories(placed.memoryIds, builtRequest, request.userId, log);
+          if (placed && placed.memories.length > 0 && builtRequest) {
+            await this.forgetMemories(placed.memories, builtRequest.agentId, request.userId, log);
           }
           if (placed) {
             // Where, never what: the kinds of source and how many rows.
@@ -3260,7 +3255,7 @@ export class StreamingChatHandler {
               turn: placed.turn,
               earlierRows: placed.earlierRowIds.length,
               summary: placed.summary,
-              memories: placed.memoryIds.length,
+              memories: placed.memories.length,
               setup: placed.setup,
             });
           }
@@ -3567,24 +3562,23 @@ export class StreamingChatHandler {
    * finds the same memory.
    */
   private async forgetMemories(
-    ids: readonly string[],
-    built: BuiltTurnRequest,
+    memories: readonly SentMemory[],
+    agentId: string,
     userId: string,
     log: typeof logger
   ): Promise<void> {
-    const asRead = ids.flatMap((id) => {
-      const at = built.memoryIds.indexOf(id);
-      return at === -1 ? [] : [{ id, updatedAt: built.memoryUpdatedAt[at] }];
-    });
-    if (asRead.length === 0) return;
     try {
       await prisma.aiUserMemory.deleteMany({
-        where: { userId, agentId: built.agentId, OR: asRead },
+        where: {
+          userId,
+          agentId,
+          OR: memories.map(({ id, updatedAt }) => ({ id, updatedAt })),
+        },
       });
     } catch (err) {
       // A count, never a key or a value.
       log.warn('Failed to forget privacy-refused user memories', {
-        memories: asRead.length,
+        memories: memories.length,
         error: err instanceof Error ? err.message : String(err),
       });
     }

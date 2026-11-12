@@ -9800,12 +9800,20 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
     vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
       makeAgent({ systemInstructions: `Escalate to ${DETAIL}.` }) as never
     );
-    // A memory holding them too is not deleted: that cannot help while the
-    // setup holds them, and cannot be undone.
-    const memories = memoryStore([{ key: 'contact', value: DETAIL }]);
+    // A memory holding them too goes first: the setup comes last, since
+    // nothing removed changes it (t-1018). The turn after shows the setup
+    // holds them on its own.
+    const memories = memoryStore([
+      { key: 'contact', value: DETAIL },
+      { key: 'language', value: 'French' },
+    ]);
     blockingProvider();
     // No request id: the handler logs on the root logger.
     const log = logger;
+
+    expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_blocked_memory');
+    expect(memories.map((m) => m.key)).toEqual(['language']);
+    vi.mocked(log.warn).mockClear();
 
     const events = await turn('And at weekends?');
 
@@ -9816,11 +9824,10 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
     });
     expect(marked(earlier)).toBeUndefined();
     expect(store.conv.summary).toBe('The user asked where to park.');
-    expect(memories.map((m) => m.key)).toEqual(['contact']);
-    // The refused turn itself is left out, as every refused turn is.
-    expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
-      'privacy_blocked'
-    );
+    expect(memories.map((m) => m.key)).toEqual(['language']);
+    // The refused turns themselves are left out, as every refused turn is.
+    const refused = store.rows.filter((r) => r.content === 'And at weekends?');
+    expect(refused.map(marked)).toEqual(['privacy_blocked', 'privacy_blocked']);
     // The log says where, never what.
     expect(log.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
       conversationId: 'conv-1',

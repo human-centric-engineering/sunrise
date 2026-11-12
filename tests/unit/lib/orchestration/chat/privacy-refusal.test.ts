@@ -39,13 +39,16 @@ const HISTORY_ROWS = [
   row('row-g', 'assistant', true),
   row('row-h', 'assistant', true),
 ];
-// Two messages the tool loop added: an assistant tool call and its result.
-const MEMORY_IDS = ['mem-1', 'mem-2'];
+const MEM_1 = { id: 'mem-1', updatedAt: new Date('2026-11-01T00:00:00Z') };
+const MEM_2 = { id: 'mem-2', updatedAt: new Date('2026-11-02T00:00:00Z') };
+const MEMORIES = [MEM_1, MEM_2];
+// Two messages past those, which the tool loop added: an assistant tool call
+// and its result.
 const SENT = {
   messageCount: 12,
   sources: SOURCES,
   historyRows: HISTORY_ROWS,
-  memoryIds: MEMORY_IDS,
+  memories: MEMORIES,
 };
 // Indices into SENT, by what is there.
 const SYSTEM = 0;
@@ -71,7 +74,7 @@ const placeRows = (...indices: number[]) =>
       messageCount: HISTORY_ROWS.length,
       sources: HISTORY_ROWS.map((_, historyIndex) => ({ kind: 'history', historyIndex })),
       historyRows: HISTORY_ROWS,
-      memoryIds: [],
+      memories: [],
     }
   )?.earlierRowIds;
 
@@ -81,7 +84,7 @@ describe('placePrivacyRefusal', () => {
       code: 'privacy_blocked',
       earlierRowIds: [],
       summary: false,
-      memoryIds: [],
+      memories: [],
       setup: [],
       turn: true,
     });
@@ -93,7 +96,7 @@ describe('placePrivacyRefusal', () => {
       code: 'privacy_blocked_earlier',
       earlierRowIds: ['row-b', 'row-c'],
       summary: false,
-      memoryIds: [],
+      memories: [],
       setup: [],
       turn: false,
     });
@@ -119,7 +122,7 @@ describe('placePrivacyRefusal', () => {
       code: 'privacy_blocked_earlier',
       earlierRowIds: ['row-b', 'row-c'],
       summary: true,
-      memoryIds: [],
+      memories: [],
       setup: [],
       turn: false,
     });
@@ -132,7 +135,7 @@ describe('placePrivacyRefusal', () => {
       code: 'privacy_blocked',
       earlierRowIds: [],
       summary: false,
-      memoryIds: [],
+      memories: [],
       setup: [],
       turn: true,
     });
@@ -145,23 +148,40 @@ describe('placePrivacyRefusal', () => {
       code: 'privacy_blocked',
       earlierRowIds: [],
       summary: false,
-      memoryIds: [],
+      memories: [],
       setup: [],
       turn: true,
     });
   });
 
-  it('the setup wins over anything earlier and any memory, and leaves them alone', () => {
-    expect(place([SYSTEM, HEADING, SYSTEM, MEMORY_2, SUMMARY, REPLY])).toEqual({
+  it('the setup: each part that held details, once, when nothing else did', () => {
+    expect(place([SYSTEM, HEADING, SYSTEM])).toEqual({
       code: 'privacy_blocked_setup',
       earlierRowIds: [],
       summary: false,
-      memoryIds: [],
+      memories: [],
       setup: ['system_prompt', 'memories'],
       turn: false,
     });
     expect(place([CONTEXT])).toMatchObject({ setup: ['context'], turn: false });
     expect(place([NOTE])).toMatchObject({ setup: ['note'] });
+  });
+
+  it('the setup comes last: anything earlier, or a memory, acts first and leaves it alone', () => {
+    // A name the setup only matched because something else taught it ("You
+    // are Max" beside a remembered "Max Turner") would refuse every turn if
+    // the setup won, with nothing for an administrator to find.
+    expect(place([SYSTEM, CONTEXT, MEMORY_2])).toMatchObject({
+      code: 'privacy_blocked_memory',
+      memories: [MEM_2],
+      setup: [],
+    });
+    expect(place([SYSTEM, SUMMARY, REPLY])).toMatchObject({
+      code: 'privacy_blocked_earlier',
+      earlierRowIds: ['row-b', 'row-c'],
+      summary: true,
+      setup: [],
+    });
   });
 
   it.each([
@@ -180,21 +200,21 @@ describe('placePrivacyRefusal', () => {
     expect(
       placePrivacyRefusal(
         { messageCount: 1, messageIndices: [0] },
-        { messageCount: 1, sources, historyRows: HISTORY_ROWS, memoryIds: MEMORY_IDS }
+        { messageCount: 1, sources, historyRows: HISTORY_ROWS, memories: MEMORIES }
       )
     ).toBeNull();
   });
 
-  it('a memory: each one that held details, by id, once', () => {
+  it('a memory: each one that held details, once, with when it was last written', () => {
     expect(place([MEMORY_2, MEMORY_1, MEMORY_2])).toEqual({
       code: 'privacy_blocked_memory',
       earlierRowIds: [],
       summary: false,
-      memoryIds: ['mem-1', 'mem-2'],
+      memories: [MEM_1, MEM_2],
       setup: [],
       turn: false,
     });
-    expect(place([MEMORY_2])).toMatchObject({ memoryIds: ['mem-2'] });
+    expect(place([MEMORY_2])).toMatchObject({ memories: [MEM_2] });
   });
 
   it('anything earlier wins over a memory, which it leaves alone', () => {
@@ -204,19 +224,19 @@ describe('placePrivacyRefusal', () => {
     expect(place([MEMORY_1, REPLY])).toMatchObject({
       code: 'privacy_blocked_earlier',
       earlierRowIds: ['row-b', 'row-c'],
-      memoryIds: [],
+      memories: [],
     });
     expect(place([SUMMARY, MEMORY_1])).toMatchObject({
       code: 'privacy_blocked_earlier',
       summary: true,
-      memoryIds: [],
+      memories: [],
     });
   });
 
   it('this turn wins over a memory, which it leaves alone', () => {
     expect(place([MEMORY_1, MESSAGE])).toMatchObject({
       code: 'privacy_blocked',
-      memoryIds: [],
+      memories: [],
       turn: true,
     });
   });
@@ -226,7 +246,7 @@ describe('placePrivacyRefusal', () => {
     expect(
       placePrivacyRefusal(
         { messageCount: 1, messageIndices: [0] },
-        { messageCount: 1, sources, historyRows: HISTORY_ROWS, memoryIds: MEMORY_IDS }
+        { messageCount: 1, sources, historyRows: HISTORY_ROWS, memories: MEMORIES }
       )
     ).toBeNull();
   });

@@ -405,15 +405,22 @@ That happened when the details were in:
   | ---------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- | ---------------------------------- |
   | This turn: the message, or a tool result             | The turn's rows                                                  | `privacy_blocked`         | Ask again without them             |
   | An earlier row, or the stored summary                | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
+  | One of the user's memories (t-1018, below)           | The turn's rows; the memory is deleted                           | `privacy_blocked_memory`  | Ask again; it has forgotten it     |
   | The system prompt, entity context or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
 
-  **One case wins, and only it acts**: this turn, then the setup, then
-  anything earlier. Detection runs over the whole call, so a name this turn
-  introduces is found in the setup, earlier rows and the summary, all of
-  which passed every scan before; sending the reader to an administrator,
-  or forgetting them, would be for nothing. If they hold details of their
-  own, the next attempt finds them, and places them. The log line ("Chat turn refused for personal details") names the
-  kinds of source and how many rows, never a value.
+  **One case wins, and only it acts**: this turn, then anything earlier,
+  then a memory (t-1018), then the setup. Detection runs over the whole
+  call, so a name learned in one part is found wherever else it appears: a
+  name this turn introduces is found in the setup, earlier rows and the
+  summary, all of which passed every scan before, and forgetting them would
+  be for nothing. If they hold details of their own, the next attempt finds
+  them, and places them. The setup comes last because nothing removed
+  changes it: ahead of the others, a name it only matched because an
+  earlier row or a memory taught it ("You are Max" beside "Max Turner")
+  would refuse every turn, with nothing for an administrator to find. (Until
+  t-1018 the setup came second.) The log line ("Chat turn refused for
+  personal details") names the kinds of source and how many rows, never a
+  value.
 
 - **An earlier row takes its exchange with it**: from where it begins to
   where the next one does. An exchange begins at a user message, or at an
@@ -483,13 +490,16 @@ that writes one needs an LLM call `block` refuses.
   memory a concurrent turn rewrote since this turn read it is kept. The
   delete is scoped to the user and the agent. It is best effort, like the
   marking: if it fails, the next refusal finds the same memory.
-- **It comes last.** This turn, then the setup, then anything earlier, then
-  a memory. Deleting can't be undone and reaches every conversation, so an
-  earlier row that holds the details is left out first: a name the memory
-  matched only because that row taught it is not found once the row is
-  gone. A conversation raised to `block` with the name in both is refused
-  twice, as `privacy_blocked_earlier` and then `privacy_blocked_memory`,
-  and goes on.
+- **Where it comes.** This turn, then anything earlier, then a memory,
+  then the setup. Deleting can't be undone and reaches every conversation,
+  so an earlier row that holds the details is left out first: a name the
+  memory matched only because that row taught it is not found once the row
+  is gone. A conversation raised to `block` with the name in both is
+  refused twice, as `privacy_blocked_earlier` and then
+  `privacy_blocked_memory`, and goes on. A memory goes before the setup, so
+  a name the setup only matched because the memory taught it does not lock
+  the user out; if the setup holds details of its own, the next turn is
+  `privacy_blocked_setup`.
 - **The log** counts memories, and names no key or value.
 - **A judge** (`judge_call`) retries `privacy_blocked_memory`, since the
   refusal deleted what caused it.
