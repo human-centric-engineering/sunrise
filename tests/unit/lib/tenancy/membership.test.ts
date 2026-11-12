@@ -9,8 +9,9 @@
  * - `membershipForNewUser` — the one answer for `(user, invitation)`, with the
  *   case t-669 found missing: an invitation that GRANTS platform ADMIN must
  *   make its user the install org's OWNER even though the row was created
- *   as USER. And the per-org bootstrap: the first member of a non-install
- *   org is its OWNER, whatever the invitation said.
+ *   as USER. And the per-org bootstrap: the first person who isn't platform
+ *   staff to join a non-install org with no OWNER is its OWNER, whatever the
+ *   invitation said — staff already in the org don't stop it (#1178).
  * - `activeOrgForSession` — the four arms, and the self-heal, which must
  *   write for a memberless user and must NOT write for anyone else.
  *
@@ -75,6 +76,20 @@ const db = mocks as unknown as Pick<
 
 const OTHER_ORG = 'cmorg000000000000000other';
 const USER_ID = 'cmuser00000000000000user1';
+
+/**
+ * Answer `orgMembership.count` from these rows, honouring the `where` it is
+ * given — so a test proves which members the bootstrap counts, not only what
+ * a fixed number makes it do.
+ */
+function orgHas(rows: Array<{ orgId: string; role: OrgRole }>): void {
+  mocks.orgMembership.count.mockImplementation(
+    ({ where }: { where: { orgId: string; role?: OrgRole } }) =>
+      Promise.resolve(
+        rows.filter((r) => r.orgId === where.orgId && (!where.role || r.role === where.role)).length
+      )
+  );
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -169,7 +184,10 @@ describe('membershipForNewUser', () => {
   );
 
   it('an invitation naming another org lands there with its orgRole, MEMBER by default', async () => {
-    mocks.orgMembership.count.mockResolvedValue(3);
+    orgHas([
+      { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
+      { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
+    ]);
     const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
 
     expect(await membershipForNewUser(row, { orgId: OTHER_ORG }, db)).toEqual({
@@ -179,7 +197,9 @@ describe('membershipForNewUser', () => {
     expect(
       await membershipForNewUser(row, { orgId: OTHER_ORG, orgRole: ORG_ADMIN_ROLE }, db)
     ).toEqual({ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE });
-    expect(mocks.orgMembership.count).toHaveBeenCalledWith({ where: { orgId: OTHER_ORG } });
+    expect(mocks.orgMembership.count).toHaveBeenCalledWith({
+      where: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
+    });
   });
 
   it('the first member of a new org is its OWNER, whatever the invitation said', async () => {
@@ -189,6 +209,63 @@ describe('membershipForNewUser', () => {
     expect(
       await membershipForNewUser(row, { orgId: OTHER_ORG, orgRole: DEFAULT_ORG_ROLE }, db)
     ).toEqual({ orgId: OTHER_ORG, role: ORG_OWNER_ROLE });
+  });
+
+  // #1178: a vendor's staff can be in an org as ADMIN, preparing it, before
+  // its first real person arrives. Counting every member, that org was not
+  // empty, so its first real person landed as MEMBER and nobody owned it.
+  it('the first non-staff member of an org that has only staff in it is its OWNER (#1178)', async () => {
+    orgHas([{ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE }]);
+    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+
+    expect(
+      await membershipForNewUser(row, { orgId: OTHER_ORG, orgRole: DEFAULT_ORG_ROLE }, db)
+    ).toEqual({ orgId: OTHER_ORG, role: ORG_OWNER_ROLE });
+  });
+
+  it('once the org has an OWNER, the next non-staff member gets the invitation’s role', async () => {
+    orgHas([
+      { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+      { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
+    ]);
+    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+
+    expect(
+      await membershipForNewUser(row, { orgId: OTHER_ORG, orgRole: ORG_ADMIN_ROLE }, db)
+    ).toEqual({ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE });
+  });
+
+  it('an org whose only OWNER is staff is not owner-less: the client gets the invitation’s role', async () => {
+    // The trigger is "no OWNER yet", not "no non-staff members": an org a
+    // platform admin was made OWNER of is administrable, and handing it a
+    // second owner is the existing owner's call.
+    orgHas([{ orgId: OTHER_ORG, role: ORG_OWNER_ROLE }]);
+    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+
+    expect(await membershipForNewUser(row, { orgId: OTHER_ORG }, db)).toEqual({
+      orgId: OTHER_ORG,
+      role: DEFAULT_ORG_ROLE,
+    });
+  });
+
+  it('platform staff never take the bootstrap, judged on the role granted or the account’s own', async () => {
+    orgHas([]);
+    const newRow = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+    const adminAccount = { role: PLATFORM_ADMIN_ROLE, accountType: 'HUMAN' };
+
+    // A new account the invitation makes a platform ADMIN (its row is still USER).
+    expect(
+      await membershipForNewUser(newRow, { role: PLATFORM_ADMIN_ROLE, orgId: OTHER_ORG }, db)
+    ).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE });
+    // An existing platform ADMIN accepting an org invitation, which always names USER.
+    expect(
+      await membershipForNewUser(adminAccount, { role: DEFAULT_USER_ROLE, orgId: OTHER_ORG }, db)
+    ).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE });
+    // Control: the same empty org makes a non-staff newcomer its OWNER.
+    expect(await membershipForNewUser(newRow, { orgId: OTHER_ORG }, db)).toEqual({
+      orgId: OTHER_ORG,
+      role: ORG_OWNER_ROLE,
+    });
   });
 
   it('the per-org bootstrap does not apply to the install org', async () => {
@@ -205,7 +282,7 @@ describe('membershipForNewUser', () => {
 
   it('a platform ADMIN invited into another org is a plain member there', async () => {
     // The platform role decides the INSTALL org's role only.
-    mocks.orgMembership.count.mockResolvedValue(2);
+    orgHas([{ orgId: OTHER_ORG, role: ORG_OWNER_ROLE }]);
     const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
 
     expect(

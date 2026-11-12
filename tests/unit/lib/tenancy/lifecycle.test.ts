@@ -387,12 +387,38 @@ describe('addMember', () => {
     expect(db.orgMembership.create).not.toHaveBeenCalled();
   });
 
-  it('defaults to MEMBER in a populated org, and OWNER for the first member of an empty one', async () => {
-    db.orgMembership.count.mockResolvedValueOnce(2);
+  it('defaults to MEMBER in an owned org, and OWNER for the first member of an empty one', async () => {
+    db.orgMembership.count.mockResolvedValueOnce(1);
     expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(DEFAULT_ORG_ROLE);
 
     db.orgMembership.count.mockResolvedValueOnce(0);
     expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(ORG_OWNER_ROLE);
+  });
+
+  // #1178, the same rule as the invitation path (takesFirstOwnership).
+  it('counts owners, not members: staff in the org as ADMIN do not stop the first real member owning it', async () => {
+    // The org holds one platform admin, as ADMIN: one member, no owner.
+    const rows = [{ orgId: ORG, role: ORG_ADMIN_ROLE }];
+    db.orgMembership.count.mockImplementation(
+      ({ where }: { where: { orgId: string; role?: string } }) =>
+        Promise.resolve(
+          rows.filter((r) => r.orgId === where.orgId && (!where.role || r.role === where.role))
+            .length
+        )
+    );
+
+    expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(ORG_OWNER_ROLE);
+    expect(db.orgMembership.count).toHaveBeenCalledWith({
+      where: { orgId: ORG, role: ORG_OWNER_ROLE },
+    });
+  });
+
+  it('never gives the bootstrap to platform staff, who are given OWNER explicitly', async () => {
+    db.orgMembership.count.mockResolvedValue(0);
+    db.user.findUnique.mockResolvedValue(human(OTHER, PLATFORM_ADMIN_ROLE));
+
+    expect((await addMember(ORG, OTHER, undefined, AS_PLATFORM)).role).toBe(DEFAULT_ORG_ROLE);
+    expect((await addMember(ORG, OTHER, ORG_OWNER_ROLE, AS_PLATFORM)).role).toBe(ORG_OWNER_ROLE);
   });
 
   it('is a 409 for an existing member', async () => {

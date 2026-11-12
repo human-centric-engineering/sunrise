@@ -57,7 +57,12 @@ import { APIError } from '@/lib/api/errors';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { healSignupRecord, initialMembershipFor } from '@/lib/tenancy/membership';
+import {
+  countOrgOwners,
+  healSignupRecord,
+  initialMembershipFor,
+  takesFirstOwnership,
+} from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
 import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
 import {
@@ -434,10 +439,11 @@ export async function updateOrgReportingPrevious(
 /**
  * Add an existing user to an org.
  *
- * `role` defaults to `MEMBER`, except that the first member of an EMPTY
- * non-install org becomes its `OWNER` when no role was asked for — the
- * invitation path's bootstrap (`membershipForNewUser`), so an org created
- * without a named owner still gets one from its first member. Unlike that
+ * `role` defaults to `MEMBER`, except that when no role was asked for, the
+ * first person who is not platform staff to join a non-install org with no
+ * `OWNER` becomes its `OWNER` — the invitation path's bootstrap, one rule for
+ * both (`takesFirstOwnership`), so an org created without a named owner still
+ * gets one from its first real member, whoever is in it already. Unlike that
  * path an explicit role is honoured: this is an API call by someone who
  * chose the role, not an invitation whose author could not know the org
  * would be empty when it was accepted.
@@ -477,8 +483,8 @@ export async function addMember(
   } else if (role !== undefined) {
     effectiveRole = role;
   } else {
-    const members = await db.orgMembership.count({ where: { orgId } });
-    effectiveRole = members === 0 ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
+    const owners = await countOrgOwners(orgId, db);
+    effectiveRole = takesFirstOwnership(user, owners) ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
   }
 
   // Placed by hand: a signup record that survived a failed write is paid and

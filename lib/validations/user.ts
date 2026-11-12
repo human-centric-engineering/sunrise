@@ -209,7 +209,7 @@ export const inviteUserSchema = z.object({
    */
   orgId: z.string().min(1).max(200).optional(),
 
-  /** Their role in that org. Absent ⇒ MEMBER (OWNER for the first member of a new org). */
+  /** Their role in that org. Absent ⇒ MEMBER (OWNER for the first non-staff member of an owner-less org). */
   orgRole: z.enum(ORG_ROLES).optional(),
 });
 

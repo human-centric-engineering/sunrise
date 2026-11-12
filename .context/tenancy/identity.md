@@ -321,8 +321,16 @@ membership would let any customer admin make outsiders members of the
 vendor's org. And suspending a customer org is meant to lock its members
 out.
 
-The last row is the **per-org bootstrap**: an org nobody owns is one nobody
-can administer, so its first member owns it. It sits beside the install-scoped
+The last row is the **per-org bootstrap** (`takesFirstOwnership`): an org
+nobody owns is one nobody can administer, so the first person who isn't
+platform staff to join an org with **no `OWNER` yet** owns it. The test is "no
+owner", not "no members" (#1178): a vendor's staff can be in an org as `ADMIN`,
+preparing it, before its first real person arrives, and that person still
+becomes its owner. Staff (a platform `ADMIN` by the account's role or by the
+role the invitation grants, or a SERVICE account) never take it — an org whose only
+owner is the vendor is not one its own people can administer — and are given
+`OWNER` explicitly when they should hold it. Whether an invitation's explicit
+`orgRole` should win over the bootstrap is a separate question (#1156). It sits beside the install-scoped
 `AuthBootstrap` (first human on a fresh database → platform `ADMIN`) and never
 replaces it: the install org's owner is decided by the platform role, and on a
 fresh database its first member is the seeded SERVICE account, which must
@@ -414,7 +422,7 @@ INVITATION_WRONG_ACCOUNT`, and the page says who is signed in and offers to
   address with an account `409 EMAIL_TAKEN` and points it here.
 - **The membership follows the new-account rule.** `membershipForNewUser`
   decides the role (the invitation's `orgRole`, default `MEMBER`, and `OWNER`
-  for the first member of an empty org), and `addMember` writes it. The
+  by the per-org bootstrap), and `addMember` writes it. The
   inviter's owner standing for an `OWNER` invitation was checked when it was
   issued, so acceptance writes what that check admitted. An existing user
   already has their install-org floor at `single`, so nothing else is
@@ -545,9 +553,9 @@ while they are acting in that org — never by a role check in a route.
   state the admin list flags (`ownerCount: 0`), and a platform admin — whom
   the policy admits everywhere — repairs it through the same members route.
   `POST /api/v1/admin/orgs` takes `ownerUserId` so the org starts with one.
-- **The first member of an empty org becomes OWNER** when no role is asked for
-  — the same bootstrap as an invitation into an empty org
-  (`membershipForNewUser`). Unlike the invitation path, an explicit role on
+- **The first non-staff member of an org with no OWNER becomes OWNER** when no
+  role is asked for — the same bootstrap as an invitation
+  (`takesFirstOwnership`, shared with `membershipForNewUser`). Unlike the invitation path, an explicit role on
   `POST …/members` is honoured: it is an API call by someone who chose it.
 - **Only an OWNER confers or revokes OWNER** (`OWNER_STANDING`). The policy
   admits an ADMIN to the roster; the lifecycle is where "without the OWNER's
