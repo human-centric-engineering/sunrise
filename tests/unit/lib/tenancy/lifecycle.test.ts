@@ -396,20 +396,41 @@ describe('addMember', () => {
   });
 
   // #1178, the same rule as the invitation path (takesFirstOwnership).
-  it('counts owners, not members: staff in the org as ADMIN do not stop the first real member owning it', async () => {
-    // The org holds one platform admin, as ADMIN: one member, no owner.
-    const rows = [{ orgId: ORG, role: ORG_ADMIN_ROLE }];
-    db.orgMembership.count.mockImplementation(
-      ({ where }: { where: { orgId: string; role?: string } }) =>
-        Promise.resolve(
-          rows.filter((r) => r.orgId === where.orgId && (!where.role || r.role === where.role))
-            .length
-        )
-    );
+  describe('the first-owner bootstrap counts non-staff members', () => {
+    // Rows as the fake count reads them; `staff` marks a platform admin's.
+    function orgHas(rows: Array<{ orgId: string; role: string; staff?: boolean }>): void {
+      db.orgMembership.count.mockImplementation(
+        ({ where }: { where: { orgId: string; role?: string; user?: unknown } }) =>
+          Promise.resolve(
+            rows.filter(
+              (r) =>
+                r.orgId === where.orgId &&
+                (!where.role || r.role === where.role) &&
+                (!where.user || !r.staff)
+            ).length
+          )
+      );
+    }
 
-    expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(ORG_OWNER_ROLE);
-    expect(db.orgMembership.count).toHaveBeenCalledWith({
-      where: { orgId: ORG, role: ORG_OWNER_ROLE },
+    it('staff in the org as ADMIN do not stop the first real member owning it', async () => {
+      orgHas([{ orgId: ORG, role: ORG_ADMIN_ROLE, staff: true }]);
+
+      expect((await addMember(ORG, OTHER, undefined, AS_PLATFORM)).role).toBe(ORG_OWNER_ROLE);
+      expect(db.orgMembership.count).toHaveBeenCalledWith({
+        where: {
+          orgId: ORG,
+          user: { role: { not: PLATFORM_ADMIN_ROLE }, accountType: { not: 'SERVICE' } },
+        },
+      });
+    });
+
+    // Security review of #1178: an org ADMIN in an org with no OWNER (its last
+    // owner erased) must not pick the next owner by adding with no role —
+    // their own second account included. OWNER needs owner standing.
+    it('an org ADMIN adding with no role to an owner-less org adds a MEMBER', async () => {
+      orgHas([{ orgId: ORG, role: ORG_ADMIN_ROLE }]);
+
+      expect((await addMember(ORG, OTHER, undefined, AS_ADMIN)).role).toBe(DEFAULT_ORG_ROLE);
     });
   });
 

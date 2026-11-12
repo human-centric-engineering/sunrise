@@ -174,8 +174,8 @@ and refuses at `multi` ([context.md](./context.md)). It is deliberately **not** 
 contributor: that registry is the fork's seam and runs last; this is a core
 invariant and runs first.
 
-**When deciding fails.** The decision reads the invited org's owner count
-(for the first-owner bootstrap), and a failure there is logged at
+**When deciding fails.** The decision reads the invited org's non-staff
+member count (for the first-owner bootstrap), and a failure there is logged at
 `error` and never blocks the signup. The before hook then records
 `undecidedMembershipsForNewUser(user, invitation)`: the invitation's org with
 the role it names, default `MEMBER`, plus the install-org floor at `single`,
@@ -322,15 +322,25 @@ vendor's org. And suspending a customer org is meant to lock its members
 out.
 
 The last row is the **per-org bootstrap** (`takesFirstOwnership`): an org
-nobody owns is one nobody can administer, so the first person who isn't
-platform staff to join an org with **no `OWNER` yet** owns it. The test is "no
-owner", not "no members" (#1178): a vendor's staff can be in an org as `ADMIN`,
-preparing it, before its first real person arrives, and that person still
-becomes its owner. Staff (a platform `ADMIN` by the account's role or by the
-role the invitation grants, or a SERVICE account) never take it — an org whose only
-owner is the vendor is not one its own people can administer — and are given
-`OWNER` explicitly when they should hold it. Whether an invitation's explicit
-`orgRole` should win over the bootstrap is a separate question (#1156). It sits beside the install-scoped
+nobody owns is one nobody can administer, so **an org's first member who isn't
+platform staff** owns it. Staff are a platform `ADMIN` (by the account's role
+or by the role the invitation grants) or a SERVICE account.
+
+- **Staff in the org don't count** (#1178). A vendor's staff can be in an org
+  as `ADMIN`, preparing it, before its first real person arrives, and that
+  person still becomes its owner.
+- **Staff never take it.** An org whose only owner is the vendor is not one
+  its own people can administer. Staff who should hold `OWNER` are given it
+  explicitly.
+- **It is not "no `OWNER` yet".** An org can lose its last owner to an erasure
+  and keep its ADMINs, and an ADMIN may add members or invite with no role.
+  Under "no owner yet" that ADMIN would pick the next owner, their own second
+  account included, without the owner standing every explicit `OWNER` grant
+  needs. Any non-staff member closes the bootstrap, and a platform admin
+  repairs such an org.
+
+Whether an invitation's explicit `orgRole` should win over the bootstrap is a
+separate question (#1156). The bootstrap sits beside the install-scoped
 `AuthBootstrap` (first human on a fresh database → platform `ADMIN`) and never
 replaces it: the install org's owner is decided by the platform role, and on a
 fresh database its first member is the seeded SERVICE account, which must
@@ -553,9 +563,10 @@ while they are acting in that org — never by a role check in a route.
   state the admin list flags (`ownerCount: 0`), and a platform admin — whom
   the policy admits everywhere — repairs it through the same members route.
   `POST /api/v1/admin/orgs` takes `ownerUserId` so the org starts with one.
-- **The first non-staff member of an org with no OWNER becomes OWNER** when no
-  role is asked for — the same bootstrap as an invitation
-  (`takesFirstOwnership`, shared with `membershipForNewUser`). Unlike the invitation path, an explicit role on
+- **An org's first non-staff member becomes OWNER** when no role is asked
+  for — the same bootstrap as an invitation (`takesFirstOwnership`, shared
+  with `membershipForNewUser`). An org ADMIN never triggers it, being a
+  non-staff member already. Unlike the invitation path, an explicit role on
   `POST …/members` is honoured: it is an API call by someone who chose it.
 - **Only an OWNER confers or revokes OWNER** (`OWNER_STANDING`). The policy
   admits an ADMIN to the roster; the lifecycle is where "without the OWNER's

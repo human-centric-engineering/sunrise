@@ -210,17 +210,19 @@ release process.
   whoever is in it already (t-1001, #1178).** The per-org bootstrap fired only
   for an org with no members at all, so an org a vendor's staff had joined as
   `ADMIN` gave its first real person the invitation's role (usually `MEMBER`)
-  and nobody owned it. It now fires when the org has **no `OWNER` yet** and the
-  newcomer is not platform staff (a platform `ADMIN`, by account or by the role
-  the invitation grants, or a SERVICE account), on both ways in: an accepted
-  invitation (`membershipForNewUser`) and `addMember` with no role chosen. One
-  rule serves both, the new `takesFirstOwnership()` in
-  `lib/tenancy/membership.ts`. Two behaviour changes for a fork to know: a
-  platform admin added to an empty org with no role now lands as `MEMBER` (give
-  `OWNER` explicitly, as `POST /api/v1/admin/orgs`' `ownerUserId` does), and an
-  org left with no owner (for example by an erasure) is owned by the next
-  non-staff person to join it. An explicit role on `addMember` is still
-  honoured; whether an invitation's explicit `orgRole` should win is #1156.
+  and nobody owned it. Members who are platform staff (a platform `ADMIN`, by
+  account or by the role the invitation grants, or a SERVICE account) no
+  longer count, and never take the bootstrap themselves. It applies on both
+  ways in: an accepted invitation (`membershipForNewUser`) and `addMember`
+  with no role chosen, through one rule, the new `takesFirstOwnership()` in
+  `lib/tenancy/membership.ts`. The trigger is deliberately not "no `OWNER`
+  yet": an org ADMIN in an org whose last owner was erased could then choose
+  its next owner without owner standing. Behaviour changes for a fork: a
+  platform admin added to an empty org with no role now lands as `MEMBER`
+  (give `OWNER` explicitly, as `POST /api/v1/admin/orgs`' `ownerUserId` does),
+  and an org whose only owner is staff makes its first non-staff member an
+  `OWNER` too. An explicit role on `addMember` is still honoured; whether an
+  invitation's explicit `orgRole` should win is #1156.
 - **An event-hook delivery whose process ended before its first attempt is
   now sent (t-1012, #834).** A new `AiEventHookDelivery` row was written
   `pending` with no `nextRetryAt`, and `processPendingHookRetries()` read only

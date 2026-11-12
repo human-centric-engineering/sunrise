@@ -25,7 +25,7 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
-import { isPlatformAdmin } from '@/lib/auth/roles';
+import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
@@ -97,14 +97,15 @@ export function initialMembershipFor(user: NewUserShape): InitialMembership {
  *   now; this covers an invitation written before it did.
  * - An invitation naming another org: that org. Its role is the invitation's
  *   `orgRole`, default `MEMBER` — except that **the first person who is not
- *   platform staff to join an org with no `OWNER` becomes its `OWNER`**,
+ *   platform staff to join an org becomes its `OWNER`**, staff already in it
+ *   or not,
  *   whatever the invitation said: the per-org bootstrap,
  *   {@link takesFirstOwnership}. It is scoped to non-install orgs on purpose:
  *   the install org's owner is decided by the platform role, and on a fresh
  *   database its first member is the seeded SERVICE account, which must stay
  *   `MEMBER`.
  *
- * Reads the org's owner count for the bootstrap arm; a null `db` is not
+ * Reads the org's non-staff member count for the bootstrap arm; a null `db` is not
  * accepted so a caller cannot skip that read by accident.
  */
 export async function membershipForNewUser(
@@ -113,8 +114,8 @@ export async function membershipForNewUser(
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<InitialMembership> {
   const orgId = invitedOrgId(invitation);
-  const owners = orgId === INSTALL_ORG_ID ? null : await countOrgOwners(orgId, db);
-  return membershipGiven(user, invitation, owners);
+  const nonStaff = orgId === INSTALL_ORG_ID ? null : await countNonStaffMembers(orgId, db);
+  return membershipGiven(user, invitation, nonStaff);
 }
 
 /**
@@ -123,34 +124,57 @@ export async function membershipForNewUser(
  * in: an accepted invitation ({@link membershipForNewUser}) and `addMember`
  * with no role chosen (`lib/tenancy/lifecycle.ts`).
  *
- * Yes when the org has **no `OWNER` yet** and the newcomer is **not platform
- * staff** (a platform `ADMIN`, or a SERVICE account). The bootstrap exists
- * because an org with no owner is one nobody in it can administer (#1178):
+ * Yes when the newcomer is **the org's first member who is not platform
+ * staff** (staff: a platform `ADMIN`, or a SERVICE account). The bootstrap
+ * exists because an org with no owner is one nobody in it can administer:
  *
- * - "No owner yet", not "no members yet": a vendor's staff can be in the org
- *   as ADMIN, preparing it, before its first real person arrives, and that
+ * - Staff in the org don't count (#1178): a vendor's staff can be in it as
+ *   ADMIN, preparing it, before its first real person arrives, and that
  *   person must still become its owner.
  * - Staff never take it: they hold platform standing already, and an org
  *   whose only owner is the vendor is not one its own people can administer.
  *   Staff who should own an org are given `OWNER` explicitly.
+ * - It is **not** "no `OWNER` yet". An org can lose its last owner (an
+ *   erasure) and keep its ADMINs, and any of them may add members or invite
+ *   with no role. Under "no owner yet" that ADMIN would choose the next
+ *   owner, their own second account included, without the owner standing
+ *   every explicit `OWNER` grant needs. Any non-staff member, ADMIN or not,
+ *   closes the bootstrap; such an org is repaired by a platform admin.
  *
- * `owners` is the org's OWNER count, or `null` when it is not known (the
- * install org, or a read that failed) — then the bootstrap does not apply,
- * so an unknown only ever narrows a role.
+ * `nonStaffMembers` is the org's count of members who are not staff
+ * ({@link countNonStaffMembers}), or `null` when it is not known (the install
+ * org, or a read that failed) — then the bootstrap does not apply, so an
+ * unknown only ever narrows a role.
  *
  * Whether an invitation's explicit `orgRole` should win over the bootstrap is
  * #1156's question, and separate: it changes who may take this, not when.
  */
-export function takesFirstOwnership(newcomer: NewUserShape, owners: number | null): boolean {
-  return owners === 0 && !isPlatformAdmin(newcomer) && newcomer.accountType !== 'SERVICE';
+export function takesFirstOwnership(
+  newcomer: NewUserShape,
+  nonStaffMembers: number | null
+): boolean {
+  return nonStaffMembers === 0 && !isStaff(newcomer);
 }
 
-/** How many `OWNER`s an org has: the count {@link takesFirstOwnership} reads. */
-export function countOrgOwners(
+/** Platform staff, as the bootstrap reads it: a platform `ADMIN`, or a SERVICE account. */
+function isStaff(user: NewUserShape): boolean {
+  return isPlatformAdmin(user) || user.accountType === 'SERVICE';
+}
+
+/**
+ * How many of an org's members are not platform staff: the count
+ * {@link takesFirstOwnership} reads. The same test as `isStaff`, in the query.
+ */
+export function countNonStaffMembers(
   orgId: string,
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<number> {
-  return db.orgMembership.count({ where: { orgId, role: ORG_OWNER_ROLE } });
+  return db.orgMembership.count({
+    where: {
+      orgId,
+      user: { role: { not: PLATFORM_ADMIN_ROLE }, accountType: { not: 'SERVICE' } },
+    },
+  });
 }
 
 /** The org an invitation admits its invitee to: the one it names, else the install org. */
@@ -159,7 +183,8 @@ export function invitedOrgId(invitation: AcceptedInvitation | null): string {
 }
 
 /**
- * {@link membershipForNewUser}'s rule, given the invited org's owner count —
+ * {@link membershipForNewUser}'s rule, given the invited org's non-staff
+ * member count —
  * or `null` when it is not known (the install org, which never reads it, or a
  * read that failed). With no count the first-owner bootstrap cannot apply,
  * so the role is the invitation's. One statement of the rule for the decision
@@ -176,12 +201,12 @@ export function invitedOrgId(invitation: AcceptedInvitation | null): string {
 function membershipGiven(
   user: NewUserShape,
   invitation: AcceptedInvitation | null,
-  owners: number | null
+  nonStaffMembers: number | null
 ): InitialMembership {
   const orgId = invitedOrgId(invitation);
   if (orgId === INSTALL_ORG_ID) return installMembershipForNewUser(user, invitation);
   const newcomer = isPlatformAdmin(user) ? user : { ...user, role: invitation?.role ?? user.role };
-  const role = takesFirstOwnership(newcomer, owners)
+  const role = takesFirstOwnership(newcomer, nonStaffMembers)
     ? ORG_OWNER_ROLE
     : (invitation?.orgRole ?? DEFAULT_ORG_ROLE);
   return { orgId, role };
@@ -263,7 +288,7 @@ function withInstallFloor(
  * invitation's org with the role it names, default `MEMBER`, plus the
  * install-org floor at `single` (#872), exactly as the decision would. The one
  * thing lost is the first-owner bootstrap ({@link takesFirstOwnership}), which
- * needs the owner count — so the failure only ever narrows a role, never
+ * needs the non-staff member count — so the failure only ever narrows a role, never
  * widens one. A first member left as MEMBER leaves the org with no owner,
  * which a platform admin repairs on the members route (it may grant OWNER),
  * or the next non-staff member to join takes; that beats a

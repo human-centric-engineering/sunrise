@@ -58,7 +58,7 @@ import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
-  countOrgOwners,
+  countNonStaffMembers,
   healSignupRecord,
   initialMembershipFor,
   takesFirstOwnership,
@@ -440,10 +440,11 @@ export async function updateOrgReportingPrevious(
  * Add an existing user to an org.
  *
  * `role` defaults to `MEMBER`, except that when no role was asked for, the
- * first person who is not platform staff to join a non-install org with no
- * `OWNER` becomes its `OWNER` — the invitation path's bootstrap, one rule for
- * both (`takesFirstOwnership`), so an org created without a named owner still
- * gets one from its first real member, whoever is in it already. Unlike that
+ * first person who is not platform staff to join a non-install org becomes
+ * its `OWNER` — the invitation path's bootstrap, one rule for both
+ * (`takesFirstOwnership`), so an org created without a named owner still
+ * gets one from its first real member, whatever staff are in it already. An
+ * org ADMIN can never trigger it: they are a non-staff member themselves. Unlike that
  * path an explicit role is honoured: this is an API call by someone who
  * chose the role, not an invitation whose author could not know the org
  * would be empty when it was accepted.
@@ -483,8 +484,8 @@ export async function addMember(
   } else if (role !== undefined) {
     effectiveRole = role;
   } else {
-    const owners = await countOrgOwners(orgId, db);
-    effectiveRole = takesFirstOwnership(user, owners) ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
+    const nonStaff = await countNonStaffMembers(orgId, db);
+    effectiveRole = takesFirstOwnership(user, nonStaff) ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
   }
 
   // Placed by hand: a signup record that survived a failed write is paid and

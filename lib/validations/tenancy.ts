@@ -43,8 +43,8 @@ export const orgMemberParamsSchema = z.object({ id: orgIdSchema, userId: cuidSch
  * `POST /api/v1/admin/orgs` body — the vendor creating a customer.
  *
  * `ownerUserId` names the founding OWNER in the same write, so the
- * bootstrap arm in `membershipForNewUser` (the first non-staff member of an
- * org with no owner becomes OWNER) is the fallback rather than the design. Optional because a
+ * bootstrap arm in `membershipForNewUser` (an org's first non-staff member
+ * becomes OWNER) is the fallback rather than the design. Optional because a
  * fork may create the org first and invite its owner into it.
  */
 export const createOrgSchema = z.object({
