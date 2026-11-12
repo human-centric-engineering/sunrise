@@ -331,8 +331,8 @@ describe('backfillMissingEmbeddings', () => {
     /**
      * Unembedded replies, read and written through the backfill's own calls.
      * The two reads are honoured as the SQL states them: never-refused
-     * replies newest first; then refused ones past the cutoff, the longest
-     * waiting first; each up to its limit.
+     * replies newest first; then refused ones past the cutoff, in the
+     * direction the SQL orders them; each up to its limit.
      */
     function replyStore(ids: string[]): StoredReply[] {
       const start = Date.parse('2026-11-12T09:00:00Z');
@@ -360,7 +360,12 @@ describe('backfillMissingEmbeddings', () => {
               .filter(
                 (m) => m.embeddingRefusedAt !== null && m.embeddingRefusedAt < (values[1] as Date)
               )
-              .sort((a, b) => a.embeddingRefusedAt!.getTime() - b.embeddingRefusedAt!.getTime());
+              .sort(
+                (a, b) =>
+                  // In the direction the SQL orders them.
+                  (sql.includes('"embeddingRefusedAt" DESC') ? -1 : 1) *
+                  (a.embeddingRefusedAt!.getTime() - b.embeddingRefusedAt!.getTime())
+              );
         return picked.slice(0, limit).map(({ id, content, agentId }) => ({ id, content, agentId }));
       }) as never);
       vi.mocked(prisma.aiMessage.updateMany).mockImplementation((async ({
@@ -461,6 +466,35 @@ describe('backfillMissingEmbeddings', () => {
 
       await backfillMissingEmbeddings(2);
       expect(store.find((m) => m.id === 'retry-me')?.embedded).toBe(true);
+    });
+
+    it('fills the room left with due retries, the longest waiting first, and no more', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+      // Oldest first, so the backfill reaches 'waited-longest' first.
+      const store = replyStore(['waited-less', 'waited-longest']);
+      const refused = new Set(['waited-less', 'waited-longest']);
+      resolverRefuses(refused);
+      // Refused an hour apart.
+      await backfillMissingEmbeddings(1);
+      vi.setSystemTime(Date.now() + EMBEDDING_REFUSAL_RETRY_MS);
+      await backfillMissingEmbeddings(1);
+      const at = (id: string) => store.find((m) => m.id === id)!.embeddingRefusedAt!.getTime();
+      expect(at('waited-longest')).toBeLessThan(at('waited-less'));
+      refused.clear();
+      vi.setSystemTime(Date.now() + 2 * EMBEDDING_REFUSAL_RETRY_MS);
+      store.push({
+        id: 'fresh',
+        content: 'A reply long enough to be embedded (fresh)',
+        agentId: null,
+        createdAt: new Date(Date.now()),
+        embeddingRefusedAt: null,
+        embedded: false,
+      });
+
+      // Room for two: the fresh reply, then one retry, the longest waiting.
+      expect(await backfillMissingEmbeddings(2)).toMatchObject({ processed: 2 });
+      expect(store.filter((m) => m.embedded).map((m) => m.id)).toEqual(['waited-longest', 'fresh']);
     });
 
     it('records a refusal on the live path too, so the backfill does not ask again at once', async () => {
