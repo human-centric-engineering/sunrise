@@ -43,10 +43,10 @@ release process.
   - Two new chat `error` event codes, each with its own words in
     `getUserFacingError()`: `privacy_blocked_earlier` (an earlier message or
     the stored summary held them, and has been left out: ask again) and
-    `privacy_blocked_setup` (the system prompt, entity context or the
-    user's memories: ask an administrator). **A client that handles
-    `privacy_blocked` should handle both.** `judge_call` never retries
-    `privacy_blocked_setup`.
+    `privacy_blocked_setup` (the system prompt or entity context: ask an
+    administrator; the user's memories are t-1018's, below). **A client
+    that handles `privacy_blocked` should handle both.** `judge_call` never
+    retries `privacy_blocked_setup`.
   - When only something earlier held them, the chat handler also marks with
     `excludedFromHistory` every row of each earlier exchange that held them,
     and replaces a stored summary that held them with its gap note alone,
@@ -59,8 +59,7 @@ release process.
   - The memory is deleted, and the turn ends with a new chat `error` event
     code, `privacy_blocked_memory`, whose words in `getUserFacingError()`
     tell the reader to ask again. **A client that handles `privacy_blocked`
-    should handle it too.** `privacy_blocked_setup` no longer covers the
-    user's memories.
+    should handle it too.**
   - `buildMessagesAndBreakdown()` sends the user's memories as a heading and
     then one system message per memory, not one message, with a new
     `memory` source (`{ kind: 'memory', memoryIndex }`) for each. **A fork

@@ -91,8 +91,9 @@ export const JUDGE_SCORE_OUT_OF_RANGE = 'judge_score_out_of_range';
  * the judge's own setup under the privacy layer's `block` (§127 t-1017). The
  * output guard, the citation guard and the tool-loop cap are left out on
  * purpose: each is one sample of the judge's reply, and a resample can clear
- * it. So is a `block` refusal for something earlier in the conversation: the
- * refusal leaves that out, so the next attempt can succeed. (`privacy_blocked`
+ * it. So is a `block` refusal for something earlier in the conversation, or
+ * for a memory of the judge's user (t-1018): the refusal leaves the one out
+ * and deletes the other, so the next attempt can succeed. (`privacy_blocked`
  * itself is a request fault: the same input is refused again.)
  */
 const PERMANENT_CHAT_REFUSALS = new Set([
