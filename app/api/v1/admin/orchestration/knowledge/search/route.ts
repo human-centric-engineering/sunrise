@@ -10,9 +10,8 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { errorResponse } from '@/lib/api/responses';
 import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';

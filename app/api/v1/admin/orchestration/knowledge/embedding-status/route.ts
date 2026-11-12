@@ -23,7 +23,18 @@ import { prisma } from '@/lib/db/client';
 import { resolveEmbeddingStatus } from '@/lib/orchestration/knowledge/embedder';
 
 export const GET = withAdminAuth(
-  async (_request) => {
+  async (request) => {
+    // `?providerOnly=true`: just the provider fields, without the two counts
+    // over the chunk table. The privacy settings page reads `providerIsLocal`
+    // on every load and has no use for them (§127).
+    if (new URL(request.url).searchParams.get('providerOnly') === 'true') {
+      const status = await resolveEmbeddingStatus();
+      return successResponse({
+        hasActiveProvider: status.availability === 'ok',
+        providerState: status.availability,
+        providerIsLocal: status.providerIsLocal,
+      });
+    }
     const [total, embeddedRows, status] = await Promise.all([
       prisma.aiKnowledgeChunk.count(),
       prisma.$queryRaw<[{ count: bigint }]>`

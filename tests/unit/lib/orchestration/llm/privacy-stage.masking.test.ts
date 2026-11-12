@@ -38,6 +38,7 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+import { logger } from '@/lib/logging';
 import {
   applyPrivacyStage,
   isLocalOnlyEmbeddingRefusal,
@@ -298,6 +299,35 @@ describe('pseudonymise: every copy of a value', () => {
   });
 });
 
+describe('pseudonymise: a one-word value is not extended to its other copies', () => {
+  it('leaves an ordinary word spelt like a found name alone', async () => {
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector({
+        id: 'app.colleague',
+        egress: 'in_process',
+        entityTypes: ['PERSON'],
+        detect: async ({ text }) => {
+          const at = text.indexOf('colleague Will');
+          return at === -1
+            ? []
+            : [{ type: 'PERSON', start: at + 10, end: at + 14, confidence: 0.9 }];
+        },
+      })
+    );
+    const args = [
+      [
+        { role: 'system', content: 'Will you always cite sources.' },
+        { role: 'user', content: 'Ask my colleague Will.' },
+      ],
+      { model: 'm' },
+    ];
+    const { result } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const sent = sentMessages(result.args);
+    expect(sent[0].content).toMatch(/^Will you always cite sources\./);
+    expect(sent[1].content).toBe('Ask my colleague [PERSON_1].');
+  });
+});
+
 describe('pseudonymise: one session per scope', () => {
   it('keeps a value’s placeholder across a turn’s calls when a later call detects more', async () => {
     let found: string[] = ['BETA-2'];
@@ -380,6 +410,29 @@ describe('pseudonymise: what comes back', () => {
       contact: EMAIL,
       note: `${EMAIL} wrote "hi"`,
     });
+  });
+
+  it('holds a streamed structured reply whole and restores it as JSON, so a quote cannot break it', async () => {
+    const quoted = 'Dara "DJ" O’Neill';
+    const args = [
+      [{ role: 'user', content: `Contact ${quoted} on ${EMAIL}` }],
+      { model: 'm', responseFormat: { type: 'json_object' } },
+    ];
+    const { result } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const email = placeholderOf(JSON.stringify(result.args), 'EMAIL');
+    const json = JSON.stringify({ to: email });
+    const out = await collect(
+      result.restorer!.stream(
+        chunks(
+          { type: 'text', content: json.slice(0, 5) },
+          { type: 'text', content: json.slice(5) },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }
+        )
+      )
+    );
+    expect(out.map((c) => c.type)).toEqual(['text', 'done']);
+    const text = out[0].type === 'text' ? out[0].content : '';
+    expect(JSON.parse(text)).toEqual({ to: EMAIL });
   });
 
   it('restores a stream split mid-placeholder, and a streamed tool call, keeping their order', async () => {
@@ -587,6 +640,19 @@ describe('embeddings policy local_only', () => {
       });
       expect(privacySummary(scope)?.refused).toEqual(['embeddings_local_only']);
     }
+  });
+
+  it('logs the refusal at info, not warn: the configuration is working as chosen', async () => {
+    mode('pseudonymise', { privacyEmbeddingsPolicy: 'local_only' });
+    await refusal(applyPrivacyStage(embedCall(false)));
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'privacy-stage: refusing a provider call',
+      expect.anything()
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      'privacy-stage: refusing a provider call',
+      expect.objectContaining({ reason: 'embeddings_local_only' })
+    );
   });
 
   it('sends one to a local provider, and does not touch it', async () => {

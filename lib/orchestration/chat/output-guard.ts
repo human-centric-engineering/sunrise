@@ -20,6 +20,7 @@ import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import { messagePieces } from '@/lib/orchestration/privacy/call-masking';
 import { CORE_RULES_DETECTOR_ID } from '@/lib/privacy/adapters/core-defaults';
 import { logger } from '@/lib/logging';
+import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
 import { runPrivacyDetectors } from '@/lib/privacy/adapters/run';
 
 export interface OutputScanResult {
@@ -39,13 +40,40 @@ export interface OutputScanResult {
  */
 const OUTPUT_SCAN_TIMEOUT_MS = 2_000;
 
+/** Characters people write inside an identifier: spaces and `- . ( ) /`. */
+const SEPARATORS = '[\\s\\-.()/]*';
+
+const ALNUM = '[\\p{L}\\p{N}]';
+
 /**
- * A value reduced to what identifies it: lower case, without spaces or the
- * punctuation people write identifiers with. "07700 900123" and
- * "(07700) 900-123" are the same number.
+ * A pattern for `value` as people write it: any of the usual separators may
+ * sit between its characters ("07700 900123", "(07700) 900-123"), case is
+ * ignored, and it must stand on its own — no letter or digit right before or
+ * after it — so a sort code is not "supplied" because its digits sit inside a
+ * longer reference number.
  */
-function comparable(text: string): string {
-  return text.toLowerCase().replace(/[\s\-.()/]/g, '');
+function writtenAs(value: string): RegExp | null {
+  const chars = [...value.toLowerCase()].filter((c) => !/[\s\-.()/]/.test(c));
+  if (chars.length === 0) return null;
+  const body = chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(SEPARATORS);
+  return new RegExp(`(?<!${ALNUM})${body}(?!${ALNUM})`, 'iu');
+}
+
+/**
+ * The ids to run for the guard: `core.rules`, or the app detector that
+ * replaced it, when it runs on this server or on infrastructure the operator
+ * controls. An `external` replacement is left out: the guard runs in every
+ * privacy mode, `off` included, and would post every reply to a service no
+ * setting sent it to.
+ */
+function guardDetectorIds(): string[] {
+  return getPrivacyAdapters()
+    .detectors.filter(
+      (d) =>
+        (d.id === CORE_RULES_DETECTOR_ID || d.replacesCore === CORE_RULES_DETECTOR_ID) &&
+        d.egress !== 'external'
+    )
+    .map((d) => d.id);
 }
 
 /**
@@ -57,10 +85,12 @@ async function identifierMatches(
   supplied: readonly LlmMessage[],
   ignoredEntityTypes: readonly string[]
 ): Promise<string[]> {
+  const detectorIds = guardDetectorIds();
+  if (detectorIds.length === 0) return [];
   const { spans, failures } = await runPrivacyDetectors(content, {
     scopeId: 'output-guard',
     knownValues: [],
-    detectorIds: [CORE_RULES_DETECTOR_ID],
+    detectorIds,
     ignoredEntityTypes,
     signal: AbortSignal.timeout(OUTPUT_SCAN_TIMEOUT_MS),
   });
@@ -73,11 +103,13 @@ async function identifierMatches(
     });
   }
   if (spans.length === 0) return [];
-  const conversation = comparable(messagePieces(supplied).join('\n'));
+  // Each piece on its own: joined, a value could be "found" across the end
+  // of one message and the start of the next.
+  const pieces = messagePieces(supplied);
   const labels = new Set<string>();
   for (const span of spans) {
-    const value = comparable(content.slice(span.start, span.end));
-    if (value.length > 0 && conversation.includes(value)) continue;
+    const pattern = writtenAs(content.slice(span.start, span.end));
+    if (pattern && pieces.some((p) => pattern.test(p))) continue;
     labels.add(`pii_${span.type.toLowerCase()}`);
   }
   return [...labels];

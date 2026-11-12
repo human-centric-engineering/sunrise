@@ -244,4 +244,23 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     const res = await GET(makeRequest());
     expect(res.status).toBe(401);
   });
+
+  it('answers ?providerOnly=true with the provider fields alone, without counting chunks', async () => {
+    const res = await GET(
+      new NextRequest(
+        'http://localhost:3000/api/v1/admin/orchestration/knowledge/embedding-status?providerOnly=true',
+        { method: 'GET' }
+      )
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({
+      hasActiveProvider: true,
+      providerState: 'ok',
+      providerIsLocal: false,
+    });
+    expect(prisma.aiKnowledgeChunk.count).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
 });

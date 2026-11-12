@@ -533,6 +533,12 @@ export function SettingsForm({
     protects(effectivePrivacyMode) &&
     watchedEmbeddingsPolicy === 'allow' &&
     embeddingProviderIsLocal === false;
+  // The other way round: local only, and the model that would embed is not
+  // local, so every embedding is refused.
+  const embeddingsRefused =
+    protects(effectivePrivacyMode) &&
+    watchedEmbeddingsPolicy === 'local_only' &&
+    embeddingProviderIsLocal === false;
 
   React.useEffect(() => {
     reset(defaults);
@@ -935,6 +941,16 @@ export function SettingsForm({
               Embeddings still go to a provider that is not local. Uploaded documents, knowledge
               search queries and chat replies reach it as written, names included. Choose a local
               embedding model, or set embeddings to local providers only.
+            </p>
+          )}
+          {embeddingsRefused && (
+            <p
+              className="text-xs text-amber-700 dark:text-amber-400"
+              data-testid="privacy-embeddings-refused"
+            >
+              The active embedding model is not local, so with local providers only every embedding
+              is refused: document uploads fail, knowledge search is unavailable and chat replies
+              are not indexed. Choose a local embedding model to use them.
             </p>
           )}
         </CardContent>

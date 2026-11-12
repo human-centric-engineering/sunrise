@@ -284,13 +284,20 @@ function refuse(
   mode: PrivacyPolicy['mode'] | undefined,
   failedAdapters: readonly string[] = []
 ): PrivacyRefusedError {
-  logger.warn('privacy-stage: refusing a provider call', {
+  // A local-only refusal is the configuration working, once per embedding
+  // the install asks for: info, so it does not bury real warnings.
+  const fields = {
     reason,
     remedy: refusalRemedy(reason),
     providerSlug: call.providerSlug,
     ...(scope ? { scopeId: scope.scopeId } : {}),
     ...(failedAdapters.length > 0 ? { failedAdapters: [...failedAdapters] } : {}),
-  });
+  };
+  if (reason === 'embeddings_local_only') {
+    logger.info('privacy-stage: refusing a provider call', fields);
+  } else {
+    logger.warn('privacy-stage: refusing a provider call', fields);
+  }
   if (scope && mode) {
     recordPrivacyRefusal(scope, mode, reason);
     notifyPrivacyObservers({

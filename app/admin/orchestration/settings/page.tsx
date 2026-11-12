@@ -200,7 +200,7 @@ async function getEmbeddingMatrixRows(): Promise<LoadResult<ActiveEmbeddingModel
  */
 async function getEmbeddingProviderIsLocal(): Promise<boolean | null> {
   const result = await loadServerData<{ providerIsLocal?: boolean | null }>(
-    API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS
+    `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS}?providerOnly=true`
   );
   return result.ok && typeof result.data.providerIsLocal === 'boolean'
     ? result.data.providerIsLocal

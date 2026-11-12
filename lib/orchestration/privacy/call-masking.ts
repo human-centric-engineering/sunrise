@@ -28,6 +28,7 @@ import { LITERAL_TYPE } from '@/lib/privacy/pii/token-strategy';
 import { restoreText, restoreValue } from '@/lib/privacy/pii/restore';
 import { isRecord } from '@/lib/utils';
 import { StreamRestorer } from '@/lib/privacy/pii/stream-restore';
+import { escapeRegExp } from '@/lib/privacy/pii/text';
 
 /** Between two pieces in the joined input. A blank line, so no pattern runs across it. */
 export const PIECE_SEPARATOR = '\n\n';
@@ -188,6 +189,9 @@ const MIN_COPY_LENGTH = 3;
 
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
 
+/** A single word of letters: "Will", "Grace". Its copies are left to the detectors. */
+const SINGLE_WORD = /^\p{L}+$/u;
+
 /**
  * `byPiece`, plus a span for every other exact copy of a value already found:
  * found anywhere in this call, or masked by an earlier call in the same scope
@@ -196,9 +200,18 @@ const WORD_CHAR = /[\p{L}\p{N}_]/u;
  * copy in plaintext beside the placeholder for the first, which ties the two
  * together for the provider.
  *
- * A copy must stand on its own: where the value begins or ends with a letter
- * or digit, the character beside it must not be one, so "Ann" never masks the
- * start of "Annual". Overlaps are merged by `maskText()`.
+ * Two limits, both against masking ordinary text:
+ * - A copy must stand on its own: where the value begins or ends with a
+ *   letter or digit, the character beside it must not be one, so "Ann" never
+ *   masks the start of "Annual".
+ * - A value that is one word of letters ("Will", "Grace", "May") is not
+ *   extended: it is far likelier to be an ordinary word elsewhere ("Will you
+ *   always cite sources"), and tier C already finds the other mentions of a
+ *   name it learns, with its own care for which ones are names.
+ *
+ * One pass per piece over a single pattern of every value, longest first, so
+ * the cost does not multiply by the number of values. Overlaps are merged by
+ * `maskText()`.
  */
 function withEveryCopy(
   pieces: readonly string[],
@@ -206,28 +219,37 @@ function withEveryCopy(
   session: TokenSession
 ): MaskSpan[][] {
   const values = new Map<string, EntityType>();
-  for (const e of session.entries()) {
-    if (e.type !== LITERAL_TYPE) values.set(e.value, e.type);
-  }
+  const add = (value: string, type: EntityType): void => {
+    if (value.length < MIN_COPY_LENGTH || SINGLE_WORD.test(value) || values.has(value)) return;
+    values.set(value, type);
+  };
+  for (const e of session.entries()) if (e.type !== LITERAL_TYPE) add(e.value, e.type);
   pieces.forEach((piece, i) => {
-    for (const s of byPiece[i]) {
-      const value = piece.slice(s.start, s.end);
-      if (!values.has(value)) values.set(value, s.type);
-    }
+    for (const s of byPiece[i]) add(piece.slice(s.start, s.end), s.type);
   });
   if (values.size === 0) return byPiece;
+  const pattern = new RegExp(
+    [...values.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp)
+      .join('|'),
+    'g'
+  );
   return pieces.map((piece, i) => {
     const out = [...byPiece[i]];
-    for (const [value, type] of values) {
-      if (value.length < MIN_COPY_LENGTH) continue;
-      const wordStart = WORD_CHAR.test(value[0]);
-      const wordEnd = WORD_CHAR.test(value[value.length - 1]);
-      for (let at = piece.indexOf(value); at !== -1; at = piece.indexOf(value, at + 1)) {
-        const end = at + value.length;
-        if (wordStart && at > 0 && WORD_CHAR.test(piece[at - 1])) continue;
-        if (wordEnd && end < piece.length && WORD_CHAR.test(piece[end])) continue;
-        out.push({ type, start: at, end });
-      }
+    for (const m of piece.matchAll(pattern)) {
+      const value = m[0];
+      const at = m.index;
+      const end = at + value.length;
+      if (WORD_CHAR.test(value[0]) && at > 0 && WORD_CHAR.test(piece[at - 1])) continue;
+      if (
+        WORD_CHAR.test(value[value.length - 1]) &&
+        end < piece.length &&
+        WORD_CHAR.test(piece[end])
+      )
+        continue;
+      const type = values.get(value);
+      if (type !== undefined) out.push({ type, start: at, end });
     }
     return out;
   });
@@ -323,6 +345,34 @@ export class CallRestorer {
     return { ...call, arguments: isRecord(r.value) ? r.value : call.arguments };
   }
 
+  /** A structured stream: text held whole, restored as JSON before anything that follows it. */
+  private async *structuredStream(source: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk> {
+    let held = '';
+    const release = (): StreamChunk | null => {
+      if (held === '') return null;
+      const out: StreamChunk = { type: 'text', content: this.text(held) };
+      held = '';
+      return out;
+    };
+    try {
+      for await (const chunk of source) {
+        if (chunk.type === 'text') {
+          held += chunk.content;
+          continue;
+        }
+        const text = release();
+        if (text) yield text;
+        yield chunk.type === 'tool_call'
+          ? { type: 'tool_call', toolCall: this.toolCall(chunk.toolCall) }
+          : chunk;
+      }
+      const text = release();
+      if (text) yield text;
+    } finally {
+      this.report();
+    }
+  }
+
   /** A whole response. */
   response(response: LlmResponse): LlmResponse {
     const out: LlmResponse = {
@@ -334,8 +384,16 @@ export class CallRestorer {
     return out;
   }
 
-  /** A stream, chunk by chunk. */
+  /**
+   * A stream, chunk by chunk. A structured reply (`responseFormat`) is held
+   * whole and restored as JSON at its end, since a value restored into a
+   * streamed JSON string could carry a quote or a newline that breaks it.
+   */
   async *stream(source: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk> {
+    if (this.structured) {
+      yield* this.structuredStream(source);
+      return;
+    }
     const text = new StreamRestorer(this.session, this.declaredTypes);
     const reasoning = new StreamRestorer(this.session, this.declaredTypes);
     const flushText = (): StreamChunk | null => {

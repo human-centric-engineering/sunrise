@@ -234,4 +234,31 @@ describe('the embeddings policy', () => {
     );
     expect(warning()).not.toBeNull();
   });
+
+  it('warns that every embedding will be refused when local only meets a model that is not local', () => {
+    render(
+      <SettingsForm
+        initialSettings={settings({
+          privacyMode: 'pseudonymise',
+          privacyEmbeddingsPolicy: 'local_only',
+        })}
+        embeddingProviderIsLocal={false}
+      />
+    );
+    expect(screen.getByTestId('privacy-embeddings-refused')).toHaveTextContent(/uploads fail/);
+    expect(warning()).toBeNull();
+  });
+
+  it('does not warn of refusals when the embedding model is local', () => {
+    render(
+      <SettingsForm
+        initialSettings={settings({
+          privacyMode: 'pseudonymise',
+          privacyEmbeddingsPolicy: 'local_only',
+        })}
+        embeddingProviderIsLocal={true}
+      />
+    );
+    expect(screen.queryByTestId('privacy-embeddings-refused')).toBeNull();
+  });
 });

@@ -189,6 +189,33 @@ describe('scanOutput', () => {
     });
   });
 
+  it('does not count a value as supplied because its digits sit inside a longer number', async () => {
+    const supplied: LlmMessage[] = [
+      { role: 'user', content: 'My order ref is 9123456780.' },
+      { role: 'tool', content: 'ends 12', toolCallId: 't1' },
+      { role: 'tool', content: '3456 starts', toolCallId: 't2' },
+    ];
+    // A sort code the conversation never gave: inside the order ref, and
+    // across the end of one message and the start of the next.
+    const result = await scanOutput('Your sort code is 12-34-56.', [], supplied);
+    expect(result.builtInMatches).toEqual(['pii_sort_code']);
+  });
+
+  it('never posts a reply to an external replacement of the rules detector', async () => {
+    const detect = vi.fn(async () => []);
+    seam.init.mockImplementation(() =>
+      registerPrivacyDetector(
+        { id: 'app.hosted', egress: 'external', entityTypes: ['EMAIL'], detect },
+        { replace: 'core.rules' }
+      )
+    );
+    const result = await scanOutput('Email john@example.com.', []);
+    // The guard runs in every privacy mode, off included: it must not open a
+    // flow to a service no setting sent the reply to.
+    expect(detect).not.toHaveBeenCalled();
+    expect(result.builtInMatches).toEqual([]);
+  });
+
   it('combines topic and built-in matches', async () => {
     const result = await scanOutput('Our competitor can be reached at info@competitor.com.', [
       'competitor',
