@@ -2,7 +2,7 @@
  * Tests: Async Message Embedder
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ─── Module mocks ───────────────────────────────────────────────────────
 
@@ -10,17 +10,12 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     $executeRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
+    aiMessage: { updateMany: vi.fn() },
   },
 }));
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
   embedText: vi.fn(),
-  resolveEmbeddingStatus: vi.fn(),
-}));
-
-const embeddings = vi.hoisted(() => ({ policy: 'allow' }));
-vi.mock('@/lib/orchestration/settings', () => ({
-  getOrchestrationSettings: vi.fn(async () => ({ privacyEmbeddingsPolicy: embeddings.policy })),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -35,12 +30,13 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';
-import { embedText, resolveEmbeddingStatus } from '@/lib/orchestration/knowledge/embedder';
+import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import { logger } from '@/lib/logging';
 import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
   queueMessageEmbedding,
   backfillMissingEmbeddings,
+  EMBEDDING_REFUSAL_RETRY_MS,
 } from '@/lib/orchestration/chat/message-embedder';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
@@ -59,11 +55,7 @@ const FAKE_EMBED_RESULT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  embeddings.policy = 'allow';
-  vi.mocked(resolveEmbeddingStatus).mockResolvedValue({
-    availability: 'ok',
-    providerIsLocal: false,
-  });
+  vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
   vi.mocked(embedText).mockResolvedValue(FAKE_EMBED_RESULT);
   vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
 });
@@ -263,7 +255,7 @@ describe('backfillMissingEmbeddings', () => {
   });
 
   it('processes messages missing embeddings', async () => {
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { id: 'msg-10', content: 'This is a test message that needs embedding' },
       { id: 'msg-11', content: 'Another message that also needs embedding' },
     ]);
@@ -274,39 +266,9 @@ describe('backfillMissingEmbeddings', () => {
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
   });
 
-  describe("replies an agent's privacy mode refuses to embed (§127 t-1010)", () => {
-    /** Whether the query told Postgres to leave out protected agents' replies. */
-    function leftOutProtected(): unknown {
-      const [, ...values] = vi.mocked(prisma.$queryRaw).mock.calls[0] as unknown[];
-      return values[0];
-    }
-
-    it('are left out of the query under local_only with a provider that is not local', async () => {
-      embeddings.policy = 'local_only';
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
-
-      await backfillMissingEmbeddings();
-
-      // Otherwise the newest refused ones are picked every tick, and the rest never.
-      expect(leftOutProtected()).toBe(true);
-      const strings = vi.mocked(prisma.$queryRaw).mock.calls[0][0];
-      const sqlText = Array.isArray(strings) ? strings.join('?') : '';
-      expect(sqlText).toContain('a."privacyMode" IN');
-    });
-
-    it('always leave out an agent whose stored mode is not a mode: it refuses every call', async () => {
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
-
-      await backfillMissingEmbeddings();
-
-      const strings = vi.mocked(prisma.$queryRaw).mock.calls[0][0];
-      const sqlText = Array.isArray(strings) ? strings.join('?') : '';
-      expect(sqlText).toContain('a."privacyMode" IS NOT NULL');
-      expect(sqlText).toContain('a."privacyMode" NOT IN');
-    });
-
+  describe('replies the privacy layer refuses to embed (§127 t-1010)', () => {
     it('count any privacy refusal as skipped, not failed: the stage has said why', async () => {
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
         {
           id: 'msg-40',
           content: 'A reply from an org whose settings cannot be read',
@@ -328,7 +290,7 @@ describe('backfillMissingEmbeddings', () => {
         scopes.push(currentPrivacyScope());
         return FAKE_EMBED_RESULT;
       });
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
         { id: 'msg-50', content: 'The first of two replies by one agent', agentId: 'agent-hr' },
         { id: 'msg-51', content: 'The second of two replies by one agent', agentId: 'agent-hr' },
         { id: 'msg-52', content: 'A reply by another agent altogether', agentId: 'agent-faq' },
@@ -340,25 +302,8 @@ describe('backfillMissingEmbeddings', () => {
       expect(scopes[2]).not.toBe(scopes[0]);
     });
 
-    it.each([
-      ['the policy allows any provider', 'allow', false],
-      ['the provider is local', 'local_only', true],
-      ['no provider resolves', 'local_only', null],
-    ])('are kept when %s', async (_label, policy, providerIsLocal) => {
-      embeddings.policy = policy;
-      vi.mocked(resolveEmbeddingStatus).mockResolvedValue({
-        availability: providerIsLocal === null ? 'none_configured' : 'ok',
-        providerIsLocal,
-      });
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
-
-      await backfillMissingEmbeddings();
-
-      expect(leftOutProtected()).toBe(false);
-    });
-
     it('count a local-only refusal as skipped, not failed, and do not warn', async () => {
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
         { id: 'msg-30', content: 'A reply its agent will not let leave', agentId: 'agent-hr' },
         { id: 'msg-31', content: 'A reply that embeds without trouble', agentId: null },
       ]);
@@ -373,6 +318,194 @@ describe('backfillMissingEmbeddings', () => {
     });
   });
 
+  describe('replies the privacy layer refused, held back no longer (§127 t-1016)', () => {
+    interface StoredReply {
+      id: string;
+      content: string;
+      agentId: string | null;
+      createdAt: Date;
+      embeddingRefusedAt: Date | null;
+      embedded: boolean;
+    }
+
+    /**
+     * Unembedded replies, read and written through the backfill's own calls.
+     * The two reads are honoured as the SQL states them: never-refused
+     * replies newest first; then refused ones past the cutoff, the longest
+     * waiting first; each up to its limit.
+     */
+    function replyStore(ids: string[]): StoredReply[] {
+      const start = Date.parse('2026-11-12T09:00:00Z');
+      // Oldest first: the last id is the newest reply.
+      const store = ids.map((id, i) => ({
+        id,
+        content: `A reply long enough to be embedded (${id})`,
+        agentId: 'agent-hr',
+        createdAt: new Date(start + i * 1000),
+        embeddingRefusedAt: null as Date | null,
+        embedded: false,
+      }));
+      vi.mocked(prisma.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const sql = strings.join('?');
+        const limit = values[values.length - 1] as number;
+        const missing = store.filter((m) => !m.embedded);
+        const picked = sql.includes('"embeddingRefusedAt" IS NULL')
+          ? missing
+              .filter((m) => m.embeddingRefusedAt === null)
+              .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          : missing
+              .filter(
+                (m) => m.embeddingRefusedAt !== null && m.embeddingRefusedAt < (values[1] as Date)
+              )
+              .sort((a, b) => a.embeddingRefusedAt!.getTime() - b.embeddingRefusedAt!.getTime());
+        return picked.slice(0, limit).map(({ id, content, agentId }) => ({ id, content, agentId }));
+      }) as never);
+      vi.mocked(prisma.aiMessage.updateMany).mockImplementation((async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: { embeddingRefusedAt: Date };
+      }) => {
+        const reply = store.find((m) => m.id === where.id);
+        if (reply) reply.embeddingRefusedAt = data.embeddingRefusedAt;
+        return { count: reply ? 1 : 0 };
+      }) as never);
+      vi.mocked(prisma.$executeRawUnsafe).mockImplementation((async (
+        _sql: string,
+        messageId: string
+      ) => {
+        const reply = store.find((m) => m.id === messageId);
+        if (reply) reply.embedded = true;
+        return 1;
+      }) as never);
+      return store;
+    }
+
+    /**
+     * Stands in for an app's policy resolver that tightens some replies'
+     * agent under `local_only`: a refusal nothing in the backfill's SQL
+     * knows about, and nothing there needs to.
+     */
+    function resolverRefuses(refused: Set<string>) {
+      vi.mocked(embedText).mockImplementation(async (_text, _kind, options) => {
+        const id = (options?.metadata as { messageId?: string } | undefined)?.messageId;
+        if (id && refused.has(id)) throw new PrivacyRefusedError('embeddings_local_only', 'openai');
+        return FAKE_EMBED_RESULT;
+      });
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('a batch full of refusals no longer holds back an older reply: the next run embeds it', async () => {
+      const refusedIds = Array.from({ length: 25 }, (_, i) => `refused-${i}`);
+      // One older reply, then 25 newer ones a resolver refuses.
+      const store = replyStore(['older', ...refusedIds]);
+      resolverRefuses(new Set(refusedIds));
+
+      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 0, failed: 0, skipped: 25 });
+      expect(store.filter((m) => m.embeddingRefusedAt !== null)).toHaveLength(25);
+
+      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(store.find((m) => m.id === 'older')?.embedded).toBe(true);
+      // Not asked again inside the back-off.
+      expect(vi.mocked(embedText)).toHaveBeenCalledTimes(26);
+    });
+
+    it('asks a refused reply again after the back-off, and embeds it once nothing refuses it', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+      const store = replyStore(['reply']);
+      const refused = new Set(['reply']);
+      resolverRefuses(refused);
+
+      expect(await backfillMissingEmbeddings()).toMatchObject({ skipped: 1 });
+      vi.setSystemTime(Date.now() + EMBEDDING_REFUSAL_RETRY_MS - 1000);
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 0 });
+
+      // A local embedding model is installed, say: nothing refuses it now.
+      refused.clear();
+      vi.setSystemTime(Date.now() + 2000);
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(store[0].embedded).toBe(true);
+    });
+
+    it('gives a due retry only the room fresh replies leave', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+      const store = replyStore(['retry-me']);
+      const refused = new Set(['retry-me']);
+      resolverRefuses(refused);
+      await backfillMissingEmbeddings(2);
+      refused.clear();
+      vi.setSystemTime(Date.now() + EMBEDDING_REFUSAL_RETRY_MS + 1000);
+      // Two fresh replies arrive, newer than the refusal.
+      store.push(
+        ...['fresh-1', 'fresh-2'].map((id, i) => ({
+          id,
+          content: `A reply long enough to be embedded (${id})`,
+          agentId: null,
+          createdAt: new Date(Date.now() + i),
+          embeddingRefusedAt: null,
+          embedded: false,
+        }))
+      );
+
+      await backfillMissingEmbeddings(2);
+      expect(store.filter((m) => m.embedded).map((m) => m.id)).toEqual(['fresh-1', 'fresh-2']);
+
+      await backfillMissingEmbeddings(2);
+      expect(store.find((m) => m.id === 'retry-me')?.embedded).toBe(true);
+    });
+
+    it('records a refusal on the live path too, so the backfill does not ask again at once', async () => {
+      vi.mocked(embedText).mockRejectedValueOnce(
+        new PrivacyRefusedError('embeddings_local_only', 'openai')
+      );
+
+      queueMessageEmbedding('msg-live', 'A reply the privacy layer will not embed now', {
+        agentId: 'agent-hr',
+      });
+      await vi.waitFor(() => expect(prisma.aiMessage.updateMany).toHaveBeenCalled());
+
+      expect(prisma.aiMessage.updateMany).toHaveBeenCalledWith({
+        where: { id: 'msg-live' },
+        data: { embeddingRefusedAt: expect.any(Date) },
+      });
+    });
+
+    it('does not record an embedding failure that is not a refusal: it is asked again next run', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { id: 'msg-60', content: 'A reply whose provider timed out', agentId: null },
+      ]);
+      vi.mocked(embedText).mockRejectedValueOnce(new Error('timeout'));
+
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 1, skipped: 0 });
+      expect(prisma.aiMessage.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('warns, and goes on, when recording a refusal fails', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { id: 'msg-70', content: 'A reply refused while the database blinked', agentId: null },
+      ]);
+      vi.mocked(embedText).mockRejectedValueOnce(
+        new PrivacyRefusedError('embeddings_local_only', 'openai')
+      );
+      vi.mocked(prisma.aiMessage.updateMany).mockRejectedValueOnce(new Error('connection reset'));
+
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 1 });
+      expect(logger.warn).toHaveBeenCalledWith('Failed to record a refused message embedding', {
+        messageId: 'msg-70',
+        error: 'connection reset',
+      });
+    });
+  });
+
   it("embeds each message in a scope carrying its conversation's agent (§127 t-1010)", async () => {
     const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
     const agents: (string | undefined)[] = [];
@@ -380,7 +513,7 @@ describe('backfillMissingEmbeddings', () => {
       agents.push(currentPrivacyScope()?.agentId);
       return FAKE_EMBED_RESULT;
     });
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { id: 'msg-20', content: 'An HR reply that needs its embedding', agentId: 'agent-hr' },
       { id: 'msg-21', content: 'A reply whose conversation is gone now', agentId: null },
     ]);
@@ -393,7 +526,7 @@ describe('backfillMissingEmbeddings', () => {
   });
 
   it('counts failures without stopping the batch', async () => {
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { id: 'msg-10', content: 'Good message that will embed fine' },
       { id: 'msg-11', content: 'Bad message that will fail embedding' },
     ]);
@@ -412,7 +545,7 @@ describe('backfillMissingEmbeddings', () => {
 
   it('returns processed=0 and does not call logger.info when all embeddings fail', async () => {
     // Arrange: two messages; both fail — processed stays 0
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { id: 'msg-30', content: 'First message that will fail to embed' },
       { id: 'msg-31', content: 'Second message that also fails to embed' },
     ]);
@@ -431,7 +564,7 @@ describe('backfillMissingEmbeddings', () => {
 
   it('logs stringified non-Error rejection and completed info when processed > 0', async () => {
     // Arrange: two messages; first succeeds, second fails with a plain string
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { id: 'msg-20', content: 'First message that embeds successfully now' },
       { id: 'msg-21', content: 'Second message that will fail with string error' },
     ]);

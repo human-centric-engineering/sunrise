@@ -26,6 +26,7 @@ has merged; this table says what exists.
 | A turn refused under `block` is left out of later history                              | t-1014 | **Built** |
 | A `block` caused by an earlier message, the summary or the setup: placed and told      | t-1017 | **Built** |
 | A `block` caused by a memory: the memory is deleted, and the user carries on           | t-1018 | **Built** |
+| A reply refused an embedding no longer holds the embedding backfill back               | t-1016 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
@@ -215,12 +216,22 @@ An agent and an org can each require more protection than the install gives.
   agent's mode refuses a remote embedding of its replies as it would inside
   the turn, on the first try and on every backfill tick. Nothing reads that
   scope's counts (`recordsNowhere`), so the stage skips the scan it skips
-  for a call with no scope. While the provider that resolves is not local,
-  the backfill leaves such agents' replies out of its query, or it would pick
-  the same newest refused ones every tick and never reach the rest. It always
-  leaves out an agent whose stored mode is not a mode, which refuses every
-  call. Any privacy refusal it does meet counts as `skipped`, not `failed`:
-  the stage has already logged why.
+  for a call with no scope. Any privacy refusal counts as `skipped`, not
+  `failed`: the stage has already logged why.
+- **A refused reply cannot hold the backfill back** (t-1016). Every privacy
+  refusal of a reply's embedding, on the first try or in the backfill, sets
+  `AiMessage.embeddingRefusedAt`. The backfill reads replies never refused
+  first, newest first, and gives whatever room is left to refused ones whose
+  back-off has passed (`EMBEDDING_REFUSAL_RETRY_MS`, one hour), the longest
+  waiting first. So refusals, from the `local_only` policy, an agent's mode
+  that is not a mode, or an app's policy resolver, never fill the batch, and
+  a refused reply is embedded within the hour once nothing refuses it (a
+  local embedding model installed, say). The backfill copies none of the
+  stage's rules: until t-1016 it left out in SQL the two refusals it knew
+  of, and could not see any other. A reply whose embedding failed for any
+  other reason is not recorded, and is asked again on the next run, as
+  before. The column is only a time; once the reply is embedded it is left
+  as it was.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a
