@@ -86,6 +86,30 @@ describe('queueMessageEmbedding', () => {
     expect(seen[0]).toBeUndefined();
   });
 
+  it("embeds in a scope of its own carrying the reply's agent, so the agent's privacy mode applies (§127 t-1010)", async () => {
+    const { createPrivacyScope, currentPrivacyScope, runInPrivacyScope } =
+      await import('@/lib/orchestration/privacy/scope');
+    const seen: { scope: unknown; agentId?: string; parent?: unknown }[] = [];
+    vi.mocked(embedText).mockImplementation(async () => {
+      const s = currentPrivacyScope();
+      seen.push({ scope: s, agentId: s?.agentId, parent: s?.parent });
+      return FAKE_EMBED_RESULT;
+    });
+    const turn = createPrivacyScope({ scopeId: 'conversation:c1', agentId: 'agent-hr' });
+
+    runInPrivacyScope(turn, () =>
+      queueMessageEmbedding('msg-agent', 'A long enough assistant reply to embed', {
+        agentId: 'agent-hr',
+      })
+    );
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].agentId).toBe('agent-hr');
+    // Not the turn's scope, nor inside it: the turn's counts are already written.
+    expect(seen[0].scope).not.toBe(turn);
+    expect(seen[0].parent).toBeUndefined();
+  });
+
   it('embeds and stores a valid message', async () => {
     const content = 'This is a message with enough content to embed';
     queueMessageEmbedding('msg-2', content);
@@ -229,6 +253,25 @@ describe('backfillMissingEmbeddings', () => {
 
     expect(result).toEqual({ processed: 2, failed: 0 });
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+  });
+
+  it("embeds each message in a scope carrying its conversation's agent (§127 t-1010)", async () => {
+    const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
+    const agents: (string | undefined)[] = [];
+    vi.mocked(embedText).mockImplementation(async () => {
+      agents.push(currentPrivacyScope()?.agentId);
+      return FAKE_EMBED_RESULT;
+    });
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'msg-20', content: 'An HR reply that needs its embedding', agentId: 'agent-hr' },
+      { id: 'msg-21', content: 'A reply whose conversation is gone now', agentId: null },
+    ]);
+
+    await backfillMissingEmbeddings();
+
+    // A refused embedding leaves its message without a row; without the
+    // agent here, the next tick would send what the agent's mode refused.
+    expect(agents).toEqual(['agent-hr', undefined]);
   });
 
   it('counts failures without stopping the batch', async () => {

@@ -190,6 +190,18 @@ An agent and an org can each require more protection than the install gives.
   most 500, the same name twice kept once. The stage adds them to the scope's
   known values, so tier B finds them and the ways people write them, and the
   mode decides what happens: counted, masked or refused.
+- **The org is the install org at `single`** when nothing else names one:
+  the stage takes the scope's org, else the tenant context's, else at
+  `single` `INSTALL_ORG_ID`, as the spend caps do. A request on an admin API
+  key enters no org, and its calls would otherwise skip the install org's
+  floor and protected terms. At `multi` a call with no org is refused before
+  the stage.
+- **A reply's embedding carries its agent.** It runs outside the turn's
+  scope, so the turn's counts do not change after it wrote them, but in a
+  scope of its own carrying the agent (`queueMessageEmbedding`), and the
+  backfill reads each message's conversation agent: under `local_only` the
+  agent's mode refuses a remote embedding of its replies as it would inside
+  the turn, on the first try and on every backfill tick.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a

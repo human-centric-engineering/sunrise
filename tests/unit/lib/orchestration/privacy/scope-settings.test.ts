@@ -29,6 +29,8 @@ const db = vi.hoisted((): ScriptedDb => ({
   failNext: false,
 }));
 const settings = vi.hoisted((): { mode: string } => ({ mode: 'off' }));
+const tenancy = vi.hoisted((): { TENANCY_MODE: string } => ({ TENANCY_MODE: 'multi' }));
+vi.mock('@/lib/env', () => ({ env: tenancy }));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -80,6 +82,7 @@ import {
   PRIVACY_TIGHTENING_MODES,
 } from '@/lib/orchestration/privacy/settings-policy';
 import { __resetPrivacyAdaptersForTests } from '@/lib/privacy/adapters/registry';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { PRIVACY_MODES_BY_STRICTNESS, type PrivacyMode } from '@/lib/privacy/adapters/types';
 
 const AGENT = 'agent-hr';
@@ -130,6 +133,7 @@ beforeEach(() => {
     failNext: false,
   });
   settings.mode = 'off';
+  tenancy.TENANCY_MODE = 'multi';
 });
 
 describe('global mode, agent mode and org minimum', () => {
@@ -209,12 +213,29 @@ describe('reading the settings', () => {
     expect(db.agentReads).toBe(2);
   });
 
-  it('reads nothing for a call that names neither agent nor org', async () => {
+  it('reads nothing for a call that names neither agent nor org at multi', async () => {
     settings.mode = 'detect';
 
     await run(scope({}));
 
     expect(db.agentReads + db.orgReads).toBe(0);
+  });
+
+  it('applies the install org’s floor at single to a call with no org in context', async () => {
+    // An admin API key's request enters no org; at `single` the install org
+    // is the one org there is, as the spend caps read it.
+    tenancy.TENANCY_MODE = 'single';
+    db.orgSettings = orgPrivacy('redact');
+    const { prisma } = await import('@/lib/db/client');
+    const s = scope({});
+
+    await run(s);
+
+    expect(prisma.org.findUnique).toHaveBeenCalledWith({
+      where: { id: INSTALL_ORG_ID },
+      select: { settings: true },
+    });
+    expect(privacySummary(s)?.mode).toBe('redact');
   });
 
   it('reads each time for a call with no scope', async () => {

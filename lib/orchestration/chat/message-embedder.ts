@@ -12,7 +12,22 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
-import { outsidePrivacyScope } from '@/lib/orchestration/privacy/scope';
+import {
+  agentPrivacyScope,
+  outsidePrivacyScope,
+  runInPrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
+
+/**
+ * Run `fn` in a privacy scope of its own carrying the agent whose reply is
+ * being embedded (t-1010), so the agent's privacy mode applies to the
+ * embedding call, and a `local_only` embeddings policy refuses it, as it
+ * would inside the turn. A scope of its own, not the turn's: the turn has
+ * moved on, and its counts must not change after it wrote them.
+ */
+function inAgentScope<T>(agentId: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  return agentId ? runInPrivacyScope(agentPrivacyScope(agentId, undefined), fn) : fn();
+}
 
 /**
  * Queue an async embedding for a persisted message.
@@ -30,23 +45,26 @@ export function queueMessageEmbedding(
   if (content.length < 20) return;
 
   // Outside the turn's privacy scope: this runs after the turn has moved on,
-  // so its embedding call is not one of the turn's (§127).
-  void outsidePrivacyScope(() => generateAndStoreEmbedding(messageId, content, attribution)).catch(
-    (err: unknown) => {
-      // The install requires local embeddings and none is active (§127): the
-      // reply is not indexed for search. Expected, so not a warning.
-      if (isLocalOnlyEmbeddingRefusal(err)) {
-        logger.info('Message embedding skipped: the privacy embeddings policy is local only', {
-          messageId,
-        });
-        return;
-      }
-      logger.warn('Message embedding failed', {
+  // so its embedding call is not one of the turn's (§127). In one of its own
+  // that carries the agent, so the agent's mode still applies.
+  void outsidePrivacyScope(() =>
+    inAgentScope(attribution?.agentId, () =>
+      generateAndStoreEmbedding(messageId, content, attribution)
+    )
+  ).catch((err: unknown) => {
+    // The install requires local embeddings and none is active (§127): the
+    // reply is not indexed for search. Expected, so not a warning.
+    if (isLocalOnlyEmbeddingRefusal(err)) {
+      logger.info('Message embedding skipped: the privacy embeddings policy is local only', {
         messageId,
-        error: err instanceof Error ? err.message : String(err),
       });
+      return;
     }
-  );
+    logger.warn('Message embedding failed', {
+      messageId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 }
 
 export interface BackfillResult {
@@ -62,9 +80,16 @@ export interface BackfillResult {
  * batches. Called by the unified maintenance tick.
  */
 export async function backfillMissingEmbeddings(batchSize: number = 25): Promise<BackfillResult> {
-  const missing = await prisma.$queryRaw<Array<{ id: string; content: string }>>`
-    SELECT m.id, m.content
+  // With the conversation's agent, so the agent's privacy mode applies to the
+  // embedding as it did when the reply was first queued (t-1010): a reply
+  // whose embedding the agent's mode refused would otherwise be sent on the
+  // next tick.
+  const missing = await prisma.$queryRaw<
+    Array<{ id: string; content: string; agentId: string | null }>
+  >`
+    SELECT m.id, m.content, c."agentId"
     FROM ai_message m
+    LEFT JOIN ai_conversation c ON c.id = m."conversationId"
     LEFT JOIN ai_message_embedding e ON e."messageId" = m.id
     WHERE m.role = 'assistant'
       AND LENGTH(m.content) > 20
@@ -78,7 +103,7 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
   let failed = 0;
   for (const msg of missing) {
     try {
-      await generateAndStoreEmbedding(msg.id, msg.content);
+      await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content));
     } catch (err) {
       failed++;
       logger.warn('Embedding backfill failed for message', {
