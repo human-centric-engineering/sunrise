@@ -352,6 +352,83 @@ describe('membershipForNewUser', () => {
     ).toEqual({ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE });
   });
 
+  // #1235: an OWNER invitation's issuer standing was checked only when it was
+  // issued. An owner who invited a second account as OWNER, then was demoted
+  // or removed, could still have it accepted as OWNER. It is asked again now.
+  describe('an explicit OWNER invitation (#1235)', () => {
+    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+    const ownerInvitation = { orgId: OTHER_ORG, orgRole: ORG_OWNER_ROLE, ...BY_ISSUER };
+
+    beforeEach(() => {
+      // The org has another owner, so the first-owner bootstrap is off and
+      // only the explicit role is in play.
+      orgHas([{ orgId: OTHER_ORG, role: ORG_OWNER_ROLE }]);
+    });
+
+    it.each([
+      ['demoted to ADMIN', DEFAULT_USER_ROLE, ORG_ADMIN_ROLE],
+      ['demoted to MEMBER', DEFAULT_USER_ROLE, DEFAULT_ORG_ROLE],
+      ['removed from the org', DEFAULT_USER_ROLE, null],
+    ] as const)(
+      'confers MEMBER when its issuer has been %s',
+      async (_case, platformRole, orgRole) => {
+        issuerIs(platformRole, orgRole);
+        expect(await membershipForNewUser(row, ownerInvitation, db)).toEqual({
+          orgId: OTHER_ORG,
+          role: DEFAULT_ORG_ROLE,
+        });
+        expect(mocks.user.findUnique).toHaveBeenCalledWith({
+          where: { id: ISSUER },
+          select: {
+            role: true,
+            orgMemberships: { where: { orgId: OTHER_ORG }, select: { role: true } },
+          },
+        });
+      }
+    );
+
+    it('confers MEMBER when its issuer no longer exists, or none is named', async () => {
+      // issuerIs not called: findUnique answers null, as for a deleted user.
+      expect((await membershipForNewUser(row, ownerInvitation, db)).role).toBe(DEFAULT_ORG_ROLE);
+      expect(
+        (await membershipForNewUser(row, { orgId: OTHER_ORG, orgRole: ORG_OWNER_ROLE }, db)).role
+      ).toBe(DEFAULT_ORG_ROLE);
+    });
+
+    it('still confers OWNER while its issuer is an OWNER of the org, or a platform admin', async () => {
+      issuerIs(DEFAULT_USER_ROLE, ORG_OWNER_ROLE);
+      expect(await membershipForNewUser(row, ownerInvitation, db)).toEqual({
+        orgId: OTHER_ORG,
+        role: ORG_OWNER_ROLE,
+      });
+      issuerIs(PLATFORM_ADMIN_ROLE);
+      expect((await membershipForNewUser(row, ownerInvitation, db)).role).toBe(ORG_OWNER_ROLE);
+    });
+
+    it('does not read the issuer for an invitation naming a role below OWNER', async () => {
+      issuerIs(DEFAULT_USER_ROLE);
+      expect(
+        (await membershipForNewUser(row, { ...ownerInvitation, orgRole: ORG_ADMIN_ROLE }, db)).role
+      ).toBe(ORG_ADMIN_ROLE);
+      expect(mocks.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('leaves the install org alone: its role follows the platform role', async () => {
+      expect(
+        await membershipForNewUser(row, { ...ownerInvitation, orgId: INSTALL_ORG_ID }, db)
+      ).toEqual({ orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE });
+      expect(mocks.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('reaches the new-account path, membershipsForNewUser, the same way', async () => {
+      issuerIs(DEFAULT_USER_ROLE, ORG_ADMIN_ROLE);
+      expect((await membershipsForNewUser(row, ownerInvitation, db)).membership).toEqual({
+        orgId: OTHER_ORG,
+        role: DEFAULT_ORG_ROLE,
+      });
+    });
+  });
+
   it('platform staff never take the bootstrap, judged on the role granted or the account’s own', async () => {
     orgHas([]);
     issuerIs(PLATFORM_ADMIN_ROLE);
@@ -710,6 +787,17 @@ describe('undecidedMembershipsForNewUser', () => {
     expect(
       undecidedMembershipsForNewUser({ role: DEFAULT_USER_ROLE, accountType: 'HUMAN' }, invitation)
     ).toEqual({ membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE } });
+  });
+
+  // The issuer's standing could not be read, so an OWNER invitation narrows
+  // (#1235): a failure never widens a role.
+  it('narrows an OWNER invitation to MEMBER, since the issuer’s standing is unknown', () => {
+    expect(
+      undecidedMembershipsForNewUser(
+        { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' },
+        { ...invitation, orgRole: ORG_OWNER_ROLE }
+      ).membership
+    ).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE });
   });
 
   it('with no invited org, keeps the install-org rule on the role the invitation grants', () => {

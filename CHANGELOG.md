@@ -317,6 +317,17 @@ release process.
   and an org whose only owner is staff makes its first non-staff member an
   `OWNER` too. An explicit role on `addMember` is still honoured; whether an
   invitation's explicit `orgRole` should win is #1156.
+- **An `OWNER` invitation no longer confers `OWNER` once its issuer has lost
+  owner standing (t-1015, #1235).** The issuer's standing was checked only
+  when the invitation was sent (`checkInvitationInto`), so an owner who
+  invited a second account of theirs as `OWNER`, then was demoted or removed,
+  could still have it accepted as `OWNER`. `membershipForNewUser` now asks
+  the issuer's (`invitedBy`) standing again at acceptance, on both the
+  existing-account and new-account paths, and a lapsed one lands the invitee
+  as `MEMBER`; the invitation is still accepted. So does one whose standing
+  could not be read (`undecidedMembershipsForNewUser`). A fork that issues
+  `OWNER` invitations sees no change while the issuer stays an owner or a
+  platform admin.
 - **An event-hook delivery whose process ended before its first attempt is
   now sent (t-1012, #834).** A new `AiEventHookDelivery` row was written
   `pending` with no `nextRetryAt`, and `processPendingHookRetries()` read only

@@ -20,7 +20,8 @@
  *     the install org) — must exist and be ACTIVE (§106)
  *   - orgRole: Their role in that org (optional; MEMBER, or OWNER for the
  *     org's first non-staff member). Refused for the install org, whose role
- *     follows the platform `role` (#871)
+ *     follows the platform `role` (#871). An OWNER invitation is accepted as
+ *     MEMBER if its issuer no longer holds owner standing then (#1235)
  *
  * Response emailStatus values:
  *   - 'sent': Email was sent successfully

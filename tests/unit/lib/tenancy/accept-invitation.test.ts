@@ -202,6 +202,28 @@ describe('acceptInvitationAsExistingUser', () => {
     expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', DEFAULT_ORG_ROLE, expect.anything());
   });
 
+  // #1235: an OWNER invitation outlives the issue-time standing check. Its
+  // issuer demoted since, it lands the invitee as MEMBER, and is consumed.
+  it('accepts an OWNER invitation as MEMBER once its issuer has lost owner standing', async () => {
+    store.issuer = { role: DEFAULT_USER_ROLE, orgMemberships: [{ role: ORG_ADMIN_ROLE }] };
+    invite('tok-a', { orgId: ORG_A, orgRole: ORG_OWNER_ROLE });
+
+    const membership = await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', DEFAULT_ORG_ROLE, expect.anything());
+    expect(membership.role).toBe(DEFAULT_ORG_ROLE);
+    expect(store.rows).toHaveLength(0);
+  });
+
+  it('accepts an OWNER invitation as OWNER while its issuer is still an OWNER', async () => {
+    store.issuer = { role: DEFAULT_USER_ROLE, orgMemberships: [{ role: ORG_OWNER_ROLE }] };
+    invite('tok-a', { orgId: ORG_A, orgRole: ORG_OWNER_ROLE });
+
+    await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', ORG_OWNER_ROLE, expect.anything());
+  });
+
   it('matches the address case-insensitively', async () => {
     invite('tok-a', { orgId: ORG_A });
 
