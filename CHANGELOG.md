@@ -58,7 +58,7 @@ release process.
   holds the message-embedding backfill back (§127, t-1016).** **Migration:**
   `AiMessage` gains `embeddingRefusedAt` (nullable, indexed): when the
   privacy layer last refused to embed the reply. `backfillMissingEmbeddings()`
-  reads replies never refused first, then refused ones after a one-hour
+  reads replies never refused first, then refused ones after a one-day
   back-off (`EMBEDDING_REFUSAL_RETRY_MS`), and no longer leaves out in SQL
   the agents it expected the stage to refuse.
 - **LLM privacy layer: a memory that holds personal details no longer locks

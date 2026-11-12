@@ -222,16 +222,22 @@ An agent and an org can each require more protection than the install gives.
   refusal of a reply's embedding, on the first try or in the backfill, sets
   `AiMessage.embeddingRefusedAt`. The backfill reads replies never refused
   first, newest first, and gives whatever room is left to refused ones whose
-  back-off has passed (`EMBEDDING_REFUSAL_RETRY_MS`, one hour), the longest
+  back-off has passed (`EMBEDDING_REFUSAL_RETRY_MS`, a day), the longest
   waiting first. So refusals, from the `local_only` policy, an agent's mode
-  that is not a mode, or an app's policy resolver, never fill the batch, and
-  a refused reply is embedded within the hour once nothing refuses it (a
-  local embedding model installed, say). The backfill copies none of the
-  stage's rules: until t-1016 it left out in SQL the two refusals it knew
-  of, and could not see any other. A reply whose embedding failed for any
-  other reason is not recorded, and is asked again on the next run, as
-  before. The column is only a time; once the reply is embedded it is left
-  as it was.
+  that is not a mode, or an app's policy resolver, never fill the batch.
+  The back-off is a day because some replies are refused for as long as a
+  setting stands, and each retry is refused, logged and reported to the
+  observers again. Once nothing refuses a reply (a local embedding model
+  installed, say), it is due within a day; due replies are then drained at
+  up to one batch (25) a run, in the room fresh replies leave, so a large
+  backlog takes a while. The backfill copies none of the stage's rules:
+  until t-1016 it left out in SQL the two refusals it knew of, and could
+  not see any other. A reply whose embedding failed for any other reason is
+  not recorded, and is asked again on the next run, as before, unless it
+  was a retry: then it waits its back-off again. The column is only a time;
+  once the reply is embedded it is left as it was. A run that met only
+  refusals counts as work for the maintenance tick's idle gate, since the
+  next run reaches what is behind them.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a

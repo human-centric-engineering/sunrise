@@ -497,6 +497,44 @@ describe('backfillMissingEmbeddings', () => {
       expect(store.filter((m) => m.embedded).map((m) => m.id)).toEqual(['waited-longest', 'fresh']);
     });
 
+    it('makes a retry that fails for another reason wait its back-off again, so the next due one gets a turn', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+      // Oldest first: 'first' is the newest, so it is refused first.
+      const store = replyStore(['second', 'first']);
+      resolverRefuses(new Set(['first', 'second']));
+      await backfillMissingEmbeddings(1);
+      vi.setSystemTime(Date.now() + 1000);
+      await backfillMissingEmbeddings(1);
+      const at = (id: string) => store.find((m) => m.id === id)!.embeddingRefusedAt!.getTime();
+      expect(at('first')).toBeLessThan(at('second'));
+      vi.setSystemTime(Date.now() + EMBEDDING_REFUSAL_RETRY_MS + 1000);
+      // Nothing refuses them now, but 'first', the longest waiting, fails for
+      // another reason, and the run has room for one.
+      vi.mocked(embedText).mockImplementation(async (_text, _kind, options) => {
+        const id = (options?.metadata as { messageId?: string } | undefined)?.messageId;
+        if (id === 'first') throw new Error('input too long for the local model');
+        return FAKE_EMBED_RESULT;
+      });
+
+      expect(await backfillMissingEmbeddings(1)).toEqual({ processed: 0, failed: 1, skipped: 0 });
+      // Its time moved to now, so the other due retry is next, not it again.
+      expect(at('first')).toBe(Date.now());
+      expect(await backfillMissingEmbeddings(1)).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(store.find((m) => m.id === 'second')?.embedded).toBe(true);
+    });
+
+    it('reads only assistant replies of some length that have no embedding', async () => {
+      // The store does this filtering itself, so the SQL's own is pinned here:
+      // without it the backfill would re-embed every message, user ones too.
+      await backfillMissingEmbeddings();
+      const fragment = vi.mocked(prisma.$queryRaw).mock.calls[0][1] as { sql: string };
+      expect(fragment.sql).toMatch(/m\.role = 'assistant'/);
+      expect(fragment.sql).toMatch(/LENGTH\(m\.content\) > 20/);
+      expect(fragment.sql).toMatch(/LEFT JOIN ai_message_embedding e ON e\."messageId" = m\.id/);
+      expect(fragment.sql).toMatch(/e\.id IS NULL/);
+    });
+
     it('records a refusal on the live path too, so the backfill does not ask again at once', async () => {
       vi.mocked(embedText).mockRejectedValueOnce(
         new PrivacyRefusedError('embeddings_local_only', 'openai')

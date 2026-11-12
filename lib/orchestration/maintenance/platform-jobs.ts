@@ -189,8 +189,10 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     scope: 'per-org',
     intervalMs: 15 * MINUTE,
     run: () => backfillMissingEmbeddings(),
-    // Batch-capped at 25, so any hit may mean more behind it.
-    foundWork: (r) => r.processed > 0 || r.failed > 0,
+    // Batch-capped at 25, so any hit may mean more behind it. A refusal is
+    // recorded and not read again until its back-off, so a batch of them is
+    // progress too: what is behind them is reached on the next run (t-1016).
+    foundWork: (r) => r.processed > 0 || r.failed > 0 || r.skipped > 0,
   }),
   job({
     name: 'retention',

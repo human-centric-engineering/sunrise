@@ -402,6 +402,15 @@ describe('runDuePlatformJobs — foundWork', () => {
           .mockResolvedValue({ processed: 25, failed: 0, skipped: 0 }),
     ],
     [
+      // Refusals are recorded and not read again until their back-off, so the
+      // next run reaches what is behind them (t-1016).
+      'embeddingBackfill — only refusals',
+      () =>
+        vi
+          .mocked(backfillMissingEmbeddings)
+          .mockResolvedValue({ processed: 0, failed: 0, skipped: 25 }),
+    ],
+    [
       'retention',
       () =>
         vi

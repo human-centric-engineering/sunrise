@@ -101,12 +101,16 @@ export interface BackfillResult {
 
 /**
  * How long a reply the privacy layer refused to embed waits before the
- * backfill asks again (t-1016). Short, because a retry only takes room fresh
- * replies left and a refused call is stopped before anything is sent: once
- * whatever refused it changes (a local embedding model installed, an agent's
- * mode lowered), the reply is embedded within the hour.
+ * backfill asks again (t-1016). A day, because some replies are refused by
+ * design for as long as a setting stands (an agent's replies under
+ * `local_only` with no local model), and each retry is refused again, logged
+ * and reported to the privacy observers: once a day per reply, not once an
+ * hour. Once whatever refused it changes (a local embedding model installed,
+ * an agent's mode lowered), a reply is due within a day, and the backfill
+ * then drains due replies at up to one batch a run, in the room fresh
+ * replies leave.
  */
-export const EMBEDDING_REFUSAL_RETRY_MS = 60 * 60 * 1000;
+export const EMBEDDING_REFUSAL_RETRY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Record that the privacy layer refused to embed a reply. Any refusal: a
@@ -175,6 +179,7 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
         `
       : [];
   const missing = [...fresh, ...retries];
+  const retried = new Set(retries.map((m) => m.id));
 
   if (missing.length === 0) return { processed: 0, failed: 0, skipped: 0 };
 
@@ -201,6 +206,10 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
         messageId: msg.id,
         error: err instanceof Error ? err.message : String(err),
       });
+      // A retry that fails for another reason waits its back-off again.
+      // Otherwise its old time keeps it first in the retry read, and it would
+      // be tried, and fail, on every run, ahead of every other due retry.
+      if (retried.has(msg.id)) await recordRefusal(msg.id);
     }
   }
 
