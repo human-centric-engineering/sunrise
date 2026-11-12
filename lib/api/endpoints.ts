@@ -84,6 +84,8 @@ export const API = {
     orgExport: (id: string): string => `/api/v1/admin/orgs/${id}/export`,
     /** An org's approved providers and jurisdictions (§120) */
     orgProviders: (id: string): string => `/api/v1/admin/orgs/${id}/providers`,
+    /** An org's LLM privacy minimum and protected terms (§127) */
+    orgPrivacy: (id: string): string => `/api/v1/admin/orgs/${id}/privacy`,
     /**
      * Delete invitation by email. With `orgId` (`null` for the install org)
      * only that org's invitation goes; without it, every org's (#1199).

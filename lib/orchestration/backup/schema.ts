@@ -103,6 +103,13 @@ export const agentBackupSchema = z.object({
   inputGuardMode: z.string().nullable().optional().default(null),
   outputGuardMode: z.string().nullable().optional().default(null),
   citationGuardMode: z.string().nullable().optional().default(null),
+  // Any stored string, as a version restore takes it: one agent holding a
+  // mode this release does not know must not make the whole restore fail,
+  // and restored, that agent refuses every call until a mode is chosen,
+  // which is where it was. Absent on a backup from before t-1010, and then
+  // left absent: the restore keeps the agent's current mode, as the
+  // settings' mode is kept, rather than loosen a protection by omission.
+  privacyMode: z.string().max(64).nullable().optional(),
   maxHistoryTokens: z.number().nullable().optional().default(null),
   maxHistoryMessages: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),

@@ -19,8 +19,9 @@
  * stack.
  *
  * A call made with no scope at all gets an ephemeral one from the stage. Its
- * policy is the global one; it is never looser than a scoped call's, because
- * nothing a scope carries in this task loosens anything.
+ * policy is the global one, raised by the org in tenant context; it is never
+ * looser than a scoped call's, because nothing a scope carries loosens
+ * anything: an agent's mode and an org's minimum only tighten (t-1010).
  *
  * @see .context/privacy/llm-privacy-layer.md — *How a call flows*
  */
@@ -34,6 +35,7 @@ import type {
 } from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import type { PrivacySummary } from '@/types/orchestration';
+import type { ScopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
 
 /** What the stage found across the calls made in one scope. Counts only, never values. */
 export interface PrivacyTally {
@@ -69,6 +71,14 @@ export interface PrivacyScopeInit {
   /** What the layer already knows belongs to the people in this call. */
   knownValues?: readonly KnownValue[];
   /**
+   * Nothing reads this scope's counts: it exists to carry who the calls are
+   * for (an agent's reply embedding, t-1010). The stage then treats it like a
+   * call with no scope for the scan it would skip there: a call the scan
+   * cannot change is not scanned for nothing, nor sent to an external
+   * detector for nothing.
+   */
+  recordsNowhere?: boolean;
+  /**
    * Loads more known values (the user's own name and email, say), once per
    * scope and only when a call is actually scanned, so mode `off` costs
    * nothing. A loader that fails leaves just `knownValues`: tier B then finds
@@ -89,6 +99,8 @@ export interface PrivacyScope {
   userId?: string;
   knownValues: readonly KnownValue[];
   loadKnownValues?: () => Promise<readonly KnownValue[]>;
+  /** See {@link PrivacyScopeInit.recordsNowhere}. */
+  recordsNowhere?: boolean;
   /** The loader's result, once asked for. Shared with child scopes. */
   loaded?: Promise<readonly KnownValue[]>;
   /**
@@ -100,6 +112,13 @@ export interface PrivacyScope {
    * from an earlier call still point at the right value.
    */
   tokenSession?: TokenSession;
+  /**
+   * The agent's and the org's privacy settings, read once for this scope by
+   * `scopePrivacySettings()` (t-1010), for the org and agent named in `key`.
+   * In memory only, gone with the scope, and not shared with a child: a child
+   * may run a different agent.
+   */
+  scopeSettings?: { key: string; value: Promise<ScopePrivacySettings> };
   readonly tally: PrivacyTally;
   /** The scope this one sits inside. What is recorded here is recorded there too. */
   readonly parent?: PrivacyScope;
@@ -132,6 +151,7 @@ export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope
     ...(init.userId !== undefined ? { userId: init.userId } : {}),
     knownValues: frozenValues(init.knownValues ?? []),
     ...(init.loadKnownValues ? { loadKnownValues: init.loadKnownValues } : {}),
+    ...(init.recordsNowhere ? { recordsNowhere: true } : {}),
     tally: emptyTally(),
     ...(parent ? { parent } : {}),
   };
@@ -164,6 +184,28 @@ export function childPrivacyScope(parent: PrivacyScope, scopeId: string): Privac
     },
     parent
   );
+}
+
+/**
+ * A scope for one named agent's run (t-1010): a workflow `agent_call` or
+ * `chat_turn` step, or an orchestrator's delegation. Inside the current scope
+ * when there is one, so what its calls find is recorded there too; its own
+ * when there is not. Its own object rather than the current one bound to the
+ * agent, because an orchestrator runs delegations to different agents at once
+ * on one step's scope, and binding would let one agent's calls run under
+ * another's settings.
+ */
+export function agentPrivacyScope(
+  agentId: string,
+  // `null`, not `undefined`, for "no parent": an explicit `undefined` takes
+  // the default, the current scope.
+  parent: PrivacyScope | null = currentPrivacyScope() ?? null
+): PrivacyScope {
+  const scope = parent
+    ? childPrivacyScope(parent, `${parent.scopeId}:agent:${agentId}`)
+    : createPrivacyScope({ scopeId: `agent:${agentId}` });
+  bindPrivacyScope(scope, { agentId });
+  return scope;
 }
 
 /**

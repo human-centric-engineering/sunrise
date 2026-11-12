@@ -226,12 +226,13 @@ describe('agent-field-registry — divergence ledger vs current hand-lists', () 
     // ...plus reasoningEffort (user config, never versioned), the two grant
     // relations (snapshotted but absent from VERSIONED_FIELDS), and the model
     // parameters and provider tools added after the ledger was taken (t-911,
-    // t-913, t-912).
+    // t-913, t-912), and the agent's LLM privacy mode (t-1010).
     expect(diff(registry, CURRENT_VERSIONED_FIELDS)).toEqual(
       [
         'grantedDocumentIds',
         'grantedTagIds',
         'parallelToolCalls',
+        'privacyMode',
         'providerTools',
         'reasoningEffort',
         'serviceTier',
@@ -335,6 +336,7 @@ describe('ownership on a platform agent (§116 t-724)', () => {
     // Ruling on §116, 2026-09-29: provider, model, fallbacks, budget, per-turn
     // cap, rate limit, retention. `providerConfig` rides with the provider.
     // `serviceTier` (t-911) is OpenAI's cost-or-speed choice, like the budget.
+    // `privacyMode` (t-1010) is how an org protects its instance's calls.
     // A field moving across this line changes what every org may edit on
     // every platform agent, so it is pinned rather than derived.
     expect(platformAgentFieldNames('org').sort()).toEqual(
@@ -343,6 +345,7 @@ describe('ownership on a platform agent (§116 t-724)', () => {
         'maxCostPerTurnUsd',
         'model',
         'monthlyBudgetUsd',
+        'privacyMode',
         'provider',
         'providerConfig',
         'rateLimitRpm',

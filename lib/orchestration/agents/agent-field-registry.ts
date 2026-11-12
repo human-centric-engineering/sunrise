@@ -318,6 +318,13 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'Citation guard', tab: 'Model', order: 210 },
   },
+  // How this agent's calls are protected in one org (§127, t-1010): an org's
+  // choice to protect its instance survives every release, as its budget does.
+  privacyMode: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'LLM privacy mode', tab: 'Model', order: 215 },
+  },
   topicBoundaries: {
     platformAgent: 'code',
     versioned: true,
@@ -560,7 +567,8 @@ export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
  * reconcile afterwards. Ruling on §116 (2026-09-29): provider, model and its
  * fallbacks and config, what the agent may spend, how fast it may be called,
  * and how long its conversations are kept. Its OpenAI service tier joined them
- * with t-911: a choice between cost and speed, like the budget.
+ * with t-911: a choice between cost and speed, like the budget. Its LLM
+ * privacy mode joined them with t-1010: how an org protects its own data.
  */
 export type PlatformAgentOrgTunableField = {
   [

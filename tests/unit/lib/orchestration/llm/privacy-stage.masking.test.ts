@@ -18,6 +18,13 @@ const settings = vi.hoisted(() => ({
 /** Makes masking throw: a bug inside the stage. */
 const masking = vi.hoisted(() => ({ fail: false }));
 
+// The agent's mode and the org's minimum (t-1010): neither set here.
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiAgent: { findUnique: vi.fn(async () => null) },
+    org: { findUnique: vi.fn(async () => null) },
+  },
+}));
 vi.mock('@/lib/app/privacy-adapters', () => ({
   initAppPrivacyAdapters: () => seam.init(),
 }));

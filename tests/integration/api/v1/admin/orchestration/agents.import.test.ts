@@ -387,6 +387,21 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
   });
 
   describe('conflictMode: overwrite', () => {
+    it("keeps an agent's own privacy mode when the bundle predates it (§127 t-1010)", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(makeDbAgent(AGENT_ID, 'existing-agent'));
+      const { privacyMode: _absent, ...older } = makeBundledAgent('existing-agent') as Record<
+        string,
+        unknown
+      >;
+
+      await POST(makeRequest({ bundle: makeBundle([older as never]), conflictMode: 'overwrite' }));
+
+      const data = tx.aiAgent.update.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data).not.toHaveProperty('privacyMode');
+    });
+
     it('updates existing agent and rebuilds capability pivots', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');

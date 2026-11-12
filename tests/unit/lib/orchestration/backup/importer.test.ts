@@ -358,6 +358,46 @@ describe('importOrchestrationConfig', () => {
     expect(result.agents.updated).toBe(0);
   });
 
+  it("restores an agent's LLM privacy mode, and inherits when the backup predates it (§127 t-1010)", async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({});
+    const { privacyMode: _absent, ...older } = makeAgent() as Record<string, unknown>;
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [
+          { ...makeAgent(), slug: 'hr', privacyMode: 'redact' },
+          { ...older, slug: 'faq' },
+        ],
+      },
+    };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const created = mockTx.aiAgent.create.mock.calls.map(
+      (call) => (call[0] as { data: { slug: string; privacyMode: unknown } }).data
+    );
+    expect(created.find((d) => d.slug === 'hr')?.privacyMode).toBe('redact');
+    // Left out, so the column's default applies: null, the install's mode.
+    expect(created.find((d) => d.slug === 'faq')?.privacyMode).toBeUndefined();
+  });
+
+  it('restores an agent privacy mode that is not one as stored, so the rest of the backup restores and that agent keeps refusing', async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({});
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, agents: [{ ...makeAgent(), privacyMode: 'strict_block' }] },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(result.agents.created).toBe(1);
+    const data = mockTx.aiAgent.create.mock.calls[0][0].data as { privacyMode: unknown };
+    expect(data.privacyMode).toBe('strict_block');
+  });
+
   it('does not leak the dropped `knowledgeCategories` column into create on a fresh target (#353)', async () => {
     // The CREATE branch spreads the parsed agent into `tx.aiAgent.create`.
     // `knowledgeCategories` is kept on the wire (back-compat) but was dropped from
@@ -411,6 +451,24 @@ describe('importOrchestrationConfig', () => {
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
     expect(result.agents.updated).toBe(1);
     expect(result.agents.created).toBe(0);
+  });
+
+  it.each([
+    ['keeps the agent’s own mode when the backup predates it', undefined, false, undefined],
+    ['writes the backup’s mode', 'block', true, 'block'],
+    ['clears it when the backup says none', null, true, null],
+  ])('on overwrite %s (§127 t-1010)', async (_label, inBackup, written, value) => {
+    mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
+    mockTx.aiAgent.update.mockResolvedValue({});
+    const { privacyMode: _absent, ...older } = makeAgent() as Record<string, unknown>;
+    const agent = inBackup === undefined ? older : { ...older, privacyMode: inBackup };
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [agent] } };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const data = mockTx.aiAgent.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect('privacyMode' in data).toBe(written);
+    expect(data.privacyMode).toBe(value);
   });
 
   it("saves an overwritten agent's restored config as a new agent version, after its grants", async () => {

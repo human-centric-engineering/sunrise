@@ -18,6 +18,38 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: an agent's own mode, an org's floor and protected
+  terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
+  (nullable, `null` for every existing agent: inherit), a core field-registry
+  field on the agent form, in config backups and agent export, and
+  org-owned on a platform agent. `Org.settings` gains a platform-owned
+  `privacy` slice, `{ minimumMode, protectedTerms }`, read and written with
+  `readOrgPrivacy()` / `writeOrgPrivacy()` (`lib/tenancy/org-settings.ts`)
+  and through the new `GET`/`PUT /api/v1/admin/orgs/[id]/privacy`
+  (platform admins), with a form on the org page. Both modes only tighten:
+  a call runs under the strictest of the install's mode, the agent's and the
+  org's, and `off` is not a value either takes. Protected terms (people and
+  organisations) reach tier B as known values. Both reach a call through
+  core's first policy resolver, **`core.scope-settings`** (timeout 5 s),
+  registered like every core adapter. **A fork that registers resolvers**
+  gets it beside its own and cannot replace or remove it (the `core.` prefix
+  is reserved and resolvers take no `replace`); its own can only tighten
+  further. The protected terms are not the resolver's: the stage reads them
+  itself, as it reads the user's own name. A stored agent mode or org
+  slice that cannot be read refuses the call (`policy_resolver_failed`). An
+  org that protects names of a type the install ignores has that type
+  scanned for its calls. **What a fork's resolver and observer see
+  changes:** a workflow `agent_call` or `chat_turn` step now runs its
+  agent's calls in a child privacy scope carrying the agent
+  (`agentPrivacyScope()`), so `PolicyInput.agentId` is set on them; at
+  `single`, a call with no org in context (an admin API key's request) now
+  carries the install org as `PolicyInput.orgId` and `PrivacyEvent.orgId`,
+  where it carried none; and resolvers run inside the call's privacy scope,
+  an unscoped call's ephemeral one included. `orgIdForCall()`
+  (`lib/tenancy/context.ts`) is the org a call is governed by, shared by
+  the spend caps and the privacy stage. A reply's embedding runs under its
+  agent's mode, and `backfillMissingEmbeddings()` returns `skipped`, the
+  replies the privacy layer refused.
 - **LLM privacy layer: `pseudonymise`, `redact` and `block`, and the
   embeddings policy (§127, t-992).** The settings API, the settings page and
   a config restore now accept all five privacy modes. Under `pseudonymise`

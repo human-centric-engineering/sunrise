@@ -45,6 +45,7 @@ import {
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
 import { agentCallConfigSchema } from '@/lib/validations/orchestration';
+import { agentPrivacyScope, runInPrivacyScope } from '@/lib/orchestration/privacy/scope';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
@@ -533,6 +534,21 @@ async function runSingleTurn(
   return { output: finalContent, tokensUsed: totalTokensUsed, costUsd: totalCostUsd };
 }
 
+/** A parsed `agent_call` step config. */
+type AgentCallStepConfig = ReturnType<typeof agentCallConfigSchema.parse>;
+
+/**
+ * The active agent a step names, with its (optional) inheritance profile so
+ * the system prompt resolves the same way as the chat handler.
+ */
+function loadAgent(agentSlug: string) {
+  return prisma.aiAgent.findFirst({
+    // A platform slug names the org's platform instance only (§116 t-725).
+    where: { slug: agentSlug, isActive: true, ...platformSlugWhere(agentSlug) },
+    include: { profile: true },
+  });
+}
+
 export async function executeAgentCall(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
@@ -573,13 +589,7 @@ export async function executeAgentCall(
     );
   }
 
-  // Load the target agent with its (optional) inheritance profile so the
-  // system prompt resolves the same way as the chat handler.
-  const agent = await prisma.aiAgent.findFirst({
-    // A platform slug names the org's platform instance only (§116 t-725).
-    where: { slug: agentSlug, isActive: true, ...platformSlugWhere(agentSlug) },
-    include: { profile: true },
-  });
+  const agent = await loadAgent(agentSlug);
   if (!agent) {
     throw new ExecutorError(
       step.id,
@@ -590,6 +600,23 @@ export async function executeAgentCall(
     );
   }
 
+  // Every provider call this agent's run makes is for this agent, so its own
+  // privacy mode applies (§127, t-1010). A scope of its own inside the step's:
+  // an orchestrator runs several of these at once on one step's scope.
+  return runInPrivacyScope(agentPrivacyScope(agent.id), () =>
+    runAgentCall(step, ctx, config, agentSlug, message, agent)
+  );
+}
+
+/** The rest of {@link executeAgentCall}, once the agent is loaded, in its privacy scope. */
+async function runAgentCall(
+  step: WorkflowStep,
+  ctx: Readonly<ExecutionContext>,
+  config: AgentCallStepConfig,
+  agentSlug: string,
+  message: string,
+  agent: NonNullable<Awaited<ReturnType<typeof loadAgent>>>
+): Promise<StepResult> {
   // Resolve reasoning-effort precedence ONCE — step config beats the
   // agent's own `reasoningEffort` column. When both are null/unset, the
   // effective value is undefined and the provider sends nothing.

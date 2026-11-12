@@ -142,7 +142,7 @@ function mockIdleTasks(): void {
     stalePending: 0,
     abandonedApprovals: 0,
   });
-  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0 });
+  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0, skipped: 0 });
   vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_IDLE);
   vi.mocked(runWaitlistRetention).mockResolvedValue({
     unconfirmedDeleted: 0,
@@ -396,7 +396,10 @@ describe('runDuePlatformJobs — foundWork', () => {
     ],
     [
       'embeddingBackfill',
-      () => vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 25, failed: 0 }),
+      () =>
+        vi
+          .mocked(backfillMissingEmbeddings)
+          .mockResolvedValue({ processed: 25, failed: 0, skipped: 0 }),
     ],
     [
       'retention',

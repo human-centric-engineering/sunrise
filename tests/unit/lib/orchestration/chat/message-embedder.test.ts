@@ -15,6 +15,12 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
   embedText: vi.fn(),
+  resolveEmbeddingStatus: vi.fn(),
+}));
+
+const embeddings = vi.hoisted(() => ({ policy: 'allow' }));
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(async () => ({ privacyEmbeddingsPolicy: embeddings.policy })),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -29,7 +35,7 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';
-import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import { embedText, resolveEmbeddingStatus } from '@/lib/orchestration/knowledge/embedder';
 import { logger } from '@/lib/logging';
 import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
@@ -53,6 +59,11 @@ const FAKE_EMBED_RESULT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  embeddings.policy = 'allow';
+  vi.mocked(resolveEmbeddingStatus).mockResolvedValue({
+    availability: 'ok',
+    providerIsLocal: false,
+  });
   vi.mocked(embedText).mockResolvedValue(FAKE_EMBED_RESULT);
   vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
 });
@@ -84,6 +95,38 @@ describe('queueMessageEmbedding', () => {
 
     await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toBeUndefined();
+  });
+
+  it("embeds in a scope of its own carrying the reply's agent, so the agent's privacy mode applies (§127 t-1010)", async () => {
+    const { createPrivacyScope, currentPrivacyScope, runInPrivacyScope } =
+      await import('@/lib/orchestration/privacy/scope');
+    const seen: { scope: unknown; agentId?: string; parent?: unknown; recordsNowhere?: boolean }[] =
+      [];
+    vi.mocked(embedText).mockImplementation(async () => {
+      const s = currentPrivacyScope();
+      seen.push({
+        scope: s,
+        agentId: s?.agentId,
+        parent: s?.parent,
+        recordsNowhere: s?.recordsNowhere,
+      });
+      return FAKE_EMBED_RESULT;
+    });
+    const turn = createPrivacyScope({ scopeId: 'conversation:c1', agentId: 'agent-hr' });
+
+    runInPrivacyScope(turn, () =>
+      queueMessageEmbedding('msg-agent', 'A long enough assistant reply to embed', {
+        agentId: 'agent-hr',
+      })
+    );
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].agentId).toBe('agent-hr');
+    // Not the turn's scope, nor inside it: the turn's counts are already written.
+    expect(seen[0].scope).not.toBe(turn);
+    expect(seen[0].parent).toBeUndefined();
+    // Nothing reads its counts, so the stage does not scan for them.
+    expect(seen[0].recordsNowhere).toBe(true);
   });
 
   it('embeds and stores a valid message', async () => {
@@ -215,7 +258,7 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(result).toEqual({ processed: 0, failed: 0, skipped: 0 });
     expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
@@ -227,8 +270,126 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 2, failed: 0 });
+    expect(result).toEqual({ processed: 2, failed: 0, skipped: 0 });
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+  });
+
+  describe("replies an agent's privacy mode refuses to embed (§127 t-1010)", () => {
+    /** Whether the query told Postgres to leave out protected agents' replies. */
+    function leftOutProtected(): unknown {
+      const [, ...values] = vi.mocked(prisma.$queryRaw).mock.calls[0] as unknown[];
+      return values[0];
+    }
+
+    it('are left out of the query under local_only with a provider that is not local', async () => {
+      embeddings.policy = 'local_only';
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+
+      await backfillMissingEmbeddings();
+
+      // Otherwise the newest refused ones are picked every tick, and the rest never.
+      expect(leftOutProtected()).toBe(true);
+      const strings = vi.mocked(prisma.$queryRaw).mock.calls[0][0];
+      const sqlText = Array.isArray(strings) ? strings.join('?') : '';
+      expect(sqlText).toContain('a."privacyMode" IN');
+    });
+
+    it('always leave out an agent whose stored mode is not a mode: it refuses every call', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+
+      await backfillMissingEmbeddings();
+
+      const strings = vi.mocked(prisma.$queryRaw).mock.calls[0][0];
+      const sqlText = Array.isArray(strings) ? strings.join('?') : '';
+      expect(sqlText).toContain('a."privacyMode" IS NOT NULL');
+      expect(sqlText).toContain('a."privacyMode" NOT IN');
+    });
+
+    it('count any privacy refusal as skipped, not failed: the stage has said why', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        {
+          id: 'msg-40',
+          content: 'A reply from an org whose settings cannot be read',
+          agentId: null,
+        },
+      ]);
+      vi.mocked(embedText).mockRejectedValueOnce(
+        new PrivacyRefusedError('policy_resolver_failed', 'openai')
+      );
+
+      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 1 });
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("read an agent's settings once for the batch: one scope per agent", async () => {
+      const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
+      const scopes: unknown[] = [];
+      vi.mocked(embedText).mockImplementation(async () => {
+        scopes.push(currentPrivacyScope());
+        return FAKE_EMBED_RESULT;
+      });
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: 'msg-50', content: 'The first of two replies by one agent', agentId: 'agent-hr' },
+        { id: 'msg-51', content: 'The second of two replies by one agent', agentId: 'agent-hr' },
+        { id: 'msg-52', content: 'A reply by another agent altogether', agentId: 'agent-faq' },
+      ]);
+
+      await backfillMissingEmbeddings();
+
+      expect(scopes[0]).toBe(scopes[1]);
+      expect(scopes[2]).not.toBe(scopes[0]);
+    });
+
+    it.each([
+      ['the policy allows any provider', 'allow', false],
+      ['the provider is local', 'local_only', true],
+      ['no provider resolves', 'local_only', null],
+    ])('are kept when %s', async (_label, policy, providerIsLocal) => {
+      embeddings.policy = policy;
+      vi.mocked(resolveEmbeddingStatus).mockResolvedValue({
+        availability: providerIsLocal === null ? 'none_configured' : 'ok',
+        providerIsLocal,
+      });
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+
+      await backfillMissingEmbeddings();
+
+      expect(leftOutProtected()).toBe(false);
+    });
+
+    it('count a local-only refusal as skipped, not failed, and do not warn', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: 'msg-30', content: 'A reply its agent will not let leave', agentId: 'agent-hr' },
+        { id: 'msg-31', content: 'A reply that embeds without trouble', agentId: null },
+      ]);
+      vi.mocked(embedText)
+        .mockRejectedValueOnce(new PrivacyRefusedError('embeddings_local_only', 'openai'))
+        .mockResolvedValueOnce(FAKE_EMBED_RESULT);
+
+      const result = await backfillMissingEmbeddings();
+
+      expect(result).toEqual({ processed: 1, failed: 0, skipped: 1 });
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
+  it("embeds each message in a scope carrying its conversation's agent (§127 t-1010)", async () => {
+    const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
+    const agents: (string | undefined)[] = [];
+    vi.mocked(embedText).mockImplementation(async () => {
+      agents.push(currentPrivacyScope()?.agentId);
+      return FAKE_EMBED_RESULT;
+    });
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'msg-20', content: 'An HR reply that needs its embedding', agentId: 'agent-hr' },
+      { id: 'msg-21', content: 'A reply whose conversation is gone now', agentId: null },
+    ]);
+
+    await backfillMissingEmbeddings();
+
+    // A refused embedding leaves its message without a row; without the
+    // agent here, the next tick would send what the agent's mode refused.
+    expect(agents).toEqual(['agent-hr', undefined]);
   });
 
   it('counts failures without stopping the batch', async () => {
@@ -242,7 +403,7 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 1, failed: 1 });
+    expect(result).toEqual({ processed: 1, failed: 1, skipped: 0 });
     expect(logger.warn).toHaveBeenCalledWith(
       'Embedding backfill failed for message',
       expect.objectContaining({ messageId: 'msg-11' })
@@ -261,7 +422,7 @@ describe('backfillMissingEmbeddings', () => {
     const result = await backfillMissingEmbeddings();
 
     // Assert: no successful embeds, both failed
-    expect(result).toEqual({ processed: 0, failed: 2 });
+    expect(result).toEqual({ processed: 0, failed: 2, skipped: 0 });
     // logger.info must NOT be called because processed === 0
     expect(logger.info).not.toHaveBeenCalled();
     // logger.warn should have been called for each failure
@@ -294,10 +455,11 @@ describe('backfillMissingEmbeddings', () => {
     expect(logger.info).toHaveBeenCalledWith('Embedding backfill completed', {
       processed: 1,
       failed: 1,
+      skipped: 0,
     });
 
     // Assert: return value reflects 1 processed and 1 failed
-    expect(result).toEqual({ processed: 1, failed: 1 });
+    expect(result).toEqual({ processed: 1, failed: 1, skipped: 0 });
   });
 
   describe('cost attribution (#654)', () => {

@@ -19,13 +19,13 @@ const ORG = platformAgentFieldNames('org');
 describe('describeTunableFields', () => {
   it('leaves provider configuration out by default: the form has no control for it', () => {
     expect(describeTunableFields(ORG)).toBe(
-      'provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept'
+      'provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit, service tier, how long its conversations are kept and how strictly its calls protect personal details'
     );
   });
 
   it('names provider configuration when asked: a restore brings it back', () => {
     expect(describeTunableFields(ORG, { includeProviderConfig: true })).toBe(
-      'provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit, service tier and how long its conversations are kept'
+      'provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit, service tier, how long its conversations are kept and how strictly its calls protect personal details'
     );
   });
 

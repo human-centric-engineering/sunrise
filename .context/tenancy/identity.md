@@ -103,7 +103,7 @@ Three things about the shape are decisions, not defaults:
   fork's product tiers sit beneath the org). The database refuses a fourth
   value, and `tests/unit/lib/tenancy/roles.test.ts` asserts the enum and
   `ORG_ROLES` agree.
-- **`settings` is one JSON column with four platform-owned keys**, and the
+- **`settings` is one JSON column with five platform-owned keys**, and the
   rest of it is a fork's. `retention` (§108 t-713) holds the retention
   windows this org keeps instead of the platform's, described in
   [Data Retention](../orchestration/retention.md#per-org-windows) and written
@@ -123,6 +123,12 @@ Three things about the shape are decisions, not defaults:
   cap of its own (see
   [Costs](../admin/orchestration-costs.md#per-org-monthly-budget-cap) and
   [Rate limiting](../security/rate-limiting.md#per-org-request-cap)).
+  `privacy` (§127 t-1010) holds the org's LLM privacy floor (`minimumMode`)
+  and the names it always protects (`protectedTerms`), written through
+  `PUT /api/v1/admin/orgs/[id]/privacy`. Like `providers`, it is read whole
+  and fails closed: an unreadable slice refuses the org's every AI call until
+  it is saved again (see
+  [LLM privacy layer](../privacy/llm-privacy-layer.md#what-is-built-t-1010)).
   `lib/tenancy/org-settings.ts` is the whole of what the platform reads and
   writes there. It **replaces its own slice rather than the object**, in a
   serializable read-modify-write, so a fork's keys, and the other platform

@@ -6,6 +6,7 @@ import {
   type OrgProviderOption,
   type OrgProviderPolicyView,
 } from '@/components/admin/orgs/org-providers-form';
+import { OrgPrivacyForm, type OrgPrivacyView } from '@/components/admin/orgs/org-privacy-form';
 import { OrgUsageSummary } from '@/components/admin/orgs/org-usage-summary';
 import { Badge } from '@/components/ui/badge';
 import { API } from '@/lib/api/endpoints';
@@ -16,7 +17,7 @@ import { parsePaginationMeta } from '@/lib/validations/common';
 
 export const metadata: Metadata = {
   title: 'Organisation',
-  description: 'One organisation, and the providers it may use.',
+  description: 'One organisation, the providers it may use, and how its AI calls are protected.',
 };
 
 interface OrgDetail {
@@ -92,18 +93,21 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * Admin — one organisation (§120 t-745).
  *
  * Server shell: the org (`GET /api/v1/admin/orgs/[id]`), its provider policy
- * (`GET …/providers`), the provider list and its usage this month against
- * its cap (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`), in parallel. Only the approved
- * providers are editable here; rename, suspend and members stay API-only. A
+ * (`GET …/providers`), its LLM privacy settings (`GET …/privacy`, §127
+ * t-1010), the provider list and its usage this month against its cap
+ * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`), in parallel. The
+ * approved providers and the privacy settings are editable here; rename,
+ * suspend and members stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
  * boundary. A policy or provider fetch that fails says so in place of the
  * form, rather than offering a partial set to save over the real one.
  */
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [org, policy, providers, usage] = await Promise.all([
+  const [org, policy, privacy, providers, usage] = await Promise.all([
     getOrg(id),
     loadOrNull<OrgProviderPolicyView>(API.ADMIN.orgProviders(id)),
+    loadOrNull<OrgPrivacyView>(API.ADMIN.orgPrivacy(id)),
     getAllProviders(),
     getOrgUsage(id),
   ]);
@@ -156,6 +160,17 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
         ) : (
           <p className="text-destructive text-sm">
             The approved providers could not be loaded. Reload the page to try again.
+          </p>
+        )}
+      </section>
+
+      <section className="space-y-3 rounded-md border p-4">
+        <h2 className="text-lg font-medium">LLM privacy</h2>
+        {privacy ? (
+          <OrgPrivacyForm orgId={org.id} orgName={org.name} privacy={privacy} />
+        ) : (
+          <p className="text-destructive text-sm">
+            The privacy settings could not be loaded. Reload the page to try again.
           </p>
         )}
       </section>

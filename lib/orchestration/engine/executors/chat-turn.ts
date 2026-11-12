@@ -44,6 +44,7 @@ import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manag
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { chatTurnConfigSchema } from '@/lib/validations/orchestration';
+import { agentPrivacyScope, runInPrivacyScope } from '@/lib/orchestration/privacy/scope';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
@@ -231,22 +232,26 @@ export async function executeChatTurn(
   const started = Date.now();
   let response;
   try {
-    response = await provider.chat(messages, {
-      model,
-      ...(config.temperature !== undefined
-        ? { temperature: config.temperature }
-        : agent.temperature !== null
-          ? { temperature: agent.temperature }
-          : {}),
-      ...(config.maxTokens !== undefined
-        ? { maxTokens: config.maxTokens }
-        : agent.maxTokens !== null
-          ? { maxTokens: agent.maxTokens }
-          : {}),
-      ...(effectiveReasoning !== undefined ? { reasoningEffort: effectiveReasoning } : {}),
-      ...modelParamOptions(agent),
-      signal: ctx.signal,
-    });
+    // The call is for this agent, so its own privacy mode applies (§127,
+    // t-1010), in a scope of its own inside the step's.
+    response = await runInPrivacyScope(agentPrivacyScope(agent.id), () =>
+      provider.chat(messages, {
+        model,
+        ...(config.temperature !== undefined
+          ? { temperature: config.temperature }
+          : agent.temperature !== null
+            ? { temperature: agent.temperature }
+            : {}),
+        ...(config.maxTokens !== undefined
+          ? { maxTokens: config.maxTokens }
+          : agent.maxTokens !== null
+            ? { maxTokens: agent.maxTokens }
+            : {}),
+        ...(effectiveReasoning !== undefined ? { reasoningEffort: effectiveReasoning } : {}),
+        ...modelParamOptions(agent),
+        signal: ctx.signal,
+      })
+    );
   } catch (err) {
     const billedOnFailure = err instanceof ProviderError ? err.usage : undefined;
     throw new ExecutorError(

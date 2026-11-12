@@ -41,9 +41,12 @@ import {
   loadPlatformAgentsMarker,
   readOrgRetention,
   isSettingsWriteConflict,
+  readOrgPrivacy,
+  salvageOrgPrivacy,
   readOrgProviderPolicy,
   readOrgQuotas,
   readPlatformAgentsMarker,
+  writeOrgPrivacy,
   writeOrgProviderPolicy,
   writeOrgQuotas,
   writePlatformAgentsMarker,
@@ -307,6 +310,115 @@ describe('the platform-agents marker (§116 t-724)', () => {
     ).toEqual({
       platformAgents: marker,
     });
+  });
+});
+
+describe('the LLM privacy settings (§127 t-1010)', () => {
+  const STORED = {
+    minimumMode: 'redact',
+    protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }],
+  };
+
+  it('reads a stored slice as saved', () => {
+    expect(readOrgPrivacy({ privacy: STORED, quotas: {} })).toEqual({
+      ok: true,
+      saved: true,
+      value: STORED,
+    });
+  });
+
+  it('reads an org that never saved one as not saved, with nothing set', () => {
+    const none = { ok: true, saved: false, value: { minimumMode: null, protectedTerms: [] } };
+    expect(readOrgPrivacy(null)).toEqual(none);
+    expect(readOrgPrivacy(undefined)).toEqual(none);
+    expect(readOrgPrivacy({ retention: {} })).toEqual(none);
+    expect(readOrgPrivacy({ privacy: null })).toEqual(none);
+  });
+
+  it.each([['a string'], [['an', 'array']], [42]])(
+    'fails closed on a settings column that is %j, not an object: it cannot be read for a slice',
+    (settings) => {
+      expect(readOrgPrivacy(settings)).toEqual({ ok: false, issues: ['(settings)'] });
+    }
+  );
+
+  it.each([
+    ['a mode that is not a minimum', { minimumMode: 'off', protectedTerms: [] }, ['minimumMode']],
+    ['a missing key', { minimumMode: null }, ['protectedTerms']],
+    ['a key it does not know', { ...STORED, extra: 1 }, ['(root)']],
+    ['not an object', 'redact', ['(root)']],
+  ])('fails closed on %s, saying where', (_label, slice, issues) => {
+    expect(readOrgPrivacy({ privacy: slice })).toEqual({ ok: false, issues });
+  });
+
+  it('salvages what still parses of an unreadable slice, so a save does not drop it', () => {
+    const settings = {
+      privacy: {
+        minimumMode: 'block',
+        protectedTerms: [
+          { value: 'Jane Hart', type: 'PERSON' },
+          { value: 'Al', type: 'PERSON' },
+          { value: 'a@b.com', type: 'EMAIL' },
+        ],
+        addedByAFork: true,
+      },
+    };
+
+    expect(readOrgPrivacy(settings).ok).toBe(false);
+    expect(salvageOrgPrivacy(settings)).toEqual({
+      minimumMode: 'block',
+      protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }],
+    });
+  });
+
+  it.each([[null], ['a string'], [{ privacy: 'garbled' }], [{ privacy: { minimumMode: 'off' } }]])(
+    'salvages nothing it cannot read from %j',
+    (settings) => {
+      expect(salvageOrgPrivacy(settings)).toEqual({ minimumMode: null, protectedTerms: [] });
+    }
+  );
+
+  it('writes the slice in a serializable transaction, keeping every other key', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({ settings: { quotas: { requestsPerMinute: 5 } } }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const db = {
+      $transaction: vi.fn((fn: (t: typeof tx) => unknown, options: unknown) => {
+        expect(options).toEqual({ isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return fn(tx);
+      }),
+    };
+
+    const result = await writeOrgPrivacy(ORG_A, STORED as never, db as never);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: { requestsPerMinute: 5 }, privacy: STORED } },
+    });
+    expect(result).toEqual({
+      previous: { ok: true, saved: false, value: { minimumMode: null, protectedTerms: [] } },
+      stored: STORED,
+    });
+  });
+
+  it('writes nothing for an invalid value', async () => {
+    const db = { $transaction: vi.fn() };
+
+    await expect(
+      writeOrgPrivacy(ORG_A, { minimumMode: 'off', protectedTerms: [] } as never, db as never)
+    ).rejects.toThrow();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an org that does not exist', async () => {
+    const tx = { org: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } };
+    const db = { $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)) };
+
+    expect(await writeOrgPrivacy(ORG_A, STORED as never, db as never)).toBeNull();
+    expect(tx.org.update).not.toHaveBeenCalled();
   });
 });
 

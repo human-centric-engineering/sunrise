@@ -420,6 +420,11 @@ async function importParsed(
               inputGuardMode: agent.inputGuardMode,
               outputGuardMode: agent.outputGuardMode,
               citationGuardMode: agent.citationGuardMode,
+              // Absent on a backup from before t-1010: keep the agent's own
+              // mode. Every other field here is overwritten with a coherent
+              // value; this one is a protection, and an omission must not
+              // loosen it (the settings' privacy mode is kept the same way).
+              ...(agent.privacyMode !== undefined ? { privacyMode: agent.privacyMode } : {}),
               maxHistoryTokens: agent.maxHistoryTokens,
               maxHistoryMessages: agent.maxHistoryMessages,
               retentionDays: agent.retentionDays,

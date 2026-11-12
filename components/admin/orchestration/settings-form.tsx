@@ -32,6 +32,7 @@ import {
   type EmbeddingsPolicy,
   parseEmbeddingsPolicy,
   parsePrivacyMode,
+  PRIVACY_MODE_LABELS,
   PRIVACY_MODES_AVAILABLE,
   protectsContent,
 } from '@/lib/orchestration/privacy/settings-policy';
@@ -154,14 +155,6 @@ const ENTITY_TYPE_LABELS: Record<CoreEntityType, string> = {
   DATE_OF_BIRTH: 'Dates of birth',
   DATE: 'Other dates',
   LOCATION: 'Place names',
-};
-
-const PRIVACY_MODE_LABELS: Record<(typeof PRIVACY_MODES_AVAILABLE)[number], string> = {
-  off: 'Off',
-  detect: 'Detect (count only)',
-  pseudonymise: 'Pseudonymise (placeholders, restored)',
-  redact: 'Redact (placeholders, not restored)',
-  block: 'Block (refuse calls with personal data)',
 };
 
 const EMBEDDINGS_POLICY_LABELS: Record<EmbeddingsPolicy, string> = {

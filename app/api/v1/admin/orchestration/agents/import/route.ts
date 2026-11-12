@@ -252,6 +252,10 @@ export const POST = withAdminAuth(
               inputGuardMode: bundled.inputGuardMode ?? null,
               outputGuardMode: bundled.outputGuardMode ?? null,
               citationGuardMode: bundled.citationGuardMode ?? null,
+              // Absent on a bundle from before t-1010: an overwrite keeps the
+              // agent's own mode rather than loosen a protection by omission;
+              // a new agent inherits the install's.
+              ...(bundled.privacyMode !== undefined ? { privacyMode: bundled.privacyMode } : {}),
               maxHistoryTokens: bundled.maxHistoryTokens ?? null,
               maxHistoryMessages: bundled.maxHistoryMessages ?? null,
               retentionDays: bundled.retentionDays ?? null,

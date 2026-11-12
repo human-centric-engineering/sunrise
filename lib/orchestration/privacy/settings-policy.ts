@@ -30,6 +30,46 @@ export const PRIVACY_MODES_AVAILABLE = [
   'block',
 ] as const satisfies readonly PrivacyMode[];
 
+/** What each mode is called on the settings, agent and org forms. */
+export const PRIVACY_MODE_LABELS: Record<(typeof PRIVACY_MODES_AVAILABLE)[number], string> = {
+  off: 'Off',
+  detect: 'Detect (count only)',
+  pseudonymise: 'Pseudonymise (placeholders, restored)',
+  redact: 'Redact (placeholders, not restored)',
+  block: 'Block (refuse calls with personal data)',
+};
+
+/**
+ * The modes an agent or an org can require (t-1010): every available mode but
+ * `off`. Both only ever tighten the install's mode, so `off` would say nothing;
+ * "no setting" is `null`, which inherits.
+ */
+export const PRIVACY_TIGHTENING_MODES = [
+  'detect',
+  'pseudonymise',
+  'redact',
+  'block',
+] as const satisfies readonly (typeof PRIVACY_MODES_AVAILABLE)[number][];
+
+export type PrivacyTighteningMode = (typeof PRIVACY_TIGHTENING_MODES)[number];
+
+/**
+ * A stored agent or org mode, or `null` when none is set. A value that is set
+ * but is not one of {@link PRIVACY_TIGHTENING_MODES} throws: it may have been
+ * a stricter mode, and reading it as "none" would send the call looser than
+ * someone asked. The stage refuses the call instead.
+ */
+export function parseTighteningMode(raw: unknown): PrivacyTighteningMode | null {
+  if (raw === null || raw === undefined) return null;
+  if (!isTighteningMode(raw)) throw new Error('stored privacy mode is not a mode');
+  return raw;
+}
+
+/** Whether `raw` is one of {@link PRIVACY_TIGHTENING_MODES}. */
+export function isTighteningMode(raw: unknown): raw is PrivacyTighteningMode {
+  return PRIVACY_TIGHTENING_MODES.some((m) => m === raw);
+}
+
 /**
  * Whether `mode` replaces what it finds with placeholders: `pseudonymise` and
  * `redact`. (`block` sends nothing it finds, so it masks nothing.)

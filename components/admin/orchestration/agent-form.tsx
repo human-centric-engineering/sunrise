@@ -20,6 +20,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
+import {
+  isTighteningMode,
+  PRIVACY_MODE_LABELS,
+  PRIVACY_TIGHTENING_MODES,
+} from '@/lib/orchestration/privacy/settings-policy';
 import { AlertCircle, Check, Loader2, Save, Scale, Shield } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -147,6 +152,7 @@ const agentFormSchema = z
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
     maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
     maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
     retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
@@ -486,6 +492,7 @@ export function AgentForm({
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
       citationGuardMode: (agent?.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
+      privacyMode: isTighteningMode(agent?.privacyMode) ? agent.privacyMode : null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
       maxHistoryMessages: agent?.maxHistoryMessages ?? null,
       retentionDays: agent?.retentionDays ?? null,
@@ -546,6 +553,16 @@ export function AgentForm({
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
+  const currentPrivacyMode = watch('privacyMode');
+  // Set, but not a mode this version knows: the agent's calls are refused
+  // until one is chosen, and a save that leaves the field alone keeps it.
+  const [privacyModeChosen, setPrivacyModeChosen] = useState(false);
+  // The stored value, not the prop: a version restore replaces it.
+  const [storedPrivacyMode, setStoredPrivacyMode] = useState<string | null>(
+    agent?.privacyMode ?? null
+  );
+  const storedPrivacyModeUnknown =
+    storedPrivacyMode !== null && !isTighteningMode(storedPrivacyMode);
   const currentVisibility = watch('visibility');
   const currentProfileId = watch('profileId');
   const currentPersona = watch('persona');
@@ -813,6 +830,10 @@ export function AgentForm({
         // API refuses a change to them, so they are never sent (§116 t-725).
         for (const field of lockedFields) delete editPayload[field];
         if (!authored.provider || data.provider.length === 0) delete editPayload.provider;
+        // A stored privacy mode this version cannot show is kept unless the
+        // admin chose another: the select shows it as "the install's mode",
+        // and sending that would loosen a protection nobody chose to (§127).
+        if (storedPrivacyModeUnknown && !privacyModeChosen) delete editPayload.privacyMode;
         if (!authored.model || data.model.length === 0) delete editPayload.model;
 
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
@@ -1958,6 +1979,61 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="grid gap-2 rounded-md border p-3">
+              <Label htmlFor="privacyMode">
+                LLM privacy mode{' '}
+                <FieldHelp title="LLM privacy mode">
+                  How this agent&apos;s calls to an AI provider protect personal details: names,
+                  contact details, account and ID numbers. It can only make protection stricter. The
+                  install&apos;s mode (Settings &rarr; LLM privacy) and the organisation&apos;s
+                  minimum still apply, and whichever of the three is strictest wins. Use it for an
+                  agent that handles personal data, such as HR or support, while the rest of the
+                  install stays lighter. Leave on &ldquo;Use the install&apos;s mode&rdquo; to
+                  inherit it.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={
+                  storedPrivacyModeUnknown && !privacyModeChosen
+                    ? '__unknown__'
+                    : (currentPrivacyMode ?? '__global__')
+                }
+                disabled={locked('privacyMode')}
+                onValueChange={(v) => {
+                  // Any choice, "the install's mode" included, replaces a
+                  // stored mode the select cannot show.
+                  setPrivacyModeChosen(true);
+                  setValue('privacyMode', isTighteningMode(v) ? v : null, { shouldValidate: true });
+                }}
+              >
+                <SelectTrigger id="privacyMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {storedPrivacyModeUnknown && !privacyModeChosen && (
+                    <SelectItem value="__unknown__" disabled>
+                      Not a mode this version knows (calls refused)
+                    </SelectItem>
+                  )}
+                  <SelectItem value="__global__">Use the install&apos;s mode</SelectItem>
+                  {PRIVACY_TIGHTENING_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {PRIVACY_MODE_LABELS[mode]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {storedPrivacyModeUnknown && !privacyModeChosen && (
+                <p
+                  className="text-xs text-amber-700 dark:text-amber-400"
+                  data-testid="privacy-mode-unknown"
+                >
+                  The stored mode is not one this version knows, so every call this agent makes is
+                  refused. Saving keeps it until you choose a mode here.
+                </p>
+              )}
+            </div>
           </div>
 
           <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
@@ -2426,6 +2502,7 @@ export function AgentForm({
                         (fresh.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
                       citationGuardMode:
                         (fresh.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
+                      privacyMode: isTighteningMode(fresh.privacyMode) ? fresh.privacyMode : null,
                       maxHistoryTokens: fresh.maxHistoryTokens ?? null,
                       maxHistoryMessages: fresh.maxHistoryMessages ?? null,
                       retentionDays: fresh.retentionDays ?? null,
@@ -2463,6 +2540,9 @@ export function AgentForm({
                       enableImageInput: fresh.enableImageInput ?? false,
                       enableDocumentInput: fresh.enableDocumentInput ?? false,
                     });
+                    // The restored row's privacy mode is the stored one now.
+                    setStoredPrivacyMode(fresh.privacyMode ?? null);
+                    setPrivacyModeChosen(false);
                     // MUST clear authorship. `reset` replaces the form values
                     // but not this state, so without it a provider the operator
                     // picked-but-did-not-save left `authored.provider` true

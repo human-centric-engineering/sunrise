@@ -27,3 +27,26 @@ export function privacyOffSettings() {
     privacyEmbeddingsPolicy: 'allow' as const,
   };
 }
+
+/**
+ * Core's agent-and-org privacy resolver (t-1010), reading nothing: for a test
+ * that runs the real provider manager, is not about the LLM privacy layer,
+ * and counts or scripts the database reads the resolver would add (it reads
+ * the call's agent and org once per privacy scope).
+ *
+ * Usage, inside the `vi.mock` factory:
+ *
+ *   vi.mock('@/lib/orchestration/privacy/scope-settings', async (importOriginal) =>
+ *     (await import('@/tests/helpers/privacy-settings')).scopeSettingsReadingNothing(
+ *       await importOriginal()
+ *     )
+ *   );
+ */
+export function scopeSettingsReadingNothing<T extends object>(real: T) {
+  const nothing = { agentMode: null, orgMinimumMode: null, protectedTerms: [] };
+  return {
+    ...real,
+    scopePrivacySettings: async () => nothing,
+    scopeSettingsResolver: () => ({ id: 'core.scope-settings', resolve: () => undefined }),
+  };
+}

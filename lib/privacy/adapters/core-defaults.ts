@@ -3,9 +3,9 @@
  * with, registered through the same registry an app uses.
  *
  * The three local detection tiers are here (t-989): rules, known values, and
- * word lists; and the stateless token strategy (t-990). Still to come: the
- * settings-backed policy resolver and metadata observer (t-991). Each adds its
- * adapter here and nowhere else, so core's detectors are reached only through
+ * word lists; the stateless token strategy (t-990); and the resolver that
+ * applies an agent's mode and an org's minimum (t-1010). Each core adapter is
+ * added here and nowhere else, so core's detectors are reached only through
  * the registry — `tests/unit/lib/privacy/pii/registry-only.test.ts` fails on
  * any other caller.
  *
@@ -28,6 +28,7 @@ import { knownValuesDetector } from '@/lib/privacy/pii/known-values';
 import { listsDetector } from '@/lib/privacy/pii/lists';
 import { RULES_DETECTOR_ID, rulesDetector } from '@/lib/privacy/pii/rules';
 import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
+import { scopeSettingsResolver } from '@/lib/orchestration/privacy/scope-settings';
 
 /**
  * Tier A's id, for a caller that runs it alone through the runner
@@ -36,11 +37,17 @@ import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
  */
 export const CORE_RULES_DETECTOR_ID = RULES_DETECTOR_ID;
 
+/**
+ * How long core's agent-and-org resolver may take: two primary-key reads,
+ * but on the first call of a scope, so a cold or busy pool counts.
+ */
+export const SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS = 5_000;
+
 export interface CorePrivacyAdapters {
   /** Always registered as required: a core detector failing is a bug, and a bug refuses the call. */
   detectors: readonly { detector: PrivacyDetector; timeoutMs?: number }[];
   tokenStrategy: PrivacyTokenStrategy | null;
-  policyResolvers: readonly PrivacyPolicyResolver[];
+  policyResolvers: readonly { resolver: PrivacyPolicyResolver; timeoutMs?: number }[];
   observers: readonly PrivacyObserver[];
 }
 
@@ -52,7 +59,14 @@ export function corePrivacyAdapters(): CorePrivacyAdapters {
       { detector: listsDetector() },
     ],
     tokenStrategy: statelessTokenStrategy(),
-    policyResolvers: [],
+    // The agent's mode and the org's minimum (t-1010). The install's own mode
+    // is the base the stage starts from, so it needs no resolver.
+    // Longer than the default: it reads the agent and the org from the
+    // database, once per scope, and a resolver that times out refuses the
+    // call, so a cold connection must not refuse a turn's first call.
+    policyResolvers: [
+      { resolver: scopeSettingsResolver(), timeoutMs: SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS },
+    ],
     observers: [],
   };
 }
