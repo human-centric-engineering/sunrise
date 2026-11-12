@@ -211,8 +211,11 @@ POST /api/v1/orgs/[id]/members
 - `userId`: required, an existing user's id (cuid). The seeded SERVICE account
   is refused as if missing.
 - `role`: optional, `OWNER` / `ADMIN` / `MEMBER`. Default `MEMBER` — except
-  that the first member of an **empty** org becomes `OWNER` when no role is
-  asked for (the invitation path's bootstrap). `OWNER` needs OWNER standing.
+  that, when no role is asked for, the org's **first member who isn't
+  platform staff** becomes `OWNER` (the invitation path's bootstrap; staff
+  already in the org don't stop it, #1178, and any non-staff member, an ADMIN
+  included, does), when the caller holds owner standing. `OWNER` needs OWNER
+  standing.
   On the install org a `role` is refused: roles there follow the platform role.
 
 Adding by id enrols the user without asking them — it mirrors the platform
@@ -286,7 +289,7 @@ POST /api/v1/invitations/decline   { token, email }   — public, token-gated
 **Accept** is for an address that already has an account (#1199). The session
 must be signed in as the invited address, verified. The membership follows the
 new-account rule (the invitation's `orgRole`, default `MEMBER`, and `OWNER` for
-an empty org's first member). Only that invitation is consumed.
+the org's first non-staff member). Only that invitation is consumed.
 **Response** (200): `{ message, membership: { orgId, role } }`.
 **Errors**: `403 INVITATION_WRONG_ACCOUNT` (signed in as another address) ·
 `403 EMAIL_NOT_VERIFIED` · `404` (no such invitation, or already used) ·

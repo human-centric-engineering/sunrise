@@ -164,6 +164,9 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       update: vi.fn(),
       count: vi.fn(),
+      // The first-owner bootstrap asks whether the invitation's issuer holds
+      // owner standing; the invitations here are issued by a platform admin.
+      findUnique: vi.fn(() => Promise.resolve({ role: 'ADMIN', orgMemberships: [] })),
     },
     authBootstrap: {
       findUnique: vi.fn(),
@@ -225,7 +228,7 @@ interface SharedMocks {
     status: string;
   };
   prisma: {
-    user: { update: MockedFn; count: MockedFn };
+    user: { update: MockedFn; count: MockedFn; findUnique: MockedFn };
     authBootstrap: { findUnique: MockedFn; upsert: MockedFn };
     orgMembership: { upsert: MockedFn; count: MockedFn };
     verification: { findFirst: MockedFn };
@@ -321,6 +324,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         user: {
           update: vi.mocked(db.prisma.user.update),
           count: vi.mocked(db.prisma.user.count),
+          findUnique: vi.mocked(db.prisma.user.findUnique),
         },
         authBootstrap: {
           findUnique: vi.mocked(db.prisma.authBootstrap.findUnique),

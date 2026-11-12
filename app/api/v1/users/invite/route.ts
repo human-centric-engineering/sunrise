@@ -19,7 +19,7 @@
  *   - orgId: The org the invitee joins on acceptance (optional; defaults to
  *     the install org) — must exist and be ACTIVE (§106)
  *   - orgRole: Their role in that org (optional; MEMBER, or OWNER for the
- *     first member of a new org). Refused for the install org, whose role
+ *     org's first non-staff member). Refused for the install org, whose role
  *     follows the platform `role` (#871)
  *
  * Response emailStatus values:

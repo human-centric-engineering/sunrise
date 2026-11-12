@@ -242,7 +242,8 @@ POST /api/v1/users/invite
   install org). Must exist and be `ACTIVE`; the authorization policy is asked
   whether the caller may administer it (§106)
 - `orgRole`: Optional, one of `OWNER`, `ADMIN`, `MEMBER` (default: `MEMBER`,
-  or `OWNER` for the first member of a new org)
+  or `OWNER` when the invitee is the org's first member who isn't platform
+  staff)
 
 **Response** (201 Created):
 

@@ -174,7 +174,7 @@ background tick → forEachOrg(fn)  one org-scoped context per iteration, per-or
   settings), `OrgMembership` (`@@unique([orgId, userId])`, role enum,
   `onDelete: Cascade`, export-manifest and erasure dispositions per the
   `CLAUDE.md` FK rules). Invitations extend the existing invitation flow with an
-  org and org role. Per-org bootstrap ("first member becomes OWNER") sits beside
+  org and org role. Per-org bootstrap ("first non-staff member becomes OWNER") sits beside
   the install-scoped `AuthBootstrap`.
 - **Context** — `lib/tenancy/context.ts`: `AsyncLocalStorage<{ orgId, source }>`
   where `source` ∈ session · api-key · embed-token · mcp-key · resolver ·

@@ -25,7 +25,12 @@ interface Row {
   metadata: unknown;
 }
 
-const store = vi.hoisted(() => ({ rows: [] as Row[], memberCount: 1 }));
+const store = vi.hoisted(() => ({
+  rows: [] as Row[],
+  memberCount: 1,
+  // The invitation's issuer: a platform admin unless a test says otherwise.
+  issuer: { role: 'ADMIN', orgMemberships: [] as { role: string }[] },
+}));
 
 type Where = {
   id?: string;
@@ -63,6 +68,10 @@ vi.mock('@/lib/db/client', () => ({
     },
     orgMembership: {
       count: vi.fn(() => Promise.resolve(store.memberCount)),
+    },
+    // The issuer ('inviter-1'), asked about by the first-owner bootstrap.
+    user: {
+      findUnique: vi.fn(() => Promise.resolve(store.issuer)),
     },
   },
 }));
@@ -136,6 +145,7 @@ async function refusal(fn: () => Promise<unknown>): Promise<APIError> {
 beforeEach(() => {
   store.rows = [];
   store.memberCount = 1;
+  store.issuer = { role: 'ADMIN', orgMemberships: [] };
   seq = 0;
   addMember.mockReset();
   addMember.mockImplementation((orgId: string, _userId: string, role: string) =>
@@ -177,6 +187,19 @@ describe('acceptInvitationAsExistingUser', () => {
     await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
     expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', ORG_OWNER_ROLE, expect.anything());
+  });
+
+  // Security review of #1178: an org ADMIN could invite a second account of
+  // theirs, then empty the org of non-staff members and leave. The bootstrap
+  // needs the issuer's owner standing when the invitation is accepted.
+  it('does not make the invitee OWNER when the issuer no longer holds owner standing', async () => {
+    store.memberCount = 0;
+    store.issuer = { role: DEFAULT_USER_ROLE, orgMemberships: [] }; // not a platform admin, and not a member
+    invite('tok-a', { orgId: ORG_A, orgRole: DEFAULT_ORG_ROLE });
+
+    await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', DEFAULT_ORG_ROLE, expect.anything());
   });
 
   it('matches the address case-insensitively', async () => {

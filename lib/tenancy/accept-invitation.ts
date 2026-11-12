@@ -7,7 +7,7 @@
  * and `membershipForNewUser` decides the membership. An address that already
  * has an account cannot go that way, so it signs in and accepts here. The
  * membership is decided by the same rule (the invitation's org and role,
- * and the first member of an empty org becomes its OWNER), then written
+ * and the per-org first-owner bootstrap), then written
  * through `addMember`, the lifecycle's one writer of a membership for an
  * existing user.
  *
@@ -57,13 +57,13 @@ export interface InvitationAccepter {
 /**
  * The standing an accepted invitation carries into `addMember`.
  *
- * An `OWNER` invitation was allowed only to an inviter with owner standing,
- * checked when it was issued (`checkInvitationInto`), and the
- * first-member-becomes-OWNER bootstrap is the platform's own rule, which the
- * new-account path applies with no actor at all. So acceptance writes the
- * role the issue-time check already admitted. At acceptance the inviter's
- * standing is no longer known, and the invitee's own has nothing to do with
- * it.
+ * An explicit `OWNER` invitation was allowed only to an inviter with owner
+ * standing, checked when it was issued (`checkInvitationInto`). The
+ * first-owner bootstrap asked the issuer's standing again, now, before
+ * deciding the role (`membershipForNewUser`, from `invitedBy`). So acceptance
+ * writes the role those checks already admitted; the invitee's own standing
+ * has nothing to do with it. An explicit `OWNER` is not re-checked against the
+ * issuer here.
  */
 const ISSUED_INVITATION_ACTOR: MembershipActor = {
   platformAdmin: false,
@@ -138,7 +138,9 @@ export async function acceptInvitationAsExistingUser(
   }
 
   // The new-account rule, so the two paths cannot disagree: the invitation's
-  // org role, default MEMBER, and OWNER for the first member of an empty org.
+  // org role, default MEMBER, and OWNER by the first-owner bootstrap.
+  // `accepter.role` is the account's own platform role: a platform ADMIN
+  // accepting here is staff, and does not take that bootstrap (#1178).
   const { role } = await membershipForNewUser({ role: accepter.role }, metadata);
 
   let membership: MembershipRecord;

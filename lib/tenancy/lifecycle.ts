@@ -57,7 +57,13 @@ import { APIError } from '@/lib/api/errors';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { healSignupRecord, initialMembershipFor } from '@/lib/tenancy/membership';
+import {
+  countNonStaffMembers,
+  hasOwnerStanding,
+  healSignupRecord,
+  initialMembershipFor,
+  takesFirstOwnership,
+} from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
 import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
 import {
@@ -142,11 +148,6 @@ export function membershipActorOf(session: {
   principal: { orgRole?: string | null };
 }): MembershipActor {
   return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
-}
-
-/** May this actor confer, alter or revoke the OWNER role in the org? */
-function hasOwnerStanding(actor: MembershipActor): boolean {
-  return actor.platformAdmin || actor.orgRole === ORG_OWNER_ROLE;
 }
 
 function requireOwnerStanding(actor: MembershipActor, what: string): void {
@@ -434,10 +435,13 @@ export async function updateOrgReportingPrevious(
 /**
  * Add an existing user to an org.
  *
- * `role` defaults to `MEMBER`, except that the first member of an EMPTY
- * non-install org becomes its `OWNER` when no role was asked for — the
- * invitation path's bootstrap (`membershipForNewUser`), so an org created
- * without a named owner still gets one from its first member. Unlike that
+ * `role` defaults to `MEMBER`, except that when no role was asked for, the
+ * first person who is not platform staff to join a non-install org becomes
+ * its `OWNER` — the invitation path's bootstrap, one rule for both
+ * (`takesFirstOwnership`), so an org created without a named owner still
+ * gets one from its first real member, whatever staff are in it already. It
+ * needs an actor with owner standing, as an explicit `OWNER` does, so an org
+ * ADMIN never triggers it. Unlike that
  * path an explicit role is honoured: this is an API call by someone who
  * chose the role, not an invitation whose author could not know the org
  * would be empty when it was accepted.
@@ -477,8 +481,10 @@ export async function addMember(
   } else if (role !== undefined) {
     effectiveRole = role;
   } else {
-    const members = await db.orgMembership.count({ where: { orgId } });
-    effectiveRole = members === 0 ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
+    const nonStaff = await countNonStaffMembers(orgId, db);
+    effectiveRole = takesFirstOwnership(user, nonStaff, hasOwnerStanding(actor))
+      ? ORG_OWNER_ROLE
+      : DEFAULT_ORG_ROLE;
   }
 
   // Placed by hand: a signup record that survived a failed write is paid and
@@ -514,8 +520,8 @@ export async function addMember(
  * May this actor invite someone into the org, as `role`? (§111 t-813)
  *
  * The invitation's half of {@link addMember}'s rules, asked before the
- * invitation is issued rather than when it is accepted: by then the inviter's
- * standing is not known. An explicit `OWNER` needs the actor's owner standing,
+ * invitation is issued rather than when it is accepted. An explicit `OWNER`
+ * needs the actor's owner standing,
  * so an ADMIN cannot appoint an owner by invitation any more than by role
  * change. The install org is refused: its memberships follow the platform
  * role, so inviting into it is the platform's invitation
@@ -523,7 +529,8 @@ export async function addMember(
  * issues no new invitations. One issued before the suspension can still be
  * accepted; its member is then refused at entry, like every member of a
  * suspended org (`.context/tenancy/identity.md`). No role means the
- * acceptance-time rule decides (`membershipForNewUser`). Answers the org, so
+ * acceptance-time rule decides (`membershipForNewUser`, which asks the
+ * issuer's owner standing again then, for the first-owner bootstrap). Answers the org, so
  * the route can name it in the invitation email.
  */
 export async function checkInvitationInto(
