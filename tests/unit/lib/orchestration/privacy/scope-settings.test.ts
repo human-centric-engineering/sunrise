@@ -10,16 +10,25 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({
-  agentMode: null,
+/** What the scripted database holds: the agent's column and the org's JSON. */
+interface ScriptedDb {
+  agentMode: unknown;
   /** A mode for one agent id, over `agentMode`. */
+  byAgent: Record<string, unknown>;
+  orgSettings: unknown;
+  agentReads: number;
+  orgReads: number;
+  failNext: boolean;
+}
+const db = vi.hoisted((): ScriptedDb => ({
+  agentMode: null,
   byAgent: {},
   orgSettings: null,
   agentReads: 0,
   orgReads: 0,
   failNext: false,
 }));
-const settings = vi.hoisted(() => ({ mode: 'off' }));
+const settings = vi.hoisted((): { mode: string } => ({ mode: 'off' }));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
