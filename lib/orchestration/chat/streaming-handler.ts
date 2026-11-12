@@ -378,12 +378,6 @@ function rowsAfterPin(pin: HistoryPin) {
 /** What a turn built its first call from, and the summary pin it read (t-1017). */
 type BuiltTurnRequest = BuiltChatRequest & { summaryPin: string | null };
 
-/** A refusal of a call the turn made itself, and how many messages that call carried. */
-interface StageRefusal {
-  error: PrivacyRefusedError;
-  messageCount: number;
-}
-
 /** What a read from the pin returns. */
 interface HistoryFromPin {
   rows: AiMessage[];
@@ -596,10 +590,10 @@ export class StreamingChatHandler {
     // What the turn built its request from, and the summary pin it read, so a
     // refusal under `block` can tell which part held the details (t-1017).
     let builtRequest: BuiltTurnRequest | null = null;
-    // The refusal of a call this turn made itself, with how many messages it
-    // sent. Only its location is trusted: another call's indices are not
-    // positions in these messages.
-    let stageRefusal: StageRefusal | null = null;
+    // How many messages the turn's own chat call carried when the privacy
+    // stage refused it. Set only there: another call's location is not a
+    // position in these messages.
+    let refusedCallMessageCount: number | null = null;
     try {
       registerBuiltInCapabilities();
 
@@ -1450,7 +1444,11 @@ export class StreamingChatHandler {
       let messages: LlmMessage[] = initialMessages;
       builtRequest = {
         sources: initialSources,
-        historyRows: history.map((m) => ({ id: m.id, role: m.role })),
+        historyRows: historyRows.map((row, i) => ({
+          id: history[i].id,
+          role: row.role,
+          toolCalls: (row.toolCalls?.length ?? 0) > 0,
+        })),
         summaryPin: conversationSummary ? casPin : null,
       };
 
@@ -1770,7 +1768,7 @@ export class StreamingChatHandler {
               } catch (streamErr) {
                 streamRetries++;
                 if (streamErr instanceof PrivacyRefusedError) {
-                  stageRefusal = { error: streamErr, messageCount: messages.length };
+                  refusedCallMessageCount = messages.length;
                 }
 
                 // Whatever the provider told us this failed call cost, record
@@ -3228,7 +3226,7 @@ export class StreamingChatHandler {
         // transcript. Details in the assistant's setup are not ours to leave
         // out: the reader is told to ask an administrator.
         if (err.code === PRIVACY_BLOCKED) {
-          const placed = this.placeBlockedTurn(err, builtRequest, stageRefusal);
+          const placed = this.placeBlockedTurn(err, builtRequest, refusedCallMessageCount);
           await this.leaveRowsOutOfHistory(
             [...turnRowIds, ...(placed?.earlierRowIds ?? [])],
             conversationId,
@@ -3424,13 +3422,12 @@ export class StreamingChatHandler {
   private placeBlockedTurn(
     err: ProviderError,
     built: BuiltTurnRequest | null,
-    refusal: StageRefusal | null
+    refusedCallMessageCount: number | null
   ): PlacedPrivacyRefusal | null {
-    if (!built || !refusal || refusal.error !== err) return null;
-    return placePrivacyRefusal(refusal.error.found, {
-      ...built,
-      messageCount: refusal.messageCount,
-    });
+    if (!built || refusedCallMessageCount === null || !(err instanceof PrivacyRefusedError)) {
+      return null;
+    }
+    return placePrivacyRefusal(err.found, { ...built, messageCount: refusedCallMessageCount });
   }
 
   /**

@@ -47,10 +47,11 @@ release process.
     user's memories: ask an administrator). **A client that handles
     `privacy_blocked` should handle both.** `judge_call` never retries
     `privacy_blocked_setup`.
-  - The chat handler also marks with `excludedFromHistory` every row of
-    each earlier exchange that held them, and replaces a stored summary that
-    held them with its gap note alone, keeping `summaryUpToMessageId`, so
-    the rows it covered are not read again.
+  - When only something earlier held them, the chat handler also marks with
+    `excludedFromHistory` every row of each earlier exchange that held them,
+    and replaces a stored summary that held them with its gap note alone,
+    keeping `summaryUpToMessageId`, so the rows it covered are not read
+    again.
   - `buildMessagesAndBreakdown()` also returns `sources`, where each message
     came from.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected

@@ -404,14 +404,20 @@ That happened when the details were in:
   | -------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- | ---------------------------------- |
   | This turn: the message, or a tool result                       | The turn's rows                                                  | `privacy_blocked`         | Ask again without them             |
   | An earlier row, or the stored summary                          | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
-  | The system prompt, entity context, memories or an opening turn | Anything else that held them, and the turn's rows                | `privacy_blocked_setup`   | Ask an administrator               |
+  | The system prompt, entity context, memories or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
 
-  The setup wins when it is one of several: asking again cannot work until
-  an administrator changes it. The log line ("Chat turn refused for personal
-  details") names the kinds of source and how many rows, never a value.
+  **One case wins, and only it acts**: the setup, then this turn, then
+  anything earlier. Detection runs over the whole call, so a name learned in
+  the setup or this turn is found in earlier rows and the summary that
+  passed every scan before; forgetting them would lose context for nothing.
+  If they hold details of their own, the next attempt finds them, and places
+  them. The log line ("Chat turn refused for personal details") names the
+  kinds of source and how many rows, never a value.
 
-- **An earlier row takes its exchange with it**: from its user message to
-  the row before the next one. So no reply is resent without its question,
+- **An earlier row takes its exchange with it**: from where it begins to
+  where the next one does. An exchange begins at a user message, or at an
+  assistant row straight after a finished reply (a turn the agent opened,
+  which persists no user row). So no reply is resent without its question,
   or a question without its reply.
 - **The summary is forgotten** (owner ruling 2026-11-12: the conversation
   carries on and forgets). Under `block` it can never be sent again, and it
@@ -438,6 +444,12 @@ That happened when the details were in:
     hold details. Degraded, not locked.
   - **The embed widget** shows its own fixed words for every error, as it
     did for `privacy_blocked`.
+  - **Memories that hold details** refuse every turn that user has with that
+    agent, and nothing can delete a memory: the "ask an administrator" copy
+    names no remedy there. Filed as t-1018.
+  - **An earlier exchange is left out without a note** in the prompt, as a
+    refused turn is (t-1014). The transcript keeps it, and the reader is
+    told the assistant may not remember everything.
 
 ### Modes
 

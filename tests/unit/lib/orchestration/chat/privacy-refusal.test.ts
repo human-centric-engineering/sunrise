@@ -1,7 +1,7 @@
 /**
  * Placing a turn the privacy layer refused under `block` (§127 t-1017): from
  * the stage's positions and the builder's sources to a case, the rows to
- * leave out, and whether the summary goes.
+ * leave out, and whether the summary is forgotten.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -19,21 +19,36 @@ const SOURCES: MessageSource[] = [
   { kind: 'history', historyIndex: 2 },
   { kind: 'user_message' },
 ];
+const row = (id: string, role: string, toolCalls = false) => ({ id, role, toolCalls });
 // Row 0 was dropped by the cap: it has an id, and no message. Rows 1 and 2
-// are one exchange, rows 3 to 5 another (a tool call and its result).
+// are one exchange, rows 3 to 6 another (a tool call, its result, the reply),
+// and row 7 a turn the agent opened, which has no user row.
 const HISTORY_ROWS = [
-  { id: 'row-a', role: 'assistant' },
-  { id: 'row-b', role: 'user' },
-  { id: 'row-c', role: 'assistant' },
-  { id: 'row-d', role: 'user' },
-  { id: 'row-e', role: 'assistant' },
-  { id: 'row-f', role: 'tool' },
+  row('row-a', 'assistant'),
+  row('row-b', 'user'),
+  row('row-c', 'assistant'),
+  row('row-d', 'user'),
+  row('row-e', 'assistant', true),
+  row('row-f', 'tool'),
+  row('row-g', 'assistant'),
+  row('row-h', 'assistant'),
 ];
 // Two messages the tool loop added: an assistant tool call and its result.
 const SENT = { messageCount: 10, sources: SOURCES, historyRows: HISTORY_ROWS };
 
 const place = (messageIndices: number[], messageCount = 10) =>
   placePrivacyRefusal({ messageCount, messageIndices }, SENT);
+
+/** A call of one message per history row, to place any row on its own. */
+const placeRows = (...indices: number[]) =>
+  placePrivacyRefusal(
+    { messageCount: HISTORY_ROWS.length, messageIndices: indices },
+    {
+      messageCount: HISTORY_ROWS.length,
+      sources: HISTORY_ROWS.map((_, historyIndex) => ({ kind: 'history', historyIndex })),
+      historyRows: HISTORY_ROWS,
+    }
+  )?.earlierRowIds;
 
 describe('placePrivacyRefusal', () => {
   it('this turn: the user’s message, or what the tool loop added', () => {
@@ -48,51 +63,58 @@ describe('placePrivacyRefusal', () => {
   });
 
   it('earlier: the whole exchange each row is in, by id, not by position in the prompt', () => {
-    // The reply held the details: its question goes too.
-    expect(place([6, 7])).toEqual({
+    expect(place([6])).toEqual({
       code: 'privacy_blocked_earlier',
       earlierRowIds: ['row-b', 'row-c'],
       summary: false,
       setup: [],
-      turn: true,
+      turn: false,
     });
     // The question held them: its reply goes too.
     expect(place([5])).toMatchObject({ earlierRowIds: ['row-b', 'row-c'] });
   });
 
-  it('earlier: an exchange runs to the next user message, and a window may start inside one', () => {
-    const sources: MessageSource[] = [
-      { kind: 'history', historyIndex: 0 },
-      { kind: 'history', historyIndex: 4 },
-    ];
-    const sent = { messageCount: 2, sources, historyRows: HISTORY_ROWS };
-    // No user message before row 0: the exchange starts at the window.
-    expect(
-      placePrivacyRefusal({ messageCount: 2, messageIndices: [0] }, sent)?.earlierRowIds
-    ).toEqual(['row-a']);
-    // The tool call's exchange: its question and its result too, each once.
-    expect(
-      placePrivacyRefusal({ messageCount: 2, messageIndices: [1, 1] }, sent)?.earlierRowIds
-    ).toEqual(['row-d', 'row-e', 'row-f']);
+  it('earlier: an exchange runs to where the next begins, and a window may start inside one', () => {
+    // No exchange begins before row 0: it starts at the window.
+    expect(placeRows(0)).toEqual(['row-a']);
+    // The tool call's exchange: its question, its result and its reply, each once.
+    expect(placeRows(4, 4)).toEqual(['row-d', 'row-e', 'row-f', 'row-g']);
+    // A turn the agent opened begins its own exchange: neither takes the other.
+    expect(placeRows(7)).toEqual(['row-h']);
+    expect(placeRows(3)).toEqual(['row-d', 'row-e', 'row-f', 'row-g']);
   });
 
-  it('earlier: the summary', () => {
-    expect(place([3])).toMatchObject({
+  it('earlier: the summary, and earlier rows with it', () => {
+    expect(place([3, 5])).toEqual({
       code: 'privacy_blocked_earlier',
+      earlierRowIds: ['row-b', 'row-c'],
       summary: true,
-      earlierRowIds: [],
+      setup: [],
+      turn: false,
     });
   });
 
-  it('setup wins, and everything else that held details is still named', () => {
+  it('this turn wins over anything earlier, which it leaves alone', () => {
+    // Detection runs over the whole call: a name this turn introduced can be
+    // found in earlier rows and the summary that passed every scan before.
+    expect(place([3, 6, 7])).toEqual({
+      code: 'privacy_blocked',
+      earlierRowIds: [],
+      summary: false,
+      setup: [],
+      turn: true,
+    });
+  });
+
+  it('the setup wins over everything, and leaves the rest alone', () => {
     expect(place([0, 2, 0, 3, 6, 8])).toEqual({
       code: 'privacy_blocked_setup',
-      earlierRowIds: ['row-b', 'row-c'],
-      summary: true,
+      earlierRowIds: [],
+      summary: false,
       setup: ['system_prompt', 'memories'],
       turn: true,
     });
-    expect(place([1])).toMatchObject({ setup: ['context'] });
+    expect(place([1])).toMatchObject({ setup: ['context'], turn: false });
     expect(place([4])).toMatchObject({ setup: ['note'] });
   });
 
@@ -108,7 +130,7 @@ describe('placePrivacyRefusal', () => {
   });
 
   it('places nothing when a history source names a row it was not given', () => {
-    const sources: MessageSource[] = [{ kind: 'history', historyIndex: 7 }];
+    const sources: MessageSource[] = [{ kind: 'history', historyIndex: 12 }];
     expect(
       placePrivacyRefusal(
         { messageCount: 1, messageIndices: [0] },

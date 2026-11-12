@@ -9828,6 +9828,25 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     for (const row of turnRows) expect(marked(row)).toBe('privacy_blocked');
   });
 
+  it('leaves earlier rows and the summary alone when this turn holds the details too', async () => {
+    // Detection runs over the whole call: a name this turn introduces is found
+    // in earlier rows that passed every scan before. They are not forgotten
+    // for it; the reader asks again without the name.
+    const store = conversationStore();
+    const earlier = store.add({ role: 'user', content: `Ask ${DETAIL} about bay 4.` });
+    store.conv.summary = `The user mentioned ${DETAIL}.`;
+    store.conv.summaryUpToMessageId = earlier.id;
+    const after = store.add({ role: 'assistant', content: 'Will do.' });
+    blockingProvider();
+
+    expect(errorOf(await turn(`Is ${DETAIL} in today?`))?.code).toBe('privacy_blocked');
+    expect(marked(after)).toBeUndefined();
+    expect(store.conv.summary).toBe(`The user mentioned ${DETAIL}.`);
+    expect(marked(store.rows.find((r) => r.content === `Is ${DETAIL} in today?`))).toBe(
+      'privacy_blocked'
+    );
+  });
+
   it('leaves out only the turn when the location is not for the call it sent', async () => {
     const { add } = conversationStore();
     const earlier = add({ role: 'user', content: `My name is ${DETAIL}.` });

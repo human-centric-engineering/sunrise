@@ -59,8 +59,11 @@ export interface PlacedPrivacyRefusal {
 export interface BuiltChatRequest {
   /** The built prefix's sources; messages past it were added by the tool loop this turn. */
   sources: readonly MessageSource[];
-  /** Each row of the history the builder was given, by index, oldest first. */
-  historyRows: readonly { id: string; role: string }[];
+  /**
+   * Each row of the history the builder was given, by index, oldest first,
+   * and whether it is an assistant row that asked for tool calls.
+   */
+  historyRows: readonly { id: string; role: string; toolCalls: boolean }[];
 }
 
 /** What the handler knows about the call it made. */
@@ -69,12 +72,29 @@ export interface SentChatCall extends BuiltChatRequest {
   messageCount: number;
 }
 
-/** The rows of the exchange `index` is in: from its user message to the row before the next. */
+/**
+ * Whether row `i` begins an exchange: a user message, or an assistant row
+ * straight after a finished reply (an assistant row with no tool calls),
+ * which is a turn the agent opened (#474) and which persists no user row.
+ */
+function opensExchange(rows: BuiltChatRequest['historyRows'], i: number): boolean {
+  const row = rows[i];
+  if (row.role === 'user') return true;
+  const before = rows[i - 1];
+  return (
+    row.role === 'assistant' &&
+    before !== undefined &&
+    before.role === 'assistant' &&
+    !before.toolCalls
+  );
+}
+
+/** The rows of the exchange `index` is in: from where it begins to the row before the next. */
 function exchangeOf(rows: BuiltChatRequest['historyRows'], index: number): number[] {
   let start = index;
-  while (start > 0 && rows[start].role !== 'user') start--;
+  while (start > 0 && !opensExchange(rows, start)) start--;
   let end = index + 1;
-  while (end < rows.length && rows[end].role !== 'user') end++;
+  while (end < rows.length && !opensExchange(rows, end)) end++;
   return Array.from({ length: end - start }, (_, k) => start + k);
 }
 
@@ -116,17 +136,26 @@ export function placePrivacyRefusal(
         setup.add(source.kind);
     }
   }
-  const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
   // An empty location is not a place: nothing to leave out but the turn.
-  if (!turn && !summary && earlierRowIds.length === 0 && setup.size === 0) return null;
-  // The setup wins: whatever else is left out, asking again cannot work until
-  // an administrator changes it. Then anything earlier: once it is left out,
-  // asking again works.
-  const code: PrivacyBlockedChatCode =
-    setup.size > 0
-      ? PRIVACY_BLOCKED_SETUP
-      : summary || earlierRowIds.length > 0
-        ? PRIVACY_BLOCKED_EARLIER
-        : PRIVACY_BLOCKED;
-  return { code, earlierRowIds, summary, setup: [...setup], turn };
+  if (!turn && !summary && earlierRows.size === 0 && setup.size === 0) return null;
+  // One case wins, and only it acts. Detection runs over the whole call, so a
+  // name learned in one part is found wherever else it appears: a name in the
+  // setup or this turn can flag earlier rows and the summary that passed every
+  // scan before. Forgetting them would lose context for nothing; if they hold
+  // details of their own, the next attempt finds them and places them.
+  // - The setup first: asking again cannot work until an administrator
+  //   changes it.
+  // - Then this turn: asking again without the details works.
+  // - Then anything earlier, which is left out, so asking again works.
+  if (setup.size > 0 || turn) {
+    return {
+      code: setup.size > 0 ? PRIVACY_BLOCKED_SETUP : PRIVACY_BLOCKED,
+      earlierRowIds: [],
+      summary: false,
+      setup: [...setup],
+      turn,
+    };
+  }
+  const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
+  return { code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, setup: [], turn };
 }
