@@ -383,14 +383,19 @@ describe('importOrchestrationConfig', () => {
     expect(created.find((d) => d.slug === 'faq')?.privacyMode).toBeUndefined();
   });
 
-  it('refuses a backup naming an agent privacy mode that is not one, rather than restore it', async () => {
+  it('restores an agent privacy mode that is not one as stored, so the rest of the backup restores and that agent keeps refusing', async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({});
     const payload = {
       ...minPayload,
-      data: { ...minPayload.data, agents: [{ ...makeAgent(), privacyMode: 'off' }] },
+      data: { ...minPayload.data, agents: [{ ...makeAgent(), privacyMode: 'strict_block' }] },
     };
 
-    await expect(importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE)).rejects.toThrow();
-    expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(result.agents.created).toBe(1);
+    const data = mockTx.aiAgent.create.mock.calls[0][0].data as { privacyMode: unknown };
+    expect(data.privacyMode).toBe('strict_block');
   });
 
   it('does not leak the dropped `knowledgeCategories` column into create on a fresh target (#353)', async () => {

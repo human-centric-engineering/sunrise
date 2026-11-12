@@ -138,6 +138,33 @@ describe('OrgPrivacyForm', () => {
     expect(sentBody()).toMatchObject({ minimumMode: null });
   });
 
+  it('warns that a block minimum refuses every call naming a protected term, the org included', async () => {
+    const user = renderForm(view({ saved: false }), 'Acme Ltd');
+    expect(screen.queryByTestId('org-privacy-block-terms')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: /minimum privacy mode/i }));
+    await user.click(within(screen.getByRole('listbox')).getByRole('option', { name: /^Block/ }));
+
+    expect(screen.getByTestId('org-privacy-block-terms')).toHaveTextContent(
+      'an agent told it works for Acme Ltd cannot answer at all'
+    );
+  });
+
+  it('shows what still parses of an unreadable slice, so saving keeps it', () => {
+    renderForm(
+      view({
+        unreadable: true,
+        minimumMode: 'redact',
+        protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }],
+      })
+    );
+
+    expect(screen.getByRole('combobox', { name: /minimum privacy mode/i })).toHaveTextContent(
+      /^Redact/
+    );
+    expect(screen.getByTestId('org-privacy-terms')).toHaveTextContent('Jane Hart');
+  });
+
   it('says every call is refused while the stored settings cannot be read', () => {
     renderForm(view({ unreadable: true }));
 

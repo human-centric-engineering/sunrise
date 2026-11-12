@@ -42,6 +42,7 @@ import {
   readOrgRetention,
   isSettingsWriteConflict,
   readOrgPrivacy,
+  salvageOrgPrivacy,
   readOrgProviderPolicy,
   readOrgQuotas,
   readPlatformAgentsMarker,
@@ -349,6 +350,33 @@ describe('the LLM privacy settings (§127 t-1010)', () => {
   ])('fails closed on %s, saying where', (_label, slice, issues) => {
     expect(readOrgPrivacy({ privacy: slice })).toEqual({ ok: false, issues });
   });
+
+  it('salvages what still parses of an unreadable slice, so a save does not drop it', () => {
+    const settings = {
+      privacy: {
+        minimumMode: 'block',
+        protectedTerms: [
+          { value: 'Jane Hart', type: 'PERSON' },
+          { value: 'Al', type: 'PERSON' },
+          { value: 'a@b.com', type: 'EMAIL' },
+        ],
+        addedByAFork: true,
+      },
+    };
+
+    expect(readOrgPrivacy(settings).ok).toBe(false);
+    expect(salvageOrgPrivacy(settings)).toEqual({
+      minimumMode: 'block',
+      protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }],
+    });
+  });
+
+  it.each([[null], ['a string'], [{ privacy: 'garbled' }], [{ privacy: { minimumMode: 'off' } }]])(
+    'salvages nothing it cannot read from %j',
+    (settings) => {
+      expect(salvageOrgPrivacy(settings)).toEqual({ minimumMode: null, protectedTerms: [] });
+    }
+  );
 
   it('writes the slice in a serializable transaction, keeping every other key', async () => {
     const tx = {

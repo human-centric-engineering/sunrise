@@ -172,8 +172,10 @@ An agent and an org can each require more protection than the install gives.
 - **Through the registry.** Core's first policy resolver,
   `core.scope-settings` (`scopeSettingsResolver()`), registered in
   `core-defaults.ts`, raises the mode from the call's `PolicyInput.agentId`
-  and `orgId`. An app replaces it by id; the protected terms are not the
-  resolver's, so they still apply. Its timeout is 5 s
+  and `orgId`. An app cannot replace or remove it: the registry refuses a
+  `core.` id from an app, and resolvers have no `replace` as detectors do.
+  An app's own resolvers run beside it and can only tighten further. The
+  protected terms are not the resolver's: the stage gathers them. Its timeout is 5 s
   (`SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS`), not the default 1 s: it reads the
   database on a scope's first call, and a resolver that times out refuses
   the call. The install's own mode needs no
@@ -233,14 +235,19 @@ An agent and an org can each require more protection than the install gives.
   replace. The form suggests the org's own name as a first term until the
   org saves; saving an empty set is stored, so the suggestion does not come
   back. The admin audit log keeps the floor and how many terms, never the
-  names.
+  names. An unreadable slice is shown with what still parses of it
+  (`salvageOrgPrivacy()`), so the save that fixes it keeps that. Under a
+  `block` floor the form warns that a protected term in an agent's own
+  instructions, the org's name most often, refuses every call that agent
+  makes.
 - **Export and erasure.** The org export reads the org row whole
   (`exportOrgData()`, no `select`), so `settings.privacy` leaves with the
   org; `eraseOrg()` deletes the row. A config backup and an agent export carry
   the agent's mode; a stored value that is not a mode is left out, as the
   settings' mode is, so restoring it keeps the target's own. A version
-  restore takes any stored string, so a version saved while the agent held
-  one stays restorable and leaves it refusing until a mode is chosen. A restore or an agent import from before
+  restore and a config restore take any stored string, so a version or a
+  backup holding a mode this release does not know stays restorable and
+  leaves that agent refusing until a mode is chosen. A restore or an agent import from before
   t-1010 has no mode for the agent, and an overwrite then keeps the agent's
   own, as the settings' mode is kept: an omission never loosens it.
 

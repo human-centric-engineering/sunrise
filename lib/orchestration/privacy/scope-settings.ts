@@ -35,7 +35,11 @@ import { stricterMode } from '@/lib/privacy/adapters/policy';
 import type { KnownValue, PrivacyPolicyResolver } from '@/lib/privacy/adapters/types';
 import { readOrgPrivacy } from '@/lib/tenancy/org-settings';
 
-/** The resolver's id. `core.` like every core adapter; an app replaces it by naming it. */
+/**
+ * The resolver's id. `core.` like every core adapter, so an app can neither
+ * register it nor replace it (resolvers take no `replace`); an app's own
+ * resolvers run beside it and can only tighten further.
+ */
 export const SCOPE_SETTINGS_RESOLVER_ID = 'core.scope-settings';
 
 /** What the agent and the org a call is for have chosen. */
@@ -139,9 +143,9 @@ export function strictestChosenMode(
   settings: Pick<ScopePrivacySettings, 'agentMode' | 'orgMinimumMode'>
 ): PrivacyTighteningMode | null {
   const { agentMode, orgMinimumMode } = settings;
-  if (agentMode === null) return orgMinimumMode;
-  if (orgMinimumMode === null) return agentMode;
-  // Both are tightening modes, so the stricter is one too.
+  if (agentMode === null || orgMinimumMode === null) return agentMode ?? orgMinimumMode;
+  // The one strictness order (`stricterMode`); both are tightening modes, so
+  // whichever it picks is one too.
   return stricterMode(agentMode, orgMinimumMode) === agentMode ? agentMode : orgMinimumMode;
 }
 

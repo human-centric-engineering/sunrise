@@ -9,10 +9,7 @@ import { z } from 'zod';
 
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
-import {
-  EMBEDDINGS_POLICIES,
-  PRIVACY_TIGHTENING_MODES,
-} from '@/lib/orchestration/privacy/settings-policy';
+import { EMBEDDINGS_POLICIES } from '@/lib/orchestration/privacy/settings-policy';
 import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 
 export const agentBackupSchema = z.object({
@@ -106,11 +103,13 @@ export const agentBackupSchema = z.object({
   inputGuardMode: z.string().nullable().optional().default(null),
   outputGuardMode: z.string().nullable().optional().default(null),
   citationGuardMode: z.string().nullable().optional().default(null),
-  // A mode it does not know would refuse every call the agent makes; refused
-  // at the restore instead. Absent on a backup from before t-1010, and then
+  // Any stored string, as a version restore takes it: one agent holding a
+  // mode this release does not know must not make the whole restore fail,
+  // and restored, that agent refuses every call until a mode is chosen,
+  // which is where it was. Absent on a backup from before t-1010, and then
   // left absent: the restore keeps the agent's current mode, as the
   // settings' mode is kept, rather than loosen a protection by omission.
-  privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
+  privacyMode: z.string().max(64).nullable().optional(),
   maxHistoryTokens: z.number().nullable().optional().default(null),
   maxHistoryMessages: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),

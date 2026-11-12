@@ -131,6 +131,28 @@ describe('GET /api/v1/admin/orgs/[id]/privacy', () => {
     });
   });
 
+  it('reports an unreadable slice with what still parses of it, so a save keeps that', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: {
+        privacy: {
+          minimumMode: 'block',
+          protectedTerms: [
+            { value: CLIENT, type: 'PERSON' },
+            { value: 'x', type: 'PERSON' },
+          ],
+        },
+      },
+    });
+
+    expect((await json(await get())).data).toEqual({
+      orgId: OTHER,
+      saved: true,
+      unreadable: true,
+      minimumMode: 'block',
+      protectedTerms: [{ value: CLIENT, type: 'PERSON' }],
+    });
+  });
+
   it('says a stored slice is unreadable rather than report it as empty', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { privacy: { minimumMode: 'off', protectedTerms: [] } },

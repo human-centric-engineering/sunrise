@@ -197,6 +197,18 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
         </Select>
       </div>
 
+      {minimumMode === 'block' && terms.length > 0 && (
+        <div
+          className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
+          data-testid="org-privacy-block-terms"
+        >
+          Under Block, any call that contains a protected term is refused, and that includes an
+          agent&apos;s own instructions: an agent told it works for {orgName} cannot answer at all
+          if that name is protected. Remove the organisation&apos;s own name from the terms, or
+          choose Pseudonymise, which masks it instead.
+        </div>
+      )}
+
       <fieldset className="grid gap-2">
         <legend className="mb-2 text-sm font-medium">
           Protected terms{' '}

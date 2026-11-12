@@ -13,9 +13,10 @@
  * masked like the user's own name, by tier B. Both apply from the next chat
  * turn or workflow step; nothing caches them.
  *
- * A stored slice that cannot be read is reported (`unreadable: true`) rather
- * than as empty: the privacy stage refuses the org's every call until it is
- * saved again, so the page has to say why.
+ * A stored slice that cannot be read is reported (`unreadable: true`) with
+ * what can still be read of it, rather than as empty: the privacy stage
+ * refuses the org's every call until it is saved again, so the page has to
+ * say why, and the save must not drop a floor that was there.
  *
  * Platform-only, like the provider policy beside it. Every replacement is in
  * the admin audit log with the mode it replaced and how many terms, never the
@@ -33,6 +34,7 @@ import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 import {
   isSettingsWriteConflict,
   readOrgPrivacy,
+  salvageOrgPrivacy,
   writeOrgPrivacy,
   type OrgPrivacyRead,
 } from '@/lib/tenancy/org-settings';
@@ -51,10 +53,15 @@ const PLATFORM_ONLY = {
   },
 } as const;
 
-/** The settings as the API reports them. */
-function describe(orgId: string, read: OrgPrivacyRead) {
+/**
+ * The settings as the API reports them. An unreadable slice reports what can
+ * still be read of it (`salvageOrgPrivacy`), so the save the page asks for
+ * keeps a floor and the terms that parse rather than replace them with
+ * nothing.
+ */
+function describe(orgId: string, read: OrgPrivacyRead, settings?: unknown) {
   if (!read.ok) {
-    return { orgId, saved: true, unreadable: true, minimumMode: null, protectedTerms: [] };
+    return { orgId, saved: true, unreadable: true, ...salvageOrgPrivacy(settings) };
   }
   return { orgId, saved: read.saved, unreadable: false, ...read.value };
 }
@@ -74,7 +81,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
   const org = await prisma.org.findUnique({ where: { id }, select: { settings: true } });
   if (!org) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
 
-  return successResponse(describe(id, readOrgPrivacy(org.settings)));
+  return successResponse(describe(id, readOrgPrivacy(org.settings), org.settings));
 }, PLATFORM_ONLY);
 
 export const PUT = withAdminAuth<{ id: string }>(async (request, session, { params }) => {

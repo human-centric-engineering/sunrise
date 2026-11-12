@@ -31,10 +31,11 @@ release process.
   org's, and `off` is not a value either takes. Protected terms (people and
   organisations) reach tier B as known values. Both reach a call through
   core's first policy resolver, **`core.scope-settings`** (timeout 5 s),
-  registered like every core adapter; **a fork that registers resolvers**
-  keeps it unless it replaces it by that id, which replaces how the agent's
-  and org's modes are applied but not the protected terms: the stage reads
-  those itself, as it reads the user's own name. A stored agent mode or org
+  registered like every core adapter. **A fork that registers resolvers**
+  gets it beside its own and cannot replace or remove it (the `core.` prefix
+  is reserved and resolvers take no `replace`); its own can only tighten
+  further. The protected terms are not the resolver's: the stage reads them
+  itself, as it reads the user's own name. A stored agent mode or org
   slice that cannot be read refuses the call (`policy_resolver_failed`). An
   org that protects names of a type the install ignores has that type
   scanned for its calls. **What a fork's resolver and observer see

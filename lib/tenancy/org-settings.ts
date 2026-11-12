@@ -56,7 +56,9 @@ import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
   ORG_QUOTA_KEYS,
   ORG_RETENTION_KEYS,
+  MAX_ORG_PROTECTED_TERMS,
   orgPrivacySettingsSchema,
+  orgProtectedTermSchema,
   orgProviderPolicySchema,
   orgQuotasSchema,
   orgRetentionSchema,
@@ -469,6 +471,29 @@ export function readOrgPrivacy(settings: unknown): OrgPrivacyRead {
   const parsed = orgPrivacySettingsSchema.safeParse(slice);
   if (parsed.success) return { ok: true, saved: true, value: parsed.data };
   return { ok: false, issues: parsed.error.issues.map((i) => i.path.join('.') || '(root)') };
+}
+
+/**
+ * What can still be read of an org's privacy slice that does not parse whole,
+ * for the admin page to show before it is saved again: the floor if it is a
+ * mode, and each term that is a term. Never used to protect a call — the
+ * stage refuses an unreadable slice — only so a save does not replace what
+ * was stored with nothing.
+ */
+export function salvageOrgPrivacy(settings: unknown): OrgPrivacySettings {
+  const slice = isJsonObject(settings) ? settings[ORG_PRIVACY_KEY] : undefined;
+  if (!isJsonObject(slice)) return NO_ORG_PRIVACY;
+  const minimumMode = orgPrivacySettingsSchema.shape.minimumMode.safeParse(slice.minimumMode);
+  const terms = Array.isArray(slice.protectedTerms) ? slice.protectedTerms : [];
+  return orgPrivacySettingsSchema.parse({
+    minimumMode: minimumMode.success ? minimumMode.data : null,
+    protectedTerms: terms
+      .flatMap((term) => {
+        const parsed = orgProtectedTermSchema.safeParse(term);
+        return parsed.success ? [parsed.data] : [];
+      })
+      .slice(0, MAX_ORG_PROTECTED_TERMS),
+  });
 }
 
 /**

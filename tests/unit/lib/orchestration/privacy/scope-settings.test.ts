@@ -353,6 +353,14 @@ describe('protected terms', () => {
 });
 
 describe('the resolver', () => {
+  it('cannot be replaced or registered by an app: the core. prefix is reserved', async () => {
+    const { registerPrivacyPolicyResolver } = await import('@/lib/privacy/adapters/registry');
+
+    expect(() =>
+      registerPrivacyPolicyResolver({ id: 'core.scope-settings', resolve: () => undefined })
+    ).toThrow('reserved');
+  });
+
   it('is registered with a timeout long enough for a cold database read', async () => {
     const { getPrivacyAdapters } = await import('@/lib/privacy/adapters/registry');
     const { SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS } =
