@@ -330,23 +330,29 @@ A chat turn refused under `block` no longer stops the conversation.
   call, for the audit trail. So were any tool-call and tool-result rows from
   earlier passes of the tool loop. Every later turn resent them and was
   refused again.
-- **The turn marks its own rows.** `streamChat` keeps every row the turn
-  persists. On `privacy_blocked` it sets `metadata.excludedFromHistory:
-'privacy_blocked'` on each, keeping what the metadata already held. The
-  error marker is not marked: it is left out of history already.
+- **The turn marks its own rows.** `streamChat` keeps the id of every row
+  the turn persists. On `privacy_blocked` it sets
+  `metadata.excludedFromHistory: 'privacy_blocked'` on each. The error marker
+  is not marked: error markers are left out of history already.
+  - It reads each row's metadata back first, so anything set since the turn
+    wrote it is kept, and it marks the rows that are still there, so one
+    removed in the meantime does not stop the rest.
   - The write is confined to the caller's conversation (the owner layer).
   - It is best effort, like the error marker. If it fails, the next turn is
     refused again and nothing is sent.
   - No other refusal marks anything: `privacy_refused` is the operator's to
     fix, and the message did not cause it.
 - **Every reader that resends a conversation leaves the rows out**, through
-  `isLeftOutOfHistory()` (`lib/orchestration/chat/message-builder.ts`):
+  `isLeftOutOfHistory()` (`lib/orchestration/chat/message-builder.ts`), the
+  one check for both kinds of row a later call must not resend: these, and
+  error markers (`metadata.error`):
   - the chat handler's history reads, which feed both the message builder and
     the summariser, so a summary never carries the details forward;
-  - the `chat_turn` workflow step.
+  - the `chat_turn` workflow step, which until now resent error markers too.
 
   The check is made in code, not as a Prisma JSON-path `NOT`, which would
-  also drop every row with null metadata. Any value leaves a row out, so a
+  also drop every row with null metadata. Any `excludedFromHistory` value
+  leaves a row out, so a
   reason added later is not let back in by a reader that does not know it.
 
 - **The transcript keeps them.** The consumer and admin message routes, the

@@ -26,12 +26,14 @@ release process.
 
   The chat handler's history reads, the summariser and the `chat_turn` step
   leave those rows out, so the conversation can go on. They stay in the
-  transcript.
+  transcript. `chat_turn` now also leaves out error markers, as the chat
+  handler always has.
 
   **A fork that resends a conversation's messages to a provider itself**
   should skip rows for which `isLeftOutOfHistory(metadata)`
-  (`lib/orchestration/chat/message-builder.ts`) is true. Otherwise it
-  resends the refused details and is refused again.
+  (`lib/orchestration/chat/message-builder.ts`) is true: error markers, and
+  a refused turn's rows. Otherwise it resends the refused details and is
+  refused again.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected
   terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
   (nullable, `null` for every existing agent: inherit), a core field-registry

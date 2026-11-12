@@ -570,12 +570,12 @@ export class StreamingChatHandler {
     let budgetNotice: { agent: BudgetNoticeAgent; budget: BudgetStatus } | null = null;
     // Every row this turn persists, so a turn the privacy layer refuses under
     // `block` can leave all of them out of later history (§127 t-1014). Out
-    // here so the catch below sees them. The error marker is not one: it is
-    // left out of history already.
-    const turnRows: AiMessage[] = [];
+    // here so the catch below sees them. The error marker is not one: every
+    // reader leaves error markers out already (`isLeftOutOfHistory`).
+    const turnRowIds: string[] = [];
     const persistTurnRow = async (params: PersistMessageParams): Promise<AiMessage> => {
       const row = await this.persistMessage(params);
-      turnRows.push(row);
+      turnRowIds.push(row.id);
       return row;
     };
     try {
@@ -1197,7 +1197,8 @@ export class StreamingChatHandler {
         const rows = history.map(toHistoryRow);
         const take = Math.min(SUMMARY_CATCHUP_MESSAGES, countWithinChunkBudget(rows));
         if (take === 0) {
-          // Everything read was an error marker: nothing to summarise, nothing to
+          // Everything read was left out of history (error markers, or a
+          // privacy-refused turn's rows): nothing to summarise, nothing to
           // lose. Move the pin past them so the next read gets further.
           // Bounded like the calls are: each skip is a write and a read.
           markerSkips += 1;
@@ -3191,7 +3192,7 @@ export class StreamingChatHandler {
         // refused again. Leave the turn out of later history; it stays in the
         // transcript, and the user can ask again without them.
         if (err.code === PRIVACY_BLOCKED) {
-          await this.leaveTurnOutOfHistory(turnRows, request.userId, log);
+          await this.leaveTurnOutOfHistory(turnRowIds, conversationId, request.userId, log);
         }
         await persistErrorMarker(err.code);
         // A spend cap ends with the words a refusal before the turn uses.
@@ -3344,22 +3345,15 @@ export class StreamingChatHandler {
   }
 
   /**
-   * Drop error markers. They exist so the CLIENT can show a failed turn instead
-   * of an unanswered question; this history is only ever used to rebuild the
-   * prompt (`historyRows`, the summary threshold, the first-turn check) and
-   * never returned to a caller. Feeding "[An error occurred and the response
-   * could not be completed.]" back to the model burns context and invites
-   * imitation, for the rest of the conversation. Excluded in JS rather than the
-   * `where` because the flag lives in a JSON column.
+   * The rows a later call may resend: without error markers, and without the
+   * rows of a turn the privacy layer refused (`isLeftOutOfHistory`). This
+   * history is only ever used to rebuild the prompt (`historyRows`, the
+   * summary threshold, the first-turn check) and never returned to a caller,
+   * so the summariser never sees either kind. Excluded in JS rather than the
+   * `where` because both flags live in a JSON column.
    */
-  private withoutErrorMarkers(messages: AiMessage[]): AiMessage[] {
-    return messages.filter((m) => {
-      const metadata = (m.metadata ?? null) as MessageMetadata | null;
-      // And a turn the privacy layer refused (§127 t-1014): resending it would
-      // be refused again, every turn. Left out here, the summariser never sees
-      // it either, since it summarises these rows.
-      return metadata?.error !== true && !isLeftOutOfHistory(m.metadata);
-    });
+  private resendableRows(messages: AiMessage[]): AiMessage[] {
+    return messages.filter((m) => !isLeftOutOfHistory(m.metadata));
   }
 
   /**
@@ -3368,18 +3362,29 @@ export class StreamingChatHandler {
    * transcript and the audit trail. Best effort, like the error marker: if the
    * write fails the conversation is no worse than before — the stage refuses
    * the details again on the next turn, and nothing is sent.
+   *
+   * The metadata is read back here rather than taken from what the turn
+   * wrote, so anything set on a row since (a fork's hook on
+   * `message.created`, say) is kept. Only the rows that are still there are
+   * marked, so one removed in the meantime does not stop the rest.
    */
   private async leaveTurnOutOfHistory(
-    rows: AiMessage[],
+    ids: string[],
+    conversationId: string | null,
     userId: string,
     log: typeof logger
   ): Promise<void> {
-    if (rows.length === 0) return;
+    if (ids.length === 0 || !conversationId) return;
     try {
+      const owned = { conversationId, conversation: conversationOwner(userId) };
+      const rows = await prisma.aiMessage.findMany({
+        where: { id: { in: ids }, ...owned },
+        select: { id: true, metadata: true },
+      });
       await prisma.$transaction(
         rows.map((row) =>
           prisma.aiMessage.update({
-            where: { id: row.id, conversation: conversationOwner(userId) },
+            where: { id: row.id, ...owned },
             data: {
               metadata: {
                 ...(isJsonObject(row.metadata) ? row.metadata : {}),
@@ -3392,7 +3397,7 @@ export class StreamingChatHandler {
       );
     } catch (err) {
       log.warn('Failed to leave a privacy-refused turn out of history', {
-        messageIds: rows.map((row) => row.id),
+        messageIds: ids,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -3433,7 +3438,7 @@ export class StreamingChatHandler {
     const kept = fetched.slice(0, HISTORY_LOAD_LIMIT);
     const last = kept[kept.length - 1];
     return {
-      rows: this.withoutErrorMarkers(kept),
+      rows: this.resendableRows(kept),
       overflow: fetched.length > HISTORY_LOAD_LIMIT,
       lastFetched: last ? { id: last.id, createdAt: last.createdAt } : null,
     };
@@ -3446,9 +3451,9 @@ export class StreamingChatHandler {
    *
    * `omitted` is an upper bound on the rows this read did not reach that nothing
    * describes — everything older than the window, or, given `afterPin`, only
-   * what follows the pin (older rows are the summary's). It counts error
-   * markers too, which a read never shows, so it can overstate; the prompt says
-   * "up to". `excludeId` is the turn's own user message, which a read made after
+   * what follows the pin (older rows are the summary's). It counts the rows
+   * left out of history too (error markers, a privacy-refused turn's), which a
+   * read never shows, so it can overstate; the prompt says "up to". `excludeId` is the turn's own user message, which a read made after
    * it was persisted would otherwise return and the prompt would carry twice.
    */
   private async loadNewestHistory(
@@ -3475,7 +3480,7 @@ export class StreamingChatHandler {
     const unseen =
       fetched.length > HISTORY_LOAD_LIMIT ? await prisma.aiMessage.count({ where: scope }) : 0;
     return {
-      rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
+      rows: this.resendableRows(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
       omitted: Math.max(0, unseen - HISTORY_LOAD_LIMIT),
     };
   }

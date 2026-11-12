@@ -9197,12 +9197,13 @@ describe('a turn the privacy layer refused under block', () => {
   function conversationStore() {
     const rows: StoredRow[] = [];
     let clock = Date.parse('2026-11-12T10:00:00Z');
+    let nextId = 0;
     vi.mocked(prisma.aiMessage.create).mockImplementation((async ({
       data,
     }: {
       data: Record<string, unknown>;
     }) => {
-      const row = makeMessage({ ...data, id: `row-${rows.length}`, createdAt: new Date(clock++) });
+      const row = makeMessage({ ...data, id: `row-${nextId++}`, createdAt: new Date(clock++) });
       rows.push(row);
       return row;
     }) as never);
@@ -9211,13 +9212,16 @@ describe('a turn the privacy layer refused under block', () => {
       orderBy,
       take,
     }: {
-      where: { conversationId: string };
-      orderBy: Array<{ createdAt?: 'asc' | 'desc' }>;
-      take: number;
+      where: { conversationId: string; id?: { in: string[] } };
+      orderBy?: Array<{ createdAt?: 'asc' | 'desc' }>;
+      take?: number;
     }) => {
-      const inOrder = rows.filter((r) => r.conversationId === where.conversationId);
-      if (orderBy[0]?.createdAt === 'desc') inOrder.reverse();
-      return inOrder.slice(0, take);
+      const inOrder = rows.filter(
+        (r) =>
+          r.conversationId === where.conversationId && (!where.id || where.id.in.includes(r.id))
+      );
+      if (orderBy?.[0]?.createdAt === 'desc') inOrder.reverse();
+      return inOrder.slice(0, take ?? inOrder.length);
     }) as never);
     vi.mocked(prisma.aiMessage.update).mockImplementation((async ({
       where,
@@ -9343,6 +9347,38 @@ describe('a turn the privacy layer refused under block', () => {
     // Each write is confined to the caller's own conversation (owner layer).
     for (const [args] of vi.mocked(prisma.aiMessage.update).mock.calls) {
       expect((args as { where: unknown }).where).toMatchObject({ conversation: { userId: 'u1' } });
+    }
+  });
+
+  it('keeps metadata set on a row after the turn wrote it', async () => {
+    // The marking reads each row back rather than reusing what the turn wrote,
+    // so a later write (a fork's hook on message.created, say) is not lost.
+    const rows = conversationStore();
+    refusingThenAnsweringProvider();
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation(async () => {
+      rows[0].metadata = { reviewed: true };
+      return { success: true, data: { found: LOOKED_UP } };
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-1', message: REFUSED }));
+
+    expect(rows[0].metadata).toEqual({ reviewed: true, excludedFromHistory: 'privacy_blocked' });
+  });
+
+  it('marks the rows still there when one has gone', async () => {
+    const rows = conversationStore();
+    refusingThenAnsweringProvider();
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation(async () => {
+      rows.splice(0, 1); // the user message, removed mid-turn
+      return { success: true, data: { found: LOOKED_UP } };
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-1', message: REFUSED }));
+
+    const left = rows.filter((r) => !(r.metadata as { error?: boolean } | null)?.error);
+    expect(left.map((r) => r.role)).toEqual(['assistant', 'tool']);
+    for (const row of left) {
+      expect(row.metadata).toMatchObject({ excludedFromHistory: 'privacy_blocked' });
     }
   });
 

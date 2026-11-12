@@ -23,8 +23,12 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('isLeftOutOfHistory (§127 t-1014)', () => {
-  it('leaves out a row a privacy refusal marked', () => {
+describe('isLeftOutOfHistory', () => {
+  it('leaves out an error marker', () => {
+    expect(isLeftOutOfHistory({ error: true, errorCode: 'truncated_no_output' })).toBe(true);
+  });
+
+  it('leaves out a row a privacy refusal marked (§127 t-1014)', () => {
     expect(isLeftOutOfHistory({ excludedFromHistory: 'privacy_blocked' })).toBe(true);
     // A reason a later version adds is left out too, not let back in.
     expect(isLeftOutOfHistory({ excludedFromHistory: 'some_later_reason' })).toBe(true);
@@ -35,7 +39,7 @@ describe('isLeftOutOfHistory (§127 t-1014)', () => {
       null,
       undefined,
       {},
-      { error: true },
+      { error: false },
       { excludedFromHistory: null },
       [],
     ]) {

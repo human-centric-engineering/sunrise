@@ -111,7 +111,8 @@ export async function executeChatTurn(
           where: { role: { in: [...ROLES_TO_LOAD] } },
           orderBy: { createdAt: 'desc' },
           take: historyLimit,
-          // `metadata` for the rows a privacy refusal left out of history.
+          // `metadata` for the rows left out of history (error markers, a
+          // privacy-refused turn's).
           select: { role: true, content: true, metadata: true },
         },
       },
@@ -211,8 +212,9 @@ export async function executeChatTurn(
 
   // 5. Prior messages, read with the conversation in step 2.
   //    Newest-first to honour `take`; flip to chronological. Without the
-  //    rows of a turn the privacy layer refused under `block` (§127 t-1014):
-  //    resending them would be refused again, every step.
+  //    rows left out of history (`isLeftOutOfHistory`): error markers, and
+  //    a turn the privacy layer refused under `block` (§127 t-1014), which
+  //    resent would be refused again, every step.
   const priorMessagesAsc = conversation.messages
     .filter((m) => !isLeftOutOfHistory(m.metadata))
     .reverse();
