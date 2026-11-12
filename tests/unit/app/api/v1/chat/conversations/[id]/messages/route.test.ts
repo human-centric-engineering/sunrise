@@ -247,6 +247,18 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
       );
     });
 
+    it('keeps a turn the privacy layer refused in the transcript (§127 t-1014)', async () => {
+      // A `block` refusal leaves the turn out of what later turns RESEND, by a
+      // flag in metadata. The transcript is the person's record of what they
+      // wrote: its read filters on nothing but the conversation.
+      await GET(createMockRequest(), createRouteContext(VALID_CUID));
+
+      const { where } = vi.mocked(prisma.aiMessage.findMany).mock.calls[0][0] as {
+        where: Record<string, unknown>;
+      };
+      expect(Object.keys(where).sort()).toEqual(['conversation', 'conversationId']);
+    });
+
     it('should order messages by createdAt ascending', async () => {
       // Arrange
       const request = createMockRequest();
