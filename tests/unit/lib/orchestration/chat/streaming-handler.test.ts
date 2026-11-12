@@ -9751,6 +9751,50 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     }
   );
 
+  it('places a tool result the turn fetched as this turn, on a later pass of the tool loop', async () => {
+    const { rows } = conversationStore();
+    const provider = blockingProvider();
+    // The first pass asks for a lookup; the tool's result brings the detail in.
+    const answers = provider.chatStream.getMockImplementation()!;
+    let pass = 0;
+    provider.chatStream.mockImplementation(async function* (messages: unknown[]) {
+      pass += 1;
+      if (pass === 1) {
+        yield {
+          type: 'tool_call',
+          toolCall: { id: 'tc-1', name: 'search_knowledge_base', arguments: { q: 'x' } },
+        };
+        yield {
+          type: 'done',
+          usage: { inputTokens: 5, outputTokens: 2 },
+          finishReason: 'tool_use',
+        };
+        return;
+      }
+      yield* answers(messages);
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { found: DETAIL },
+    });
+
+    const events = await turn('Who is in bay 4?');
+
+    expect(errorOf(events)?.code).toBe('privacy_blocked');
+    // Placed, not a fallback: the refused call carried the tool loop's rows.
+    expect(logger.warn).toHaveBeenCalledWith('Chat turn refused for personal details', {
+      conversationId: 'conv-1',
+      code: 'privacy_blocked',
+      turn: true,
+      earlierRows: 0,
+      summary: false,
+      setup: [],
+    });
+    const turnRows = rows.filter((r) => !(r.metadata as { error?: boolean } | null)?.error);
+    expect(turnRows.map((r) => r.role)).toEqual(['user', 'assistant', 'tool']);
+    for (const row of turnRows) expect(marked(row)).toBe('privacy_blocked');
+  });
+
   it('leaves out only the turn when the location is not for the call it sent', async () => {
     const { add } = conversationStore();
     const earlier = add({ role: 'user', content: `My name is ${DETAIL}.` });
