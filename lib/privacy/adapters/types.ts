@@ -105,8 +105,9 @@ export interface DetectedSpan {
   confidence: number;
   /**
    * True when the detector matched this only because it learned the value
-   * from elsewhere in the same text: a name's first part after its full
-   * name, a company's short form after its full name (§127 t-1018). It is
+   * from elsewhere in the same text: a surname after the full name, a
+   * company's short form after its full name (§127 t-1018). Not a value it
+   * would report standing alone, such as a known first name. It is
    * masked and refused like any other span. A refusal under `block` does not
    * count it when it says which messages held personal details, so the
    * message the value was learned from is the one that is placed. Leave it

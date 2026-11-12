@@ -171,9 +171,12 @@ export function placePrivacyRefusal(
     return null;
   }
   // One case wins, and only it acts; whatever else holds details is placed
-  // by the next attempt. Every part named here holds details of its own (the
-  // stage leaves out values it only learned elsewhere), so the order only
-  // decides what is lost first:
+  // by the next attempt. The stage leaves out values a detector says it only
+  // learned elsewhere (`DetectedSpan.learned`), so the parts named here hold
+  // details of their own as far as the detectors can tell. That holds for
+  // core's; a detector that learns without saying so, or a call where every
+  // span was learned, can still name a part that holds none, and the next
+  // attempt shows it. So the order is what decides what is lost first:
   // - This turn first: asking again without the details works, and nothing
   //   else is lost.
   // - Then the setup: until an administrator changes it, nothing removed

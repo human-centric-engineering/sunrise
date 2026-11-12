@@ -72,7 +72,7 @@ export interface HistoryRow {
 }
 
 /** The fixed line the user's memories follow, each in a message of its own. */
-export const USER_MEMORIES_HEADING =
+const USER_MEMORIES_HEADING =
   '[User memories]\nThe following are things you have previously remembered about this user:';
 
 export interface UserMemoryEntry {
@@ -265,8 +265,10 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
 
   if (args.userMemories && args.userMemories.length > 0) {
     // A heading, then one message per memory, so a refusal under `block` can
-    // say which memory held personal details (§127 t-1018). Joined, they are
-    // the block the model was always sent, and the breakdown counts that.
+    // say which memory held personal details (§127 t-1018). The text is the
+    // block the model was always sent, split at its lines; providers frame
+    // each as a system message or block of its own. The breakdown counts the
+    // joined text.
     const lines = args.userMemories.map((m) => `- ${m.key}: ${m.value}`);
     messages.push({ role: 'system', content: USER_MEMORIES_HEADING });
     sources.push({ kind: 'memories' });

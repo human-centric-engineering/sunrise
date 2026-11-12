@@ -498,7 +498,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       const messages = chatMessages(call);
       // Where, from what was found where it stands (t-1018). A value a
       // detector only matched because it learned it from another message
-      // (a first name after the full name) places that message, not this
+      // (a surname after the full name) places that message, not this
       // one. A detector that marked every span learned leaves nothing to
       // place by; then every span places, as before the flag existed.
       const own = spans.filter((s) => s.learned !== true);

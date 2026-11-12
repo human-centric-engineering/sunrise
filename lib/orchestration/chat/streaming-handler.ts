@@ -3568,13 +3568,21 @@ export class StreamingChatHandler {
     log: typeof logger
   ): Promise<void> {
     try {
-      await prisma.aiUserMemory.deleteMany({
+      const { count } = await prisma.aiUserMemory.deleteMany({
         where: {
           userId,
           agentId,
           OR: memories.map(({ id, updatedAt }) => ({ id, updatedAt })),
         },
       });
+      // Rewritten since this turn read it, or already gone: kept, and the
+      // next refusal finds it if it still holds details. Counts only.
+      if (count < memories.length) {
+        log.warn('Some privacy-refused user memories were not deleted', {
+          memories: memories.length,
+          deleted: count,
+        });
+      }
     } catch (err) {
       // A count, never a key or a value.
       log.warn('Failed to forget privacy-refused user memories', {

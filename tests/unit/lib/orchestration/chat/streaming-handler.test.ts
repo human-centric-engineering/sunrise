@@ -9922,6 +9922,14 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
 
     expect(errorOf(await turn('Where can I park?'))?.code).toBe('privacy_blocked_memory');
     expect(memories.map((m) => m.value)).toEqual(['Prefers bay 4']);
+    // Said in the log, with counts only.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Some privacy-refused user memories were not deleted',
+      {
+        memories: 1,
+        deleted: 0,
+      }
+    );
   });
 
   it('still answers with the memory code when the delete fails, and logs no value (t-1018)', async () => {
