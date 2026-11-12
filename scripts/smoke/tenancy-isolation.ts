@@ -127,7 +127,9 @@
  * point is the policy), and skips clean when no database is reachable.
  * Self-cleaning: everything it creates is removed on the way out, under the
  * system scope, whether or not the assertions held — and a cleanup that
- * fails, fails the run.
+ * fails, fails the run. An install with an embedding model pinned has the pin
+ * cleared for the run and put back on the way out, so its embedding calls
+ * reach the local provider the two orgs are confined to (#1144).
  */
 import '@/prisma/load-env';
 import { NextRequest } from 'next/server';
@@ -675,8 +677,35 @@ async function main(): Promise<void> {
   /** Receipts [18]'s erasures write: keyed by a subject id, with no FK, so nothing cascades them. */
   const erasureReceiptIds: string[] = [];
   const tagSlug = `${PREFIX}-tag-${stamp}`;
+  // The install's embedding pin, held for the run and put back on the way out
+  // (#1144). Set only once the pin has been cleared, so a run that never got
+  // that far restores nothing.
+  let clearedEmbeddingPin: string | null = null;
 
   try {
+    // ── The install's embedding pin, cleared for the run ──────────────────
+    // The embedder takes a pinned model as the operator's explicit choice and
+    // never reroutes it, so with one set both orgs' embedding calls go to the
+    // pinned provider, which their policy (only the local provider below)
+    // rightly refuses. Clearing it sends them down the fallback chain to the
+    // local provider, which `interceptEmbeddings` answers: no vendor call.
+    const pin = await runAsSystem('smoke: read the embedding pin', () =>
+      prisma.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { activeEmbeddingModelId: true },
+      })
+    );
+    if (pin?.activeEmbeddingModelId) {
+      await runAsSystem('smoke: clear the embedding pin', () =>
+        prisma.aiOrchestrationSettings.update({
+          where: { slug: 'global' },
+          data: { activeEmbeddingModelId: null },
+        })
+      );
+      clearedEmbeddingPin = pin.activeEmbeddingModelId;
+      console.log(`cleared the install's embedding pin (${clearedEmbeddingPin}) for the run`);
+    }
+
     // ── Global fixtures: a local embedding provider, a tag, a capability ────
     // AiProviderConfig and KnowledgeTag are global tables (no orgId); the
     // capability is one the seed shipped.
@@ -3784,6 +3813,26 @@ async function main(): Promise<void> {
     console.log('\n✓ smoke:tenancy-isolation passed');
   } finally {
     restoreFetch();
+    // The pin goes back first and on its own, so a cleanup that fails below
+    // cannot leave the install unpinned. A pin that cannot be put back fails
+    // the run, as a failed cleanup does.
+    const pinToRestore = clearedEmbeddingPin;
+    if (pinToRestore) {
+      await runAsSystem('smoke: restore the embedding pin', () =>
+        prisma.aiOrchestrationSettings.update({
+          where: { slug: 'global' },
+          data: { activeEmbeddingModelId: pinToRestore },
+        })
+      )
+        .then(() => console.log(`restored the install's embedding pin (${pinToRestore})`))
+        .catch((err: unknown) => {
+          console.error(
+            `✗ could not restore the embedding pin — set ai_orchestration_settings."activeEmbeddingModelId" back to ${pinToRestore} by hand`,
+            err
+          );
+          process.exitCode = 1;
+        });
+    }
     // Everything this smoke creates carries the prefix, and an org's
     // tenant-owned rows cascade with it — so a run that died half-way
     // through seeding (a dropped policy refuses the first create) leaves
