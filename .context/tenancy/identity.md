@@ -592,6 +592,10 @@ while they are acting in that org — never by a role check in a route.
   has since been demoted or removed confers `MEMBER`, not `OWNER` (#1235).
   It narrows rather than refuses, so the invitee still joins the org that
   invited them and the signup hooks never block; an owner can promote them.
+  One edge follows: a sole owner who hands over by `OWNER` invitation and
+  then erases their account before it is accepted leaves the org with no
+  owner. The invitee lands as `MEMBER`, and a platform admin grants `OWNER`
+  on the members route. Erasure does not yet hold to the last-owner rule.
 - **The install org's memberships follow the platform role**
   (`INSTALL_ORG_MEMBERSHIP`; the ruling above), so the members API refuses a
   role there, and refuses a removal there.
