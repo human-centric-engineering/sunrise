@@ -3359,14 +3359,17 @@ export class StreamingChatHandler {
   /**
    * Mark the rows of a turn the privacy layer refused under `block` so every
    * later history read leaves them out (§127 t-1014). They stay in the
-   * transcript and the audit trail. Best effort, like the error marker: if the
-   * write fails the conversation is no worse than before — the stage refuses
-   * the details again on the next turn, and nothing is sent.
+   * transcript and the audit trail. Best effort, like the error marker. If the
+   * write fails, nothing retries it: the conversation is where it was before
+   * t-1014, every later turn resending the details and being refused, so
+   * nothing is sent, but it cannot go on.
    *
    * The metadata is read back here rather than taken from what the turn
-   * wrote, so anything set on a row since (a fork's hook on
-   * `message.created`, say) is kept. Only the rows that are still there are
-   * marked, so one removed in the meantime does not stop the rest.
+   * wrote, so anything set on a row before this read (a fork's hook on
+   * `message.created`, say) is kept. Only the rows the read finds are
+   * updated, so a row removed before it is skipped. Not atomic with the
+   * update: a write or removal in the moment between the two is lost, or
+   * rolls the batch back. Nothing in core writes a message after creating it.
    */
   private async leaveTurnOutOfHistory(
     ids: string[],

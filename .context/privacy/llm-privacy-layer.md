@@ -335,11 +335,14 @@ A chat turn refused under `block` no longer stops the conversation.
   `metadata.excludedFromHistory: 'privacy_blocked'` on each. The error marker
   is not marked: error markers are left out of history already.
   - It reads each row's metadata back first, so anything set since the turn
-    wrote it is kept, and it marks the rows that are still there, so one
-    removed in the meantime does not stop the rest.
+    wrote it is kept, and it updates only the rows that read finds, so one
+    removed before it is skipped. The read and the update are not atomic: a
+    write or removal in the moment between them is lost, or rolls the batch
+    back. Nothing in core writes a message after creating it.
   - The write is confined to the caller's conversation (the owner layer).
-  - It is best effort, like the error marker. If it fails, the next turn is
-    refused again and nothing is sent.
+  - It is best effort, like the error marker. If it fails, nothing retries
+    it: every later turn resends the details and is refused, as before
+    t-1014. Nothing is sent, but the conversation cannot go on.
   - No other refusal marks anything: `privacy_refused` is the operator's to
     fix, and the message did not cause it.
 - **Every reader that resends a conversation leaves the rows out**, through
