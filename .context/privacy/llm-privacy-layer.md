@@ -167,7 +167,9 @@ The stage acts in every mode.
   masked too, where it stands on its own (not inside a longer word): a
   detector that needs context, such as a phone number only after a phone
   word, would otherwise leave a second copy in plaintext beside the
-  placeholder for the first. Each piece is masked in order with the
+  placeholder for the first. A value that is one word of letters ("Will",
+  "Grace") is not extended: elsewhere it is likelier an ordinary word, and
+  tier C already finds the other mentions of a name it learns. Each piece is masked in order with the
   **scope's** token session (`maskMessages()`,
   `lib/orchestration/privacy/call-masking.ts`). The caller's messages are
   never changed: it keeps the real conversation and the next call masks it
@@ -183,7 +185,8 @@ The stage acts in every mode.
   `CallRestorer.response()`, `chatStream` its chunks through
   `CallRestorer.stream()`. Text is restored with `restoreText()`; a reply to a
   call with `responseFormat` is parsed and restored with `restoreValue()`
-  (a streamed one is restored as text); tool-call arguments with
+  (a streamed one is held whole and restored the same way at its end, so
+  a restored quote or newline cannot break it); tool-call arguments with
   `restoreValue()`, keys included, before the caller dispatches them. A
   stream's text and its display reasoning each have a `StreamRestorer`, and
   what one holds back is released before any other chunk, so order is kept.
@@ -713,10 +716,13 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   that masked something, so the system prompt never changes partway through
   a conversation and provider prompt caching keeps working.
 - **Output guard.** Its identifier check runs `core.rules` (or the app
-  detector that replaced it) through the runner (`detectorIds`), and ignores
-  an identifier the messages the call sent already contain, compared without
-  case, spaces or the punctuation identifiers are written with, and the
-  types the settings ignore (`privacyIgnoredEntityTypes`). Tiers B and C are
+  detector that replaced it, unless that one is `external`: the guard runs in
+  every mode, `off` included, and must not post replies to a service no
+  setting sent them to) through the runner (`detectorIds`). It ignores an
+  identifier one of the messages the call sent already contains, as people
+  write it (separators allowed between characters) and standing on its own,
+  so a sort code is not "supplied" by an order reference that contains its
+  digits; and the types the settings ignore (`privacyIgnoredEntityTypes`). Tiers B and C are
   not used: a famous name would be flagged, and `block` discards the reply. A
   scan that could not finish flags nothing and logs which detector failed. See
   [Output Guard](../orchestration/output-guard.md).
@@ -752,8 +758,11 @@ Ruled at claim, 2026-11-11, from real deployments:
 - The settings page warns when the mode is `pseudonymise` or stricter,
   embeddings go to a provider that is not `isLocal`, and the policy is
   `allow`. Whether the provider is local comes from
-  `GET …/knowledge/embedding-status` (`providerIsLocal`, from
-  `resolveEmbeddingStatus()`); when no provider resolves, it makes no claim.
+  `GET …/knowledge/embedding-status?providerOnly=true` (`providerIsLocal`,
+  from `resolveEmbeddingStatus()`, without the chunk counts); when no
+  provider resolves, it makes no claim. It also warns, the other way round,
+  when the policy is `local_only` and that provider is not local: every
+  embedding would be refused.
 
 Pseudonymised chat plus a local embedding model keeps names off every third
 party while search keeps full quality, because tool arguments are restored

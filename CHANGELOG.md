@@ -47,12 +47,15 @@ release process.
   `search_knowledge_base` returns the tool error `embeddings_local_only`,
   and an upload fails with a message naming the setting. The settings page
   warns when protection is on and embeddings still go to a provider that is
-  not local; `GET …/knowledge/embedding-status` now returns
-  `providerIsLocal`. `PrivacySummary` gains `refused` and `unresolved`. The
+  not local, or that `local_only` will refuse every embedding;
+  `GET …/knowledge/embedding-status` now returns `providerIsLocal`, and
+  with `?providerOnly=true` only the provider fields, without the chunk
+  counts. `PrivacySummary` gains `refused` and `unresolved`. The
   output guard's identifier check now uses the privacy layer's UK rules
   (through the registry, so an app's replacement of `core.rules` applies)
   in place of its four US-centric patterns, ignores identifiers the
-  conversation itself supplied, and is async: `scanOutput()` returns a
+  conversation itself supplied (per message, standing on its own), never
+  runs an `external` replacement of `core.rules`, and is async: `scanOutput()` returns a
   promise and takes the sent messages as a third argument and
   `{ ignoredEntityTypes }` as a fourth. Its labels are
   `pii_<type>` (`pii_credit_card` is now `pii_card_number`; a US SSN is no
