@@ -45,10 +45,7 @@ import {
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
-import {
-  backfillMissingEmbeddings,
-  EMBEDDING_BACKFILL_BATCH,
-} from '@/lib/orchestration/chat/message-embedder';
+import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import {
   enforceRetentionPolicies,
   enforceSystemRetentionPolicies,
@@ -197,8 +194,7 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // only those that did not fill the batch left nothing behind: counting it
     // would keep the idle gate open on an install where nothing can ever be
     // embedded, and a scale-to-zero database awake.
-    foundWork: (r) =>
-      r.processed > 0 || r.processed + r.failed + r.skipped >= EMBEDDING_BACKFILL_BATCH,
+    foundWork: (r) => r.processed > 0 || r.filledBatch,
   }),
   job({
     name: 'retention',

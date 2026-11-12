@@ -36,7 +36,6 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({ processPendingRetrie
 vi.mock('@/lib/orchestration/hooks/registry', () => ({ processPendingHookRetries: vi.fn() }));
 vi.mock('@/lib/orchestration/engine/execution-reaper', () => ({ reapZombieExecutions: vi.fn() }));
 vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
-  EMBEDDING_BACKFILL_BATCH: 25,
   backfillMissingEmbeddings: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/retention', () => ({
@@ -143,7 +142,12 @@ function mockIdleTasks(): void {
     stalePending: 0,
     abandonedApprovals: 0,
   });
-  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0, skipped: 0 });
+  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({
+    processed: 0,
+    failed: 0,
+    skipped: 0,
+    filledBatch: false,
+  });
   vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_IDLE);
   vi.mocked(runWaitlistRetention).mockResolvedValue({
     unconfirmedDeleted: 0,
@@ -376,6 +380,7 @@ describe('runDuePlatformJobs — foundWork', () => {
       processed: 0,
       failed: 2,
       skipped: 22,
+      filledBatch: false,
     });
 
     const { foundWork } = await runDuePlatformJobs(T0);
@@ -414,7 +419,7 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(backfillMissingEmbeddings)
-          .mockResolvedValue({ processed: 25, failed: 0, skipped: 0 }),
+          .mockResolvedValue({ processed: 25, failed: 0, skipped: 0, filledBatch: true }),
     ],
     [
       // A full batch of refusals or failures may have more behind it (t-1016).
@@ -422,7 +427,7 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(backfillMissingEmbeddings)
-          .mockResolvedValue({ processed: 0, failed: 5, skipped: 20 }),
+          .mockResolvedValue({ processed: 0, failed: 5, skipped: 20, filledBatch: true }),
     ],
     [
       'retention',

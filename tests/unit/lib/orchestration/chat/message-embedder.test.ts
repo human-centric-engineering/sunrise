@@ -251,7 +251,7 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 0, failed: 0, skipped: 0 });
+    expect(result).toMatchObject({ processed: 0, failed: 0, skipped: 0 });
     expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
@@ -263,7 +263,7 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 2, failed: 0, skipped: 0 });
+    expect(result).toMatchObject({ processed: 2, failed: 0, skipped: 0 });
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
   });
 
@@ -280,7 +280,11 @@ describe('backfillMissingEmbeddings', () => {
         new PrivacyRefusedError('policy_resolver_failed', 'openai')
       );
 
-      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 1 });
+      expect(await backfillMissingEmbeddings()).toMatchObject({
+        processed: 0,
+        failed: 0,
+        skipped: 1,
+      });
       expect(logger.warn).not.toHaveBeenCalled();
     });
 
@@ -314,7 +318,7 @@ describe('backfillMissingEmbeddings', () => {
 
       const result = await backfillMissingEmbeddings();
 
-      expect(result).toEqual({ processed: 1, failed: 0, skipped: 1 });
+      expect(result).toMatchObject({ processed: 1, failed: 0, skipped: 1 });
       expect(logger.warn).not.toHaveBeenCalled();
     });
   });
@@ -426,6 +430,21 @@ describe('backfillMissingEmbeddings', () => {
       vi.useRealTimers();
     });
 
+    it('says whether it tried a full batch, so the idle gate knows if more may be behind', async () => {
+      replyStore(['a', 'b', 'c']);
+      expect(await backfillMissingEmbeddings(3)).toMatchObject({ processed: 3, filledBatch: true });
+      replyStore(['a', 'b']);
+      resolverRefuses(new Set(['a', 'b']));
+      expect(await backfillMissingEmbeddings(3)).toMatchObject({ skipped: 2, filledBatch: false });
+      replyStore([]);
+      expect(await backfillMissingEmbeddings(3)).toEqual({
+        processed: 0,
+        failed: 0,
+        skipped: 0,
+        filledBatch: false,
+      });
+    });
+
     it('waits an hour after the first failure, doubling each time, at most a week', () => {
       expect([1, 2, 3, 4].map(embeddingRetryDelayMs)).toEqual([HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR]);
       expect(embeddingRetryDelayMs(8)).toBe(128 * HOUR);
@@ -440,10 +459,18 @@ describe('backfillMissingEmbeddings', () => {
       const store = replyStore(['older', ...refusedIds]);
       resolverRefuses(new Set(refusedIds));
 
-      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 0, failed: 0, skipped: 25 });
+      expect(await backfillMissingEmbeddings(25)).toMatchObject({
+        processed: 0,
+        failed: 0,
+        skipped: 25,
+      });
       expect(store.filter((m) => m.embeddingFailures === 1)).toHaveLength(25);
 
-      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(await backfillMissingEmbeddings(25)).toMatchObject({
+        processed: 1,
+        failed: 0,
+        skipped: 0,
+      });
       expect(store.find((m) => m.id === 'older')?.embedded).toBe(true);
       // Not asked again before their retry time.
       expect(vi.mocked(embedText)).toHaveBeenCalledTimes(26);
@@ -458,8 +485,16 @@ describe('backfillMissingEmbeddings', () => {
         return FAKE_EMBED_RESULT;
       });
 
-      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 0, failed: 25, skipped: 0 });
-      expect(await backfillMissingEmbeddings(25)).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(await backfillMissingEmbeddings(25)).toMatchObject({
+        processed: 0,
+        failed: 25,
+        skipped: 0,
+      });
+      expect(await backfillMissingEmbeddings(25)).toMatchObject({
+        processed: 1,
+        failed: 0,
+        skipped: 0,
+      });
       expect(store.find((m) => m.id === 'older')?.embedded).toBe(true);
     });
 
@@ -470,12 +505,20 @@ describe('backfillMissingEmbeddings', () => {
 
       expect(await backfillMissingEmbeddings()).toMatchObject({ skipped: 1 });
       vi.setSystemTime(Date.now() + HOUR - 1000);
-      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 0 });
+      expect(await backfillMissingEmbeddings()).toMatchObject({
+        processed: 0,
+        failed: 0,
+        skipped: 0,
+      });
 
       // A local embedding model is installed, say: nothing refuses it now.
       refused.clear();
       vi.setSystemTime(Date.now() + 1000);
-      expect(await backfillMissingEmbeddings()).toEqual({ processed: 1, failed: 0, skipped: 0 });
+      expect(await backfillMissingEmbeddings()).toMatchObject({
+        processed: 1,
+        failed: 0,
+        skipped: 0,
+      });
       expect(store[0].embedded).toBe(true);
     });
 
@@ -577,7 +620,11 @@ describe('backfillMissingEmbeddings', () => {
       );
       vi.mocked(prisma.aiMessage.updateMany).mockRejectedValueOnce(new Error('connection reset'));
 
-      expect(await backfillMissingEmbeddings()).toEqual({ processed: 0, failed: 0, skipped: 1 });
+      expect(await backfillMissingEmbeddings()).toMatchObject({
+        processed: 0,
+        failed: 0,
+        skipped: 1,
+      });
       expect(logger.warn).toHaveBeenCalledWith('Failed to defer a message embedding', {
         messageId: 'msg-70',
         error: 'connection reset',
@@ -615,7 +662,7 @@ describe('backfillMissingEmbeddings', () => {
 
     const result = await backfillMissingEmbeddings();
 
-    expect(result).toEqual({ processed: 1, failed: 1, skipped: 0 });
+    expect(result).toMatchObject({ processed: 1, failed: 1, skipped: 0 });
     expect(logger.warn).toHaveBeenCalledWith(
       'Embedding backfill failed for message',
       expect.objectContaining({ messageId: 'msg-11' })
@@ -634,7 +681,7 @@ describe('backfillMissingEmbeddings', () => {
     const result = await backfillMissingEmbeddings();
 
     // Assert: no successful embeds, both failed
-    expect(result).toEqual({ processed: 0, failed: 2, skipped: 0 });
+    expect(result).toMatchObject({ processed: 0, failed: 2, skipped: 0 });
     // logger.info must NOT be called because processed === 0
     expect(logger.info).not.toHaveBeenCalled();
     // logger.warn should have been called for each failure
@@ -671,7 +718,7 @@ describe('backfillMissingEmbeddings', () => {
     });
 
     // Assert: return value reflects 1 processed and 1 failed
-    expect(result).toEqual({ processed: 1, failed: 1, skipped: 0 });
+    expect(result).toMatchObject({ processed: 1, failed: 1, skipped: 0 });
   });
 
   describe('cost attribution (#654)', () => {

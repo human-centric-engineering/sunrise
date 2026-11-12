@@ -99,10 +99,13 @@ export interface BackfillResult {
   failed: number;
   /** Refused by the privacy layer (the `local_only` policy, say): a decision, not a failure. */
   skipped: number;
+  /**
+   * Whether the run tried a full batch, so more may be waiting behind it.
+   * A run that did not has left nothing behind: every reply it failed waits
+   * for its retry time (t-1016).
+   */
+  filledBatch: boolean;
 }
-
-/** The backfill's batch: how many replies one run tries at most. */
-export const EMBEDDING_BACKFILL_BATCH = 25;
 
 /** The wait after a reply's first failed or refused embedding (t-1016). */
 export const EMBEDDING_RETRY_BASE_MS = 60 * 60 * 1000;
@@ -181,9 +184,7 @@ const MISSING_EMBEDDINGS = Prisma.sql`
  * fill the batch and hold back a reply behind it (t-1016). The privacy stage
  * alone decides what is refused: nothing here copies its rules.
  */
-export async function backfillMissingEmbeddings(
-  batchSize: number = EMBEDDING_BACKFILL_BATCH
-): Promise<BackfillResult> {
+export async function backfillMissingEmbeddings(batchSize: number = 25): Promise<BackfillResult> {
   const fresh = await prisma.$queryRaw<MissingEmbedding[]>`
     ${MISSING_EMBEDDINGS}
       AND m."embeddingRetryAt" IS NULL
@@ -202,7 +203,7 @@ export async function backfillMissingEmbeddings(
       : [];
   const missing = [...fresh, ...due];
 
-  if (missing.length === 0) return { processed: 0, failed: 0, skipped: 0 };
+  if (missing.length === 0) return { processed: 0, failed: 0, skipped: 0, filledBatch: false };
 
   let processed = 0;
   let failed = 0;
@@ -234,7 +235,7 @@ export async function backfillMissingEmbeddings(
     logger.info('Embedding backfill completed', { processed, failed, skipped });
   }
 
-  return { processed, failed, skipped };
+  return { processed, failed, skipped, filledBatch: missing.length >= batchSize };
 }
 
 async function generateAndStoreEmbedding(
