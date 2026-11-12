@@ -267,6 +267,43 @@ describe('chat_turn — happy path', () => {
     );
   });
 
+  it('leaves out a privacy-refused turn and error markers (§127 t-1014)', async () => {
+    // A streaming turn refused under `block` stays in the conversation, marked.
+    // Replaying it here would send the refused details and be refused again.
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      messages: [
+        { role: 'assistant', content: 'A2', metadata: null },
+        {
+          role: 'assistant',
+          content: '[An error occurred and the response could not be completed.]',
+          metadata: { error: true, errorCode: 'privacy_blocked' },
+        },
+        {
+          role: 'user',
+          content: 'Jane Holloway, 14 Mill Lane',
+          metadata: { excludedFromHistory: 'privacy_blocked' },
+        },
+        { role: 'user', content: 'U1', metadata: null },
+      ],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    expect(vi.mocked(prisma.aiConversation.findUnique).mock.calls[0][0]).toMatchObject({
+      select: { messages: { select: { role: true, content: true, metadata: true } } },
+    });
+    const { provider } = await vi.mocked(getProviderWithFallbacks).mock.results[0].value;
+    const sent = provider.chat.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    expect(sent.map((m) => m.content)).not.toContain('Jane Holloway, 14 Mill Lane');
+    // Nor the turn's error marker, which would otherwise answer nothing.
+    expect(sent.some((m) => m.content.includes('An error occurred'))).toBe(false);
+    expect(sent.map((m) => m.content)).toContain('U1');
+    expect(sent.map((m) => m.content)).toContain('A2');
+  });
+
   it("makes the provider call in a scope carrying the agent's id, inside the step's (§127 t-1010)", async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv_1',

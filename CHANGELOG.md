@@ -18,6 +18,22 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: a turn refused under `block` is left out of later
+  history (§127, t-1014).** A refused turn's rows get the new
+  `MessageMetadata.excludedFromHistory` (`'privacy_blocked'`):
+  - its user message;
+  - any tool-call and tool-result rows written before the refusal.
+
+  The chat handler's history reads, the summariser and the `chat_turn` step
+  leave those rows out, so the conversation can go on. They stay in the
+  transcript. `chat_turn` now also leaves out error markers, as the chat
+  handler always has.
+
+  **A fork that resends a conversation's messages to a provider itself**
+  should skip rows for which `isLeftOutOfHistory(metadata)`
+  (`lib/orchestration/chat/message-builder.ts`) is true: error markers, and
+  a refused turn's rows. Otherwise it resends the refused details and is
+  refused again.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected
   terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
   (nullable, `null` for every existing agent: inherit), a core field-registry
@@ -59,8 +75,8 @@ release process.
   and capabilities see real values and need no change. `redact` masks and
   never restores. `block` refuses a chat call with anything found, with the
   new request-fault code `privacy_blocked` (`PRIVACY_BLOCKED`, apart from
-  `privacy_refused` because its remedy differs: the reader starts a new
-  conversation). Under `pseudonymise`, `redact` and `block` a required
+  `privacy_refused` because its remedy differs: the reader asks again
+  without the details). Under `pseudonymise`, `redact` and `block` a required
   detector that fails or times out refuses a chat call rather than send
   what it missed, and a chat call made outside
   any scope is always scanned (an unscoped embedding call no longer is,

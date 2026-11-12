@@ -97,6 +97,15 @@ describe('getUserFacingError', () => {
     expect(result.action?.toLowerCase()).toContain('new conversation');
   });
 
+  it('tells the reader a privacy_blocked turn can be asked again in the same conversation (§127 t-1014)', () => {
+    // The refused turn is left out of later history, so a new conversation is
+    // no longer the remedy.
+    const blocked = getUserFacingError('privacy_blocked');
+    expect(blocked.action).toContain('this conversation');
+    expect(blocked.action).not.toMatch(/new conversation/i);
+    expect(blocked.message).not.toMatch(/conversation contains/i);
+  });
+
   it('returns distinct messages for input_blocked vs output_blocked', () => {
     const input = getUserFacingError('input_blocked');
     const output = getUserFacingError('output_blocked');

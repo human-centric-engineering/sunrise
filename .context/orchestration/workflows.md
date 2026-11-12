@@ -217,7 +217,7 @@ Config (`chatTurnConfigSchema`):
 
 Behaviour:
 
-1. Loads up to `historyLimit` prior `AiMessage` rows for the conversation, oldest-first.
+1. Loads up to `historyLimit` prior `AiMessage` rows for the conversation, oldest-first, leaving out what a later call must not resend (`isLeftOutOfHistory`): error markers, and the rows of a turn the LLM privacy layer refused under `block` (§127 t-1014), which resent would be refused again.
 2. Composes the agent's system prompt via the same `resolveEffectivePrompt` + `composeSystemPromptString` path the streaming chat handler uses (persona / voice / guardrails inheritance is byte-identical).
 3. Builds `[system, ...history, user]` and calls `provider.chat()`.
 4. Persists both new turns to `AiMessage` in one transaction with provenance pins (`agentVersionId`, `workflowExecutionId`, `providerSlug`, `modelId`).

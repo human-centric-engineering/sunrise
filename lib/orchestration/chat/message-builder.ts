@@ -14,6 +14,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { isRecord } from '@/lib/utils';
 import type { ContentPart, LlmMessage, LlmRole, LlmToolCall } from '@/lib/orchestration/llm/types';
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
@@ -32,6 +33,28 @@ import type { InputBreakdown, InputBreakdownPart } from '@/types/orchestration';
  * so history truncation stays conservative.
  */
 const ATTACHMENT_OVERHEAD_TOKENS = 1600;
+
+/**
+ * Whether a stored message is left out of the history a later call resends.
+ * Every reader that rebuilds a conversation for a provider applies it: the
+ * chat handler's history reads (and so the summariser), and the `chat_turn`
+ * workflow step. Two kinds of row:
+ *
+ * - **An error marker** (`MessageMetadata.error`). It exists so the client can
+ *   show a failed turn. Resent, "[An error occurred …]" burns context and
+ *   invites imitation for the rest of the conversation.
+ * - **A row of a turn the privacy layer refused under `block`**
+ *   (`MessageMetadata.excludedFromHistory`, §127 t-1014). Resent, it would be
+ *   refused again on every turn.
+ *
+ * Read from the row's metadata in code, never as a Prisma JSON-path `NOT`
+ * filter: that also drops every row whose metadata is null, which is most of
+ * them. Any `excludedFromHistory` value leaves the row out, so a reason added
+ * later does not slip back in on a reader that does not know it.
+ */
+export function isLeftOutOfHistory(metadata: unknown): boolean {
+  return isRecord(metadata) && (metadata.error === true || metadata.excludedFromHistory != null);
+}
 
 export interface HistoryRow {
   role: string;

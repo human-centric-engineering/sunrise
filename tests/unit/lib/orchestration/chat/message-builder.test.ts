@@ -12,7 +12,8 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 const { logger } = await import('@/lib/logging');
-const { buildMessages } = await import('@/lib/orchestration/chat/message-builder');
+const { buildMessages, isLeftOutOfHistory } =
+  await import('@/lib/orchestration/chat/message-builder');
 const { MAX_HISTORY_MESSAGES } = await import('@/lib/orchestration/chat/types');
 const { getTextContent } = await import('@/lib/orchestration/llm/types');
 
@@ -20,6 +21,31 @@ const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('isLeftOutOfHistory', () => {
+  it('leaves out an error marker', () => {
+    expect(isLeftOutOfHistory({ error: true, errorCode: 'truncated_no_output' })).toBe(true);
+  });
+
+  it('leaves out a row a privacy refusal marked (§127 t-1014)', () => {
+    expect(isLeftOutOfHistory({ excludedFromHistory: 'privacy_blocked' })).toBe(true);
+    // A reason a later version adds is left out too, not let back in.
+    expect(isLeftOutOfHistory({ excludedFromHistory: 'some_later_reason' })).toBe(true);
+  });
+
+  it('keeps every other row, including the many with no metadata', () => {
+    for (const metadata of [
+      null,
+      undefined,
+      {},
+      { error: false },
+      { excludedFromHistory: null },
+      [],
+    ]) {
+      expect(isLeftOutOfHistory(metadata)).toBe(false);
+    }
+  });
 });
 
 describe('buildMessages', () => {

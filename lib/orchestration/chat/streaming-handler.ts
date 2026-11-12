@@ -62,6 +62,7 @@ import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effec
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
 import {
   isRequestFault,
+  PRIVACY_BLOCKED,
   ProviderError,
   SPEND_CAP_CODES,
   type LlmProvider,
@@ -114,7 +115,11 @@ import {
   LATEST_AGENT_VERSION_ID_INCLUDE,
   readAgentConsistently,
 } from '@/lib/orchestration/agents/agent-versioning';
-import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
+import {
+  buildMessagesAndBreakdown,
+  isLeftOutOfHistory,
+} from '@/lib/orchestration/chat/message-builder';
+import { isJsonObject } from '@/lib/privacy/config-recipients';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
   countOpenAiToolDefinitionTokens,
@@ -563,6 +568,16 @@ export class StreamingChatHandler {
     // The agent and its latest budget reading, for the `budget_exceeded`
     // webhook when a spend cap ends the turn from inside the provider gate.
     let budgetNotice: { agent: BudgetNoticeAgent; budget: BudgetStatus } | null = null;
+    // Every row this turn persists, so a turn the privacy layer refuses under
+    // `block` can leave all of them out of later history (§127 t-1014). Out
+    // here so the catch below sees them. The error marker is not one: every
+    // reader leaves error markers out already (`isLeftOutOfHistory`).
+    const turnRowIds: string[] = [];
+    const persistTurnRow = async (params: PersistMessageParams): Promise<AiMessage> => {
+      const row = await this.persistMessage(params);
+      turnRowIds.push(row.id);
+      return row;
+    };
     try {
       registerBuiltInCapabilities();
 
@@ -872,7 +887,7 @@ export class StreamingChatHandler {
       // message-builder instead.
       const userMessage = isOpeningTurn
         ? null
-        : await this.persistMessage({
+        : await persistTurnRow({
             conversationId: conversation.id,
             role: 'user',
             content: turnText,
@@ -1182,7 +1197,8 @@ export class StreamingChatHandler {
         const rows = history.map(toHistoryRow);
         const take = Math.min(SUMMARY_CATCHUP_MESSAGES, countWithinChunkBudget(rows));
         if (take === 0) {
-          // Everything read was an error marker: nothing to summarise, nothing to
+          // Everything read was left out of history (error markers, or a
+          // privacy-refused turn's rows): nothing to summarise, nothing to
           // lose. Move the pin past them so the next read gets further.
           // Bounded like the calls are: each skip is a write and a read.
           markerSkips += 1;
@@ -2216,7 +2232,7 @@ export class StreamingChatHandler {
             // Counts only; absent when it scanned none.
             Object.assign(assistantMetadata, privacyField(privacyScope));
           }
-          const assistantMsg = await this.persistMessage({
+          const assistantMsg = await persistTurnRow({
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
@@ -2453,7 +2469,7 @@ export class StreamingChatHandler {
           // call request; it may be empty for tool-first responses,
           // which is fine — the metadata marker is the load-bearing
           // bit for replay.
-          await this.persistMessage({
+          await persistTurnRow({
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
@@ -2599,7 +2615,7 @@ export class StreamingChatHandler {
                 message: refusal.message,
               },
             };
-            await this.persistMessage({
+            await persistTurnRow({
               conversationId: conversation.id,
               role: 'tool',
               content: JSON.stringify(unavailableResult),
@@ -2708,7 +2724,7 @@ export class StreamingChatHandler {
             ...(request.includeTrace ? { trace: singleTrace } : {}),
           };
 
-          await this.persistMessage({
+          await persistTurnRow({
             conversationId: conversation.id,
             role: 'tool',
             content: JSON.stringify(augmentedResult),
@@ -2743,7 +2759,7 @@ export class StreamingChatHandler {
           // via a follow-up message; the LLM does not narrate here.
           const pendingApproval = extractPendingApproval(tc.name, augmentedResult);
           if (pendingApproval) {
-            await this.persistMessage({
+            await persistTurnRow({
               conversationId: conversation.id,
               role: 'assistant',
               content: '',
@@ -2912,7 +2928,7 @@ export class StreamingChatHandler {
               result,
               ...(request.includeTrace ? { trace: skippedTrace } : {}),
             });
-            await this.persistMessage({
+            await persistTurnRow({
               conversationId: conversation.id,
               role: 'tool',
               content: JSON.stringify(result),
@@ -2998,7 +3014,7 @@ export class StreamingChatHandler {
               ...(request.includeTrace ? { trace: parallelTrace } : {}),
             });
 
-            await this.persistMessage({
+            await persistTurnRow({
               conversationId: conversation.id,
               role: 'tool',
               content: JSON.stringify(augmentedResult),
@@ -3048,7 +3064,7 @@ export class StreamingChatHandler {
           for (const r of results) {
             const pa = extractPendingApproval(r.capabilitySlug, r.result);
             if (pa) {
-              await this.persistMessage({
+              await persistTurnRow({
                 conversationId: conversation.id,
                 role: 'assistant',
                 content: '',
@@ -3171,6 +3187,13 @@ export class StreamingChatHandler {
         // fallbacks — or a request fault like `truncated_no_output`, which
         // now ends the turn here rather than failing over — leaves the user
         // message unanswered on reload.
+        // Refused under `block` (§127 t-1014): the details are in something
+        // this turn persisted, and every later turn would resend them and be
+        // refused again. Leave the turn out of later history; it stays in the
+        // transcript, and the user can ask again without them.
+        if (err.code === PRIVACY_BLOCKED) {
+          await this.leaveTurnOutOfHistory(turnRowIds, conversationId, request.userId, log);
+        }
         await persistErrorMarker(err.code);
         // A spend cap ends with the words a refusal before the turn uses.
         yield errorEvent(
@@ -3322,19 +3345,65 @@ export class StreamingChatHandler {
   }
 
   /**
-   * Drop error markers. They exist so the CLIENT can show a failed turn instead
-   * of an unanswered question; this history is only ever used to rebuild the
-   * prompt (`historyRows`, the summary threshold, the first-turn check) and
-   * never returned to a caller. Feeding "[An error occurred and the response
-   * could not be completed.]" back to the model burns context and invites
-   * imitation, for the rest of the conversation. Excluded in JS rather than the
-   * `where` because the flag lives in a JSON column.
+   * The rows a later call may resend: without error markers, and without the
+   * rows of a turn the privacy layer refused (`isLeftOutOfHistory`). This
+   * history is only ever used to rebuild the prompt (`historyRows`, the
+   * summary threshold, the first-turn check) and never returned to a caller,
+   * so the summariser never sees either kind. Excluded in JS rather than the
+   * `where` because both flags live in a JSON column.
    */
-  private withoutErrorMarkers(messages: AiMessage[]): AiMessage[] {
-    return messages.filter((m) => {
-      const metadata = (m.metadata ?? null) as MessageMetadata | null;
-      return metadata?.error !== true;
-    });
+  private resendableRows(messages: AiMessage[]): AiMessage[] {
+    return messages.filter((m) => !isLeftOutOfHistory(m.metadata));
+  }
+
+  /**
+   * Mark the rows of a turn the privacy layer refused under `block` so every
+   * later history read leaves them out (§127 t-1014). They stay in the
+   * transcript and the audit trail. Best effort, like the error marker. If the
+   * write fails, nothing retries it: the conversation is where it was before
+   * t-1014, every later turn resending the details and being refused, so
+   * nothing is sent, but it cannot go on.
+   *
+   * The metadata is read back here rather than taken from what the turn
+   * wrote, so anything set on a row before this read (a fork's hook on
+   * `message.created`, say) is kept. Only the rows the read finds are
+   * updated, so a row removed before it is skipped. Not atomic with the
+   * update: a write or removal in the moment between the two is lost, or
+   * rolls the batch back. Nothing in core writes a message after creating it.
+   */
+  private async leaveTurnOutOfHistory(
+    ids: string[],
+    conversationId: string | null,
+    userId: string,
+    log: typeof logger
+  ): Promise<void> {
+    if (ids.length === 0 || !conversationId) return;
+    try {
+      const owned = { conversationId, conversation: conversationOwner(userId) };
+      const rows = await prisma.aiMessage.findMany({
+        where: { id: { in: ids }, ...owned },
+        select: { id: true, metadata: true },
+      });
+      await prisma.$transaction(
+        rows.map((row) =>
+          prisma.aiMessage.update({
+            where: { id: row.id, ...owned },
+            data: {
+              metadata: {
+                ...(isJsonObject(row.metadata) ? row.metadata : {}),
+                excludedFromHistory: PRIVACY_BLOCKED,
+              },
+            },
+            select: { id: true },
+          })
+        )
+      );
+    } catch (err) {
+      log.warn('Failed to leave a privacy-refused turn out of history', {
+        messageIds: ids,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -3372,7 +3441,7 @@ export class StreamingChatHandler {
     const kept = fetched.slice(0, HISTORY_LOAD_LIMIT);
     const last = kept[kept.length - 1];
     return {
-      rows: this.withoutErrorMarkers(kept),
+      rows: this.resendableRows(kept),
       overflow: fetched.length > HISTORY_LOAD_LIMIT,
       lastFetched: last ? { id: last.id, createdAt: last.createdAt } : null,
     };
@@ -3385,9 +3454,9 @@ export class StreamingChatHandler {
    *
    * `omitted` is an upper bound on the rows this read did not reach that nothing
    * describes — everything older than the window, or, given `afterPin`, only
-   * what follows the pin (older rows are the summary's). It counts error
-   * markers too, which a read never shows, so it can overstate; the prompt says
-   * "up to". `excludeId` is the turn's own user message, which a read made after
+   * what follows the pin (older rows are the summary's). It counts the rows
+   * left out of history too (error markers, a privacy-refused turn's), which a
+   * read never shows, so it can overstate; the prompt says "up to". `excludeId` is the turn's own user message, which a read made after
    * it was persisted would otherwise return and the prompt would carry twice.
    */
   private async loadNewestHistory(
@@ -3414,7 +3483,7 @@ export class StreamingChatHandler {
     const unseen =
       fetched.length > HISTORY_LOAD_LIMIT ? await prisma.aiMessage.count({ where: scope }) : 0;
     return {
-      rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
+      rows: this.resendableRows(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
       omitted: Math.max(0, unseen - HISTORY_LOAD_LIMIT),
     };
   }
