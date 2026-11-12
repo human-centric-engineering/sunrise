@@ -51,6 +51,11 @@ const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [
   },
   {
     file: 'lib/orchestration/chat/message-embedder.ts',
+    table: 'ai_conversation',
+    why: "The backfill joins each message's conversation only for its agentId, which picks the privacy scope its embedding runs in (§127 t-1010); it runs from the maintenance tick, where no person is narrowed, and returns nothing to a caller.",
+  },
+  {
+    file: 'lib/orchestration/chat/message-embedder.ts',
     table: 'ai_message',
     why: 'The backfill runs from the maintenance tick, where no person is narrowed, and returns nothing to a caller; the insert reads only the orgId of the message it is embedding.',
   },
