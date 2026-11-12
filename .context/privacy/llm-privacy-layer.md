@@ -387,7 +387,8 @@ That happened when the details were in:
   call carries `PrivacyRefusedError.found`: how many messages the call
   carried, and the indices of the ones that held a finding
   (`messagesHoldingSpans()`, `call-masking.ts`, which maps the spans back
-  onto the messages the way masking does). No value, no type, no count.
+  onto the messages the way masking does). Never a value, a type, or how
+  many were found.
 - **The handler knows where each message came from.**
   `buildMessagesAndBreakdown()` returns a source per message: the system
   prompt, the entity context, the memories, the summary, a note the builder

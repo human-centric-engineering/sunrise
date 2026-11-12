@@ -9568,7 +9568,9 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
   function blockingProvider(beforeRefusing?: () => void) {
     const provider = {
       ...mockProvider([]),
-      chatStream: vi.fn(async function* (messages: unknown[]) {
+      chatStream: vi.fn(async function* (
+        messages: unknown[]
+      ): AsyncGenerator<Record<string, unknown>> {
         const holding = messages.flatMap((m, i) => (JSON.stringify(m).includes(DETAIL) ? [i] : []));
         if (holding.length > 0) {
           beforeRefusing?.();
