@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
+import { EMBEDDINGS_POLICIES } from '@/lib/orchestration/privacy/settings-policy';
 import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 
 export const agentBackupSchema = z.object({
@@ -191,6 +192,7 @@ const settingsBackupSchema = z.object({
   privacyMode: z.enum(PRIVACY_MODES_BY_STRICTNESS).optional(),
   privacyIgnoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)).max(100).optional(),
   privacyProtectLocalProviders: z.boolean().optional(),
+  privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES).optional(),
 });
 
 /**

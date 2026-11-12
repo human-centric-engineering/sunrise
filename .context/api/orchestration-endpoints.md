@@ -946,7 +946,7 @@ Returns chunk metadata plus a 2D UMAP projection of each chunk's 1,536-dimension
 
 ### `GET /knowledge/embedding-status`
 
-Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
+Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider, providerState, providerIsLocal }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
 
 ---
 

@@ -31,6 +31,7 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import { logger } from '@/lib/logging';
+import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
   queueMessageEmbedding,
   backfillMissingEmbeddings,
@@ -138,6 +139,39 @@ describe('queueMessageEmbedding', () => {
         })
       );
     });
+  });
+
+  it('logs a local-only embeddings refusal at info, not as a failure (§127)', async () => {
+    vi.mocked(embedText).mockRejectedValue(
+      new PrivacyRefusedError('embeddings_local_only', 'openai')
+    );
+
+    queueMessageEmbedding('msg-7', 'This is a valid message to embed');
+
+    await vi.waitFor(() => {
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringMatching(/^Message embedding skipped: /),
+        expect.objectContaining({ messageId: 'msg-7' })
+      );
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('still warns for a privacy refusal that is not the embeddings policy', async () => {
+    vi.mocked(embedText).mockRejectedValue(new PrivacyRefusedError('stage_error', 'openai'));
+
+    queueMessageEmbedding('msg-8', 'This is a valid message to embed');
+
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Message embedding failed',
+        expect.objectContaining({ messageId: 'msg-8' })
+      );
+    });
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^Message embedding skipped/),
+      expect.anything()
+    );
   });
 
   it('logs stringified non-Error rejection value via String(err)', async () => {

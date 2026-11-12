@@ -16,6 +16,7 @@ import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES,
   parseIgnoredEntityTypes,
+  parseEmbeddingsPolicy,
   parsePrivacyMode,
 } from '@/lib/orchestration/privacy/settings-policy';
 import {
@@ -119,6 +120,7 @@ export function hydrateSettings(row: {
   privacyMode?: string | null;
   privacyIgnoredEntityTypes?: Prisma.JsonValue | null;
   privacyProtectLocalProviders?: boolean | null;
+  privacyEmbeddingsPolicy?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -206,6 +208,7 @@ export function hydrateSettings(row: {
         ? [...DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES]
         : parseIgnoredEntityTypes(row.privacyIgnoredEntityTypes),
     privacyProtectLocalProviders: row.privacyProtectLocalProviders === true,
+    privacyEmbeddingsPolicy: parseEmbeddingsPolicy(row.privacyEmbeddingsPolicy ?? undefined),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

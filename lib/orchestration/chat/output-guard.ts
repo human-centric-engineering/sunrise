@@ -10,56 +10,136 @@
  * still steer the model off-topic. The primary defense is always the
  * system prompt; this guard is a safety net for logging and alerting.
  *
- * The guard also detects common PII patterns (emails, phone numbers,
- * SSNs) that should rarely appear in assistant output regardless of
- * agent configuration.
+ * The guard also flags identifiers in the reply — email addresses, phone
+ * numbers, NI and NHS numbers, card and bank details, keys — using the LLM
+ * privacy layer's tier A rules through its registry (§127), and ignores any
+ * the conversation itself supplied: a reply that repeats the user's own email
+ * back to them, or one the privacy layer restored, is not a leak.
  */
+import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import { messagePieces } from '@/lib/orchestration/privacy/call-masking';
+import { CORE_RULES_DETECTOR_ID } from '@/lib/privacy/adapters/core-defaults';
+import { logger } from '@/lib/logging';
+import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
+import { runPrivacyDetectors } from '@/lib/privacy/adapters/run';
 
 export interface OutputScanResult {
   flagged: boolean;
   /** Which forbidden topics matched. */
   topicMatches: string[];
-  /** Which built-in patterns matched (e.g. 'pii_email'). */
+  /**
+   * Which kinds of identifier the reply contained that the conversation did
+   * not supply, as `pii_<type>` (e.g. `pii_email`, `pii_uk_nino`).
+   */
   builtInMatches: string[];
 }
 
-interface BuiltInPattern {
-  label: string;
-  regex: RegExp;
+/**
+ * How long the identifier scan may take. A reply is short, so this is
+ * generous; a scan that runs out flags nothing rather than holding the turn.
+ */
+const OUTPUT_SCAN_TIMEOUT_MS = 2_000;
+
+/** Characters people write inside an identifier: spaces and `- . ( ) /`. */
+const SEPARATORS = '[\\s\\-.()/]*';
+
+const ALNUM = '[\\p{L}\\p{N}]';
+
+/**
+ * A pattern for `value` as people write it: any of the usual separators may
+ * sit between its characters ("07700 900123", "(07700) 900-123"), case is
+ * ignored, and it must stand on its own — no letter or digit right before or
+ * after it — so a sort code is not "supplied" because its digits sit inside a
+ * longer reference number.
+ */
+function writtenAs(value: string): RegExp | null {
+  const chars = [...value.toLowerCase()].filter((c) => !/[\s\-.()/]/.test(c));
+  if (chars.length === 0) return null;
+  const body = chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(SEPARATORS);
+  return new RegExp(`(?<!${ALNUM})${body}(?!${ALNUM})`, 'iu');
 }
 
 /**
- * Built-in patterns that apply to all agents regardless of configuration.
- * These catch common PII leaks in assistant output.
+ * The ids to run for the guard: `core.rules`, or the app detector that
+ * replaced it, when it runs on this server or on infrastructure the operator
+ * controls. An `external` replacement is left out: the guard runs in every
+ * privacy mode, `off` included, and would post every reply to a service no
+ * setting sent it to.
  */
-const BUILT_IN_PATTERNS: BuiltInPattern[] = [
-  {
-    label: 'pii_email',
-    regex: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/,
-  },
-  {
-    label: 'pii_phone',
-    regex: /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b/,
-  },
-  {
-    label: 'pii_ssn',
-    regex: /\b\d{3}-\d{2}-\d{4}\b/,
-  },
-  {
-    label: 'pii_credit_card',
-    regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/,
-  },
-];
+function guardDetectorIds(): string[] {
+  return getPrivacyAdapters()
+    .detectors.filter(
+      (d) =>
+        (d.id === CORE_RULES_DETECTOR_ID || d.replacesCore === CORE_RULES_DETECTOR_ID) &&
+        d.egress !== 'external'
+    )
+    .map((d) => d.id);
+}
 
 /**
- * Scan an assistant response against per-agent topic boundaries
- * and built-in PII patterns.
+ * The kinds of identifier in `content` that `supplied` does not contain, as
+ * `pii_<type>` labels in order of first appearance.
+ */
+async function identifierMatches(
+  content: string,
+  supplied: readonly LlmMessage[],
+  ignoredEntityTypes: readonly string[]
+): Promise<string[]> {
+  const detectorIds = guardDetectorIds();
+  if (detectorIds.length === 0) return [];
+  const { spans, failures } = await runPrivacyDetectors(content, {
+    scopeId: 'output-guard',
+    knownValues: [],
+    detectorIds,
+    ignoredEntityTypes,
+    signal: AbortSignal.timeout(OUTPUT_SCAN_TIMEOUT_MS),
+  });
+  // Flags nothing it could not scan, rather than hold the turn; said here so
+  // a quiet guard is not read as a clean reply. Ids only, never the text.
+  if (failures.length > 0) {
+    logger.warn('output-guard: identifier scan incomplete', {
+      failedAdapters: failures.map((f) => f.adapterId),
+      reasons: failures.map((f) => f.reason),
+    });
+  }
+  if (spans.length === 0) return [];
+  // Each piece on its own: joined, a value could be "found" across the end
+  // of one message and the start of the next.
+  const pieces = messagePieces(supplied);
+  const labels = new Set<string>();
+  for (const span of spans) {
+    const pattern = writtenAs(content.slice(span.start, span.end));
+    if (pattern && pieces.some((p) => pattern.test(p))) continue;
+    labels.add(`pii_${span.type.toLowerCase()}`);
+  }
+  return [...labels];
+}
+
+/**
+ * Scan an assistant response against per-agent topic boundaries and for
+ * identifiers the conversation did not supply.
  *
  * @param content - The assistant response text
  * @param topicBoundaries - Forbidden keywords/phrases from the agent config.
  *   Each entry is matched case-insensitively as a word-boundary substring.
+ * @param supplied - What the conversation sent the model: the system prompt,
+ *   the user's messages, tool results. An identifier found in it is not
+ *   flagged in the reply.
+ * @param options.ignoredEntityTypes - Types the admin told the privacy layer
+ *   to leave alone; not flagged here either.
  */
-export function scanOutput(content: string, topicBoundaries: string[]): OutputScanResult {
+export async function scanOutput(
+  content: string,
+  topicBoundaries: string[],
+  supplied: readonly LlmMessage[] = [],
+  options: {
+    /**
+     * Identifier types not to flag: the LLM privacy settings'
+     * `privacyIgnoredEntityTypes`, so one admin choice governs both.
+     */
+    ignoredEntityTypes?: readonly string[];
+  } = {}
+): Promise<OutputScanResult> {
   const lower = content.toLowerCase();
 
   const topicMatches: string[] = [];
@@ -72,12 +152,11 @@ export function scanOutput(content: string, topicBoundaries: string[]): OutputSc
     }
   }
 
-  const builtInMatches: string[] = [];
-  for (const pattern of BUILT_IN_PATTERNS) {
-    if (pattern.regex.test(content)) {
-      builtInMatches.push(pattern.label);
-    }
-  }
+  const builtInMatches = await identifierMatches(
+    content,
+    supplied,
+    options.ignoredEntityTypes ?? []
+  );
 
   return {
     flagged: topicMatches.length > 0 || builtInMatches.length > 0,

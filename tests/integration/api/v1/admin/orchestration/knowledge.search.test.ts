@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/knowledge/search/route';
+import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -277,6 +278,40 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
       await POST(makePostRequest({ query: 'global search' }));
 
       expect(vi.mocked(resolveAgentDocumentAccess)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('under the LLM privacy layer’s local-only embeddings policy (§127)', () => {
+    it('answers 409 naming the setting, not a bare 500', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('embeddings_local_only', 'openai')
+      );
+
+      const response = await POST(makePostRequest({ query: 'acme' }));
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
+        response
+      );
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('EMBEDDINGS_LOCAL_ONLY');
+      expect(body.error.message).toContain('embeddings policy: local only');
+    });
+
+    it('lets any other refusal through as an error, not as the local-only answer', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('stage_error', 'openai')
+      );
+
+      const response = await POST(makePostRequest({ query: 'acme' }));
+
+      expect(response.status).not.toBe(200);
+      expect(response.status).not.toBe(409);
+      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).not.toBe('EMBEDDINGS_LOCAL_ONLY');
     });
   });
 });

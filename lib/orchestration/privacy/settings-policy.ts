@@ -8,6 +8,7 @@
  *
  * @see .context/privacy/llm-privacy-layer.md — *Settings*
  */
+import { modeStrictness } from '@/lib/privacy/adapters/policy';
 import {
   ENTITY_TYPE_PATTERN,
   PRIVACY_MODES_BY_STRICTNESS,
@@ -16,12 +17,57 @@ import {
 } from '@/lib/privacy/adapters/types';
 
 /**
- * The modes an operator can choose in this version. `pseudonymise`, `redact`
- * and `block` are built by t-992; until then the settings API refuses them,
- * and the stage refuses a call a resolver raises to one, rather than send it
- * unprotected under a mode that promised protection.
+ * The modes an operator can choose in this version: all five since t-992. Kept
+ * apart from {@link PRIVACY_MODES_BY_STRICTNESS} so a mode added to the
+ * contract before it is built can be left out here, and the settings API, the
+ * settings page and a backup restore then refuse it.
  */
-export const PRIVACY_MODES_AVAILABLE = ['off', 'detect'] as const satisfies readonly PrivacyMode[];
+export const PRIVACY_MODES_AVAILABLE = [
+  'off',
+  'detect',
+  'pseudonymise',
+  'redact',
+  'block',
+] as const satisfies readonly PrivacyMode[];
+
+/**
+ * Whether `mode` replaces what it finds with placeholders: `pseudonymise` and
+ * `redact`. (`block` sends nothing it finds, so it masks nothing.)
+ */
+export function isMaskingMode(mode: PrivacyMode): boolean {
+  return mode === 'pseudonymise' || mode === 'redact';
+}
+
+/**
+ * Whether `mode` protects what is sent: `pseudonymise` or stricter. The test
+ * for refusing on a failed detector, for the `local_only` embeddings refusal,
+ * and for the settings page's embeddings warning: one definition for all three.
+ */
+export function protectsContent(mode: PrivacyMode): boolean {
+  return modeStrictness(mode) >= modeStrictness('pseudonymise');
+}
+
+/**
+ * What the layer does about embedding calls (spec § Embeddings). Their input
+ * is counted and never masked, because a masked name cannot be searched for.
+ *
+ * - `allow` — send them to whichever provider the install embeds with.
+ * - `local_only` — under `pseudonymise` or stricter, refuse one to a provider
+ *   that is not `isLocal`.
+ */
+export const EMBEDDINGS_POLICIES = ['allow', 'local_only'] as const;
+
+export type EmbeddingsPolicy = (typeof EMBEDDINGS_POLICIES)[number];
+
+/**
+ * A stored embeddings policy. Absent (a row shape from before the column)
+ * reads as `allow`, the column default; a stored value that is not a policy
+ * reads as `local_only`, the stricter, so a corrupted row never loosens it.
+ */
+export function parseEmbeddingsPolicy(raw: unknown): EmbeddingsPolicy {
+  if (raw === undefined) return 'allow';
+  return EMBEDDINGS_POLICIES.find((p) => p === raw) ?? 'local_only';
+}
 
 /** The ignored types a new settings row starts with: the column default. */
 export const DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES: readonly string[] = ['DATE', 'LOCATION'];

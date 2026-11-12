@@ -98,6 +98,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   privacyMode: 'off',
   privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
   privacyProtectLocalProviders: false,
+  privacyEmbeddingsPolicy: 'allow',
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

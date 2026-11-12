@@ -667,6 +667,7 @@ describe('importOrchestrationConfig', () => {
       privacyMode: 'off',
       privacyIgnoredEntityTypes: ['DATE'],
       privacyProtectLocalProviders: true,
+      privacyEmbeddingsPolicy: 'local_only',
     };
     const payload = {
       ...minPayload,
@@ -679,21 +680,24 @@ describe('importOrchestrationConfig', () => {
     expect(call.update).toMatchObject(privacy);
   });
 
-  it('keeps the current mode, with a warning, when the backup carries one this version cannot apply', async () => {
-    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
-    const result = await importOrchestrationConfig(
-      {
-        ...minPayload,
-        data: { ...minPayload.data, settings: { ...makeSettings(), privacyMode: 'redact' } },
-      },
-      'user-1',
-      SHARED_SCOPE
-    );
-    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
-    expect(call.update).not.toHaveProperty('privacyMode');
-    expect(call.create).not.toHaveProperty('privacyMode');
-    expect(result.warnings).toContainEqual(expect.stringContaining('"redact"'));
-  });
+  it.each(['pseudonymise', 'redact', 'block'])(
+    'restores the masking mode %s now that this version can apply it',
+    async (mode) => {
+      mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+      const result = await importOrchestrationConfig(
+        {
+          ...minPayload,
+          data: { ...minPayload.data, settings: { ...makeSettings(), privacyMode: mode } },
+        },
+        'user-1',
+        SHARED_SCOPE
+      );
+      const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+      expect(call.update.privacyMode).toBe(mode);
+      expect(call.create.privacyMode).toBe(mode);
+      expect(result.warnings.join(' ')).not.toMatch(/privacy mode/);
+    }
+  );
 
   it('leaves the current privacy settings alone when the backup predates them', async () => {
     mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
@@ -707,6 +711,7 @@ describe('importOrchestrationConfig', () => {
       'privacyMode',
       'privacyIgnoredEntityTypes',
       'privacyProtectLocalProviders',
+      'privacyEmbeddingsPolicy',
     ]) {
       expect(call.update).not.toHaveProperty(key);
       expect(call.create).not.toHaveProperty(key);

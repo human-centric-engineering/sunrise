@@ -44,6 +44,7 @@ const FAKE_EMBED = {
 function withEmbed(results: unknown[]): { results: unknown[]; embedding: typeof FAKE_EMBED } {
   return { results, embedding: FAKE_EMBED };
 }
+const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
 const { resolveAgentDocumentAccess } =
   await import('@/lib/orchestration/knowledge/resolveAgentDocumentAccess');
 const { SearchKnowledgeCapability } =
@@ -374,6 +375,38 @@ describe('SearchKnowledgeCapability', () => {
         evaluationRunId: 'run-9',
         kind: 'knowledge_search',
       });
+    });
+  });
+  describe('embedding refusal under the privacy layer (§127)', () => {
+    it('returns a tool error the model can relay when embeddings are local only', async () => {
+      vi.mocked(searchKnowledgeWithEmbedding).mockRejectedValue(
+        new PrivacyRefusedError('embeddings_local_only', 'openai')
+      );
+
+      const result = await new SearchKnowledgeCapability().execute({ query: 'refunds' }, context);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('embeddings_local_only');
+      expect(result.error?.message).toMatch(/unavailable/i);
+      expect(result.error?.message).toMatch(/local embedding model/i);
+    });
+
+    it('rethrows a privacy refusal for any other reason', async () => {
+      const err = new PrivacyRefusedError('stage_error', 'openai');
+      vi.mocked(searchKnowledgeWithEmbedding).mockRejectedValue(err);
+
+      await expect(
+        new SearchKnowledgeCapability().execute({ query: 'refunds' }, context)
+      ).rejects.toBe(err);
+    });
+
+    it('rethrows an ordinary failure', async () => {
+      const err = new Error('pool timeout');
+      vi.mocked(searchKnowledgeWithEmbedding).mockRejectedValue(err);
+
+      await expect(
+        new SearchKnowledgeCapability().execute({ query: 'refunds' }, context)
+      ).rejects.toBe(err);
     });
   });
 });

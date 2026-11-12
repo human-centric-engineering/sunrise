@@ -26,8 +26,15 @@ import type {
 } from '@/lib/privacy/adapters/types';
 import { knownValuesDetector } from '@/lib/privacy/pii/known-values';
 import { listsDetector } from '@/lib/privacy/pii/lists';
-import { rulesDetector } from '@/lib/privacy/pii/rules';
+import { RULES_DETECTOR_ID, rulesDetector } from '@/lib/privacy/pii/rules';
 import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
+
+/**
+ * Tier A's id, for a caller that runs it alone through the runner
+ * (`runPrivacyDetectors(text, { detectorIds: [...] })`): the output guard.
+ * Here so nothing outside the registry imports the detector module.
+ */
+export const CORE_RULES_DETECTOR_ID = RULES_DETECTOR_ID;
 
 export interface CorePrivacyAdapters {
   /** Always registered as required: a core detector failing is a bug, and a bug refuses the call. */

@@ -58,6 +58,13 @@ export type DetectionCallContext = Omit<DetectContext, 'signal' | 'priorSpans'> 
    * carry the address out unmasked.
    */
   ignoredEntityTypes?: readonly EntityType[];
+  /**
+   * Run only the detectors with these ids, or that replaced a core detector
+   * with one of them (`replace`), in registry order; all of them when absent.
+   * The output guard runs just `core.rules` this way, so an app's replacement
+   * of that detector changes what the guard flags too.
+   */
+  detectorIds?: readonly string[];
 };
 
 class AdapterTimeoutError extends Error {
@@ -138,11 +145,17 @@ export async function runPrivacyDetectors(
   text: string,
   ctx: DetectionCallContext
 ): Promise<DetectionResult> {
-  const { detectors } = getPrivacyAdapters();
+  const { detectors: registered } = getPrivacyAdapters();
+  const only = ctx.detectorIds ? new Set(ctx.detectorIds) : null;
+  const detectors = only
+    ? registered.filter(
+        (r) => only.has(r.id) || (r.replacesCore !== undefined && only.has(r.replacesCore))
+      )
+    : registered;
   const rank = new Map(detectors.map((r, i) => [r.id, i]));
   const found: AttributedSpan[] = [];
   const failures: AdapterFailure[] = [];
-  const { signal: outer, ignoredEntityTypes = [], ...rest } = ctx;
+  const { signal: outer, ignoredEntityTypes = [], detectorIds: _only, ...rest } = ctx;
   // Frozen once: every detector sees the same known values, and none can
   // change what a later one (or the caller) reads.
   const callCtx = {

@@ -13,6 +13,7 @@
 
 import { logger } from '@/lib/logging';
 import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
+import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import type { McpResourceContent } from '@/types/mcp';
 import type { ResourceCallContext } from '@/lib/orchestration/mcp/resource-registry';
@@ -57,13 +58,27 @@ export async function handleKnowledgeSearch(
     });
   }
 
-  const results = await searchKnowledge(query, filters, 10, undefined, {
-    // The key owner pays for this embedding, the same way they pay for a tool
-    // call made with the same key. `AiApiKey.createdBy` is a `user` FK, so it
-    // is a real row or null — never a synthetic id.
-    userId: callContext.userId,
-    metadata: { kind: 'mcp_knowledge_search' },
-  });
+  let results: Awaited<ReturnType<typeof searchKnowledge>>;
+  try {
+    results = await searchKnowledge(query, filters, 10, undefined, {
+      // The key owner pays for this embedding, the same way they pay for a tool
+      // call made with the same key. `AiApiKey.createdBy` is a `user` FK, so it
+      // is a real row or null — never a synthetic id.
+      userId: callContext.userId,
+      metadata: { kind: 'mcp_knowledge_search' },
+    });
+  } catch (err) {
+    // The LLM privacy layer requires a local embedding model and none is
+    // active (§127): the client is told why, as a malformed URI is.
+    if (isLocalOnlyEmbeddingRefusal(err)) {
+      return {
+        uri,
+        mimeType: 'application/json',
+        text: JSON.stringify({ error: err.message, code: 'embeddings_local_only' }),
+      };
+    }
+    throw err;
+  }
 
   const simplified = results.map((r) => ({
     content: r.chunk.content,

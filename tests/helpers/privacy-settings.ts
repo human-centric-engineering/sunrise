@@ -24,5 +24,6 @@ export function privacyOffSettings() {
     privacyMode: 'off' as const,
     privacyIgnoredEntityTypes: [] as string[],
     privacyProtectLocalProviders: false,
+    privacyEmbeddingsPolicy: 'allow' as const,
   };
 }

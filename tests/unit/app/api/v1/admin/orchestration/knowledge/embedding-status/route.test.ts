@@ -108,6 +108,38 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     expect(body.data.embedded).toBe(80);
     expect(body.data.pending).toBe(20);
     expect(body.data.hasActiveProvider).toBe(true);
+    expect(body.data.providerState).toBe('ok');
+    expect(body.data.providerIsLocal).toBe(false);
+  });
+
+  it('reports providerIsLocal true when the resolved provider is local', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      {
+        id: 'prov-2',
+        slug: 'ollama',
+        providerType: 'openai-compatible',
+        baseUrl: 'http://localhost:11434/v1',
+        apiKeyEnvVar: null,
+        isLocal: true,
+        isActive: true,
+      },
+    ] as never);
+
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    expect(body.data.hasActiveProvider).toBe(true);
+    expect(body.data.providerIsLocal).toBe(true);
+  });
+
+  it('reports providerIsLocal null when no provider resolves', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    expect(body.data.hasActiveProvider).toBe(false);
+    expect(body.data.providerIsLocal).toBeNull();
   });
 
   it('reports no provider when only OPENAI_API_KEY is set — the bare key no longer embeds (t-740)', async () => {
@@ -211,5 +243,24 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
 
     const res = await GET(makeRequest());
     expect(res.status).toBe(401);
+  });
+
+  it('answers ?providerOnly=true with the provider fields alone, without counting chunks', async () => {
+    const res = await GET(
+      new NextRequest(
+        'http://localhost:3000/api/v1/admin/orchestration/knowledge/embedding-status?providerOnly=true',
+        { method: 'GET' }
+      )
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({
+      hasActiveProvider: true,
+      providerState: 'ok',
+      providerIsLocal: false,
+    });
+    expect(prisma.aiKnowledgeChunk.count).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 });

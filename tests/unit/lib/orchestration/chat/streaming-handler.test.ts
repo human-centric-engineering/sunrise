@@ -4067,7 +4067,7 @@ describe('output guard ordering', () => {
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeAgent({ outputGuardMode: 'block', topicBoundaries: ['forbidden-topic'] })
     );
-    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+    (scanOutput as ReturnType<typeof vi.fn>).mockResolvedValue({
       flagged: true,
       topicMatches: ['forbidden-topic'],
       builtInMatches: [],
@@ -4201,7 +4201,7 @@ describe('citation guard', () => {
         topicBoundaries: ['forbidden'],
       })
     );
-    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+    (scanOutput as ReturnType<typeof vi.fn>).mockResolvedValue({
       flagged: true,
       topicMatches: ['forbidden'],
       builtInMatches: [],
@@ -6259,7 +6259,7 @@ describe('output guard warn_and_continue', () => {
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeAgent({ outputGuardMode: 'warn_and_continue', topicBoundaries: ['competitor'] })
     );
-    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+    (scanOutput as ReturnType<typeof vi.fn>).mockResolvedValue({
       flagged: true,
       topicMatches: ['competitor'],
       builtInMatches: [],

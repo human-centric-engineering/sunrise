@@ -17,6 +17,8 @@ import {
   knownValuesOf,
   privacySummary,
   recordPrivacyCall,
+  recordPrivacyRefusal,
+  recordPrivacyUnresolved,
   runInPrivacyScope,
   withPrivacyScope,
   type PrivacyCallRecord,
@@ -131,6 +133,67 @@ describe('the tally', () => {
     const summary = privacySummary(scope);
     if (summary) summary.counts.PERSON = 99;
     expect(privacySummary(scope)?.counts).toEqual({ PERSON: 1 });
+  });
+});
+
+describe('refusals and unresolved placeholders', () => {
+  it('records a refusal in the scope and every ancestor, raises the mode, and sorts and dedupes the summary', () => {
+    const root = createPrivacyScope({ scopeId: 'root' });
+    const mid = childPrivacyScope(root, 'mid');
+    const leaf = childPrivacyScope(mid, 'leaf');
+    recordPrivacyCall(root, chat({}, { mode: 'detect' }));
+
+    recordPrivacyRefusal(leaf, 'block', 'stage_error');
+    recordPrivacyRefusal(leaf, 'block', 'content_blocked');
+    recordPrivacyRefusal(leaf, 'block', 'content_blocked');
+
+    for (const s of [leaf, mid, root]) {
+      expect(privacySummary(s)?.refused).toEqual(['content_blocked', 'stage_error']);
+      expect(s.tally.mode).toBe('block');
+    }
+  });
+
+  it('keeps a sibling out of a refusal, and gives a refusal-only scope a summary with no calls', () => {
+    const root = createPrivacyScope({ scopeId: 'root' });
+    const a = childPrivacyScope(root, 'a');
+    const b = childPrivacyScope(root, 'b');
+
+    recordPrivacyRefusal(a, 'pseudonymise', 'detector_failed');
+
+    expect(privacySummary(b)).toBeUndefined();
+    expect(privacySummary(a)).toMatchObject({
+      mode: 'pseudonymise',
+      calls: 0,
+      embeddingCalls: 0,
+      refused: ['detector_failed'],
+    });
+  });
+
+  it('has no refused key when nothing was refused', () => {
+    const scope = createPrivacyScope({ scopeId: 's' });
+    recordPrivacyCall(scope, chat({ EMAIL: 1 }));
+    expect(privacySummary(scope)).not.toHaveProperty('refused');
+  });
+
+  it('adds unresolved placeholders to every ancestor, ignoring zero and negatives', () => {
+    const root = createPrivacyScope({ scopeId: 'root' });
+    const leaf = childPrivacyScope(root, 'leaf');
+    recordPrivacyCall(leaf, chat({}));
+
+    recordPrivacyUnresolved(leaf, 2);
+    recordPrivacyUnresolved(leaf, 1);
+    recordPrivacyUnresolved(leaf, 0);
+    recordPrivacyUnresolved(leaf, -5);
+
+    expect(privacySummary(leaf)?.unresolved).toBe(3);
+    expect(privacySummary(root)?.unresolved).toBe(3);
+  });
+
+  it('leaves unresolved out of the summary when there are none', () => {
+    const scope = createPrivacyScope({ scopeId: 's' });
+    recordPrivacyCall(scope, chat({}));
+    recordPrivacyUnresolved(scope, 0);
+    expect(privacySummary(scope)).not.toHaveProperty('unresolved');
   });
 });
 

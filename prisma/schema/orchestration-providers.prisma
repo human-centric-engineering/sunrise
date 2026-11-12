@@ -282,6 +282,10 @@ model AiOrchestrationSettings {
   // Apply the layer to `isLocal` providers too. Off by default: the text
   // never leaves infrastructure the operator controls.
   privacyProtectLocalProviders  Boolean   @default(false)
+  // `allow` | `local_only`. With `local_only` and a mode of `pseudonymise` or
+  // stricter, an embedding call to a provider that is not `isLocal` is
+  // refused: embedding inputs are counted, never masked (spec § Embeddings).
+  privacyEmbeddingsPolicy       String    @default("allow")
   createdAt                     DateTime  @default(now())
   updatedAt                     DateTime  @updatedAt
 

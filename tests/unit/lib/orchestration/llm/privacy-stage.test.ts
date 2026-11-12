@@ -1,6 +1,7 @@
 /**
  * Tests: the privacy stage the provider-manager Proxy runs on every chat and
- * embedding call (§127), in `off` and `detect`.
+ * embedding call (§127): `off` and `detect` here; the masking modes, `block`
+ * and the embeddings policy in `privacy-stage.masking.test.ts`.
  *
  * The registry and Sunrise's own detectors are real, so detection is the real
  * thing. The app seam is a stand-in each case fills (or makes throw), and the
@@ -38,7 +39,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import { applyPrivacyStage, PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
-import { isRequestFault } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   createPrivacyScope,
@@ -127,7 +128,8 @@ describe('mode off', () => {
 
     const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
 
-    expect(result).toBe(args);
+    expect(result.args).toBe(args);
+    expect(result.restorer).toBeUndefined();
     expect(args).toEqual(before);
     expect(privacySummary(scope)).toBeUndefined();
     await new Promise((r) => setTimeout(r, 0));
@@ -158,7 +160,8 @@ describe('mode detect', () => {
 
     const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
 
-    expect(result).toBe(args);
+    expect(result.args).toBe(args);
+    expect(result.restorer).toBeUndefined();
     expect(args).toEqual(before);
     const summary = privacySummary(scope);
     expect(summary).toMatchObject({ mode: 'detect', calls: 1, embeddingCalls: 0 });
@@ -236,7 +239,7 @@ describe('mode detect', () => {
 
   it('works with no scope at all, on an ephemeral one that records nowhere', async () => {
     const args = [messages(), { model: 'm' }];
-    await expect(applyPrivacyStage(chatCall(args))).resolves.toBe(args);
+    await expect(applyPrivacyStage(chatCall(args))).resolves.toEqual({ args });
   });
 
   it('skips the scan when nothing would read it: no scope, no observer, no block policy', async () => {
@@ -265,7 +268,7 @@ describe('mode detect', () => {
     expect(detect).toHaveBeenCalledTimes(2);
   });
 
-  it('stops the scan when the caller abandons the call, and neither counts nor refuses it', async () => {
+  it('stops the scan when the caller abandons the call, and throws the abort: neither counted nor refused', async () => {
     const caller = new AbortController();
     const events: PrivacyEvent[] = [];
     seam.init.mockImplementation(() => {
@@ -292,10 +295,19 @@ describe('mode detect', () => {
     const args = [messages(), { model: 'm', signal: caller.signal }];
     const started = Date.now();
 
-    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage(chatCall(args)).then(
+        () => 'handed back',
+        (e: unknown) => e
+      )
+    );
 
     expect(Date.now() - started).toBeLessThan(900);
-    expect(result).toBe(args);
+    // A cancel: the abort every provider throws, never the unscanned
+    // arguments, and never a refusal.
+    expect(result).toBeInstanceOf(ProviderError);
+    expect(result).toMatchObject({ code: 'aborted' });
+    expect(result).not.toBeInstanceOf(PrivacyRefusedError);
     expect(privacySummary(scope)).toBeUndefined();
     await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([]);
@@ -365,24 +377,20 @@ describe('refusals', () => {
     expect((await refusal(applyPrivacyStage(chatCall()))).reason).toBe('policy_resolver_failed');
   });
 
-  it('refuses a chat call raised past detect, but still only counts an embedding one', async () => {
+  it('only ever counts an embedding call, whatever the mode', async () => {
     seam.init.mockImplementation(() =>
       registerPrivacyPolicyResolver({
         id: 'app.strict',
-        resolve: (): Partial<PrivacyPolicy> => ({ mode: 'pseudonymise' }),
+        resolve: (): Partial<PrivacyPolicy> => ({ mode: 'block' }),
       })
     );
-    expect((await refusal(applyPrivacyStage(chatCall()))).reason).toBe('mode_unavailable');
-
-    const { scope } = await inScope(() =>
-      applyPrivacyStage({
-        providerSlug: 'voyage',
-        isLocal: false,
-        coverage: 'count',
-        args: [[EMAIL]],
-      })
+    const args = [[`${NAME} ${EMAIL}`]];
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage({ providerSlug: 'voyage', isLocal: false, coverage: 'count', args })
     );
-    expect(privacySummary(scope)).toMatchObject({ mode: 'pseudonymise', embeddingCalls: 1 });
+    expect(result.args).toBe(args);
+    expect(privacySummary(scope)).toMatchObject({ mode: 'block', embeddingCalls: 1, calls: 0 });
+    expect(privacySummary(scope)?.embeddingCounts.EMAIL).toBe(1);
   });
 
   it('goes ahead, degraded, when a detector fails and the policy falls back', async () => {
@@ -399,7 +407,8 @@ describe('refusals', () => {
     );
     const args = [messages(), { model: 'm' }];
     const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
-    expect(result).toBe(args);
+    expect(result.args).toBe(args);
+    expect(result.restorer).toBeUndefined();
     expect(privacySummary(scope)).toMatchObject({ degraded: true, failedAdapters: ['app.flaky'] });
     expect(privacySummary(scope)?.counts.EMAIL).toBe(1);
   });
@@ -447,7 +456,7 @@ describe('refusals', () => {
 });
 
 describe('a cancel while the policy resolvers run', () => {
-  it('lets the call go quietly rather than report a refused one', async () => {
+  it('throws the abort rather than hand back a call whose policy it never finished', async () => {
     const caller = new AbortController();
     const events: PrivacyEvent[] = [];
     seam.init.mockImplementation(() => {
@@ -462,9 +471,18 @@ describe('a cancel while the policy resolvers run', () => {
     });
     const args = [messages(), { model: 'm', signal: caller.signal }];
 
-    const { result, scope } = await inScope(() => applyPrivacyStage(chatCall(args)));
+    const { result, scope } = await inScope(() =>
+      applyPrivacyStage(chatCall(args)).then(
+        () => 'handed back',
+        (e: unknown) => e
+      )
+    );
 
-    expect(result).toBe(args);
+    // Thrown even in `detect`: the resolver that would have raised the mode
+    // may be the one the cancel cut short.
+    expect(result).toBeInstanceOf(ProviderError);
+    expect(result).toMatchObject({ code: 'aborted' });
+    expect(result).not.toBeInstanceOf(PrivacyRefusedError);
     expect(privacySummary(scope)).toBeUndefined();
     await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([]);

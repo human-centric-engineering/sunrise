@@ -18,6 +18,50 @@ release process.
 
 ### Added
 
+- **LLM privacy layer: `pseudonymise`, `redact` and `block`, and the
+  embeddings policy (§127, t-992).** The settings API, the settings page and
+  a config restore now accept all five privacy modes. Under `pseudonymise`
+  a chat call's message text and tool-call arguments go to the provider with
+  placeholders such as `[PERSON_1]`, and the reply, streamed text and
+  tool-call arguments come back from `getProvider()` restored, so callers
+  and capabilities see real values and need no change. `redact` masks and
+  never restores. `block` refuses a chat call with anything found, with the
+  new request-fault code `privacy_blocked` (`PRIVACY_BLOCKED`, apart from
+  `privacy_refused` because its remedy differs: the reader starts a new
+  conversation). Under `pseudonymise`, `redact` and `block` a required
+  detector that fails or times out refuses a chat call rather than send
+  what it missed, and a chat call made outside
+  any scope is always scanned (an unscoped embedding call no longer is,
+  when nothing reads the result). A call its caller abandons while the
+  stage runs now throws `ProviderError` code `aborted` in every mode,
+  rather than being handed back unfinished. Every exact copy of a found
+  value is masked, and a token session now lives for the privacy
+  scope (a chat turn, a workflow step), not one call: **a fork's
+  `PrivacyTokenStrategy`** gets one `createSession()` per scope, and its
+  session must keep issuing the same placeholder for a value across the
+  scope's calls. **Migration:** `AiOrchestrationSettings` gains
+  `privacyEmbeddingsPolicy` (`allow`, the default for every row, or
+  `local_only`): under `local_only` and a mode of `pseudonymise` or
+  stricter, an embedding call to a provider not marked local is refused
+  (`isLocalOnlyEmbeddingRefusal()`): a reply's embedding is skipped,
+  `search_knowledge_base` returns the tool error `embeddings_local_only`,
+  and an upload fails with a message naming the setting. The settings page
+  warns when protection is on and embeddings still go to a provider that is
+  not local, or that `local_only` will refuse every embedding;
+  `GET …/knowledge/embedding-status` now returns `providerIsLocal`, and
+  with `?providerOnly=true` only the provider fields, without the chunk
+  counts. `PrivacySummary` gains `refused` and `unresolved`. The
+  output guard's identifier check now uses the privacy layer's UK rules
+  (through the registry, so an app's replacement of `core.rules` applies)
+  in place of its four US-centric patterns, ignores identifiers the
+  conversation itself supplied (per message, standing on its own), never
+  runs an `external` replacement of `core.rules`, and is async:
+  `scanOutput()` returns a promise and takes the sent messages as a third
+  argument and `{ ignoredEntityTypes }` as a fourth. Its labels are
+  `pii_<type>` (`pii_credit_card` is now `pii_card_number`; a US SSN is no
+  longer flagged). `runPrivacyDetectors()` takes `detectorIds`. See
+  `.context/privacy/llm-privacy-layer.md`.
+
 - **LLM privacy layer: the stage on every vendor call, in `detect` mode
   (§127, t-991).** **Migration:** `AiOrchestrationSettings` gains
   `privacyMode`, `privacyIgnoredEntityTypes` and
@@ -26,7 +70,7 @@ release process.
   settings; a new install starts in `detect`. In `detect`, a `chat`,
   `chatStream`, `embed` or `embedMany` call through `getProvider`, made in a
   chat turn or a workflow run to a provider not marked local, is scanned
-  locally and sent unchanged; a call outside both is scanned only when an observer is registered or the policy blocks on a failed detector. Per-type counts, never values, are recorded on the
+  locally and sent unchanged; in `detect`, a call outside both is scanned only when an observer is registered or the policy blocks on a failed detector. Per-type counts, never values, are recorded on the
   assistant message that ends the turn (`metadata.privacy`) and on each
   workflow step's trace entry (`privacy`), and shown on both traces. The
   stage refuses a call with `PrivacyRefusedError` (code `privacy_refused`, a
@@ -34,8 +78,8 @@ release process.
   what the policy is: while `initAppPrivacyAdapters()` or a core adapter has
   failed (mode `off` included), the stored mode is unreadable, a policy
   resolver fails, or the stage itself throws. It also refuses when the
-  policy says to: a resolver raising a chat call past `detect`, or `block`
-  on a failed detector. A method added to `LlmProvider` must now be
+  policy says `block` on a failed detector. (The stricter modes are t-992's,
+  above.) A method added to `LlmProvider` must now be
   classified in `PRIVACY_COVERAGE` as well as `METHOD_DISPOSITION`. A fork's
   own long-running work can enter a privacy scope with `withPrivacyScope()`
   (`lib/orchestration/privacy/scope.ts`) so its calls are counted together.

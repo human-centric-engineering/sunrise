@@ -193,16 +193,38 @@ async function getEmbeddingMatrixRows(): Promise<LoadResult<ActiveEmbeddingModel
   };
 }
 
+/**
+ * Whether knowledge embedding would go to a local provider, for the privacy
+ * card's warning (§127). `null` when no provider resolves or the status could
+ * not be read: the warning then makes no claim.
+ */
+async function getEmbeddingProviderIsLocal(): Promise<boolean | null> {
+  const result = await loadServerData<{ providerIsLocal?: boolean | null }>(
+    `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS}?providerOnly=true`
+  );
+  return result.ok && typeof result.data.providerIsLocal === 'boolean'
+    ? result.data.providerIsLocal
+    : null;
+}
+
 export default async function OrchestrationSettingsPage() {
-  const [fullSettings, models, providers, embeddingModels, audioModels, embeddingMatrixRows] =
-    await Promise.all([
-      getSettings(),
-      getChatModels(),
-      getProviders(),
-      getEmbeddingModels(),
-      getAudioModels(),
-      getEmbeddingMatrixRows(),
-    ]);
+  const [
+    fullSettings,
+    models,
+    providers,
+    embeddingModels,
+    audioModels,
+    embeddingMatrixRows,
+    embeddingProviderIsLocal,
+  ] = await Promise.all([
+    getSettings(),
+    getChatModels(),
+    getProviders(),
+    getEmbeddingModels(),
+    getAudioModels(),
+    getEmbeddingMatrixRows(),
+    getEmbeddingProviderIsLocal(),
+  ]);
 
   // The narrow `OrchestrationSettings` shape that `SettingsForm` accepts
   // is a structural subset of the full singleton, so we can hand the
@@ -265,6 +287,7 @@ export default async function OrchestrationSettingsPage() {
         initialSettings={formSettings}
         // Server-only env, so the client guard cannot read it directly (#553).
         allowPrivateEscalationWebhook={env.ESCALATION_WEBHOOK_ALLOW_PRIVATE}
+        embeddingProviderIsLocal={embeddingProviderIsLocal}
       />
 
       <BackupPanel />

@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   basePolicyFromSettings,
+  parseEmbeddingsPolicy,
   parseIgnoredEntityTypes,
   parsePrivacyMode,
   PRIVACY_MODES_AVAILABLE,
@@ -30,6 +31,20 @@ describe('parseIgnoredEntityTypes', () => {
   it('reads anything else as nothing ignored, the stricter reading of exclusions', () => {
     for (const bad of [null, 'DATE', { DATE: true }, ['DATE', 'lower'], ['DATE', 1]]) {
       expect(parseIgnoredEntityTypes(bad)).toEqual([]);
+    }
+  });
+});
+
+describe('parseEmbeddingsPolicy', () => {
+  it('reads the two policies as themselves, and an absent one as the column default', () => {
+    expect(parseEmbeddingsPolicy('allow')).toBe('allow');
+    expect(parseEmbeddingsPolicy('local_only')).toBe('local_only');
+    expect(parseEmbeddingsPolicy(undefined)).toBe('allow');
+  });
+
+  it('reads a stored value that is not a policy as local_only, the stricter', () => {
+    for (const bad of ['LOCAL_ONLY', 'local', '', null, 1]) {
+      expect(parseEmbeddingsPolicy(bad)).toBe('local_only');
     }
   });
 });
@@ -62,12 +77,12 @@ describe('basePolicyFromSettings', () => {
 });
 
 describe('the settings API', () => {
-  it('accepts only the modes this version can apply', () => {
-    expect(PRIVACY_MODES_AVAILABLE).toEqual(['off', 'detect']);
+  it('accepts every mode now that each is built, and nothing else', () => {
+    expect(PRIVACY_MODES_AVAILABLE).toEqual(['off', 'detect', 'pseudonymise', 'redact', 'block']);
     for (const mode of PRIVACY_MODES_AVAILABLE) {
       expect(updateOrchestrationSettingsSchema.safeParse({ privacyMode: mode }).success).toBe(true);
     }
-    for (const mode of ['pseudonymise', 'redact', 'block', 'nonsense']) {
+    for (const mode of ['pseudonymize', 'nonsense']) {
       expect(updateOrchestrationSettingsSchema.safeParse({ privacyMode: mode }).success).toBe(
         false
       );
@@ -88,5 +103,19 @@ describe('the settings API', () => {
     expect(
       updateOrchestrationSettingsSchema.safeParse({ privacyProtectLocalProviders: true }).success
     ).toBe(true);
+    expect(
+      updateOrchestrationSettingsSchema.safeParse({ privacyEmbeddingsPolicy: 'local_only' }).success
+    ).toBe(true);
+  });
+
+  it('accepts the two embeddings policies and nothing else', () => {
+    for (const ok of ['allow', 'local_only']) {
+      expect(
+        updateOrchestrationSettingsSchema.safeParse({ privacyEmbeddingsPolicy: ok }).success
+      ).toBe(true);
+    }
+    expect(
+      updateOrchestrationSettingsSchema.safeParse({ privacyEmbeddingsPolicy: 'local' }).success
+    ).toBe(false);
   });
 });

@@ -27,7 +27,14 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { costLogsOutliveExecutions } from '@/lib/validations/orchestration';
 import { CORE_ENTITY_TYPES, type CoreEntityType } from '@/lib/privacy/adapters/types';
-import { PRIVACY_MODES_AVAILABLE } from '@/lib/orchestration/privacy/settings-policy';
+import {
+  EMBEDDINGS_POLICIES,
+  type EmbeddingsPolicy,
+  parseEmbeddingsPolicy,
+  parsePrivacyMode,
+  PRIVACY_MODES_AVAILABLE,
+  protectsContent,
+} from '@/lib/orchestration/privacy/settings-policy';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -101,10 +108,17 @@ export interface OrchestrationSettings {
   privacyMode?: string | null;
   privacyIgnoredEntityTypes?: string[];
   privacyProtectLocalProviders?: boolean;
+  privacyEmbeddingsPolicy?: string;
 }
 
 export interface SettingsFormProps {
   initialSettings: OrchestrationSettings;
+  /**
+   * Whether the provider knowledge embedding would use is marked local, from
+   * the embedding-status endpoint; `null` when none resolves or it could not
+   * be read. The privacy card warns when protection is on and it is `false`.
+   */
+  embeddingProviderIsLocal?: boolean | null;
   /**
    * Mirrors `ESCALATION_WEBHOOK_ALLOW_PRIVATE`, passed down because the form
    * cannot read a server-only env var. Without it the client guard below would
@@ -145,7 +159,25 @@ const ENTITY_TYPE_LABELS: Record<CoreEntityType, string> = {
 const PRIVACY_MODE_LABELS: Record<(typeof PRIVACY_MODES_AVAILABLE)[number], string> = {
   off: 'Off',
   detect: 'Detect (count only)',
+  pseudonymise: 'Pseudonymise (placeholders, restored)',
+  redact: 'Redact (placeholders, not restored)',
+  block: 'Block (refuse calls with personal data)',
 };
+
+const EMBEDDINGS_POLICY_LABELS: Record<EmbeddingsPolicy, string> = {
+  allow: 'Allow any provider',
+  local_only: 'Local providers only',
+};
+
+/**
+ * Whether `mode` protects what is sent (`pseudonymise` or stricter), so
+ * embeddings sent as they are become a gap: `protectsContent()`, the same test
+ * the stage uses for the `local_only` refusal.
+ */
+function protects(mode: string): boolean {
+  const known = parsePrivacyMode(mode);
+  return known !== null && protectsContent(known);
+}
 
 /**
  * The select's value when the stored mode is one this page cannot show (a
@@ -177,6 +209,7 @@ const settingsFormSchema = z
     privacyMode: z.enum([...PRIVACY_MODES_AVAILABLE, KEEP_STORED_MODE]),
     privacyProtectedTypes: z.array(z.string()),
     privacyProtectLocalProviders: z.boolean(),
+    privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES),
     // Limits
     globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
     // Per-execution / per-turn defaults (improvement #39 runaway-loop
@@ -319,6 +352,7 @@ function escalationConfigFrom(
 export function SettingsForm({
   initialSettings,
   allowPrivateEscalationWebhook = false,
+  embeddingProviderIsLocal = null,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [saveFailure, setSaveFailure] = React.useState<SaveFailure | null>(null);
@@ -444,6 +478,7 @@ export function SettingsForm({
         (t) => !(initialSettings.privacyIgnoredEntityTypes ?? []).includes(t)
       ),
       privacyProtectLocalProviders: initialSettings.privacyProtectLocalProviders === true,
+      privacyEmbeddingsPolicy: parseEmbeddingsPolicy(initialSettings.privacyEmbeddingsPolicy),
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
       defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
@@ -487,6 +522,23 @@ export function SettingsForm({
   });
 
   const watchedHybrid = watch('hybridEnabled');
+  const watchedPrivacyMode = watch('privacyMode');
+  const watchedEmbeddingsPolicy = watch('privacyEmbeddingsPolicy');
+  // The mode in force once saved: the chosen one, or the stored one kept.
+  const effectivePrivacyMode =
+    watchedPrivacyMode === KEEP_STORED_MODE
+      ? (initialSettings.privacyMode ?? '')
+      : watchedPrivacyMode;
+  const embeddingsLeak =
+    protects(effectivePrivacyMode) &&
+    watchedEmbeddingsPolicy === 'allow' &&
+    embeddingProviderIsLocal === false;
+  // The other way round: local only, and the model that would embed is not
+  // local, so every embedding is refused.
+  const embeddingsRefused =
+    protects(effectivePrivacyMode) &&
+    watchedEmbeddingsPolicy === 'local_only' &&
+    embeddingProviderIsLocal === false;
 
   React.useEffect(() => {
     reset(defaults);
@@ -552,6 +604,7 @@ export function SettingsForm({
               initialSettings.privacyIgnoredEntityTypes ?? []
             ),
             privacyProtectLocalProviders: values.privacyProtectLocalProviders,
+            privacyEmbeddingsPolicy: values.privacyEmbeddingsPolicy,
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
             defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
             defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
@@ -734,13 +787,20 @@ export function SettingsForm({
                   <strong>Off</strong> sends every call as it is. <strong>Detect</strong> also sends
                   every call unchanged, and counts what it finds by type — names, email addresses,
                   NI numbers and so on — on each conversation and workflow step, so you can see what
-                  agents meet before anything is changed. Values are never stored or logged, only
-                  counts.
+                  agents meet before anything is changed.
                 </p>
                 <p className="mt-2">
-                  Default: off on an install that was upgraded, detect on a new one. Replacing
-                  values with placeholders comes in a later version. Embedding calls are counted,
-                  never altered; transcription is not covered.
+                  <strong>Pseudonymise</strong> replaces what it finds with placeholders such as
+                  [PERSON_1] before the call, and puts the real values back in the reply and in what
+                  tools are given, so answers read normally. <strong>Redact</strong> replaces them
+                  and never puts them back. <strong>Block</strong> refuses any call that contains
+                  them. Under pseudonymise and redact, a call that cannot be fully scanned (very
+                  large, or a detector failed) is refused rather than sent part-masked.
+                </p>
+                <p className="mt-2">
+                  Default: off on an install that was upgraded, detect on a new one. Values are
+                  never stored or logged, only counts. Embedding calls are counted, never altered;
+                  transcription is not covered.
                 </p>
               </FieldHelp>
             </Label>
@@ -781,10 +841,10 @@ export function SettingsForm({
             <legend className="flex items-center gap-1 text-sm font-medium">
               What to look for
               <FieldHelp title="Types of personal data">
-                Ticked types are looked for and counted. Unticked ones are left alone. Default:
-                everything except other dates and place names, which are common in ordinary text and
-                rarely identify anyone on their own. A type a new detector adds is looked for until
-                you untick it here.
+                Ticked types are looked for, then counted, replaced or refused as the mode says.
+                Unticked ones are left alone. Default: everything except other dates and place
+                names, which are common in ordinary text and rarely identify anyone on their own. A
+                type a new detector adds is looked for until you untick it here.
               </FieldHelp>
             </legend>
             <Controller
@@ -829,13 +889,70 @@ export function SettingsForm({
                   Apply to local providers too
                   <FieldHelp title="Local providers">
                     Default: off. A provider marked local runs on infrastructure you control, so the
-                    text never leaves it and the layer skips it. Turn this on to count what local
-                    models are sent as well.
+                    text never leaves it and the layer skips it. Turn this on to apply the mode to
+                    local models as well.
                   </FieldHelp>
                 </label>
               )}
             />
           </div>
+
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="privacyEmbeddingsPolicy" className="flex items-center gap-1">
+              Embeddings
+              <FieldHelp title="Embedding calls">
+                <p>
+                  Embedding turns text into vectors for knowledge search: uploaded documents, search
+                  queries and chat replies. Its input is counted but never masked, because a name
+                  replaced by a placeholder could not be searched for.
+                </p>
+                <p className="mt-2">
+                  <strong>Local providers only</strong> refuses embedding with a provider that is
+                  not marked local while the mode is pseudonymise, redact or block: uploads fail,
+                  knowledge search is unavailable and replies are not indexed until a local
+                  embedding model is active. Default: allow any provider.
+                </p>
+              </FieldHelp>
+            </Label>
+            <Controller
+              name="privacyEmbeddingsPolicy"
+              control={control}
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger id="privacyEmbeddingsPolicy">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMBEDDINGS_POLICIES.map((policy) => (
+                      <SelectItem key={policy} value={policy}>
+                        {EMBEDDINGS_POLICY_LABELS[policy]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+          {embeddingsLeak && (
+            <p
+              className="text-xs text-amber-700 dark:text-amber-400"
+              data-testid="privacy-embeddings-warning"
+            >
+              Embeddings still go to a provider that is not local. Uploaded documents, knowledge
+              search queries and chat replies reach it as written, names included. Choose a local
+              embedding model, or set embeddings to local providers only.
+            </p>
+          )}
+          {embeddingsRefused && (
+            <p
+              className="text-xs text-amber-700 dark:text-amber-400"
+              data-testid="privacy-embeddings-refused"
+            >
+              The active embedding model is not local, so with local providers only every embedding
+              is refused: document uploads fail, knowledge search is unavailable and chat replies
+              are not indexed. Choose a local embedding model to use them.
+            </p>
+          )}
         </CardContent>
       </Card>
 

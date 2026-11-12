@@ -46,7 +46,7 @@ const { registerProviderEligibility, resetProviderEligibility } =
 const { logger } = await import('@/lib/logging');
 const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
 const { NoProviderConfiguredError } = await import('@/lib/orchestration/llm/agent-resolver');
-const { embedText, resolveEmbeddingAvailability } =
+const { embedText, resolveEmbeddingAvailability, resolveEmbeddingStatus } =
   await import('@/lib/orchestration/knowledge/embedder');
 
 function row(overrides: Record<string, unknown>) {
@@ -263,6 +263,46 @@ describe('resolveEmbeddingAvailability', () => {
     // Act + Assert: the operator needs to add a provider row, not to ask about a rule.
     await expect(resolveEmbeddingAvailability()).resolves.toBe('none_configured');
     expect(getProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveEmbeddingStatus', () => {
+  it.each([true, false])('carries the resolved provider isLocal (%s)', async (isLocal) => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'p1', isLocal, baseUrl: 'http://localhost:11434/v1' }),
+    ] as never);
+
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'ok',
+      providerIsLocal: isLocal,
+    });
+  });
+
+  it('has providerIsLocal null when nothing is configured', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'none_configured',
+      providerIsLocal: null,
+    });
+  });
+
+  it('has providerIsLocal null when the rule refuses every provider', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'together' }),
+    ] as never);
+    registerProviderEligibility(() => []);
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'none_permitted',
+      providerIsLocal: null,
+    });
+  });
+
+  it('has providerIsLocal null when the lookup fails', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(new Error('pool timeout'));
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'unknown',
+      providerIsLocal: null,
+    });
   });
 });
 
