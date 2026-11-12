@@ -164,6 +164,9 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       update: vi.fn(),
       count: vi.fn(),
+      // The first-owner bootstrap asks whether the invitation's issuer holds
+      // owner standing; the invitations here are issued by a platform admin.
+      findUnique: vi.fn(() => Promise.resolve({ role: 'ADMIN' })),
     },
     authBootstrap: {
       findUnique: vi.fn(),
@@ -172,6 +175,7 @@ vi.mock('@/lib/db/client', () => ({
     orgMembership: {
       upsert: vi.fn(),
       count: vi.fn(),
+      findUnique: vi.fn(() => Promise.resolve(null)),
     },
     // The memberships and the cleared signup record are one batch (t-838):
     // every operation was already issued, so the batch is their settlement.
@@ -225,9 +229,9 @@ interface SharedMocks {
     status: string;
   };
   prisma: {
-    user: { update: MockedFn; count: MockedFn };
+    user: { update: MockedFn; count: MockedFn; findUnique: MockedFn };
     authBootstrap: { findUnique: MockedFn; upsert: MockedFn };
-    orgMembership: { upsert: MockedFn; count: MockedFn };
+    orgMembership: { upsert: MockedFn; count: MockedFn; findUnique: MockedFn };
     verification: { findFirst: MockedFn };
     $transaction: MockedFn;
   };
@@ -321,6 +325,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         user: {
           update: vi.mocked(db.prisma.user.update),
           count: vi.mocked(db.prisma.user.count),
+          findUnique: vi.mocked(db.prisma.user.findUnique),
         },
         authBootstrap: {
           findUnique: vi.mocked(db.prisma.authBootstrap.findUnique),
@@ -329,6 +334,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         orgMembership: {
           upsert: vi.mocked(db.prisma.orgMembership.upsert),
           count: vi.mocked(db.prisma.orgMembership.count),
+          findUnique: vi.mocked(db.prisma.orgMembership.findUnique),
         },
         verification: {
           findFirst: vi.mocked(db.prisma.verification.findFirst),

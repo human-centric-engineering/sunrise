@@ -443,8 +443,9 @@ export async function updateOrgReportingPrevious(
  * first person who is not platform staff to join a non-install org becomes
  * its `OWNER` — the invitation path's bootstrap, one rule for both
  * (`takesFirstOwnership`), so an org created without a named owner still
- * gets one from its first real member, whatever staff are in it already. An
- * org ADMIN can never trigger it: they are a non-staff member themselves. Unlike that
+ * gets one from its first real member, whatever staff are in it already. It
+ * needs an actor with owner standing, as an explicit `OWNER` does, so an org
+ * ADMIN never triggers it. Unlike that
  * path an explicit role is honoured: this is an API call by someone who
  * chose the role, not an invitation whose author could not know the org
  * would be empty when it was accepted.
@@ -485,7 +486,9 @@ export async function addMember(
     effectiveRole = role;
   } else {
     const nonStaff = await countNonStaffMembers(orgId, db);
-    effectiveRole = takesFirstOwnership(user, nonStaff) ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
+    effectiveRole = takesFirstOwnership(user, nonStaff, hasOwnerStanding(actor))
+      ? ORG_OWNER_ROLE
+      : DEFAULT_ORG_ROLE;
   }
 
   // Placed by hand: a signup record that survived a failed write is paid and

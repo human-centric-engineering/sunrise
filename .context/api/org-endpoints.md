@@ -214,7 +214,8 @@ POST /api/v1/orgs/[id]/members
   that, when no role is asked for, the org's **first member who isn't
   platform staff** becomes `OWNER` (the invitation path's bootstrap; staff
   already in the org don't stop it, #1178, and any non-staff member, an ADMIN
-  included, does). `OWNER` needs OWNER standing.
+  included, does), when the caller holds owner standing. `OWNER` needs OWNER
+  standing.
   On the install org a `role` is refused: roles there follow the platform role.
 
 Adding by id enrols the user without asking them — it mirrors the platform

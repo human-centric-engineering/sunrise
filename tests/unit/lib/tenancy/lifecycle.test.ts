@@ -419,7 +419,7 @@ describe('addMember', () => {
       expect(db.orgMembership.count).toHaveBeenCalledWith({
         where: {
           orgId: ORG,
-          user: { role: { not: PLATFORM_ADMIN_ROLE }, accountType: { not: 'SERVICE' } },
+          user: { role: { not: PLATFORM_ADMIN_ROLE }, NOT: { accountType: 'SERVICE' } },
         },
       });
     });
@@ -431,6 +431,15 @@ describe('addMember', () => {
       orgHas([{ orgId: ORG, role: ORG_ADMIN_ROLE }]);
 
       expect((await addMember(ORG, OTHER, undefined, AS_ADMIN)).role).toBe(DEFAULT_ORG_ROLE);
+    });
+
+    // Code review: even with no non-staff member left, the bootstrap needs the
+    // actor's owner standing, as an explicit OWNER does.
+    it('an actor without owner standing never triggers it, even in a staff-only org', async () => {
+      orgHas([{ orgId: ORG, role: ORG_ADMIN_ROLE, staff: true }]);
+
+      expect((await addMember(ORG, OTHER, undefined, AS_ADMIN)).role).toBe(DEFAULT_ORG_ROLE);
+      expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(ORG_OWNER_ROLE);
     });
   });
 

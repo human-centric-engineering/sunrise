@@ -215,9 +215,11 @@ release process.
   longer count, and never take the bootstrap themselves. It applies on both
   ways in: an accepted invitation (`membershipForNewUser`) and `addMember`
   with no role chosen, through one rule, the new `takesFirstOwnership()` in
-  `lib/tenancy/membership.ts`. The trigger is deliberately not "no `OWNER`
-  yet": an org ADMIN in an org whose last owner was erased could then choose
-  its next owner without owner standing. Behaviour changes for a fork: a
+  `lib/tenancy/membership.ts`. Whoever grants it must hold owner standing, as
+  for an explicit `OWNER`: the `addMember` actor, or an invitation's issuer
+  when it is accepted (`hasOwnerStandingIn()`). The trigger is deliberately
+  not "no `OWNER` yet": an org ADMIN in an org whose last owner was erased
+  could then choose its next owner. Behaviour changes for a fork: a
   platform admin added to an empty org with no role now lands as `MEMBER`
   (give `OWNER` explicitly, as `POST /api/v1/admin/orgs`' `ownerUserId` does),
   and an org whose only owner is staff makes its first non-staff member an

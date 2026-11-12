@@ -338,6 +338,11 @@ or by the role the invitation grants) or a SERVICE account.
   account included, without the owner standing every explicit `OWNER` grant
   needs. Any non-staff member closes the bootstrap, and a platform admin
   repairs such an org.
+- **Its grantor needs owner standing**, as for an explicit `OWNER`: the
+  `addMember` actor, or an invitation's issuer (`invitedBy`) **when it is
+  accepted** (`hasOwnerStandingIn`). Otherwise an ADMIN could invite a second
+  account of theirs, then remove every other non-staff member and leave, and
+  the count would be 0 again by acceptance.
 
 Whether an invitation's explicit `orgRole` should win over the bootstrap is a
 separate question (#1156). The bootstrap sits beside the install-scoped
@@ -565,8 +570,8 @@ while they are acting in that org — never by a role check in a route.
   `POST /api/v1/admin/orgs` takes `ownerUserId` so the org starts with one.
 - **An org's first non-staff member becomes OWNER** when no role is asked
   for — the same bootstrap as an invitation (`takesFirstOwnership`, shared
-  with `membershipForNewUser`). An org ADMIN never triggers it, being a
-  non-staff member already. Unlike the invitation path, an explicit role on
+  with `membershipForNewUser`). It needs an actor with owner standing, so an
+  org ADMIN never triggers it. Unlike the invitation path, an explicit role on
   `POST …/members` is honoured: it is an API call by someone who chose it.
 - **Only an OWNER confers or revokes OWNER** (`OWNER_STANDING`). The policy
   admits an ADMIN to the roster; the lifecycle is where "without the OWNER's
