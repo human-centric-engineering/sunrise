@@ -12,7 +12,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 const { logger } = await import('@/lib/logging');
-const { buildMessages, isLeftOutOfHistory } =
+const { buildMessages, buildMessagesAndBreakdown, isLeftOutOfHistory } =
   await import('@/lib/orchestration/chat/message-builder');
 const { MAX_HISTORY_MESSAGES } = await import('@/lib/orchestration/chat/types');
 const { getTextContent } = await import('@/lib/orchestration/llm/types');
@@ -45,6 +45,93 @@ describe('isLeftOutOfHistory', () => {
     ]) {
       expect(isLeftOutOfHistory(metadata)).toBe(false);
     }
+  });
+});
+
+describe('buildMessagesAndBreakdown sources (t-1017)', () => {
+  it('names where every message came from, and each history row by its index in what it was given', () => {
+    const history = [
+      { role: 'user', content: 'dropped by the cap' },
+      { role: 'assistant', content: '' }, // a UI marker: skipped
+      { role: 'tool', content: 'orphan', toolCallId: 'gone' }, // no call before it: dropped
+      { role: 'user', content: 'kept' },
+      { role: 'assistant', content: 'reply' },
+    ];
+    const { messages, sources } = buildMessagesAndBreakdown({
+      systemInstructions: 'sys',
+      contextBlock: 'context',
+      userMemories: [{ key: 'k', value: 'v' }],
+      conversationSummary: 'summary',
+      omittedBeforeHistory: 3,
+      history,
+      maxHistoryMessages: 4,
+      newUserMessage: 'new',
+    });
+
+    expect(sources).toEqual([
+      { kind: 'system_prompt' },
+      { kind: 'context' },
+      { kind: 'memories' },
+      { kind: 'summary' },
+      { kind: 'note' },
+      { kind: 'history', historyIndex: 3 },
+      { kind: 'history', historyIndex: 4 },
+      { kind: 'user_message' },
+    ]);
+    expect(sources).toHaveLength(messages.length);
+    sources.forEach((source, i) => {
+      if (source.kind === 'history') {
+        expect(messages[i].content).toBe(history[source.historyIndex].content);
+      }
+    });
+  });
+
+  it('names a tool row and the call before it, and the unsummarised-rows note', () => {
+    const history = [
+      { role: 'user', content: 'old' },
+      { role: 'user', content: 'q' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'f', arguments: {} }],
+      },
+      { role: 'tool', content: 'result', toolCallId: 'c1' },
+    ];
+    const { sources } = buildMessagesAndBreakdown({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      maxHistoryMessages: 3,
+      newUserMessage: 'new',
+    });
+    expect(sources).toEqual([
+      { kind: 'system_prompt' },
+      { kind: 'note' },
+      { kind: 'history', historyIndex: 1 },
+      { kind: 'history', historyIndex: 2 },
+      { kind: 'history', historyIndex: 3 },
+      { kind: 'user_message' },
+    ]);
+  });
+
+  it('names an opening turn, and a message with attachments', () => {
+    const opening = buildMessagesAndBreakdown({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: '',
+      openingTurn: 'Greet them.',
+    });
+    expect(opening.sources).toEqual([{ kind: 'system_prompt' }, { kind: 'opening_turn' }]);
+
+    const attached = buildMessagesAndBreakdown({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'look',
+      attachments: [{ name: 'a.png', mediaType: 'image/png', data: 'x' }],
+    });
+    expect(attached.sources).toEqual([{ kind: 'system_prompt' }, { kind: 'user_message' }]);
   });
 });
 

@@ -20,6 +20,7 @@ import {
   mapMessageTexts,
   maskMessages,
   messagePieces,
+  messagesHoldingSpans,
   PIECE_SEPARATOR,
   withPlaceholderInstruction,
 } from '@/lib/orchestration/privacy/call-masking';
@@ -91,6 +92,43 @@ describe('mapMessageTexts', () => {
 
   it('messagePieces lists the same texts in the same order', () => {
     expect(messagePieces(input())).toEqual(['sys', 'part', '', 'who', 'bob', 'nested', 'k', 'v']);
+  });
+});
+
+describe('messagesHoldingSpans (t-1017)', () => {
+  const sent: LlmMessage[] = [
+    { role: 'system', content: 'abc' },
+    // An image only: no pieces, and still a position.
+    {
+      role: 'user',
+      content: [{ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'x' } }],
+    },
+    { role: 'user', content: 'hello Bob' },
+    {
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 't', name: 'f', arguments: { k: 'v' } }],
+    },
+  ];
+  // Joined: 'abc' at 0, 'hello Bob' at 5, '' at 16, 'k' at 18, 'v' at 21.
+  const at = (text: string, from = 0): { start: number; end: number } => {
+    const joined = messagePieces(sent).join(PIECE_SEPARATOR);
+    const start = joined.indexOf(text, from);
+    return { start, end: start + text.length };
+  };
+
+  it('names the message each span is in, by its position', () => {
+    expect(messagesHoldingSpans(sent, [{ type: 'PERSON', ...at('Bob') }])).toEqual([2]);
+    expect(messagesHoldingSpans(sent, [{ type: 'PERSON', ...at('v', 20) }])).toEqual([3]);
+  });
+
+  it('names both messages a span runs across, each once, in order', () => {
+    const across = { type: 'PERSON', start: at('c').start, end: at('hello').end };
+    expect(messagesHoldingSpans(sent, [across, { type: 'PERSON', ...at('Bob') }])).toEqual([0, 2]);
+  });
+
+  it('names nothing when nothing was found', () => {
+    expect(messagesHoldingSpans(sent, [])).toEqual([]);
   });
 });
 

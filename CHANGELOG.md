@@ -34,6 +34,24 @@ release process.
   (`lib/orchestration/chat/message-builder.ts`) is true: error markers, and
   a refused turn's rows. Otherwise it resends the refused details and is
   refused again.
+- **LLM privacy layer: a `block` caused by an earlier message, the summary
+  or the assistant's setup no longer refuses every turn after it (§127,
+  t-1017).**
+  - `PrivacyRefusedError.found` (`PrivacyFindingLocation`:
+    `{ messageCount, messageIndices }`) on a `content_blocked` refusal of a
+    chat call: which messages held personal details, never what.
+  - Two new chat `error` event codes, each with its own words in
+    `getUserFacingError()`: `privacy_blocked_earlier` (an earlier message or
+    the stored summary held them, and has been left out: ask again) and
+    `privacy_blocked_setup` (the system prompt, entity context or the
+    user's memories: ask an administrator). **A client that handles
+    `privacy_blocked` should handle both.** `judge_call` never retries
+    `privacy_blocked_setup`.
+  - The chat handler also marks the earlier rows that held them with
+    `excludedFromHistory`, and discards a stored summary that held them
+    (`AiConversation.summary` and `summaryUpToMessageId` set to null).
+  - `buildMessagesAndBreakdown()` also returns `sources`, where each message
+    came from.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected
   terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
   (nullable, `null` for every existing agent: inherit), a core field-registry

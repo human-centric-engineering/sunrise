@@ -185,8 +185,26 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
   return buildMessagesAndBreakdown(args).messages;
 }
 
+/**
+ * Where one built message came from (§127 t-1017). Lets a caller that is told
+ * which messages held personal details tell whose they are: the agent's setup,
+ * the stored summary, an earlier row (by its index in `history`), or this turn.
+ */
+export type MessageSource =
+  | { kind: 'system_prompt' }
+  | { kind: 'context' }
+  | { kind: 'memories' }
+  | { kind: 'summary' }
+  /** A line the builder writes itself: "[... N earlier messages omitted ...]". */
+  | { kind: 'note' }
+  | { kind: 'history'; historyIndex: number }
+  | { kind: 'opening_turn' }
+  | { kind: 'user_message' };
+
 export interface BuildMessagesResult {
   messages: LlmMessage[];
+  /** One per message, in the same order: where each came from. */
+  sources: MessageSource[];
   /**
    * Per-section input-token breakdown for the initial LLM call. Does
    * not include `toolDefinitions` (those are passed separately by the
@@ -217,6 +235,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     brandVoiceInstructions: args.brandVoiceInstructions,
   });
   const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
+  const sources: MessageSource[] = [{ kind: 'system_prompt' }];
 
   // A turn the agent opens (#474) carries no user text. Its content still counts
   // toward the token budget and still needs a part in the breakdown, so estimate
@@ -232,6 +251,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
 
   if (args.contextBlock) {
     messages.push({ role: 'system', content: args.contextBlock });
+    sources.push({ kind: 'context' });
     breakdown.contextBlock = makePart(args.contextBlock, modelId);
   }
 
@@ -239,6 +259,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     const formatted = args.userMemories.map((m) => `- ${m.key}: ${m.value}`).join('\n');
     const memoryBlock = `[User memories]\nThe following are things you have previously remembered about this user:\n${formatted}`;
     messages.push({ role: 'system', content: memoryBlock });
+    sources.push({ kind: 'memories' });
     breakdown.userMemories = {
       ...makePart(memoryBlock, modelId),
       count: args.userMemories.length,
@@ -326,6 +347,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
           : '[Conversation summary of earlier messages]';
       const summaryBlock = `${heading}\n\n${args.conversationSummary}`;
       messages.push({ role: 'system', content: summaryBlock });
+      sources.push({ kind: 'summary' });
       breakdown.conversationSummary = makePart(summaryBlock, modelId);
     }
     if (omittedBeforeHistory > 0) {
@@ -335,6 +357,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
         role: 'system',
         content: `[... up to ${omittedBeforeHistory} earlier messages omitted ...]`,
       });
+      sources.push({ kind: 'note' });
     }
     const unsummarised = droppedCount - summarised;
     if (unsummarised > 0) {
@@ -345,6 +368,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
         role: 'system',
         content: `[... ${unsummarised} older messages omitted for context window ...]`,
       });
+      sources.push({ kind: 'note' });
     }
   }
 
@@ -379,8 +403,9 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   let historyChars = 0;
   let historyTokens = 0;
   let historyMessageCount = 0;
-  for (const row of truncated) {
+  for (const [j, row] of truncated.entries()) {
     const role = normaliseRole(row.role);
+    const source: MessageSource = { kind: 'history', historyIndex: droppedCount + j };
 
     if (role === 'tool') {
       if (!row.toolCallId || !pendingToolCallIds.has(row.toolCallId)) {
@@ -389,6 +414,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
       }
       pendingToolCallIds.delete(row.toolCallId);
       messages.push({ role: 'tool', content: row.content, toolCallId: row.toolCallId });
+      sources.push(source);
       historyChars += row.content.length;
       historyTokens += estimateTokens(row.content, modelId);
       historyMessageCount += 1;
@@ -427,6 +453,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     } else {
       messages.push({ role, content: row.content });
     }
+    sources.push(source);
     historyChars += row.content.length;
     historyTokens += estimateTokens(row.content, modelId);
     historyMessageCount += 1;
@@ -449,6 +476,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   // hoist it into the system prompt and leave the request ending on history.
   if (isOpeningTurn) {
     messages.push({ role: 'system', content: turnText, turnInstruction: true });
+    sources.push({ kind: 'opening_turn' });
   } else if (args.attachments && args.attachments.length > 0) {
     const parts: ContentPart[] = [{ type: 'text', text: args.newUserMessage }];
     for (const attachment of args.attachments) {
@@ -474,12 +502,14 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
       }
     }
     messages.push({ role: 'user', content: parts });
+    sources.push({ kind: 'user_message' });
     breakdown.attachments = {
       tokens: args.attachments.length * ATTACHMENT_OVERHEAD_TOKENS,
       count: args.attachments.length,
     };
   } else {
     messages.push({ role: 'user', content: args.newUserMessage });
+    sources.push({ kind: 'user_message' });
   }
 
   breakdown.totalEstimated =
@@ -491,7 +521,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     (breakdown.attachments?.tokens ?? 0) +
     breakdown.userMessage.tokens;
 
-  return { messages, breakdown };
+  return { messages, sources, breakdown };
 }
 
 /** Build a breakdown part for a single text chunk. Includes the raw text. */

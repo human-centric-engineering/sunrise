@@ -24,6 +24,7 @@ has merged; this table says what exists.
 | `pseudonymise`, `redact` and `block`; embeddings policy; output-guard change           | t-992  | **Built** |
 | Agent mode, org floor (minimum mode), protected terms                                  | t-1010 | **Built** |
 | A turn refused under `block` is left out of later history                              | t-1014 | **Built** |
+| A `block` caused by an earlier message, the summary or the setup: placed and told      | t-1017 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
@@ -294,9 +295,10 @@ The stage acts in every mode.
   the reply, and any tool call the model makes, carries placeholders.
 - **`block`** refuses a chat call with anything found (`content_blocked`,
   code `privacy_blocked`); a call with nothing found goes out untouched. The
-  refused turn is left out of later history (t-1014, below), so the reader
-  is told to ask again without the details in the same conversation, or to
-  ask an administrator if they did not include any.
+  refused turn is left out of later history (t-1014, below), and so is
+  whatever earlier held the details (t-1017, below), so the reader is told
+  to ask again in the same conversation. When the details are in the
+  assistant's setup, they are told to ask an administrator.
 - **A required detector that fails under `pseudonymise`, `redact` or
   `block` refuses a chat call** (`detector_failed`), whatever
   `onDetectorFailure` says: sent, it would carry in plaintext what that
@@ -341,8 +343,8 @@ A chat turn refused under `block` no longer stops the conversation.
     back. Nothing in core writes a message after creating it.
   - The write is confined to the caller's conversation (the owner layer).
   - It is best effort, like the error marker. If it fails, nothing retries
-    it: every later turn resends the details and is refused, as before
-    t-1014. Nothing is sent, but the conversation cannot go on.
+    it then: the next turn resends the details and is refused, and that
+    refusal finds the rows and marks them (t-1017). Nothing is sent.
   - No other refusal marks anything: `privacy_refused` is the operator's to
     fix, and the message did not cause it.
 - **Every reader that resends a conversation leaves the rows out**, through
@@ -365,9 +367,66 @@ A chat turn refused under `block` no longer stops the conversation.
     refused input included, to the judge. That is an analysis of everything
     that happened, not a conversation going on, and under `block` it is
     refused with the same code.
-  - **A `block` caused by content from an earlier turn**, after the mode was
-    raised from `detect`, or by a system prompt or knowledge chunk, refuses
-    every turn. The remedy is the operator's, as before.
+  - A `block` caused by something outside the turn was placed by t-1017,
+    below.
+
+### What is built (t-1017)
+
+A `block` caused by something outside the current turn no longer refuses
+every turn after it. Before t-1017 the turn's own rows were marked, which
+were innocent, and the reader was told to ask again, which could not work.
+That happened when the details were in:
+
+- an earlier message or the stored summary, written before the mode was
+  `block` (an agent's mode or an org's floor raised on a live
+  conversation is enough);
+- an earlier refused turn whose own marking failed;
+- the assistant's setup.
+
+- **The stage says where, never what.** A `content_blocked` refusal of a chat
+  call carries `PrivacyRefusedError.found`: how many messages the call
+  carried, and the indices of the ones that held a finding
+  (`messagesHoldingSpans()`, `call-masking.ts`, which maps the spans back
+  onto the messages the way masking does). No value, no type, no count.
+- **The handler knows where each message came from.**
+  `buildMessagesAndBreakdown()` returns a source per message: the system
+  prompt, the entity context, the memories, the summary, a note the builder
+  wrote, a history row (by its index in what it was given), an opening turn
+  or the user's message. A message past those was added by the tool loop
+  this turn. The handler trusts a location only from a refusal of a call it
+  made itself, for as many messages as it sent; otherwise it does what
+  t-1014 does (`lib/orchestration/chat/privacy-refusal.ts`).
+- **What is left out, and what the reader is told:**
+
+  | Where the details were                                         | Left out of later history                             | Code                      | The reader is told                 |
+  | -------------------------------------------------------------- | ----------------------------------------------------- | ------------------------- | ---------------------------------- |
+  | This turn: the message, or a tool result                       | The turn's rows                                       | `privacy_blocked`         | Ask again without them             |
+  | An earlier row, or the stored summary                          | Those rows and the turn's; the summary and its pin go | `privacy_blocked_earlier` | Ask again; it may not remember all |
+  | The system prompt, entity context, memories or an opening turn | Anything else that held them, and the turn's rows     | `privacy_blocked_setup`   | Ask an administrator               |
+
+  The setup wins when it is one of several: asking again cannot work until
+  an administrator changes it. The log line ("Chat turn refused for personal
+  details") names the kinds of source and how many rows, never a value.
+
+- **The summary is discarded** (owner ruling 2026-11-12: the conversation
+  carries on and forgets). Under `block` it can never be sent again, and it
+  cannot be rebuilt from itself: the summariser's call would carry it and
+  be refused. The pin goes with it, only if it is still the one the turn
+  read, so a summary a concurrent turn wrote is kept. The next turn reads
+  the newest rows and summarises again from what it can send. A row the old
+  summary covered that held details too comes back into the window and
+  causes one more refusal, which leaves it out.
+- **A judge** (`judge_call`) does not retry `privacy_blocked_setup`; it
+  does retry `privacy_blocked_earlier`, since the refusal left out what
+  caused it.
+- **Not changed:**
+  - **A refused summariser call names no row.** The summariser sends every
+    row in one message, so its refusal (which it treats as a fallback)
+    cannot say which. The stored summary is kept, the rows the cap drops are
+    announced as omitted, and the summary does not move while those rows
+    hold details. Degraded, not locked.
+  - **The embed widget** shows its own fixed words for every error, as it
+    did for `privacy_blocked`.
 
 ### Modes
 
@@ -534,21 +593,21 @@ timeout bounds one detector, not the pass: the stage bounds the pass by passing
 a deadline as the call's signal (`AbortSignal.timeout()`), and detectors left
 when it fires are reported `aborted`.
 
-| Failure                                                     | Reported as                            | What the stage does                                                        |
-| ----------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
-| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                    |
-| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded    |
-| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                        |
-| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                     |
-| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                    |
-| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                    |
-| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                  |
-| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)   |
-| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history |
-| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                 |
-| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value   |
-| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose     |
-| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted           |
+| Failure                                                     | Reported as                            | What the stage does                                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                                                             |
+| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded                                             |
+| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                                                                 |
+| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                                                              |
+| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                                                             |
+| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                                                             |
+| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                                                           |
+| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)                                            |
+| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history, and so is what earlier held it (t-1017) |
+| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                                                          |
+| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value                                            |
+| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose                                              |
+| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted                                                    |
 
 Every refusal ships its remedy: the user sees a plain message
 (`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
