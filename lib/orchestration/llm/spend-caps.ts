@@ -63,8 +63,7 @@ import {
   invalidateOrchestrationSettingsCache,
 } from '@/lib/orchestration/settings';
 import { loadOrgQuotas } from '@/lib/tenancy/org-settings';
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { orgIdForCall } from '@/lib/tenancy/context';
 
 /** How long a month-to-date total is served from the cache. */
 export const SPEND_TOTAL_TTL_MS = 10_000;
@@ -390,16 +389,8 @@ const OPERATOR_MESSAGES: Record<SpendCap, string> = {
     'This platform has reached its global monthly AI budget, so the call to a paid provider was refused. A platform admin can raise the global cap in the orchestration settings, or the work can use a local model.',
 };
 
-/**
- * The org the current call is made for: the tenant context's, or at `single`
- * the install org, which is the one org there is. `null` at `multi` with no org
- * in context; the eligibility gate has already refused such a call.
- */
-function orgOfCall(): string | null {
-  const orgId = getTenantContext()?.orgId ?? null;
-  if (orgId !== null) return orgId;
-  return isMultiTenant() ? null : INSTALL_ORG_ID;
-}
+/** The org the current call is made for (`orgIdForCall`, shared with the privacy floor). */
+const orgOfCall = orgIdForCall;
 
 /**
  * The refusal a paid call to `providerSlug` would meet now, or `null` when it

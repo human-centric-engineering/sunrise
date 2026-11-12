@@ -55,6 +55,9 @@ export interface OrgPrivacyFormProps {
 
 const NO_MINIMUM = '__none__';
 
+/** Tier B skips anything shorter, so the API refuses it (`orgProtectedTermSchema`). */
+const MIN_TERM_LENGTH = 3;
+
 const TERM_TYPE_LABELS: Record<OrgProtectedTerm['type'], string> = {
   PERSON: 'Person',
   ORG: 'Organisation',
@@ -72,6 +75,7 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
   const [terms, setTerms] = useState(() => initialTerms(initial, orgName));
   const [newValue, setNewValue] = useState('');
   const [newType, setNewType] = useState<OrgProtectedTerm['type']>('PERSON');
+  const [termError, setTermError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const saveFailure = useSaveFailure({
@@ -84,6 +88,18 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
   const addTerm = () => {
     const value = newValue.trim();
     if (value.length === 0) return;
+    // The API's own rules, said where the term was typed rather than as a
+    // failed save of the whole list.
+    if (value.length < MIN_TERM_LENGTH) {
+      setTermError(`A protected term needs at least ${MIN_TERM_LENGTH} characters`);
+      return;
+    }
+    const lower = value.toLowerCase();
+    if (terms.some((t) => t.type === newType && t.value.toLowerCase() === lower)) {
+      setTermError(`${value} is already protected`);
+      return;
+    }
+    setTermError(null);
     changed();
     setTerms((current) => [...current, { value, type: newType }]);
     setNewValue('');
@@ -209,7 +225,10 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
             aria-label="New protected term"
             placeholder="Jane Hart"
             value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
+            onChange={(e) => {
+              setTermError(null);
+              setNewValue(e.target.value);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -231,6 +250,11 @@ export function OrgPrivacyForm({ orgId, orgName, privacy: initial }: OrgPrivacyF
             Add
           </Button>
         </div>
+        {termError && (
+          <p className="text-destructive text-xs" role="alert" data-testid="org-privacy-term-error">
+            {termError}
+          </p>
+        )}
       </fieldset>
 
       <div className="space-y-2">

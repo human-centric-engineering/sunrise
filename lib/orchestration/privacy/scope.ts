@@ -71,6 +71,14 @@ export interface PrivacyScopeInit {
   /** What the layer already knows belongs to the people in this call. */
   knownValues?: readonly KnownValue[];
   /**
+   * Nothing reads this scope's counts: it exists to carry who the calls are
+   * for (an agent's reply embedding, t-1010). The stage then treats it like a
+   * call with no scope for the scan it would skip there: a call the scan
+   * cannot change is not scanned for nothing, nor sent to an external
+   * detector for nothing.
+   */
+  recordsNowhere?: boolean;
+  /**
    * Loads more known values (the user's own name and email, say), once per
    * scope and only when a call is actually scanned, so mode `off` costs
    * nothing. A loader that fails leaves just `knownValues`: tier B then finds
@@ -91,6 +99,8 @@ export interface PrivacyScope {
   userId?: string;
   knownValues: readonly KnownValue[];
   loadKnownValues?: () => Promise<readonly KnownValue[]>;
+  /** See {@link PrivacyScopeInit.recordsNowhere}. */
+  recordsNowhere?: boolean;
   /** The loader's result, once asked for. Shared with child scopes. */
   loaded?: Promise<readonly KnownValue[]>;
   /**
@@ -141,6 +151,7 @@ export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope
     ...(init.userId !== undefined ? { userId: init.userId } : {}),
     knownValues: frozenValues(init.knownValues ?? []),
     ...(init.loadKnownValues ? { loadKnownValues: init.loadKnownValues } : {}),
+    ...(init.recordsNowhere ? { recordsNowhere: true } : {}),
     tally: emptyTally(),
     ...(parent ? { parent } : {}),
   };
@@ -186,7 +197,9 @@ export function childPrivacyScope(parent: PrivacyScope, scopeId: string): Privac
  */
 export function agentPrivacyScope(
   agentId: string,
-  parent: PrivacyScope | undefined = currentPrivacyScope()
+  // `null`, not `undefined`, for "no parent": an explicit `undefined` takes
+  // the default, the current scope.
+  parent: PrivacyScope | null = currentPrivacyScope() ?? null
 ): PrivacyScope {
   const scope = parent
     ? childPrivacyScope(parent, `${parent.scopeId}:agent:${agentId}`)

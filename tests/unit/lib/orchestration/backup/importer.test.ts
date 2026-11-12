@@ -379,7 +379,8 @@ describe('importOrchestrationConfig', () => {
       (call) => (call[0] as { data: { slug: string; privacyMode: unknown } }).data
     );
     expect(created.find((d) => d.slug === 'hr')?.privacyMode).toBe('redact');
-    expect(created.find((d) => d.slug === 'faq')?.privacyMode).toBeNull();
+    // Left out, so the column's default applies: null, the install's mode.
+    expect(created.find((d) => d.slug === 'faq')?.privacyMode).toBeUndefined();
   });
 
   it('refuses a backup naming an agent privacy mode that is not one, rather than restore it', async () => {
@@ -445,6 +446,24 @@ describe('importOrchestrationConfig', () => {
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
     expect(result.agents.updated).toBe(1);
     expect(result.agents.created).toBe(0);
+  });
+
+  it.each([
+    ['keeps the agent’s own mode when the backup predates it', undefined, false, undefined],
+    ['writes the backup’s mode', 'block', true, 'block'],
+    ['clears it when the backup says none', null, true, null],
+  ])('on overwrite %s (§127 t-1010)', async (_label, inBackup, written, value) => {
+    mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
+    mockTx.aiAgent.update.mockResolvedValue({});
+    const { privacyMode: _absent, ...older } = makeAgent() as Record<string, unknown>;
+    const agent = inBackup === undefined ? older : { ...older, privacyMode: inBackup };
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [agent] } };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const data = mockTx.aiAgent.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect('privacyMode' in data).toBe(written);
+    expect(data.privacyMode).toBe(value);
   });
 
   it("saves an overwritten agent's restored config as a new agent version, after its grants", async () => {

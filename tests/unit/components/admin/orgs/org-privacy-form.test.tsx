@@ -147,26 +147,39 @@ describe('OrgPrivacyForm', () => {
     expect(screen.queryByTestId('org-privacy-suggested')).not.toBeInTheDocument();
   });
 
-  it('shows a failed save beside Save, with the field message the API sent', async () => {
-    vi.mocked(apiClient.put).mockRejectedValueOnce(
-      new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400, {
-        errors: [
-          {
-            path: 'protectedTerms.0.value',
-            message: 'A protected term needs at least 3 characters',
-          },
-        ],
-      })
-    );
+  it('refuses a term under three characters where it was typed, and adds nothing', async () => {
     const user = renderForm();
 
     await user.type(screen.getByRole('textbox', { name: 'New protected term' }), 'Al');
     await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByTestId('org-privacy-term-error')).toHaveTextContent(
+      'A protected term needs at least 3 characters'
+    );
+    expect(screen.getByText('No protected terms.')).toBeInTheDocument();
+  });
+
+  it('refuses the same name twice, ignoring case', async () => {
+    const user = renderForm(view({ protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }] }));
+
+    await user.type(screen.getByRole('textbox', { name: 'New protected term' }), 'jane hart');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByTestId('org-privacy-term-error')).toHaveTextContent('already protected');
+    expect(screen.getAllByRole('button', { name: /^Remove/ })).toHaveLength(1);
+  });
+
+  it('shows a failed save beside Save, with the message the API sent', async () => {
+    vi.mocked(apiClient.put).mockRejectedValueOnce(
+      new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400, {
+        errors: [{ path: 'protectedTerms', message: 'At most 500 protected terms' }],
+      })
+    );
+    const user = renderForm();
+
     await user.click(screen.getByRole('button', { name: 'Save privacy settings' }));
 
-    expect(
-      await screen.findByText(/A protected term needs at least 3 characters/)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/At most 500 protected terms/)).toBeInTheDocument();
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 });

@@ -329,10 +329,17 @@ describe('the LLM privacy settings (§127 t-1010)', () => {
   it('reads an org that never saved one as not saved, with nothing set', () => {
     const none = { ok: true, saved: false, value: { minimumMode: null, protectedTerms: [] } };
     expect(readOrgPrivacy(null)).toEqual(none);
-    expect(readOrgPrivacy('a fork wrote a string')).toEqual(none);
+    expect(readOrgPrivacy(undefined)).toEqual(none);
     expect(readOrgPrivacy({ retention: {} })).toEqual(none);
     expect(readOrgPrivacy({ privacy: null })).toEqual(none);
   });
+
+  it.each([['a string'], [['an', 'array']], [42]])(
+    'fails closed on a settings column that is %j, not an object: it cannot be read for a slice',
+    (settings) => {
+      expect(readOrgPrivacy(settings)).toEqual({ ok: false, issues: ['(settings)'] });
+    }
+  );
 
   it.each([
     ['a mode that is not a minimum', { minimumMode: 'off', protectedTerms: [] }, ['minimumMode']],

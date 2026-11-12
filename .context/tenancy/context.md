@@ -109,6 +109,10 @@ level.
   before a query runs wide is the only safe answer); at `single` answers the
   install org marked `implicit`, the eighth source, so a log line can tell it
   from a real entry.
+- **`orgIdForCall()`** — the org a provider call is charged to or governed
+  by, for a per-org control on it (the spend caps, the LLM privacy floor):
+  the entered org, or at `single` the install org; `null` at `multi` with no
+  org, which the eligibility gate has already refused. It never throws.
 - **`requireOrgId()`** — the entered org, for a lookup that has to name it: a
   per-org unique key (`orgId_slug` on an agent, a knowledge base or a
   document, t-708) cannot be asked without saying whose `support` is meant.

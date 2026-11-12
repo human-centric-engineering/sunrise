@@ -28,7 +28,10 @@ const db = vi.hoisted((): ScriptedDb => ({
   orgReads: 0,
   failNext: false,
 }));
-const settings = vi.hoisted((): { mode: string } => ({ mode: 'off' }));
+const settings = vi.hoisted((): { mode: string; embeddings: string } => ({
+  mode: 'off',
+  embeddings: 'allow',
+}));
 const tenancy = vi.hoisted((): { TENANCY_MODE: string } => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: tenancy }));
 
@@ -59,7 +62,7 @@ vi.mock('@/lib/orchestration/settings', () => ({
     privacyMode: settings.mode,
     privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
     privacyProtectLocalProviders: false,
-    privacyEmbeddingsPolicy: 'allow',
+    privacyEmbeddingsPolicy: settings.embeddings,
   }),
 }));
 vi.mock('@/lib/logging', () => ({
@@ -133,6 +136,7 @@ beforeEach(() => {
     failNext: false,
   });
   settings.mode = 'off';
+  settings.embeddings = 'allow';
   tenancy.TENANCY_MODE = 'multi';
 });
 
@@ -324,6 +328,41 @@ describe('protected terms', () => {
   });
 });
 
+describe('a scope that records nowhere (a reply embedding)', () => {
+  const embedCall = {
+    providerSlug: 'openai',
+    isLocal: false,
+    coverage: 'count' as const,
+    args: [['Jane Hart asked about her leave']],
+  };
+  const embeddingScope = () =>
+    createPrivacyScope({
+      scopeId: 'message-embedding:agent:x',
+      agentId: AGENT,
+      recordsNowhere: true,
+    });
+
+  it("still applies the agent's mode: local_only refuses the remote embedding", async () => {
+    settings.mode = 'detect';
+    settings.embeddings = 'local_only';
+    db.agentMode = 'pseudonymise';
+
+    await expect(
+      runInPrivacyScope(embeddingScope(), () => applyPrivacyStage(embedCall))
+    ).rejects.toMatchObject({ reason: 'embeddings_local_only' });
+  });
+
+  it('is not scanned for counts nothing reads', async () => {
+    settings.mode = 'detect';
+    const s = embeddingScope();
+
+    const result = await runInPrivacyScope(s, () => applyPrivacyStage(embedCall));
+
+    expect(result.args).toBe(embedCall.args);
+    expect(privacySummary(s)).toBeUndefined();
+  });
+});
+
 describe('agentPrivacyScope', () => {
   it('is a child of the current scope carrying the agent, and records there too', async () => {
     settings.mode = 'detect';
@@ -353,7 +392,7 @@ describe('agentPrivacyScope', () => {
   });
 
   it('stands alone when there is no current scope', () => {
-    const s = agentPrivacyScope(AGENT, undefined);
+    const s = agentPrivacyScope(AGENT, null);
 
     expect(s).toMatchObject({ scopeId: `agent:${AGENT}`, agentId: AGENT });
     expect(s.parent).toBeUndefined();

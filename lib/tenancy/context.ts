@@ -219,6 +219,21 @@ export function requireOrgId(): string {
 }
 
 /**
+ * The org a provider call is for, for a per-org control that applies to it
+ * (spend caps, the LLM privacy floor): the tenant context's org, or at
+ * `single` the install org, the one org there is. `null` at `multi` with no
+ * org in context, which the call-time eligibility gate has already refused,
+ * and for the system scope there. Never throws, unlike
+ * {@link requireTenantContext}: a control that cannot name an org decides
+ * for itself what that means.
+ */
+export function orgIdForCall(): string | null {
+  const orgId = getTenantContext()?.orgId ?? null;
+  if (orgId !== null) return orgId;
+  return isMultiTenant() ? null : INSTALL_ORG_ID;
+}
+
+/**
  * Await the callback's result INSIDE the scope, not just call it there.
  *
  * A `PrismaPromise` is lazy: the data layer's hook — and with it the read of

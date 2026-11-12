@@ -201,7 +201,12 @@ An agent and an org can each require more protection than the install gives.
   scope of its own carrying the agent (`queueMessageEmbedding`), and the
   backfill reads each message's conversation agent: under `local_only` the
   agent's mode refuses a remote embedding of its replies as it would inside
-  the turn, on the first try and on every backfill tick.
+  the turn, on the first try and on every backfill tick. Nothing reads that
+  scope's counts (`recordsNowhere`), so the stage skips the scan it skips
+  for a call with no scope. While the provider that resolves is not local,
+  the backfill leaves such agents' replies out of its query, or it would pick
+  the same newest refused ones every tick and never reach the rest; a
+  refusal it does meet counts as `skipped`, not `failed`.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a
@@ -211,7 +216,9 @@ An agent and an org can each require more protection than the install gives.
   scope. A chat turn binds its agent on the turn's scope, as before.
 - **Where it is set.** The agent form's Model tab (LLM privacy mode), through
   the core field registry; an org-owned field on a platform agent, so an
-  org's choice survives every release. The org page (`/admin/orgs/[id]`,
+  org's choice survives every release. A stored value it cannot show is
+  listed as not a mode this version knows, and a save keeps it until the
+  admin chooses another, as the settings page does. The org page (`/admin/orgs/[id]`,
   "LLM privacy"), through `GET`/`PUT /api/v1/admin/orgs/[id]/privacy`:
   platform-admin only, like the provider policy, with both keys required on a
   replace. The form suggests the org's own name as a first term until the
@@ -222,7 +229,9 @@ An agent and an org can each require more protection than the install gives.
   (`exportOrgData()`, no `select`), so `settings.privacy` leaves with the
   org; `eraseOrg()` deletes the row. A config backup and an agent export carry
   the agent's mode; a stored value that is not a mode exports as none, as the
-  settings' mode is left out.
+  settings' mode is left out. A restore or an agent import from before
+  t-1010 has no mode for the agent, and an overwrite then keeps the agent's
+  own, as the settings' mode is kept: an omission never loosens it.
 
 ### What is built (t-992)
 

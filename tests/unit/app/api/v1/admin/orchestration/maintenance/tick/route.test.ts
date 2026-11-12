@@ -292,7 +292,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       stalePending: 0,
       abandonedApprovals: 0,
     });
-    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0 });
+    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0, skipped: 0 });
     vi.mocked(enforceRetentionPolicies).mockResolvedValue({
       ...DEFAULT_RETENTION_RESULT,
       deleted: 0,

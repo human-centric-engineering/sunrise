@@ -455,7 +455,13 @@ export type OrgPrivacyRead =
  * validated as one value, because half of it is looser than what was written.
  */
 export function readOrgPrivacy(settings: unknown): OrgPrivacyRead {
-  if (!isJsonObject(settings)) return { ok: true, saved: false, value: NO_ORG_PRIVACY };
+  // An unset column is the normal "never saved". One holding something that
+  // is not an object cannot be read for a slice at all, so it is unreadable,
+  // not empty: read as empty it would drop a floor it may have held.
+  if (settings === null || settings === undefined) {
+    return { ok: true, saved: false, value: NO_ORG_PRIVACY };
+  }
+  if (!isJsonObject(settings)) return { ok: false, issues: ['(settings)'] };
   const slice = settings[ORG_PRIVACY_KEY];
   if (slice === undefined || slice === null) {
     return { ok: true, saved: false, value: NO_ORG_PRIVACY };

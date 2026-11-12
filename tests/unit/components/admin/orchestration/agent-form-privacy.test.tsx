@@ -140,11 +140,37 @@ describe('AgentForm — LLM privacy mode', () => {
     expect(await savedBody(user)).toMatchObject({ privacyMode: null });
   });
 
-  it("shows a stored value that is not a mode as the install's mode", async () => {
-    await openPrivacySelect('off');
+  it('keeps a stored value that is not a mode when a save leaves the field alone, and says so', async () => {
+    const user = await openPrivacySelect('off');
 
     expect(screen.getByRole('combobox', { name: /llm privacy mode/i })).toHaveTextContent(
-      "Use the install's mode"
+      'Not a mode this version knows'
     );
+    expect(screen.getByTestId('privacy-mode-unknown')).toHaveTextContent(
+      'every call this agent makes is refused'
+    );
+    // Sending null would loosen the agent without anyone choosing to.
+    expect(await savedBody(user)).not.toHaveProperty('privacyMode');
+  });
+
+  it("clears a stored value that is not a mode when the admin chooses the install's mode", async () => {
+    const user = await openPrivacySelect('off');
+
+    await user.click(screen.getByRole('combobox', { name: /llm privacy mode/i }));
+    await user.click(
+      within(screen.getByRole('listbox')).getByRole('option', { name: "Use the install's mode" })
+    );
+
+    expect(await savedBody(user)).toMatchObject({ privacyMode: null });
+  });
+
+  it('replaces a stored value that is not a mode once the admin chooses one', async () => {
+    const user = await openPrivacySelect('off');
+
+    await user.click(screen.getByRole('combobox', { name: /llm privacy mode/i }));
+    await user.click(within(screen.getByRole('listbox')).getByRole('option', { name: /^Redact/ }));
+
+    expect(screen.queryByTestId('privacy-mode-unknown')).not.toBeInTheDocument();
+    expect(await savedBody(user)).toMatchObject({ privacyMode: 'redact' });
   });
 });

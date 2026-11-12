@@ -554,6 +554,13 @@ export function AgentForm({
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
   const currentPrivacyMode = watch('privacyMode');
+  // Set, but not a mode this version knows: the agent's calls are refused
+  // until one is chosen, and a save that leaves the field alone keeps it.
+  const [privacyModeChosen, setPrivacyModeChosen] = useState(false);
+  const storedPrivacyModeUnknown =
+    agent?.privacyMode !== null &&
+    agent?.privacyMode !== undefined &&
+    !isTighteningMode(agent.privacyMode);
   const currentVisibility = watch('visibility');
   const currentProfileId = watch('profileId');
   const currentPersona = watch('persona');
@@ -821,6 +828,10 @@ export function AgentForm({
         // API refuses a change to them, so they are never sent (§116 t-725).
         for (const field of lockedFields) delete editPayload[field];
         if (!authored.provider || data.provider.length === 0) delete editPayload.provider;
+        // A stored privacy mode this version cannot show is kept unless the
+        // admin chose another: the select shows it as "the install's mode",
+        // and sending that would loosen a protection nobody chose to (§127).
+        if (storedPrivacyModeUnknown && !privacyModeChosen) delete editPayload.privacyMode;
         if (!authored.model || data.model.length === 0) delete editPayload.model;
 
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
@@ -1981,16 +1992,28 @@ export function AgentForm({
                 </FieldHelp>
               </Label>
               <Select
-                value={currentPrivacyMode ?? '__global__'}
-                disabled={locked('privacyMode')}
-                onValueChange={(v) =>
-                  setValue('privacyMode', isTighteningMode(v) ? v : null, { shouldValidate: true })
+                value={
+                  storedPrivacyModeUnknown && !privacyModeChosen
+                    ? '__unknown__'
+                    : (currentPrivacyMode ?? '__global__')
                 }
+                disabled={locked('privacyMode')}
+                onValueChange={(v) => {
+                  // Any choice, "the install's mode" included, replaces a
+                  // stored mode the select cannot show.
+                  setPrivacyModeChosen(true);
+                  setValue('privacyMode', isTighteningMode(v) ? v : null, { shouldValidate: true });
+                }}
               >
                 <SelectTrigger id="privacyMode">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {storedPrivacyModeUnknown && !privacyModeChosen && (
+                    <SelectItem value="__unknown__" disabled>
+                      Not a mode this version knows (calls refused)
+                    </SelectItem>
+                  )}
                   <SelectItem value="__global__">Use the install&apos;s mode</SelectItem>
                   {PRIVACY_TIGHTENING_MODES.map((mode) => (
                     <SelectItem key={mode} value={mode}>
@@ -1999,6 +2022,15 @@ export function AgentForm({
                   ))}
                 </SelectContent>
               </Select>
+              {storedPrivacyModeUnknown && !privacyModeChosen && (
+                <p
+                  className="text-xs text-amber-700 dark:text-amber-400"
+                  data-testid="privacy-mode-unknown"
+                >
+                  The stored mode is not one this version knows, so every call this agent makes is
+                  refused. Saving keeps it until you choose a mode here.
+                </p>
+              )}
             </div>
           </div>
 

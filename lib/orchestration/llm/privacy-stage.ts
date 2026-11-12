@@ -64,8 +64,7 @@ import {
   runPrivacyDetectors,
 } from '@/lib/privacy/adapters/run';
 import type { EntityType, PrivacyEvent, PrivacyPolicy } from '@/lib/privacy/adapters/types';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { orgIdForCall } from '@/lib/tenancy/context';
 
 /**
  * How long the whole detection pass may take. Each detector has its own
@@ -242,7 +241,8 @@ function countByType(spans: readonly { type: EntityType }[]): Record<EntityType,
 
 function scopeFor(): { scope: PrivacyScope; ephemeral: boolean } {
   const scope = currentPrivacyScope();
-  if (scope) return { scope, ephemeral: false };
+  // A scope that only carries who the call is for is ephemeral for the scan.
+  if (scope) return { scope, ephemeral: scope.recordsNowhere === true };
   // No turn or execution entered a scope: an ephemeral one for this call.
   // Its policy is the global one, never looser than a scoped call's.
   return {
@@ -263,17 +263,14 @@ function callerSignal(call: PrivacyStageCall): AbortSignal | undefined {
 }
 
 /**
- * The org the call is for: the scope's, else the tenant context's, else at
- * `single` the install org, the one org there is — as the spend caps read it
- * (`orgOfCall`). A call with no org in context at `single` (an admin API key's
- * request enters none) would otherwise skip the install org's floor and
- * protected terms (t-1010). At `multi` such a call has already been refused.
+ * The org the call is for: the scope's, else the one the spend caps charge it
+ * to (`orgIdForCall`): the tenant context's, or at `single` the install org.
+ * A call with no org in context at `single` (an admin API key's request
+ * enters none) would otherwise skip the install org's floor and protected
+ * terms (t-1010). At `multi` such a call has already been refused.
  */
 function orgOf(scope: PrivacyScope): string | undefined {
-  if (scope.orgId !== undefined) return scope.orgId;
-  const orgId = getTenantContext()?.orgId ?? null;
-  if (orgId !== null) return orgId;
-  return isMultiTenant() ? undefined : INSTALL_ORG_ID;
+  return scope.orgId ?? orgIdForCall() ?? undefined;
 }
 
 function eventBase(
