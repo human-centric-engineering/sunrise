@@ -1447,7 +1447,8 @@ export class StreamingChatHandler {
         historyRows: historyRows.map((row, i) => ({
           id: history[i].id,
           role: row.role,
-          toolCalls: (row.toolCalls?.length ?? 0) > 0,
+          finishedReply:
+            row.role === 'assistant' && row.content.length > 0 && !row.toolCalls?.length,
         })),
         summaryPin: conversationSummary ? casPin : null,
       };

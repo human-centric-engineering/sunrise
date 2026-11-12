@@ -9,7 +9,7 @@
  * give one of three cases:
  * - **this turn** — the user's message, or a tool result the turn fetched.
  *   The turn's rows are left out (t-1014); asking again without the details
- *   works.
+ *   works. It wins over the others: a name it introduces is found in them too.
  * - **earlier** — an earlier row, or the stored summary, written before the
  *   mode was `block` or by a turn whose own marking failed. The exchanges
  *   those rows are in are left out too, and the summary is replaced by a
@@ -61,9 +61,10 @@ export interface BuiltChatRequest {
   sources: readonly MessageSource[];
   /**
    * Each row of the history the builder was given, by index, oldest first,
-   * and whether it is an assistant row that asked for tool calls.
+   * and whether it is a finished reply: an assistant row with text and no
+   * tool calls. (An empty one is a marker, such as a pending approval's.)
    */
-  historyRows: readonly { id: string; role: string; toolCalls: boolean }[];
+  historyRows: readonly { id: string; role: string; finishedReply: boolean }[];
 }
 
 /** What the handler knows about the call it made. */
@@ -74,19 +75,13 @@ export interface SentChatCall extends BuiltChatRequest {
 
 /**
  * Whether row `i` begins an exchange: a user message, or an assistant row
- * straight after a finished reply (an assistant row with no tool calls),
- * which is a turn the agent opened (#474) and which persists no user row.
+ * straight after a finished reply, which is a turn the agent opened (#474)
+ * and which persists no user row.
  */
 function opensExchange(rows: BuiltChatRequest['historyRows'], i: number): boolean {
   const row = rows[i];
   if (row.role === 'user') return true;
-  const before = rows[i - 1];
-  return (
-    row.role === 'assistant' &&
-    before !== undefined &&
-    before.role === 'assistant' &&
-    !before.toolCalls
-  );
+  return row.role === 'assistant' && rows[i - 1]?.finishedReply === true;
 }
 
 /** The rows of the exchange `index` is in: from where it begins to the row before the next. */
@@ -139,20 +134,22 @@ export function placePrivacyRefusal(
   // An empty location is not a place: nothing to leave out but the turn.
   if (!turn && !summary && earlierRows.size === 0 && setup.size === 0) return null;
   // One case wins, and only it acts. Detection runs over the whole call, so a
-  // name learned in one part is found wherever else it appears: a name in the
-  // setup or this turn can flag earlier rows and the summary that passed every
-  // scan before. Forgetting them would lose context for nothing; if they hold
-  // details of their own, the next attempt finds them and places them.
-  // - The setup first: asking again cannot work until an administrator
+  // name learned in one part is found wherever else it appears: a name this
+  // turn introduces can flag the setup, earlier rows and the summary, all of
+  // which passed every scan before. Acting on them would send the reader to
+  // an administrator, or lose context, for nothing; if they hold details of
+  // their own, the next attempt finds them and places them.
+  // - This turn first: asking again without the details works, or shows
+  //   what else holds them.
+  // - Then the setup: asking again cannot work until an administrator
   //   changes it.
-  // - Then this turn: asking again without the details works.
   // - Then anything earlier, which is left out, so asking again works.
-  if (setup.size > 0 || turn) {
+  if (turn || setup.size > 0) {
     return {
-      code: setup.size > 0 ? PRIVACY_BLOCKED_SETUP : PRIVACY_BLOCKED,
+      code: turn ? PRIVACY_BLOCKED : PRIVACY_BLOCKED_SETUP,
       earlierRowIds: [],
       summary: false,
-      setup: [...setup],
+      setup: turn ? [] : [...setup],
       turn,
     };
   }

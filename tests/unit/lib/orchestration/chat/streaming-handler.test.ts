@@ -9636,6 +9636,27 @@ describe('a block caused by something earlier, or by the setup (t-1017)', () => 
     expect(sent.split('What are the parking rules?')).toHaveLength(2);
   });
 
+  it('leaves out an earlier exchange whole, through its approval marker to its reply', async () => {
+    // A pending approval writes an empty assistant row mid-turn; it is not a
+    // finished reply, so the reply after it is the same exchange.
+    const { add } = conversationStore();
+    const question = add({ role: 'user', content: `Book a slot for ${DETAIL}.` });
+    const call = add({
+      role: 'assistant',
+      content: '',
+      metadata: { toolCalls: [{ id: 'tc-b', name: 'run_workflow', arguments: {} }] },
+    });
+    const result = add({ role: 'tool', content: '{"pending":true}', toolCallId: 'tc-b' });
+    const marker = add({ role: 'assistant', content: '', metadata: { pendingApproval: {} } });
+    const reply = add({ role: 'assistant', content: 'Waiting for approval.' });
+    blockingProvider();
+
+    expect(errorOf(await turn('Any news?'))?.code).toBe('privacy_blocked_earlier');
+    for (const row of [question, call, result, marker, reply]) {
+      expect(marked(row)).toBe('privacy_blocked');
+    }
+  });
+
   it('marks a refused turn whose own marking failed, at the next refusal', async () => {
     const { rows, state } = conversationStore();
     const provider = blockingProvider();

@@ -406,18 +406,20 @@ That happened when the details were in:
   | An earlier row, or the stored summary                          | Those rows' exchanges and the turn's; the summary becomes a note | `privacy_blocked_earlier` | Ask again; it may not remember all |
   | The system prompt, entity context, memories or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
 
-  **One case wins, and only it acts**: the setup, then this turn, then
-  anything earlier. Detection runs over the whole call, so a name learned in
-  the setup or this turn is found in earlier rows and the summary that
-  passed every scan before; forgetting them would lose context for nothing.
-  If they hold details of their own, the next attempt finds them, and places
-  them. The log line ("Chat turn refused for personal details") names the
+  **One case wins, and only it acts**: this turn, then the setup, then
+  anything earlier. Detection runs over the whole call, so a name this turn
+  introduces is found in the setup, earlier rows and the summary, all of
+  which passed every scan before; sending the reader to an administrator,
+  or forgetting them, would be for nothing. If they hold details of their
+  own, the next attempt finds them, and places them. The log line ("Chat turn refused for personal details") names the
   kinds of source and how many rows, never a value.
 
 - **An earlier row takes its exchange with it**: from where it begins to
   where the next one does. An exchange begins at a user message, or at an
-  assistant row straight after a finished reply (a turn the agent opened,
-  which persists no user row). So no reply is resent without its question,
+  assistant row straight after a finished reply, one with text and no tool
+  calls (a turn the agent opened, which persists no user row). An empty
+  assistant row, such as a pending approval's marker, is not a finished
+  reply. So no reply is resent without its question,
   or a question without its reply.
 - **The summary is forgotten** (owner ruling 2026-11-12: the conversation
   carries on and forgets). Under `block` it can never be sent again, and it

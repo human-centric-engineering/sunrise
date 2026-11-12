@@ -19,19 +19,21 @@ const SOURCES: MessageSource[] = [
   { kind: 'history', historyIndex: 2 },
   { kind: 'user_message' },
 ];
-const row = (id: string, role: string, toolCalls = false) => ({ id, role, toolCalls });
+const row = (id: string, role: string, finishedReply = false) => ({ id, role, finishedReply });
 // Row 0 was dropped by the cap: it has an id, and no message. Rows 1 and 2
-// are one exchange, rows 3 to 6 another (a tool call, its result, the reply),
-// and row 7 a turn the agent opened, which has no user row.
+// are one exchange; rows 3 to 7 another (a tool call, its result, a pending
+// approval's empty marker, the reply); row 8 a turn the agent opened, which
+// has no user row.
 const HISTORY_ROWS = [
-  row('row-a', 'assistant'),
+  row('row-a', 'assistant', true),
   row('row-b', 'user'),
-  row('row-c', 'assistant'),
+  row('row-c', 'assistant', true),
   row('row-d', 'user'),
-  row('row-e', 'assistant', true),
+  row('row-e', 'assistant'),
   row('row-f', 'tool'),
-  row('row-g', 'assistant'),
-  row('row-h', 'assistant'),
+  row('row-m', 'assistant'),
+  row('row-g', 'assistant', true),
+  row('row-h', 'assistant', true),
 ];
 // Two messages the tool loop added: an assistant tool call and its result.
 const SENT = { messageCount: 10, sources: SOURCES, historyRows: HISTORY_ROWS };
@@ -77,11 +79,14 @@ describe('placePrivacyRefusal', () => {
   it('earlier: an exchange runs to where the next begins, and a window may start inside one', () => {
     // No exchange begins before row 0: it starts at the window.
     expect(placeRows(0)).toEqual(['row-a']);
-    // The tool call's exchange: its question, its result and its reply, each once.
-    expect(placeRows(4, 4)).toEqual(['row-d', 'row-e', 'row-f', 'row-g']);
+    // The tool call's exchange: its question, its result, the marker and its
+    // reply, each once. A marker is not a finished reply: no split there.
+    const toolExchange = ['row-d', 'row-e', 'row-f', 'row-m', 'row-g'];
+    expect(placeRows(4, 4)).toEqual(toolExchange);
+    expect(placeRows(7)).toEqual(toolExchange);
     // A turn the agent opened begins its own exchange: neither takes the other.
-    expect(placeRows(7)).toEqual(['row-h']);
-    expect(placeRows(3)).toEqual(['row-d', 'row-e', 'row-f', 'row-g']);
+    expect(placeRows(8)).toEqual(['row-h']);
+    expect(placeRows(3)).toEqual(toolExchange);
   });
 
   it('earlier: the summary, and earlier rows with it', () => {
@@ -91,6 +96,18 @@ describe('placePrivacyRefusal', () => {
       summary: true,
       setup: [],
       turn: false,
+    });
+  });
+
+  it('this turn wins over everything, and leaves the rest alone', () => {
+    // A name the reader typed that the setup also holds: asking again
+    // without it works, so they are not sent to an administrator.
+    expect(place([0, 2, 3, 6, 7])).toEqual({
+      code: 'privacy_blocked',
+      earlierRowIds: [],
+      summary: false,
+      setup: [],
+      turn: true,
     });
   });
 
@@ -106,13 +123,13 @@ describe('placePrivacyRefusal', () => {
     });
   });
 
-  it('the setup wins over everything, and leaves the rest alone', () => {
-    expect(place([0, 2, 0, 3, 6, 8])).toEqual({
+  it('the setup wins over anything earlier, and leaves it alone', () => {
+    expect(place([0, 2, 0, 3, 6])).toEqual({
       code: 'privacy_blocked_setup',
       earlierRowIds: [],
       summary: false,
       setup: ['system_prompt', 'memories'],
-      turn: true,
+      turn: false,
     });
     expect(place([1])).toMatchObject({ setup: ['context'], turn: false });
     expect(place([4])).toMatchObject({ setup: ['note'] });
