@@ -9621,13 +9621,18 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
     vi.mocked(prisma.aiUserMemory.deleteMany).mockImplementation((async ({
       where,
     }: {
-      where: { userId: string; agentId: string; OR: Array<{ id: string; updatedAt: Date }> };
+      where: { userId?: string; agentId?: string; OR: Array<{ id: string; updatedAt?: Date }> };
     }) => {
+      // As Prisma reads a filter: a field left out matches anything.
       const doomed = memories.filter(
         (m) =>
-          m.userId === where.userId &&
-          m.agentId === where.agentId &&
-          where.OR.some((w) => w.id === m.id && w.updatedAt.getTime() === m.updatedAt.getTime())
+          (where.userId === undefined || m.userId === where.userId) &&
+          (where.agentId === undefined || m.agentId === where.agentId) &&
+          where.OR.some(
+            (w) =>
+              w.id === m.id &&
+              (w.updatedAt === undefined || w.updatedAt.getTime() === m.updatedAt.getTime())
+          )
       );
       for (const m of doomed) memories.splice(memories.indexOf(m), 1);
       return { count: doomed.length };
@@ -9850,6 +9855,15 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       message: getUserFacingError('privacy_blocked_memory').message,
     });
     expect(memories.map((m) => m.key)).toEqual(['language']);
+    // Scoped to the user and the agent: the owner layer does not check a
+    // `deleteMany`, so this filter is the only thing that does.
+    expect(prisma.aiUserMemory.deleteMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'u1',
+        agentId: 'agent-1',
+        OR: [{ id: 'mem-0', updatedAt: new Date('2026-11-01T00:00:00Z') }],
+      },
+    });
     // Nothing else is forgotten for it.
     expect(marked(earlier)).toBeUndefined();
     expect(marked(store.rows.find((r) => r.content === 'And at weekends?'))).toBe(
