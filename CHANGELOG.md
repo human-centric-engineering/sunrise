@@ -27,12 +27,19 @@ release process.
   and capabilities see real values and need no change. `redact` masks and
   never restores. `block` refuses a chat call with anything found, with the
   new request-fault code `privacy_blocked` (`PRIVACY_BLOCKED`, apart from
-  `privacy_refused` because the reader can fix it). Under `pseudonymise`,
+  `privacy_refused` because its remedy differs: the reader starts a new
+  conversation). Under `pseudonymise`,
   `redact` and `block` a required detector that fails or times out refuses
   a chat call rather than send what it missed, and a chat call made outside
   any scope is always scanned (an unscoped embedding call no longer is,
-  when nothing reads the result). A call abandoned mid-scan under those
-  modes throws `ProviderError` code `aborted`. **Migration:** `AiOrchestrationSettings` gains
+  when nothing reads the result). A call its caller abandons while the
+  stage runs now throws `ProviderError` code `aborted` in every mode,
+  rather than being handed back unfinished. Every exact copy of
+  a found value is masked, and a token session now lives for the privacy
+  scope (a chat turn, a workflow step), not one call: **a fork's
+  `PrivacyTokenStrategy`** gets one `createSession()` per scope, and its
+  session must keep issuing the same placeholder for a value across the
+  scope's calls. **Migration:** `AiOrchestrationSettings` gains
   `privacyEmbeddingsPolicy` (`allow`, the default for every row, or
   `local_only`): under `local_only` and a mode of `pseudonymise` or
   stricter, an embedding call to a provider not marked local is refused
@@ -46,7 +53,8 @@ release process.
   (through the registry, so an app's replacement of `core.rules` applies)
   in place of its four US-centric patterns, ignores identifiers the
   conversation itself supplied, and is async: `scanOutput()` returns a
-  promise and takes the sent messages as a third argument. Its labels are
+  promise and takes the sent messages as a third argument and
+  `{ ignoredEntityTypes }` as a fourth. Its labels are
   `pii_<type>` (`pii_credit_card` is now `pii_card_number`; a US SSN is no
   longer flagged). `runPrivacyDetectors()` takes `detectorIds`. See
   `.context/privacy/llm-privacy-layer.md`.

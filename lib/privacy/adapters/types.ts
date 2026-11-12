@@ -166,8 +166,11 @@ export interface PrivacyDetector {
 // ---------------------------------------------------------------------------
 
 /**
- * One call's placeholder map. Created per provider call and discarded after
- * it, unless the strategy is persistent.
+ * One scope's placeholder map: a chat turn's, a workflow step's, or a single
+ * provider call's when it runs outside any scope. Created on the first masked
+ * call in the scope, used by every masked call after it there, and discarded
+ * with the scope, unless the strategy is persistent. So a value keeps its
+ * placeholder across a turn's tool loop.
  */
 export interface TokenSession {
   /**
@@ -189,7 +192,7 @@ export interface TokenSession {
 
 interface TokenStrategyBase {
   id: string;
-  /** Start one call's session. */
+  /** Start one scope's session (see {@link TokenSession}). */
   createSession(ctx: { scopeId: string; orgId?: string }): TokenSession;
 }
 

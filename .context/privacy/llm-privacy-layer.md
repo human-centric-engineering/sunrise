@@ -162,8 +162,13 @@ The stage acts in every mode.
   same one input as in `detect`: every message's text, then the strings in
   its tool-call arguments, keys included, joined by a blank line. The spans
   are mapped back onto those pieces (one reaching across a separator is
-  split, so every character stays masked) and each piece is masked with
-  **one** token session, in order (`maskMessages()`,
+  split, so every character stays masked). **Every exact copy** of a value
+  found anywhere in the call, or masked by an earlier call in the scope, is
+  masked too, where it stands on its own (not inside a longer word): a
+  detector that needs context, such as a phone number only after a phone
+  word, would otherwise leave a second copy in plaintext beside the
+  placeholder for the first. Each piece is masked in order with the
+  **scope's** token session (`maskMessages()`,
   `lib/orchestration/privacy/call-masking.ts`). The caller's messages are
   never changed: it keeps the real conversation and the next call masks it
   again. Options, tool definitions, images, documents and reasoning blocks
@@ -187,7 +192,10 @@ The stage acts in every mode.
 - **`redact`** masks with `escapeLookAlikes: false` and never restores, so
   the reply, and any tool call the model makes, carries placeholders.
 - **`block`** refuses a chat call with anything found (`content_blocked`,
-  code `privacy_blocked`: the reader can remove the details and try again).
+  code `privacy_blocked`). The refused message stays in the conversation and
+  every later turn resends it, so the reader is told to start a new
+  conversation, or ask an administrator if the details were not theirs.
+  Excluding a refused turn from later history is a follow-up.
   A call with nothing found goes out untouched.
 - **A required detector that fails under `pseudonymise`, `redact` or
   `block` refuses a chat call** (`detector_failed`), whatever
@@ -376,20 +384,20 @@ timeout bounds one detector, not the pass: the stage bounds the pass by passing
 a deadline as the call's signal (`AbortSignal.timeout()`), and detectors left
 when it fires are reported `aborted`.
 
-| Failure                                                     | Reported as                            | What the stage does                                                      |
-| ----------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
-| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                  |
-| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded  |
-| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                      |
-| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                   |
-| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                  |
-| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                  |
-| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                |
-| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling) |
-| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the reader can remove the details   |
-| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)               |
-| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose   |
-| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted         |
+| Failure                                                     | Reported as                            | What the stage does                                                       |
+| ----------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                   |
+| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded   |
+| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                       |
+| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                    |
+| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                   |
+| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                   |
+| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                 |
+| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)  |
+| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the reader starts a new conversation |
+| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                |
+| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose    |
+| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted          |
 
 Every refusal ships its remedy: the user sees a plain message
 (`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
@@ -399,10 +407,11 @@ message is safe for anyone, because a workflow executor copies it to the SSE
 client. It is a request fault: never retried (an `ExecutorError` with it in
 its cause chain takes its code and is not retriable), never failed over to
 another provider, never counted against a circuit breaker. A call the caller
-abandoned during the scan is neither counted nor refused: in `detect` it goes
-back as it came, and its own signal cancels it; under a stricter mode it was
-never scanned, so instead of handing it back the stage throws the abort every
-provider throws (`ProviderError`, code `aborted`).
+abandoned while the stage runs is neither counted nor refused, and never
+handed back: in any mode the stage throws the abort every provider throws
+(`ProviderError`, code `aborted`). Handed back, a call abandoned during policy
+resolution could go out under a policy missing the resolver that would have
+raised it, to a provider that ignored its signal.
 
 **Nothing logs request text or a found value.** Detectors and resolvers each get
 a frozen copy of what they are handed, so none can change what the next one or
@@ -638,8 +647,13 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
   so earlier turns mask the same way on every call, and provider prompt
   caching keeps working. A property test checks this over growing histories.
 - **No vault.** Every call sends the full conversation, and providers are
-  called statelessly. The map is rebuilt from each call's own input and
-  discarded. The t-990 check found no `store: true`, no
+  called statelessly. The map lives in memory for one scope (a chat turn, a
+  workflow step, or one unscoped call) and is discarded with it
+  (`PrivacyScope.tokenSession`). Within a scope a value keeps its
+  placeholder even when a later call detects a value an earlier one
+  missed, which numbering by first appearance alone would renumber; a
+  reasoning block replayed from the earlier call would then point at the
+  wrong value. A new scope numbers by first appearance. The t-990 check found no `store: true`, no
   `previous_response_id` and no batch API in `lib/orchestration/llm/`; the
   Responses path sends `store: false`. A code-execution container is reused
   only within one reply's tool loop, where numbering is the same anyway. If
@@ -701,9 +715,11 @@ An app replaces it with `registerPrivacyTokenStrategy()`.
 - **Output guard.** Its identifier check runs `core.rules` (or the app
   detector that replaced it) through the runner (`detectorIds`), and ignores
   an identifier the messages the call sent already contain, compared without
-  case, spaces or the punctuation identifiers are written with. Tiers B and
-  C are not used: a famous name would be flagged, and `block` discards the
-  reply. See [Output Guard](../orchestration/output-guard.md).
+  case, spaces or the punctuation identifiers are written with, and the
+  types the settings ignore (`privacyIgnoredEntityTypes`). Tiers B and C are
+  not used: a famous name would be flagged, and `block` discards the reply. A
+  scan that could not finish flags nothing and logs which detector failed. See
+  [Output Guard](../orchestration/output-guard.md).
 
 A persistent strategy stores personal data: it declares `persistent: true` and
 names its models in `storesIn`, and the registry refuses one that does not.
@@ -728,7 +744,9 @@ Ruled at claim, 2026-11-11, from real deployments:
   `isLocalOnlyEmbeddingRefusal()`: a reply's embedding
   (`queueMessageEmbedding`) is skipped and logged at info; a refused
   `search_knowledge_base` returns the tool error `embeddings_local_only`,
-  which the model can relay; a refused upload stores the refusal's own
+  which the model can relay; the admin search test answers 409
+  `EMBEDDINGS_LOCAL_ONLY` and the MCP knowledge resource an error body, each
+  with the reason; a `rag_retrieve` step fails with the refusal's message; a refused upload stores the refusal's own
   message, which names the setting, as the document's `errorMessage`. A
   stored value that is not a policy reads as `local_only`.
 - The settings page warns when the mode is `pseudonymise` or stricter,

@@ -50,9 +50,9 @@ lib/orchestration/chat/output-guard.ts
 
 Key exports: `scanOutput(content, topicBoundaries, supplied?) → Promise<OutputScanResult>` and `scanCitations(content, citations) → CitationScanResult`.
 
-`supplied` is the messages the call sent the model (system prompt, user turns, tool results); an identifier found in them is not flagged in the reply. Values are compared without case, spaces, or the punctuation identifiers are written with, so `07911 123 456` matches `07911123456`.
+`supplied` is the messages the call sent the model (system prompt, user turns, tool results); an identifier found in them is not flagged in the reply. `options.ignoredEntityTypes` is the LLM privacy settings' `privacyIgnoredEntityTypes`, which the chat handler passes so one admin choice governs both. Values are compared without case, spaces, or the punctuation identifiers are written with, so `07911 123 456` matches `07911123456`.
 
-**Which detector runs.** Only `core.rules`, or the app detector registered with `replace: 'core.rules'` (`runPrivacyDetectors(text, { detectorIds })`), so an app's replacement applies here too. Names (tier C) are not checked: a famous name would be flagged, and `block` discards the reply. A US SSN-shaped number is no longer flagged; the old four patterns were US-centric. A scan that runs out of time (2 s) flags nothing rather than hold the turn.
+**Which detector runs.** Only `core.rules`, or the app detector registered with `replace: 'core.rules'` (`runPrivacyDetectors(text, { detectorIds })`), so an app's replacement applies here too. Names (tier C) are not checked: a famous name would be flagged, and `block` discards the reply. A US SSN-shaped number is no longer flagged; the old four patterns were US-centric. A scan that runs out of time (2 s), or whose detector fails, flags nothing rather than hold the turn, and logs `output-guard: identifier scan incomplete` with the detector's id.
 
 ```typescript
 interface OutputScanResult {
