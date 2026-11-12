@@ -8,8 +8,11 @@
  * widens the tool to the whole tree.
  *
  * Collaborators (`git`, `exists`, the ignore lookup and both tools) are
- * injected, so nothing here spawns ESLint or Prettier. The real run is proven by
- * running `npm run validate:changed` itself.
+ * injected for the decision logic. The last block runs the real ones (git,
+ * Prettier on one file, ESLint's ignore lookup) against this checkout, because
+ * injected fakes can only prove the logic, never that the real collaborators
+ * are wired the way it assumes. ESLint itself is never spawned here: a lint run
+ * on this tree costs GBs.
  *
  * @see scripts/ci/validate-changed.mjs
  */
@@ -27,6 +30,8 @@ import {
   plan,
   PRETTIER_ARGS,
   resolveBase,
+  runGit,
+  runPrettier,
   splitNul,
   widenedBy,
   LINT_WIDENERS,
@@ -268,5 +273,49 @@ describe('agreement with package.json', () => {
       'node scripts/ci/validate-changed.mjs'
     );
     expect(scripts['validate:changed']).toBe(expected);
+  });
+});
+
+describe('the real collaborators, against this checkout', () => {
+  it('runGit returns stdout on success and null on failure', () => {
+    expect(runGit(['rev-parse', '--is-inside-work-tree'])?.trim()).toBe('true');
+    expect(runGit(['rev-parse', '--verify', 'no-such-ref-validate-changed'])).toBeNull();
+  });
+
+  it('runPrettier checks a formatted file and exits 0', async () => {
+    expect(await runPrettier(['./tests/mocks/server-only.ts'])).toBe(0);
+  });
+
+  it('main with the default git, exists and ignore lookup scopes to this branch', async () => {
+    const lint = vi.fn(async () => 0);
+    const format = vi.fn(async () => 0);
+    const log = vi.fn();
+    const error = vi.fn();
+
+    // HEAD as the base: the branch half is empty, so the scope is whatever is
+    // uncommitted, which may be nothing. Either way the real listings ran.
+    const code = await main(['--base', 'HEAD'], { lint, format, log, error });
+
+    expect(error).not.toHaveBeenCalled();
+    expect(code).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^validate:changed — \d+ changed file/));
+    for (const call of lint.mock.calls as unknown as string[][][]) {
+      for (const file of call[0]) expect(file).not.toMatch(/^node_modules\//);
+    }
+  });
+
+  it('the real ignore lookup drops a file ESLint ignores', async () => {
+    const lint = vi.fn(async () => 0);
+    // `.next/` is in the flat config's ignores; `lib/` is linted.
+    const git = fakeGit({ branch: ['.next/server/x.js', 'lib/security/ip.ts'] });
+    await main([], {
+      git,
+      exists: () => true,
+      lint,
+      format: vi.fn(async () => 0),
+      log: vi.fn(),
+      error: vi.fn(),
+    });
+    expect(lint).toHaveBeenCalledWith(['lib/security/ip.ts']);
   });
 });
