@@ -530,8 +530,10 @@ export async function addMember(
  * accepted; its member is then refused at entry, like every member of a
  * suspended org (`.context/tenancy/identity.md`). No role means the
  * acceptance-time rule decides (`membershipForNewUser`, which asks the
- * issuer's owner standing again then, for the first-owner bootstrap). Answers the org, so
- * the route can name it in the invitation email.
+ * issuer's owner standing again then, for the first-owner bootstrap). An
+ * explicit `OWNER` is asked again then too, and narrows to `MEMBER` once the
+ * issuer's standing has lapsed (#1235), so this check is not the last word on
+ * it. Answers the org, so the route can name it in the invitation email.
  */
 export async function checkInvitationInto(
   orgId: string,
