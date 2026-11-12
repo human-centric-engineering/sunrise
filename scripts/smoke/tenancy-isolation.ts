@@ -127,7 +127,12 @@
  * point is the policy), and skips clean when no database is reachable.
  * Self-cleaning: everything it creates is removed on the way out, under the
  * system scope, whether or not the assertions held — and a cleanup that
- * fails, fails the run.
+ * fails, fails the run. An install with an embedding model pinned has the pin
+ * cleared for the run and put back on the way out, so its embedding calls
+ * reach the local provider the two orgs are confined to (#1144). The cleared
+ * pin is recorded in a `SMOKE_ISO_EMBEDDING_PIN` feature flag, so a run that
+ * is killed before it can put the pin back leaves the next run to do it; a
+ * pin set while the smoke holds it is left as the operator set it.
  */
 import '@/prisma/load-env';
 import { NextRequest } from 'next/server';
@@ -256,6 +261,17 @@ const LOCAL_PROVIDER_SLUG = `${PREFIX}-embed-${stamp}`;
 const CHAT_MODEL = 'smoke-chat';
 /** What the fake judge scores every case — the number the run must carry back. */
 const JUDGE_SCORE = 0.8;
+/**
+ * The record of an embedding pin this smoke cleared (#1144): a feature-flag
+ * row, written in the same transaction as the clear and deleted in the same
+ * transaction as the restore. It outlives a run that dies before `finally`
+ * (SIGKILL, a cancelled job), so the next run puts the pin back first, and
+ * while it exists an operator can see in the admin flag list who holds the
+ * pin. Carries the `SMOKE_ISO_` prefix but is not one of the run's own flags:
+ * the cleanup leaves it to the restore.
+ */
+const EMBEDDING_PIN_MARKER = 'SMOKE_ISO_EMBEDDING_PIN';
+const embeddingPinMarkerSchema = z.object({ activeEmbeddingModelId: z.string().min(1) });
 
 async function dbReachable(): Promise<boolean> {
   try {
@@ -654,6 +670,99 @@ async function asPrincipal<T>(
   );
 }
 
+/**
+ * Clear the install's embedding pin for the run, recording it first (#1144).
+ * The record and the clear commit together, so there is never a cleared pin
+ * with no record of what it was. Returns the pin cleared, or null when the
+ * install had none.
+ */
+async function clearEmbeddingPin(): Promise<string | null> {
+  return runAsSystem('smoke: clear the embedding pin', () =>
+    prisma.$transaction(async (tx) => {
+      const settings = await tx.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { activeEmbeddingModelId: true },
+      });
+      const pin = settings?.activeEmbeddingModelId;
+      if (!pin) return null;
+      await tx.featureFlag.create({
+        data: {
+          name: EMBEDDING_PIN_MARKER,
+          enabled: false,
+          description: `smoke:tenancy-isolation cleared the install's embedding pin (${pin}) and puts it back when the run ends, or at the start of the next run if this one was killed.`,
+          metadata: { activeEmbeddingModelId: pin },
+        },
+      });
+      await tx.aiOrchestrationSettings.update({
+        where: { slug: 'global' },
+        data: { activeEmbeddingModelId: null },
+      });
+      return pin;
+    })
+  );
+}
+
+/**
+ * Put back an embedding pin this smoke (this run or a killed earlier one)
+ * cleared, and drop the record. The pin is written only while the setting is
+ * still empty: one set during the run is the operator's newer choice and
+ * stays. Returns what happened, or null when there was nothing to restore.
+ */
+async function restoreEmbeddingPin(): Promise<{
+  pin: string;
+  restored: boolean;
+  current: string | null;
+} | null> {
+  return runAsSystem('smoke: restore the embedding pin', () =>
+    prisma.$transaction(async (tx) => {
+      const marker = await tx.featureFlag.findUnique({
+        where: { name: EMBEDDING_PIN_MARKER },
+        select: { metadata: true },
+      });
+      if (!marker) return null;
+      const parsed = embeddingPinMarkerSchema.safeParse(marker.metadata);
+      if (!parsed.success) {
+        throw new Error(
+          `the ${EMBEDDING_PIN_MARKER} flag does not name a pin (${JSON.stringify(marker.metadata)}) — check ai_orchestration_settings."activeEmbeddingModelId" by hand, then delete the flag`
+        );
+      }
+      const pin = parsed.data.activeEmbeddingModelId;
+      const { count } = await tx.aiOrchestrationSettings.updateMany({
+        where: { slug: 'global', activeEmbeddingModelId: null },
+        data: { activeEmbeddingModelId: pin },
+      });
+      await tx.featureFlag.delete({ where: { name: EMBEDDING_PIN_MARKER } });
+      if (count > 0) return { pin, restored: true, current: pin };
+      const settings = await tx.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { activeEmbeddingModelId: true },
+      });
+      return { pin, restored: false, current: settings?.activeEmbeddingModelId ?? null };
+    })
+  );
+}
+
+/** Restore the pin and say what happened. A restore that fails fails the run. */
+async function restoreEmbeddingPinAndReport(): Promise<void> {
+  try {
+    const outcome = await restoreEmbeddingPin();
+    if (!outcome) return;
+    if (outcome.restored) {
+      console.log(`restored the install's embedding pin (${outcome.pin})`);
+    } else {
+      console.log(
+        `left the install's embedding pin as it is (${outcome.current}): it was set while the smoke held ${outcome.pin}, and the newer choice stands`
+      );
+    }
+  } catch (err: unknown) {
+    console.error(
+      `✗ could not restore the embedding pin — the ${EMBEDDING_PIN_MARKER} feature flag records it; the next run puts it back, or set ai_orchestration_settings."activeEmbeddingModelId" by hand`,
+      err
+    );
+    process.exitCode = 1;
+  }
+}
+
 async function main(): Promise<void> {
   if (!(await dbReachable())) {
     console.log('smoke:tenancy-isolation skipped — no database reachable.');
@@ -675,8 +784,38 @@ async function main(): Promise<void> {
   /** Receipts [18]'s erasures write: keyed by a subject id, with no FK, so nothing cascades them. */
   const erasureReceiptIds: string[] = [];
   const tagSlug = `${PREFIX}-tag-${stamp}`;
+  // A Ctrl-C or a SIGTERM skips `finally`, so the pin goes back here too
+  // before the process exits; the marker covers a SIGKILL (#1144).
+  const onSignal = (signal: NodeJS.Signals) => {
+    console.error(`\n✗ smoke:tenancy-isolation interrupted (${signal})`);
+    void restoreEmbeddingPinAndReport().finally(() => process.exit(1));
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
 
   try {
+    // ── The install's embedding pin, cleared for the run ──────────────────
+    // The embedder takes a pinned model as the operator's explicit choice and
+    // never reroutes it, so with one set both orgs' embedding calls go to the
+    // pinned provider, which their policy (only the local provider below)
+    // rightly refuses. Clearing it sends them down the fallback chain to the
+    // local provider, which `interceptEmbeddings` answers: no vendor call.
+    // The clear is install-wide for the run's length, one more reason this
+    // smoke runs on a throwaway database only. A pin an earlier, killed run
+    // left cleared goes back first.
+    const stranded = await restoreEmbeddingPin();
+    if (stranded) {
+      console.log(
+        stranded.restored
+          ? `restored the embedding pin (${stranded.pin}) an interrupted run left cleared`
+          : `dropped an interrupted run's record of the embedding pin (${stranded.pin}): the pin has been set since (${stranded.current})`
+      );
+    }
+    const clearedPin = await clearEmbeddingPin();
+    if (clearedPin) {
+      console.log(`cleared the install's embedding pin (${clearedPin}) for the run`);
+    }
+
     // ── Global fixtures: a local embedding provider, a tag, a capability ────
     // AiProviderConfig and KnowledgeTag are global tables (no orgId); the
     // capability is one the seed shipped.
@@ -3781,9 +3920,14 @@ async function main(): Promise<void> {
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
-    console.log('\n✓ smoke:tenancy-isolation passed');
   } finally {
     restoreFetch();
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    // The pin goes back first and on its own, so a cleanup that fails below
+    // cannot leave the install unpinned. A pin that cannot be put back fails
+    // the run, as a failed cleanup does.
+    await restoreEmbeddingPinAndReport();
     // Everything this smoke creates carries the prefix, and an org's
     // tenant-owned rows cascade with it — so a run that died half-way
     // through seeding (a dropped policy refuses the first create) leaves
@@ -3803,7 +3947,10 @@ async function main(): Promise<void> {
       await prisma.aiAgentProfile.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiProviderConfig.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiProviderModel.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
-      await prisma.featureFlag.deleteMany({ where: { name: { startsWith: 'SMOKE_ISO_' } } });
+      // Not the pin marker: a restore that failed above leaves it for the next run.
+      await prisma.featureFlag.deleteMany({
+        where: { name: { startsWith: 'SMOKE_ISO_', not: EMBEDDING_PIN_MARKER } },
+      });
       if (mcpExposureCapabilityId) {
         if (mcpExposure) {
           await prisma.mcpExposedTool.update({
@@ -3826,6 +3973,9 @@ async function main(): Promise<void> {
     });
     await prisma.$disconnect();
   }
+  // Only after the teardown: a pin or a cleanup that failed there fails the
+  // run, and a "passed" printed before it would read as success.
+  if (process.exitCode !== 1) console.log('\n✓ smoke:tenancy-isolation passed');
 }
 
 main().catch((err: unknown) => {
