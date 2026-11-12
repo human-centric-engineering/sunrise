@@ -295,6 +295,14 @@ release process.
   ask an existing account to sign in rather than set a password.
   `checkInvitationInto()` now returns the org instead of `void`.
 
+- **`CI_DOCKER`: a repo variable that switches off the `docker` CI job**
+  (t-1019, #802). Docker Build + Stack Smoke is the slowest CI job, and until
+  now a fork could only stop it by editing `ci.yml`. Unset, the job runs as
+  before. **Forks:** if you deploy by other means and never ship the image,
+  run `gh variable set CI_DOCKER --body off`. If you carry this clause as a fork
+  edit today, take upstream's version and drop yours. See
+  `.context/architecture/ci.md` Knob 7.
+
 ### Changed
 
 - **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`

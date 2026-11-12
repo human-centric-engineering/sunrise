@@ -685,6 +685,26 @@ Raise it if your fresh cache is already near the limit — the step's log line
 shows the size on every run, and a limit below a fresh cache's size makes every
 build cold. A value that is not a whole number logs a warning and uses 2048.
 
+### Knob 7: `CI_DOCKER`
+
+The other knobs tune the checks; this one switches off the most expensive job
+outright. `docker` (Docker Build + Stack Smoke) runs on every code push to
+`main` and on any PR touching a Docker-relevant file. That is right for a
+deployment that ships the image. A fork that deploys through a platform's Git
+integration (Vercel, say) never builds or runs that image anywhere, so the job
+gates nothing it ships, and it still pays a 1.4–1.9GB cache footprint and up to
+30 minutes on a 2-core runner for it.
+
+```bash
+gh variable set CI_DOCKER --body off
+```
+
+Unset (default): the job runs under its own gating. `"off"`: skipped
+everywhere; `ci-status` already passes on `skipped` (the docs-only path depends
+on it), so nothing wedges. Any value other than exactly `"off"` leaves the job
+on. Delete the variable to bring the job back, and do so before you ever deploy
+the image.
+
 ## Private-fork correctness (GHAS-dependent jobs)
 
 CodeQL and Dependency Review both upload to GitHub Advanced Security, which is
