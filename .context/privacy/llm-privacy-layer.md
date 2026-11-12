@@ -475,8 +475,9 @@ that writes one needs an LLM call `block` refuses.
 
 - **Each memory is its own message.** The builder sends the fixed heading
   ("[User memories] …"), then one system message per memory, so the
-  stage's location names the memory. Joined, they are the block the model
-  was always sent, and the token breakdown counts it that way. Anthropic
+  stage's location names the memory. The text is the block the model was
+  always sent, split at its lines, and the token breakdown counts the
+  joined text; each part is framed as a message of its own. Anthropic
   takes them as separate system text blocks (the cache breakpoint is on the
   first), and OpenAI-compatible providers as separate system messages.
 - **The memory is deleted** (owner ruling 2026-11-12: carry on and forget,
@@ -490,7 +491,9 @@ that writes one needs an LLM call `block` refuses.
 - **It is a compare-and-set** on when the memory was last written, so a
   memory a concurrent turn rewrote since this turn read it is kept. The
   delete is scoped to the user and the agent. It is best effort, like the
-  marking: if it fails, the next refusal finds the same memory.
+  marking: if it fails, the next refusal finds the same memory. A delete
+  that fails, or that keeps a memory rewritten since, is logged with
+  counts only.
 - **It comes last**: this turn, then the setup, then anything earlier, then
   a memory. Deleting can't be undone and reaches every conversation, so
   while the setup holds details of its own nothing is deleted (it would
@@ -504,6 +507,8 @@ that writes one needs an LLM call `block` refuses.
   elsewhere is kept, and a persona that only repeats a remembered surname
   does not lock the user out (`DetectedSpan.learned`).
 - **The log** counts memories, and names no key or value.
+- **The setup's copy** now names only the setup ("The assistant's setup
+  contains personal details …"): memories have their own.
 - **A judge** (`judge_call`) retries `privacy_blocked_memory`, since the
   refusal deleted what caused it.
 - **Not changed:**
@@ -511,8 +516,6 @@ that writes one needs an LLM call `block` refuses.
     nothing places it. Read back by `read_user_memory`, its result is a
     tool result, placed as this turn (`privacy_blocked`). Degraded, not
     locked: the model has to ask for that memory by key again.
-  - **The setup's own copy** now names only the setup ("The assistant's
-    setup contains personal details …").
 
 ### Modes
 
