@@ -152,7 +152,11 @@ function readerMessage(reason: PrivacyRefusalReason): string {
 export interface PrivacyFindingLocation {
   /** How many messages the refused call carried, so a caller can check they are the ones it sent. */
   messageCount: number;
-  /** The indices of those messages that held a finding, in order. */
+  /**
+   * The indices of those messages that held a finding of their own, in order:
+   * not one a detector only matched because it learned the value from
+   * another message (t-1018).
+   */
   messageIndices: readonly number[];
 }
 
@@ -492,9 +496,19 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     const counts = countByType(spans);
     if (call.coverage === 'full' && policy.mode === 'block' && spans.length > 0) {
       const messages = chatMessages(call);
+      // Where, from what was found where it stands (t-1018). A value a
+      // detector only matched because it learned it from another message
+      // (a first name after the full name) places that message, not this
+      // one. A detector that marked every span learned leaves nothing to
+      // place by; then every span places, as before the flag existed.
+      const own = spans.filter((s) => s.learned !== true);
       throw refuse('content_blocked', call, scope, mode, failedAdapters, {
         messageCount: messages.length,
-        messageIndices: messagesHoldingSpans(messages, spans, pieces ?? undefined),
+        messageIndices: messagesHoldingSpans(
+          messages,
+          own.length > 0 ? own : spans,
+          pieces ?? undefined
+        ),
       });
     }
 

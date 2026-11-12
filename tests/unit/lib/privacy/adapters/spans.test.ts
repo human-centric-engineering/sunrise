@@ -28,6 +28,17 @@ describe('validateSpans', () => {
     );
   });
 
+  it('keeps learned only when it is exactly true (t-1018)', () => {
+    const flagged = (learned: unknown) =>
+      validateSpans([{ ...valid(), learned }], TEXT, 'a', DECLARED)[0];
+    expect(flagged(true)).toEqual({ ...valid(), source: 'a', learned: true });
+    // Anything else is a span found where it stands, which is what a refusal
+    // acts on: a malformed flag cannot hide where details are.
+    for (const other of [false, 'true', 1, null, undefined]) {
+      expect(flagged(other)).not.toHaveProperty('learned');
+    }
+  });
+
   it('drops unknown extra fields rather than passing them on', () => {
     const [span] = validateSpans([{ ...valid(), text: 'priya@example.com' }], TEXT, 'a', DECLARED);
     expect(span).not.toHaveProperty('text');
@@ -100,6 +111,18 @@ describe('resolveOverlaps', () => {
     ]);
 
     expect(merged).toEqual([{ type: 'ORG', start: 0, end: 30, confidence: 0.8, source: 'a' }]);
+  });
+
+  it('marks a merged span learned only when every member was (t-1018)', () => {
+    const learned = (s: AttributedSpan): AttributedSpan => ({ ...s, learned: true });
+    // One member found where it stands makes the union a finding of its own.
+    expect(
+      resolveOverlaps([learned(span('PERSON', 0, 6, 0.7)), span('PERSON', 0, 12, 0.75)])[0]
+    ).not.toHaveProperty('learned');
+    expect(
+      resolveOverlaps([learned(span('PERSON', 0, 6, 0.7)), learned(span('ORG', 3, 9, 0.75))])
+    ).toEqual([{ type: 'ORG', start: 0, end: 9, confidence: 0.75, source: 'a', learned: true }]);
+    expect(resolveOverlaps([learned(span('PERSON', 0, 6, 0.7))])[0].learned).toBe(true);
   });
 
   it('names the merged span after its most confident member', () => {

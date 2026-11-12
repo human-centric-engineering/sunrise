@@ -5,11 +5,17 @@
  *
  * The privacy stage reports positions in the messages it was given
  * ({@link PrivacyFindingLocation}), never what it found. The message builder
- * says where each message came from ({@link MessageSource}). Together they
- * give one of four cases:
+ * says where each message came from ({@link MessageSource}). A message is
+ * named only for details it holds on its own: not for a value a detector
+ * matched only because it learned it from another message, such as a
+ * surname after the full name (t-1018). Together they give one of four
+ * cases, in this order:
  * - **this turn** — the user's message, or a tool result the turn fetched.
  *   The turn's rows are left out (t-1014); asking again without the details
- *   works. It wins over the others: a name it introduces is found in them too.
+ *   works.
+ * - **setup** — the system prompt, the entity context, or an opening the
+ *   server wrote. Nothing the reader can change; they are told to ask an
+ *   administrator.
  * - **earlier** — an earlier row, or the stored summary, written before the
  *   mode was `block` or by a turn whose own marking failed. The exchanges
  *   those rows are in are left out too, and the summary is replaced by a
@@ -21,9 +27,6 @@
  *   has with the agent, and nothing else can remove it, so the memory is
  *   deleted (t-1018; owner ruling 2026-11-12: carry on and forget) and asking
  *   again works.
- * - **setup** — the system prompt, the entity context, or an opening the
- *   server wrote. Nothing the reader can change; they are told to ask an
- *   administrator.
  *
  * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*, *(t-1018)*
  */
@@ -167,34 +170,24 @@ export function placePrivacyRefusal(
   if (!turn && !summary && earlierRows.size === 0 && memories.size === 0 && setup.size === 0) {
     return null;
   }
-  // One case wins, and only it acts. Detection runs over the whole call, so a
-  // name learned in one part is found wherever else it appears: a name this
-  // turn introduces can flag the setup, earlier rows and the summary, all of
-  // which passed every scan before. Acting on them would send the reader to
-  // an administrator, or lose context, for nothing; if they hold details of
-  // their own, the next attempt finds them and places them.
-  // - This turn first: asking again without the details works, or shows
-  //   what else holds them.
+  // One case wins, and only it acts; whatever else holds details is placed
+  // by the next attempt. Every part named here holds details of its own (the
+  // stage leaves out values it only learned elsewhere), so the order only
+  // decides what is lost first:
+  // - This turn first: asking again without the details works, and nothing
+  //   else is lost.
+  // - Then the setup: until an administrator changes it, nothing removed
+  //   here helps, so nothing is.
   // - Then anything earlier, which is left out, so asking again works.
-  // - Then a memory, which is deleted. After anything earlier because that
-  //   cannot be undone and reaches every conversation the user has with the
-  //   agent: a name it only matched because an earlier row taught it is not
-  //   found once that row is left out.
-  // - The setup last: nothing removed here can change it, so it is the one
-  //   case that ends in an administrator. Ahead of the others, a name it
-  //   only matched because a memory or an earlier row taught it ("You are
-  //   Max" beside a remembered "Max Turner") would refuse every turn, with
-  //   nothing for the administrator to find. Behind them, the next attempt
-  //   shows whether it holds details of its own.
+  // - Then a memory, which is deleted. Last because that cannot be undone
+  //   and reaches every conversation the user has with the agent.
   const none = { earlierRowIds: [], summary: false, memories: [], setup: [] };
   if (turn) return { ...none, code: PRIVACY_BLOCKED, turn };
+  if (setup.size > 0) return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
   if (summary || earlierRows.size > 0) {
     const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
     return { ...none, code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, turn };
   }
-  if (memories.size > 0) {
-    const placed = [...memories].sort((a, b) => a - b).map((i) => sent.memories[i]);
-    return { ...none, code: PRIVACY_BLOCKED_MEMORY, memories: placed, turn };
-  }
-  return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
+  const placed = [...memories].sort((a, b) => a - b).map((i) => sent.memories[i]);
+  return { ...none, code: PRIVACY_BLOCKED_MEMORY, memories: placed, turn };
 }

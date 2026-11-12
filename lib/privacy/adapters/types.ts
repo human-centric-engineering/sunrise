@@ -103,6 +103,16 @@ export interface DetectedSpan {
    * little less, a list guess well below — see the spec's *Overlaps*.
    */
   confidence: number;
+  /**
+   * True when the detector matched this only because it learned the value
+   * from elsewhere in the same text: a name's first part after its full
+   * name, a company's short form after its full name (§127 t-1018). It is
+   * masked and refused like any other span. A refusal under `block` does not
+   * count it when it says which messages held personal details, so the
+   * message the value was learned from is the one that is placed. Leave it
+   * out for a value found where it stands.
+   */
+  learned?: boolean;
 }
 
 /** A span after the layer has accepted it, carrying which adapter found it. */

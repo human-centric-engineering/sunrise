@@ -408,19 +408,20 @@ That happened when the details were in:
   | One of the user's memories (t-1018, below)           | The turn's rows; the memory is deleted                           | `privacy_blocked_memory`  | Ask again; it has forgotten it     |
   | The system prompt, entity context or an opening turn | The turn's rows                                                  | `privacy_blocked_setup`   | Ask an administrator               |
 
-  **One case wins, and only it acts**: this turn, then anything earlier,
-  then a memory (t-1018), then the setup. Detection runs over the whole
-  call, so a name learned in one part is found wherever else it appears: a
-  name this turn introduces is found in the setup, earlier rows and the
-  summary, all of which passed every scan before, and forgetting them would
-  be for nothing. If they hold details of their own, the next attempt finds
-  them, and places them. The setup comes last because nothing removed
-  changes it: ahead of the others, a name it only matched because an
-  earlier row or a memory taught it ("You are Max" beside "Max Turner")
-  would refuse every turn, with nothing for an administrator to find. (Until
-  t-1018 the setup came second.) The log line ("Chat turn refused for
-  personal details") names the kinds of source and how many rows, never a
-  value.
+  **One case wins, and only it acts**: this turn, then the setup, then
+  anything earlier, then a memory (t-1018). The rest are placed by the next
+  attempt, if they still hold details. **A message is named only for
+  details of its own** (t-1018): detection runs over the whole call, and
+  tier C marks a surname or a company's short form wherever it appears once
+  it has seen the full name, but the location leaves those learned matches
+  out (`DetectedSpan.learned`, see _Spans_). So a name this turn introduces
+  does not blame earlier rows, and a full name in a memory does not blame a
+  persona that only repeats the surname, which would refuse every turn
+  with nothing for an administrator to find. A known first name standing
+  alone is a finding of its own (tier C reports it at 0.5), so a persona
+  "You are Max" is the setup's to change. The log line ("Chat turn refused
+  for personal details") names the kinds of source and how many rows,
+  never a value.
 
 - **An earlier row takes its exchange with it**: from where it begins to
   where the next one does. An exchange begins at a user message, or at an
@@ -490,16 +491,18 @@ that writes one needs an LLM call `block` refuses.
   memory a concurrent turn rewrote since this turn read it is kept. The
   delete is scoped to the user and the agent. It is best effort, like the
   marking: if it fails, the next refusal finds the same memory.
-- **Where it comes.** This turn, then anything earlier, then a memory,
-  then the setup. Deleting can't be undone and reaches every conversation,
-  so an earlier row that holds the details is left out first: a name the
-  memory matched only because that row taught it is not found once the row
-  is gone. A conversation raised to `block` with the name in both is
-  refused twice, as `privacy_blocked_earlier` and then
-  `privacy_blocked_memory`, and goes on. A memory goes before the setup, so
-  a name the setup only matched because the memory taught it does not lock
-  the user out; if the setup holds details of its own, the next turn is
-  `privacy_blocked_setup`.
+- **It comes last**: this turn, then the setup, then anything earlier, then
+  a memory. Deleting can't be undone and reaches every conversation, so
+  while the setup holds details of its own nothing is deleted (it would
+  not help until an administrator changes the setup), and an earlier row
+  that holds them is left out first. A conversation raised to `block` with
+  the name in both an earlier message and a memory is refused twice, as
+  `privacy_blocked_earlier` and then `privacy_blocked_memory`, and goes on.
+- **Only a memory that holds details of its own is deleted.** A surname
+  or company short form the detector only learned from another message is
+  left out of the location, so a memory that merely repeats a name found
+  elsewhere is kept, and a persona that only repeats a remembered surname
+  does not lock the user out (`DetectedSpan.learned`).
 - **The log** counts memories, and names no key or value.
 - **A judge** (`judge_call`) retries `privacy_blocked_memory`, since the
   refusal deleted what caused it.
@@ -641,7 +644,17 @@ span is accepted when:
 - `confidence` is a finite number in `[0, 1]`.
 
 One bad span rejects the whole result: the detector is reported `malformed` and
-contributes nothing. Extra fields are dropped. The type pattern matters because
+contributes nothing. Extra fields are dropped, except `learned`, kept when it is
+exactly `true` (t-1018).
+
+**`learned`** says the detector matched a span only because it learned the value
+from elsewhere in the same text: tier C sets it on a surname or a company's
+short form marked after the full name. The span is masked and refused like any
+other. A refusal under `block` leaves it out when it says which messages held
+details, so the message the value was learned from is placed, not every message
+that repeats it. Leave it out for a value found where it stands; anything but
+`true` counts as that, so a wrong flag can only place as before it existed. A
+merged span is learned only when every member was. The type pattern matters because
 the type becomes part of the placeholder the model reads (`PERSON_1`); free text
 there would be a prompt-injection path.
 
@@ -823,7 +836,7 @@ What it learns, it learns from one `detect` input and forgets after: a company
 found with its suffix marks its short form elsewhere in that text, and a full
 name marks its parts (matched capitalised). **The stage should therefore pass
 a call's messages as one input**, or a name learned in one message will not
-mark the next.
+mark the next. Each match it learned is marked `learned` (see _Spans_).
 
 A street word that is also a common surname (Green, Hill, Park) counts as part
 of a name; numbered, or after an address cue, the street is still an address,

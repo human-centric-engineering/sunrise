@@ -154,8 +154,11 @@ describe('placePrivacyRefusal', () => {
     });
   });
 
-  it('the setup: each part that held details, once, when nothing else did', () => {
-    expect(place([SYSTEM, HEADING, SYSTEM])).toEqual({
+  it('the setup: each part that held details, once, ahead of anything earlier or a memory', () => {
+    // Every part named holds details of its own (the stage leaves out values
+    // it only learned elsewhere). Until an administrator changes the setup,
+    // nothing removed helps, so nothing is.
+    expect(place([SYSTEM, HEADING, SYSTEM, MEMORY_2, SUMMARY, REPLY])).toEqual({
       code: 'privacy_blocked_setup',
       earlierRowIds: [],
       summary: false,
@@ -165,23 +168,6 @@ describe('placePrivacyRefusal', () => {
     });
     expect(place([CONTEXT])).toMatchObject({ setup: ['context'], turn: false });
     expect(place([NOTE])).toMatchObject({ setup: ['note'] });
-  });
-
-  it('the setup comes last: anything earlier, or a memory, acts first and leaves it alone', () => {
-    // A name the setup only matched because something else taught it ("You
-    // are Max" beside a remembered "Max Turner") would refuse every turn if
-    // the setup won, with nothing for an administrator to find.
-    expect(place([SYSTEM, CONTEXT, MEMORY_2])).toMatchObject({
-      code: 'privacy_blocked_memory',
-      memories: [MEM_2],
-      setup: [],
-    });
-    expect(place([SYSTEM, SUMMARY, REPLY])).toMatchObject({
-      code: 'privacy_blocked_earlier',
-      earlierRowIds: ['row-b', 'row-c'],
-      summary: true,
-      setup: [],
-    });
   });
 
   it.each([

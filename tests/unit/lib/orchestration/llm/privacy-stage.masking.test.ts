@@ -531,6 +531,50 @@ describe('block', () => {
     for (const value of SEEDED) expect(JSON.stringify(err.found)).not.toContain(value);
   });
 
+  it('places a name where it was found, not where it was only learned from it (t-1018)', async () => {
+    // Tier C learns "Sharma" from the full name in the memory and marks it in
+    // the persona too. The persona passes every scan on its own, so only the
+    // memory is named: blaming the persona would refuse every turn with
+    // nothing for an administrator to change.
+    mode('block');
+    const args = [
+      [
+        { role: 'system', content: 'You are the parking desk. Greet Sharma fans warmly.' },
+        { role: 'system', content: `- name: ${NAME}` },
+        { role: 'user', content: 'Where can I park?' },
+      ],
+      { model: 'm' },
+    ];
+    const { result: err } = await inScope(() => refusal(applyPrivacyStage(chatCall(args))));
+    expect(err.found).toEqual({ messageCount: 3, messageIndices: [1] });
+  });
+
+  it('places by every span when a detector marked them all learned (t-1018)', async () => {
+    // Nothing found where it stands leaves nothing to place by: every span
+    // places, as before the flag existed, rather than none.
+    mode('block');
+    registerPrivacyDetector({
+      id: 'app.echo',
+      egress: 'in_process',
+      entityTypes: ['CODE'],
+      detect: async ({ text }) => {
+        const at = text.indexOf('ZX-41');
+        return at === -1
+          ? []
+          : [{ type: 'CODE', start: at, end: at + 5, confidence: 1, learned: true }];
+      },
+    });
+    const args = [
+      [
+        { role: 'system', content: 'You help with orders.' },
+        { role: 'user', content: 'Where is ZX-41?' },
+      ],
+      { model: 'm' },
+    ];
+    const { result: err } = await inScope(() => refusal(applyPrivacyStage(chatCall(args))));
+    expect(err.found).toEqual({ messageCount: 2, messageIndices: [1] });
+  });
+
   it('sends a call with nothing found, untouched', async () => {
     mode('block');
     const args = [[{ role: 'user', content: 'What are your opening hours?' }], { model: 'm' }];
