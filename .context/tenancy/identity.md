@@ -439,7 +439,9 @@ INVITATION_WRONG_ACCOUNT`, and the page says who is signed in and offers to
   decides the role (the invitation's `orgRole`, default `MEMBER`, and `OWNER`
   by the per-org bootstrap), and `addMember` writes it. The
   inviter's owner standing for an `OWNER` invitation was checked when it was
-  issued, so acceptance writes what that check admitted. An existing user
+  issued, and is checked again at acceptance: an `OWNER` invitation whose
+  issuer has since lost owner standing lands its invitee as `MEMBER`
+  (#1235). An existing user
   already has their install-org floor at `single`, so nothing else is
   written. A suspended org's invitation is accepted as on the new-account
   path, and the member is refused at entry.
@@ -585,8 +587,11 @@ while they are acting in that org — never by a role check in a route.
 - **An invitation is held to the same rules before it is sent**
   (`checkInvitationInto`, t-813): an `OWNER` invitation needs owner standing,
   and the install org and a suspended org (`ORG_NOT_ACTIVE`) take none from
-  the org route. Acceptance cannot check the inviter's standing, so the check
-  is made when the invitation is written.
+  the org route. An invitation outlives that check, so acceptance asks the
+  issuer's (`invitedBy`) standing again: an `OWNER` invitation whose issuer
+  has since been demoted or removed confers `MEMBER`, not `OWNER` (#1235).
+  It narrows rather than refuses, so the invitee still joins the org that
+  invited them and the signup hooks never block; an owner can promote them.
 - **The install org's memberships follow the platform role**
   (`INSTALL_ORG_MEMBERSHIP`; the ruling above), so the members API refuses a
   role there, and refuses a removal there.

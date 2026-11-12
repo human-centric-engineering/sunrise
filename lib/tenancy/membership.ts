@@ -55,9 +55,9 @@ export interface AcceptedInvitation {
    */
   orgRole?: OrgRole | null;
   /**
-   * Who issued it (the user id). The first-owner bootstrap asks, at
-   * acceptance, whether they hold owner standing in the org then
-   * ({@link takesFirstOwnership}); absent ⇒ they do not.
+   * Who issued it (the user id). The first-owner bootstrap, and an `OWNER`
+   * invitation, ask at acceptance whether they hold owner standing in the org
+   * then ({@link takesFirstOwnership}, #1235); absent ⇒ they do not.
    */
   invitedBy?: string | null;
 }
@@ -112,9 +112,14 @@ export function initialMembershipFor(user: NewUserShape): InitialMembership {
  *   database its first member is the seeded SERVICE account, which must stay
  *   `MEMBER`.
  *
+ *   An explicit `OWNER` invitation confers `OWNER` only while its issuer
+ *   still holds owner standing, asked at acceptance; otherwise `MEMBER`
+ *   (#1235, {@link invitedOrgRole}).
+ *
  * Reads the org's non-staff member count for the bootstrap arm, and the
- * issuer's standing only when that count is 0; a null `db` is not accepted
- * so a caller cannot skip those reads by accident.
+ * issuer's standing only when it could matter: that count is 0, or the
+ * invitation names `OWNER`. A null `db` is not accepted so a caller cannot
+ * skip those reads by accident.
  */
 export async function membershipForNewUser(
   user: NewUserShape,
@@ -125,7 +130,8 @@ export async function membershipForNewUser(
   if (orgId === INSTALL_ORG_ID) return membershipGiven(user, invitation, null, false);
   const nonStaff = await countNonStaffMembers(orgId, db);
   const issuerStanding =
-    nonStaff === 0 && (await hasOwnerStandingIn(orgId, invitation?.invitedBy ?? null, db));
+    (nonStaff === 0 || invitation?.orgRole === ORG_OWNER_ROLE) &&
+    (await hasOwnerStandingIn(orgId, invitation?.invitedBy ?? null, db));
   return membershipGiven(user, invitation, nonStaff, issuerStanding);
 }
 
@@ -242,8 +248,10 @@ export function invitedOrgId(invitation: AcceptedInvitation | null): string {
  * member count — or `null` when it is not known (the install org, which
  * never reads it, or a read that failed) — and whether the invitation's
  * issuer holds owner standing. With no count, or no standing, the first-owner
- * bootstrap cannot apply, so the role is the invitation's. One statement of the rule for the decision
- * and for {@link undecidedMembershipsForNewUser}, so the two cannot drift.
+ * bootstrap cannot apply, so the role is the invitation's — and without
+ * standing an `OWNER` invitation confers `MEMBER` ({@link invitedOrgRole}).
+ * One statement of the rule for the decision and for
+ * {@link undecidedMembershipsForNewUser}, so the two cannot drift.
  *
  * The newcomer is staff when **either** the platform role the invitation
  * grants or the account's own role says so. The grant, for the t-669 reason
@@ -262,10 +270,32 @@ function membershipGiven(
   const orgId = invitedOrgId(invitation);
   if (orgId === INSTALL_ORG_ID) return installMembershipForNewUser(user, invitation);
   const newcomer = isPlatformAdmin(user) ? user : { ...user, role: invitation?.role ?? user.role };
-  const role = takesFirstOwnership(newcomer, nonStaffMembers, issuerHasOwnerStanding)
-    ? ORG_OWNER_ROLE
-    : (invitation?.orgRole ?? DEFAULT_ORG_ROLE);
-  return { orgId, role };
+  if (takesFirstOwnership(newcomer, nonStaffMembers, issuerHasOwnerStanding)) {
+    return { orgId, role: ORG_OWNER_ROLE };
+  }
+  return { orgId, role: invitedOrgRole(invitation, issuerHasOwnerStanding) };
+}
+
+/**
+ * The org role an invitation confers, outside the first-owner bootstrap: the
+ * `orgRole` it names, default `MEMBER` — except that an `OWNER` invitation
+ * whose issuer no longer holds owner standing confers `MEMBER` (#1235).
+ *
+ * `checkInvitationInto` asked the issuer's standing when the invitation was
+ * written, but an invitation outlives that check: an owner who invites a
+ * second account of theirs as OWNER, then is demoted or removed, would
+ * otherwise still confer OWNER on standing nobody holds. So it is asked
+ * again at acceptance, and a lapsed one narrows to `MEMBER` rather than
+ * refusing: the invitee still joins the org that invited them, the signup
+ * hooks never block, and an owner can promote them. An unknown standing (a
+ * read that failed) narrows the same way.
+ */
+function invitedOrgRole(
+  invitation: AcceptedInvitation | null,
+  issuerHasOwnerStanding: boolean
+): OrgRole {
+  const named = invitation?.orgRole ?? DEFAULT_ORG_ROLE;
+  return named === ORG_OWNER_ROLE && !issuerHasOwnerStanding ? DEFAULT_ORG_ROLE : named;
 }
 
 /**
@@ -342,10 +372,11 @@ function withInstallFloor(
  *
  * Instead this answers the decision without the read that can fail: the
  * invitation's org with the role it names, default `MEMBER`, plus the
- * install-org floor at `single` (#872), exactly as the decision would. The one
- * thing lost is the first-owner bootstrap ({@link takesFirstOwnership}), which
- * needs the reads that failed — so the failure only ever narrows a role,
- * never widens one. A first member left as MEMBER leaves the org with no
+ * install-org floor at `single` (#872), exactly as the decision would. What
+ * is lost is what needs the reads that failed: the first-owner bootstrap
+ * ({@link takesFirstOwnership}), and an `OWNER` invitation's issuer standing,
+ * so such an invitation lands as `MEMBER` (#1235) — the failure only ever
+ * narrows a role, never widens one. A first member left as MEMBER leaves the org with no
  * owner, which a platform admin repairs on the members route (it may grant
  * OWNER): that member closes the bootstrap for everyone after them. That
  * beats a membership in the wrong org. An invitation naming no org keeps the

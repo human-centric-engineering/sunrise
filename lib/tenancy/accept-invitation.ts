@@ -58,12 +58,12 @@ export interface InvitationAccepter {
  * The standing an accepted invitation carries into `addMember`.
  *
  * An explicit `OWNER` invitation was allowed only to an inviter with owner
- * standing, checked when it was issued (`checkInvitationInto`). The
- * first-owner bootstrap asked the issuer's standing again, now, before
- * deciding the role (`membershipForNewUser`, from `invitedBy`). So acceptance
- * writes the role those checks already admitted; the invitee's own standing
- * has nothing to do with it. An explicit `OWNER` is not re-checked against the
- * issuer here.
+ * standing, checked when it was issued (`checkInvitationInto`).
+ * `membershipForNewUser` asks the issuer's standing again, now, from
+ * `invitedBy`, before deciding the role: for the first-owner bootstrap, and
+ * for an explicit `OWNER`, which narrows to `MEMBER` once that standing has
+ * lapsed (#1235). So acceptance writes only a role those checks admitted at
+ * acceptance; the invitee's own standing has nothing to do with it.
  */
 const ISSUED_INVITATION_ACTOR: MembershipActor = {
   platformAdmin: false,
