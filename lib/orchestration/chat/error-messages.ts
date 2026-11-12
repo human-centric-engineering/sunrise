@@ -241,13 +241,23 @@ const ERROR_MAP: Record<string, UserFacingError> = {
       "Ask again. The assistant now leaves out the earlier messages that held them, so it may not remember everything said before. Don't include personal details in your message.",
   },
   // `block` again, for details in the assistant's own setup: its
-  // instructions, the context it was given, or what it remembers about the
-  // reader (t-1017). Nothing the reader writes can change that.
+  // instructions or the context it was given (t-1017). Nothing the reader
+  // writes can change that.
   privacy_blocked_setup: {
     title: 'Personal Details Not Sent',
     message:
-      "The assistant's setup, or something it remembers about you, contains personal details, such as names or contact details, that this deployment does not send to an AI provider. It can't answer until that changes.",
+      "The assistant's setup contains personal details, such as names or contact details, that this deployment does not send to an AI provider. It can't answer until that changes.",
     action: "Ask an administrator to check this assistant's setup. Rephrasing won't help.",
+  },
+  // `block` again, for details in something the assistant remembered about
+  // the reader, written before the mode was `block` (t-1018). The refusal
+  // deleted that memory, so asking again works (owner ruling, 2026-11-12).
+  privacy_blocked_memory: {
+    title: 'Personal Details Not Sent',
+    message:
+      'Something this assistant remembered about you contains personal details, such as names or contact details, that this deployment does not send to an AI provider. The assistant has now forgotten it.',
+    action:
+      "Ask again. The assistant may not remember everything it knew about you. Don't include personal details in your message.",
   },
   no_default_model_configured: {
     title: 'Default Model Not Set',

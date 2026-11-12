@@ -54,6 +54,18 @@ release process.
     again.
   - `buildMessagesAndBreakdown()` also returns `sources`, where each message
     came from.
+- **LLM privacy layer: a memory that holds personal details no longer locks
+  its user out of an agent under `block` (§127, t-1018).**
+  - The memory is deleted, and the turn ends with a new chat `error` event
+    code, `privacy_blocked_memory`, whose words in `getUserFacingError()`
+    tell the reader to ask again. **A client that handles `privacy_blocked`
+    should handle it too.** `privacy_blocked_setup` no longer covers the
+    user's memories.
+  - `buildMessagesAndBreakdown()` sends the user's memories as a heading and
+    then one system message per memory, not one message, with a new
+    `memory` source (`{ kind: 'memory', memoryIndex }`) for each. **A fork
+    that reads the built messages** and looks for the `[User memories]`
+    block finds only the heading in that message.
 - **LLM privacy layer: an agent's own mode, an org's floor and protected
   terms (§127, t-1010).** **Migration:** `AiAgent` gains `privacyMode`
   (nullable, `null` for every existing agent: inherit), a core field-registry

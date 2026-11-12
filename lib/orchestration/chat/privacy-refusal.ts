@@ -6,7 +6,7 @@
  * The privacy stage reports positions in the messages it was given
  * ({@link PrivacyFindingLocation}), never what it found. The message builder
  * says where each message came from ({@link MessageSource}). Together they
- * give one of three cases:
+ * give one of four cases:
  * - **this turn** — the user's message, or a tool result the turn fetched.
  *   The turn's rows are left out (t-1014); asking again without the details
  *   works. It wins over the others: a name it introduces is found in them too.
@@ -16,11 +16,16 @@
  *   note of how many messages it no longer describes (owner ruling
  *   2026-11-12: the conversation carries on and forgets), so asking again
  *   works.
- * - **setup** — the system prompt, the entity context, the user's memories or
- *   an opening the server wrote. Nothing the reader can change; they are told
- *   to ask an administrator.
+ * - **setup** — the system prompt, the entity context, or an opening the
+ *   server wrote. Nothing the reader can change; they are told to ask an
+ *   administrator.
+ * - **a memory** — something the agent remembered about this user, written
+ *   before the mode was `block`. It is sent in every conversation the user
+ *   has with the agent, and nothing else can remove it, so the memory is
+ *   deleted (t-1018; owner ruling 2026-11-12: carry on and forget) and asking
+ *   again works.
  *
- * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*
+ * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*, *(t-1018)*
  */
 import type { MessageSource } from '@/lib/orchestration/chat/message-builder';
 import { PRIVACY_BLOCKED } from '@/lib/orchestration/llm/provider';
@@ -32,10 +37,19 @@ export const PRIVACY_BLOCKED_EARLIER = 'privacy_blocked_earlier';
 /** Refused for personal details in the assistant's setup: nothing the reader can change. */
 export const PRIVACY_BLOCKED_SETUP = 'privacy_blocked_setup';
 
-export type PrivacyBlockedChatCode =
-  typeof PRIVACY_BLOCKED | typeof PRIVACY_BLOCKED_EARLIER | typeof PRIVACY_BLOCKED_SETUP;
+/** Refused for personal details in something the agent remembered about the user (t-1018). */
+export const PRIVACY_BLOCKED_MEMORY = 'privacy_blocked_memory';
 
-/** A part of the assistant's setup that held personal details. Logged; never a value. */
+export type PrivacyBlockedChatCode =
+  | typeof PRIVACY_BLOCKED
+  | typeof PRIVACY_BLOCKED_EARLIER
+  | typeof PRIVACY_BLOCKED_SETUP
+  | typeof PRIVACY_BLOCKED_MEMORY;
+
+/**
+ * A part of the assistant's setup that held personal details. Logged; never a
+ * value. `memories` is the fixed heading the memories follow, not a memory.
+ */
 export type SetupSource = 'system_prompt' | 'context' | 'memories' | 'opening_turn' | 'note';
 
 export interface PlacedPrivacyRefusal {
@@ -49,6 +63,8 @@ export interface PlacedPrivacyRefusal {
   earlierRowIds: string[];
   /** Whether the stored summary held personal details: to be replaced by a note. */
   summary: boolean;
+  /** The user's memories that held personal details, each once: to be deleted. */
+  memoryIds: string[];
   /** The parts of the setup that held personal details, each once. */
   setup: SetupSource[];
   /** Whether something this turn sent (its message, or a tool result) held them. */
@@ -65,6 +81,8 @@ export interface BuiltChatRequest {
    * tool calls. (An empty one is a marker, such as a pending approval's.)
    */
   historyRows: readonly { id: string; role: string; finishedReply: boolean }[];
+  /** The id of each of the user's memories the builder was given, by index. */
+  memoryIds: readonly string[];
 }
 
 /** What the handler knows about the call it made. */
@@ -104,6 +122,7 @@ export function placePrivacyRefusal(
 ): PlacedPrivacyRefusal | null {
   if (!found || found.messageCount !== sent.messageCount) return null;
   const earlierRows = new Set<number>();
+  const memories = new Set<number>();
   const setup = new Set<SetupSource>();
   let summary = false;
   let turn = false;
@@ -127,12 +146,18 @@ export function placePrivacyRefusal(
       case 'summary':
         summary = true;
         break;
+      case 'memory':
+        if (sent.memoryIds[source.memoryIndex] === undefined) return null;
+        memories.add(source.memoryIndex);
+        break;
       default:
         setup.add(source.kind);
     }
   }
   // An empty location is not a place: nothing to leave out but the turn.
-  if (!turn && !summary && earlierRows.size === 0 && setup.size === 0) return null;
+  if (!turn && !summary && earlierRows.size === 0 && memories.size === 0 && setup.size === 0) {
+    return null;
+  }
   // One case wins, and only it acts. Detection runs over the whole call, so a
   // name learned in one part is found wherever else it appears: a name this
   // turn introduces can flag the setup, earlier rows and the summary, all of
@@ -144,15 +169,17 @@ export function placePrivacyRefusal(
   // - Then the setup: asking again cannot work until an administrator
   //   changes it.
   // - Then anything earlier, which is left out, so asking again works.
-  if (turn || setup.size > 0) {
-    return {
-      code: turn ? PRIVACY_BLOCKED : PRIVACY_BLOCKED_SETUP,
-      earlierRowIds: [],
-      summary: false,
-      setup: turn ? [] : [...setup],
-      turn,
-    };
+  // - Then a memory, which is deleted. Last because that cannot be undone and
+  //   reaches every conversation the user has with the agent: a name it only
+  //   matched because an earlier row taught it is not found once that row
+  //   is left out.
+  const none = { earlierRowIds: [], summary: false, memoryIds: [], setup: [] };
+  if (turn) return { ...none, code: PRIVACY_BLOCKED, turn };
+  if (setup.size > 0) return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
+  if (summary || earlierRows.size > 0) {
+    const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
+    return { ...none, code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, turn };
   }
-  const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
-  return { code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, setup: [], turn };
+  const memoryIds = [...memories].sort((a, b) => a - b).map((i) => sent.memoryIds[i]);
+  return { ...none, code: PRIVACY_BLOCKED_MEMORY, memoryIds, turn };
 }

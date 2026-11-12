@@ -71,6 +71,10 @@ export interface HistoryRow {
   toolCalls?: LlmToolCall[] | null;
 }
 
+/** The fixed line the user's memories follow, each in a message of its own. */
+export const USER_MEMORIES_HEADING =
+  '[User memories]\nThe following are things you have previously remembered about this user:';
+
 export interface UserMemoryEntry {
   key: string;
   value: string;
@@ -188,12 +192,16 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
 /**
  * Where one built message came from (§127 t-1017). Lets a caller that is told
  * which messages held personal details tell whose they are: the agent's setup,
- * the stored summary, an earlier row (by its index in `history`), or this turn.
+ * the stored summary, an earlier row (by its index in `history`), one of the
+ * user's memories (by its index in `userMemories`), or this turn.
  */
 export type MessageSource =
   | { kind: 'system_prompt' }
   | { kind: 'context' }
+  /** The heading of the user's memories: fixed text, part of the setup. */
   | { kind: 'memories' }
+  /** One of the user's memories, by its index in `userMemories` (t-1018). */
+  | { kind: 'memory'; memoryIndex: number }
   | { kind: 'summary' }
   /** A line the builder writes itself: "[... N earlier messages omitted ...]". */
   | { kind: 'note' }
@@ -256,12 +264,18 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   }
 
   if (args.userMemories && args.userMemories.length > 0) {
-    const formatted = args.userMemories.map((m) => `- ${m.key}: ${m.value}`).join('\n');
-    const memoryBlock = `[User memories]\nThe following are things you have previously remembered about this user:\n${formatted}`;
-    messages.push({ role: 'system', content: memoryBlock });
+    // A heading, then one message per memory, so a refusal under `block` can
+    // say which memory held personal details (§127 t-1018). Joined, they are
+    // the block the model was always sent, and the breakdown counts that.
+    const lines = args.userMemories.map((m) => `- ${m.key}: ${m.value}`);
+    messages.push({ role: 'system', content: USER_MEMORIES_HEADING });
     sources.push({ kind: 'memories' });
+    lines.forEach((line, memoryIndex) => {
+      messages.push({ role: 'system', content: line });
+      sources.push({ kind: 'memory', memoryIndex });
+    });
     breakdown.userMemories = {
-      ...makePart(memoryBlock, modelId),
+      ...makePart([USER_MEMORIES_HEADING, ...lines].join('\n'), modelId),
       count: args.userMemories.length,
     };
   }

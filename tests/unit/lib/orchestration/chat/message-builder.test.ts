@@ -60,7 +60,10 @@ describe('buildMessagesAndBreakdown sources (t-1017)', () => {
     const { messages, sources } = buildMessagesAndBreakdown({
       systemInstructions: 'sys',
       contextBlock: 'context',
-      userMemories: [{ key: 'k', value: 'v' }],
+      userMemories: [
+        { key: 'k', value: 'v' },
+        { key: 'k2', value: 'v2' },
+      ],
       conversationSummary: 'summary',
       omittedBeforeHistory: 3,
       history,
@@ -72,6 +75,8 @@ describe('buildMessagesAndBreakdown sources (t-1017)', () => {
       { kind: 'system_prompt' },
       { kind: 'context' },
       { kind: 'memories' },
+      { kind: 'memory', memoryIndex: 0 },
+      { kind: 'memory', memoryIndex: 1 },
       { kind: 'summary' },
       { kind: 'note' },
       { kind: 'history', historyIndex: 3 },
@@ -688,7 +693,7 @@ describe('buildMessages', () => {
 
   // ── userMemories injection ────────────────────────────────────────────────
 
-  it('injects user memories as a system message after the context block', () => {
+  it('injects user memories after the context block: a heading, then one system message each (t-1018)', () => {
     const messages = buildMessages({
       systemInstructions: 'System.',
       contextBlock: '=== LOCKED CONTEXT ===\nfoo\n=== END LOCKED CONTEXT ===',
@@ -705,13 +710,35 @@ describe('buildMessages', () => {
     expect(messages[1].role).toBe('system'); // context block
     expect(messages[1].content).toContain('LOCKED CONTEXT');
 
-    const memMsg = messages[2];
-    expect(memMsg.role).toBe('system');
-    expect(memMsg.content).toContain('[User memories]');
-    expect(memMsg.content).toContain('- language: TypeScript');
-    expect(memMsg.content).toContain('- topic: agents');
+    // One message per memory, so a refusal can say which held details.
+    expect(messages.slice(2, 5)).toEqual([
+      {
+        role: 'system',
+        content:
+          '[User memories]\nThe following are things you have previously remembered about this user:',
+      },
+      { role: 'system', content: '- language: TypeScript' },
+      { role: 'system', content: '- topic: agents' },
+    ]);
 
-    expect(messages[3]).toEqual({ role: 'user', content: 'Hi' });
+    expect(messages[5]).toEqual({ role: 'user', content: 'Hi' });
+  });
+
+  it('counts the memories in the breakdown as the one block they read as joined (t-1018)', () => {
+    const userMemories = [
+      { key: 'language', value: 'TypeScript' },
+      { key: 'topic', value: 'agents' },
+    ];
+    const { breakdown } = buildMessagesAndBreakdown({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'hi',
+      userMemories,
+    });
+    const block =
+      '[User memories]\nThe following are things you have previously remembered about this user:\n- language: TypeScript\n- topic: agents';
+    expect(breakdown.userMemories).toMatchObject({ content: block, chars: block.length, count: 2 });
   });
 
   it('formats each memory as a "- key: value" bullet', () => {
@@ -726,10 +753,9 @@ describe('buildMessages', () => {
       ],
     });
 
-    const memMsg = messages.find((m) => getTextContent(m.content).includes('[User memories]'));
-    expect(memMsg).toBeDefined();
-    expect(memMsg?.content).toContain('- preferred_language: Python');
-    expect(memMsg?.content).toContain('- project_name: sunrise');
+    const texts = messages.map((m) => getTextContent(m.content));
+    expect(texts).toContain('- preferred_language: Python');
+    expect(texts).toContain('- project_name: sunrise');
   });
 
   it('does not inject a memory message when userMemories is undefined', () => {
