@@ -54,13 +54,16 @@ release process.
     again.
   - `buildMessagesAndBreakdown()` also returns `sources`, where each message
     came from.
-- **LLM privacy layer: a reply the privacy layer refused to embed no longer
-  holds the message-embedding backfill back (§127, t-1016).** **Migration:**
-  `AiMessage` gains `embeddingRefusedAt` (nullable, indexed): when the
-  privacy layer last refused to embed the reply. `backfillMissingEmbeddings()`
-  reads replies never refused first, then refused ones after a one-day
-  back-off (`EMBEDDING_REFUSAL_RETRY_MS`), and no longer leaves out in SQL
-  the agents it expected the stage to refuse.
+- **Message-embedding backfill: a reply whose embedding fails, or that the
+  LLM privacy layer refuses, no longer holds the backfill back (§127,
+  t-1016).** **Migration:** `AiMessage` gains `embeddingRetryAt` (nullable,
+  indexed) and `embeddingFailures` (default 0). Any failed or refused
+  attempt sets them: an hour's wait after the first, doubling each time, at
+  most a week (`embeddingRetryDelayMs()`). `backfillMissingEmbeddings()`
+  reads replies that never failed first, then due ones, and no longer leaves
+  out in SQL the agents it expected the privacy stage to refuse. The
+  maintenance tick counts a backfill run as work only when it embedded
+  something or filled its batch (`EMBEDDING_BACKFILL_BATCH`).
 - **LLM privacy layer: a memory that holds personal details no longer locks
   its user out of an agent under `block` (§127, t-1018).**
   - The memory is deleted, and the turn ends with a new chat `error` event

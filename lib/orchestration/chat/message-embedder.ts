@@ -4,9 +4,10 @@
  * After each assistant message is persisted, queues an async embedding
  * job to generate and store a vector embedding for semantic search.
  * Non-blocking to the chat stream — failures are logged but do not
- * affect the user experience. A reply the LLM privacy layer refuses to embed
- * (its `local_only` embeddings policy with no local model, say) is recorded
- * as refused, and the backfill asks again only after a back-off (§127 t-1016).
+ * affect the user experience. A reply whose embedding fails, or that the LLM
+ * privacy layer refuses to embed (its `local_only` embeddings policy with no
+ * local model, say), is given a retry time, and the backfill asks again only
+ * then, each failure doubling the wait (§127 t-1016).
  */
 
 import { Prisma } from '@prisma/client';
@@ -75,8 +76,9 @@ export function queueMessageEmbedding(
       generateAndStoreEmbedding(messageId, content, attribution)
     )
   ).catch(async (err: unknown) => {
-    // Refused: recorded, so the backfill does not ask again at once (t-1016).
-    if (err instanceof PrivacyRefusedError) await recordRefusal(messageId);
+    // Failed or refused: the backfill waits before asking again (t-1016). The
+    // first attempt, so no earlier failures.
+    await deferEmbedding(messageId, 0);
     // The install requires local embeddings and none is active (§127): the
     // reply is not indexed for search. Expected, so not a warning.
     if (isLocalOnlyEmbeddingRefusal(err)) {
@@ -99,41 +101,60 @@ export interface BackfillResult {
   skipped: number;
 }
 
-/**
- * How long a reply the privacy layer refused to embed waits before the
- * backfill asks again (t-1016). A day, because some replies are refused by
- * design for as long as a setting stands (an agent's replies under
- * `local_only` with no local model), and each retry is refused again, logged
- * and reported to the privacy observers: once a day per reply, not once an
- * hour. Once whatever refused it changes (a local embedding model installed,
- * an agent's mode lowered), a reply is due within a day, and the backfill
- * then drains due replies at up to one batch a run, in the room fresh
- * replies leave.
- */
-export const EMBEDDING_REFUSAL_RETRY_MS = 24 * 60 * 60 * 1000;
+/** The backfill's batch: how many replies one run tries at most. */
+export const EMBEDDING_BACKFILL_BATCH = 25;
+
+/** The wait after a reply's first failed or refused embedding (t-1016). */
+export const EMBEDDING_RETRY_BASE_MS = 60 * 60 * 1000;
+
+/** The longest wait between attempts, however many have failed. */
+export const EMBEDDING_RETRY_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Record that the privacy layer refused to embed a reply. Any refusal: a
- * decision (the `local_only` policy, an app's policy resolver) or a fault
- * that refuses every call until it is fixed (an unreadable mode). Either
- * way, asking again on every tick would fill the backfill's batch. Best
- * effort: if the write fails, the reply is asked again next tick, as before.
+ * How long to wait after the `failures`-th failed or refused attempt in a
+ * row: an hour, doubling each time, at most a week (owner ruling 2026-11-12:
+ * back off everything). A reply that can never be embedded, say an agent's
+ * reply under `local_only` with no local model, settles to one attempt a week,
+ * so an install where nothing can be embedded goes quiet. One that is fixed
+ * is tried again within its current wait.
  */
-async function recordRefusal(messageId: string): Promise<void> {
+export function embeddingRetryDelayMs(failures: number): number {
+  return Math.min(EMBEDDING_RETRY_BASE_MS * 2 ** Math.max(failures - 1, 0), EMBEDDING_RETRY_MAX_MS);
+}
+
+/**
+ * Give a reply whose embedding failed or was refused a time to try again,
+ * after `previous` failures in a row. Any failure: a privacy refusal (the
+ * `local_only` policy, an app's policy resolver, an unreadable mode), a
+ * provider refusal (an org's provider policy), or an error (a local model
+ * rejecting a long reply). Asking again on every run would let 25 of them
+ * fill the backfill's batch for good. Best effort: if the write fails, the
+ * reply is asked again next run, as before t-1016.
+ */
+async function deferEmbedding(messageId: string, previous: number): Promise<void> {
+  const failures = previous + 1;
   try {
     await prisma.aiMessage.updateMany({
       where: { id: messageId },
-      data: { embeddingRefusedAt: new Date() },
+      data: {
+        embeddingFailures: failures,
+        embeddingRetryAt: new Date(Date.now() + embeddingRetryDelayMs(failures)),
+      },
     });
   } catch (err) {
-    logger.warn('Failed to record a refused message embedding', {
+    logger.warn('Failed to defer a message embedding', {
       messageId,
       error: err instanceof Error ? err.message : String(err),
     });
   }
 }
 
-type MissingEmbedding = { id: string; content: string; agentId: string | null };
+type MissingEmbedding = {
+  id: string;
+  content: string;
+  agentId: string | null;
+  embeddingFailures: number;
+};
 
 /**
  * Assistant replies with no embedding: content over 20 characters, no
@@ -142,7 +163,7 @@ type MissingEmbedding = { id: string; content: string; agentId: string | null };
  * queued (t-1010).
  */
 const MISSING_EMBEDDINGS = Prisma.sql`
-  SELECT m.id, m.content, c."agentId"
+  SELECT m.id, m.content, c."agentId", m."embeddingFailures"
   FROM ai_message m
   LEFT JOIN ai_conversation c ON c.id = m."conversationId"
   LEFT JOIN ai_message_embedding e ON e."messageId" = m.id
@@ -154,32 +175,32 @@ const MISSING_EMBEDDINGS = Prisma.sql`
  * Backfill embeddings for assistant messages that are missing them. Called
  * by the unified maintenance tick.
  *
- * Replies the privacy layer has never refused come first, newest first.
- * Whatever room is left goes to refused ones whose back-off
- * ({@link EMBEDDING_REFUSAL_RETRY_MS}) has passed, the longest-waiting
- * first. So refusals, whatever refused them, can never fill the batch and
- * hold back a reply behind them (t-1016). The stage alone decides what is
- * refused: nothing here copies its rules.
+ * Replies that never failed come first, newest first. Whatever room is left
+ * goes to failed ones whose retry time has come, the earliest first
+ * ({@link embeddingRetryDelayMs}). So no failure, whatever caused it, can
+ * fill the batch and hold back a reply behind it (t-1016). The privacy stage
+ * alone decides what is refused: nothing here copies its rules.
  */
-export async function backfillMissingEmbeddings(batchSize: number = 25): Promise<BackfillResult> {
+export async function backfillMissingEmbeddings(
+  batchSize: number = EMBEDDING_BACKFILL_BATCH
+): Promise<BackfillResult> {
   const fresh = await prisma.$queryRaw<MissingEmbedding[]>`
     ${MISSING_EMBEDDINGS}
-      AND m."embeddingRefusedAt" IS NULL
+      AND m."embeddingRetryAt" IS NULL
     ORDER BY m."createdAt" DESC
     LIMIT ${batchSize}
   `;
   const room = batchSize - fresh.length;
-  const retries =
+  const due =
     room > 0
       ? await prisma.$queryRaw<MissingEmbedding[]>`
           ${MISSING_EMBEDDINGS}
-            AND m."embeddingRefusedAt" < ${new Date(Date.now() - EMBEDDING_REFUSAL_RETRY_MS)}
-          ORDER BY m."embeddingRefusedAt" ASC
+            AND m."embeddingRetryAt" <= ${new Date()}
+          ORDER BY m."embeddingRetryAt" ASC
           LIMIT ${room}
         `
       : [];
-  const missing = [...fresh, ...retries];
-  const retried = new Set(retries.map((m) => m.id));
+  const missing = [...fresh, ...due];
 
   if (missing.length === 0) return { processed: 0, failed: 0, skipped: 0 };
 
@@ -192,13 +213,13 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
       await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content), scopes);
       processed++;
     } catch (err) {
+      // Either way it waits before the next attempt, longer each time.
+      await deferEmbedding(msg.id, msg.embeddingFailures);
       // Refused by the privacy layer: a decision, not an embedding failure,
       // and the stage has already said why (an unreadable org slice names the
-      // org and its remedy). The message stays unembedded, recorded as
-      // refused, and is asked again after the back-off.
+      // org and its remedy).
       if (err instanceof PrivacyRefusedError) {
         skipped++;
-        await recordRefusal(msg.id);
         continue;
       }
       failed++;
@@ -206,10 +227,6 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
         messageId: msg.id,
         error: err instanceof Error ? err.message : String(err),
       });
-      // A retry that fails for another reason waits its back-off again.
-      // Otherwise its old time keeps it first in the retry read, and it would
-      // be tried, and fail, on every run, ahead of every other due retry.
-      if (retried.has(msg.id)) await recordRefusal(msg.id);
     }
   }
 

@@ -36,6 +36,7 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({ processPendingRetrie
 vi.mock('@/lib/orchestration/hooks/registry', () => ({ processPendingHookRetries: vi.fn() }));
 vi.mock('@/lib/orchestration/engine/execution-reaper', () => ({ reapZombieExecutions: vi.fn() }));
 vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
+  EMBEDDING_BACKFILL_BATCH: 25,
   backfillMissingEmbeddings: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/retention', () => ({
@@ -368,6 +369,20 @@ describe('runDuePlatformJobs — foundWork', () => {
     expect(foundWork).toBe(false);
   });
 
+  it('is false for a backfill run of only refusals and failures that did not fill its batch (t-1016)', async () => {
+    // Each now waits for its retry time, so nothing is behind them: counting
+    // it would keep the idle gate open where nothing can ever be embedded.
+    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({
+      processed: 0,
+      failed: 2,
+      skipped: 22,
+    });
+
+    const { foundWork } = await runDuePlatformJobs(T0);
+
+    expect(foundWork).toBe(false);
+  });
+
   it.each([
     ['webhookRetries', () => vi.mocked(processPendingRetries).mockResolvedValue(1)],
     ['hookRetries', () => vi.mocked(processPendingHookRetries).mockResolvedValue(1)],
@@ -402,13 +417,12 @@ describe('runDuePlatformJobs — foundWork', () => {
           .mockResolvedValue({ processed: 25, failed: 0, skipped: 0 }),
     ],
     [
-      // Refusals are recorded and not read again until their back-off, so the
-      // next run reaches what is behind them (t-1016).
-      'embeddingBackfill — only refusals',
+      // A full batch of refusals or failures may have more behind it (t-1016).
+      'embeddingBackfill — a full batch of refusals and failures',
       () =>
         vi
           .mocked(backfillMissingEmbeddings)
-          .mockResolvedValue({ processed: 0, failed: 0, skipped: 25 }),
+          .mockResolvedValue({ processed: 0, failed: 5, skipped: 20 }),
     ],
     [
       'retention',

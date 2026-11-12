@@ -159,10 +159,13 @@ model AiMessage {
   ratedAt        DateTime?
   createdAt      DateTime  @default(now())
 
-  // When the LLM privacy layer last refused to embed this reply (§127 t-1016).
-  // The embedding backfill reads replies never refused first, and retries a
-  // refused one only after a back-off, so refusals cannot fill its batch.
-  embeddingRefusedAt DateTime?
+  // When the embedding backfill may next try this reply, after its embedding
+  // failed or the LLM privacy layer refused it, and how many attempts in a
+  // row have (§127 t-1016). Each failure doubles the wait, up to a week. The
+  // backfill reads replies that never failed first, so none can fill its
+  // batch and hold older replies back.
+  embeddingRetryAt  DateTime?
+  embeddingFailures Int       @default(0)
 
   // Provenance — version pins captured at message-creation time
   agentVersionId      String?
@@ -193,9 +196,9 @@ model AiMessage {
   // stays unindexed on purpose: a partial index needs raw SQL, and therefore a
   // drift probe to maintain forever, to save a filter on an already-narrow scan.
   @@index([role, createdAt])
-  // Serves the backfill's retry read: refused replies whose back-off has
-  // passed, oldest refusal first (t-1016).
-  @@index([embeddingRefusedAt])
+  // Serves the backfill's retry read: failed replies whose retry time has
+  // come, the earliest first (t-1016).
+  @@index([embeddingRetryAt])
   @@index([createdAt])
   @@index([rating])
   @@index([agentVersionId])
