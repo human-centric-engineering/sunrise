@@ -9223,16 +9223,35 @@ describe('a turn the privacy layer refused under block', () => {
       if (orderBy?.[0]?.createdAt === 'desc') inOrder.reverse();
       return inOrder.slice(0, take ?? inOrder.length);
     }) as never);
-    vi.mocked(prisma.aiMessage.update).mockImplementation((async ({
+    // Lazy like a PrismaPromise: the write runs when awaited, and a row that
+    // is not there rejects (P2025), as the real update does.
+    vi.mocked(prisma.aiMessage.update).mockImplementation((({
       where,
       data,
     }: {
       where: { id: string };
       data: { metadata: unknown };
-    }) => {
-      const row = rows.find((r) => r.id === where.id)!;
-      row.metadata = data.metadata;
-      return { id: row.id };
+    }) => ({
+      then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
+        return Promise.resolve()
+          .then(() => {
+            const row = rows.find((r) => r.id === where.id);
+            if (!row) throw new Error('P2025: record to update not found');
+            row.metadata = data.metadata;
+            return { id: row.id };
+          })
+          .then(resolve, reject);
+      },
+    })) as never);
+    // All or nothing, as a batch transaction is.
+    vi.mocked(prisma.$transaction).mockImplementation((async (writes: Promise<unknown>[]) => {
+      const before = rows.map((r) => [r, r.metadata] as const);
+      try {
+        return await Promise.all(writes);
+      } catch (err) {
+        for (const [row, metadata] of before) row.metadata = metadata;
+        throw err;
+      }
     }) as never);
     vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(makeConversation() as never);
     return rows;
