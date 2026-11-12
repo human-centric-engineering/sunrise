@@ -59,6 +59,7 @@ import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   countNonStaffMembers,
+  hasOwnerStanding,
   healSignupRecord,
   initialMembershipFor,
   takesFirstOwnership,
@@ -147,11 +148,6 @@ export function membershipActorOf(session: {
   principal: { orgRole?: string | null };
 }): MembershipActor {
   return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
-}
-
-/** May this actor confer, alter or revoke the OWNER role in the org? */
-function hasOwnerStanding(actor: MembershipActor): boolean {
-  return actor.platformAdmin || actor.orgRole === ORG_OWNER_ROLE;
 }
 
 function requireOwnerStanding(actor: MembershipActor, what: string): void {
@@ -524,8 +520,8 @@ export async function addMember(
  * May this actor invite someone into the org, as `role`? (§111 t-813)
  *
  * The invitation's half of {@link addMember}'s rules, asked before the
- * invitation is issued rather than when it is accepted: by then the inviter's
- * standing is not known. An explicit `OWNER` needs the actor's owner standing,
+ * invitation is issued rather than when it is accepted. An explicit `OWNER`
+ * needs the actor's owner standing,
  * so an ADMIN cannot appoint an owner by invitation any more than by role
  * change. The install org is refused: its memberships follow the platform
  * role, so inviting into it is the platform's invitation
@@ -533,7 +529,8 @@ export async function addMember(
  * issues no new invitations. One issued before the suspension can still be
  * accepted; its member is then refused at entry, like every member of a
  * suspended org (`.context/tenancy/identity.md`). No role means the
- * acceptance-time rule decides (`membershipForNewUser`). Answers the org, so
+ * acceptance-time rule decides (`membershipForNewUser`, which asks the
+ * issuer's owner standing again then, for the first-owner bootstrap). Answers the org, so
  * the route can name it in the invitation email.
  */
 export async function checkInvitationInto(

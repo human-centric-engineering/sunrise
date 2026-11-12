@@ -198,25 +198,38 @@ export function countNonStaffMembers(
 }
 
 /**
- * Does this user hold owner standing in the org now: a platform admin, or an
- * `OWNER` of it? The invitation half of {@link takesFirstOwnership}'s grantor
- * test, asked of an invitation's issuer at acceptance — `addMember` asks the
- * same of its actor. A missing user, or none named, has none.
+ * May this actor confer, alter or revoke the `OWNER` role in an org: a
+ * platform admin, or an `OWNER` of it? The one statement of owner standing —
+ * `addMember` and the other lifecycle calls ask it of their actor, and
+ * {@link hasOwnerStandingIn} of an invitation's issuer.
+ */
+export function hasOwnerStanding(actor: {
+  platformAdmin: boolean;
+  orgRole?: string | null;
+}): boolean {
+  return actor.platformAdmin || actor.orgRole === ORG_OWNER_ROLE;
+}
+
+/**
+ * Does this user hold owner standing in the org now ({@link hasOwnerStanding})?
+ * The invitation half of {@link takesFirstOwnership}'s grantor test, asked of
+ * an invitation's issuer at acceptance. A missing user, or none named, has none.
  */
 export async function hasOwnerStandingIn(
   orgId: string,
   userId: string | null,
-  db: BootstrapDb = prisma
+  db: Pick<PrismaClient, 'user'> = prisma
 ): Promise<boolean> {
   if (!userId) return false;
-  const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
-  if (!user) return false;
-  if (isPlatformAdmin(user)) return true;
-  const membership = await db.orgMembership.findUnique({
-    where: { orgId_userId: { orgId, userId } },
-    select: { role: true },
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { role: true, orgMemberships: { where: { orgId }, select: { role: true } } },
   });
-  return membership?.role === ORG_OWNER_ROLE;
+  if (!user) return false;
+  return hasOwnerStanding({
+    platformAdmin: isPlatformAdmin(user),
+    orgRole: user.orgMemberships[0]?.role,
+  });
 }
 
 /** The org an invitation admits its invitee to: the one it names, else the install org. */

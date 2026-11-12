@@ -54,7 +54,6 @@ const mocks = {
   orgMembership: {
     count: vi.fn(),
     findMany: vi.fn(),
-    findUnique: vi.fn(),
     upsert: vi.fn(),
   },
   user: {
@@ -85,9 +84,12 @@ const BY_ISSUER = { invitedBy: ISSUER };
 /** The issuer's platform role, and their role in the invited org (none ⇒ not a member). */
 function issuerIs(platformRole: string, orgRole: OrgRole | null = null): void {
   mocks.user.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
-    Promise.resolve(where.id === ISSUER ? { role: platformRole } : null)
+    Promise.resolve(
+      where.id === ISSUER
+        ? { role: platformRole, orgMemberships: orgRole ? [{ role: orgRole }] : [] }
+        : null
+    )
   );
-  mocks.orgMembership.findUnique.mockResolvedValue(orgRole ? { role: orgRole } : null);
 }
 
 /** A membership row as the fake count reads it; `staff` marks a platform admin's. */
@@ -122,7 +124,6 @@ beforeEach(() => {
   mockEnv.TENANCY_MODE = 'single';
   mocks.orgMembership.count.mockResolvedValue(0);
   mocks.orgMembership.findMany.mockResolvedValue([]);
-  mocks.orgMembership.findUnique.mockResolvedValue(null);
   mocks.orgMembership.upsert.mockResolvedValue(undefined);
   mocks.user.findUnique.mockResolvedValue(null);
   mocks.user.update.mockResolvedValue(undefined);
@@ -271,10 +272,30 @@ describe('membershipForNewUser', () => {
     expect((await membershipForNewUser(row, invitation, db)).role).toBe(ORG_OWNER_ROLE);
     issuerIs(PLATFORM_ADMIN_ROLE);
     expect((await membershipForNewUser(row, invitation, db)).role).toBe(ORG_OWNER_ROLE);
-    expect(mocks.orgMembership.findUnique).toHaveBeenCalledWith({
-      where: { orgId_userId: { orgId: OTHER_ORG, userId: ISSUER } },
-      select: { role: true },
+    expect(mocks.user.findUnique).toHaveBeenCalledWith({
+      where: { id: ISSUER },
+      select: {
+        role: true,
+        orgMemberships: { where: { orgId: OTHER_ORG }, select: { role: true } },
+      },
     });
+  });
+
+  // The standing is asked only when it could matter: with a non-staff member
+  // in the org the bootstrap is off, and an invited signup pays no extra read.
+  it('does not read the issuer when the org already has a non-staff member', async () => {
+    orgHas([{ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE, staff: false }]);
+    issuerIs(PLATFORM_ADMIN_ROLE);
+    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+
+    expect(
+      await membershipForNewUser(
+        row,
+        { orgId: OTHER_ORG, orgRole: DEFAULT_ORG_ROLE, ...BY_ISSUER },
+        db
+      )
+    ).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE });
+    expect(mocks.user.findUnique).not.toHaveBeenCalled();
   });
 
   // #1178: a vendor's staff can be in an org as ADMIN, preparing it, before

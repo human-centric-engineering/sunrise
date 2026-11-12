@@ -29,7 +29,7 @@ const store = vi.hoisted(() => ({
   rows: [] as Row[],
   memberCount: 1,
   // The invitation's issuer: a platform admin unless a test says otherwise.
-  issuer: { role: 'ADMIN' },
+  issuer: { role: 'ADMIN', orgMemberships: [] as { role: string }[] },
 }));
 
 type Where = {
@@ -68,8 +68,6 @@ vi.mock('@/lib/db/client', () => ({
     },
     orgMembership: {
       count: vi.fn(() => Promise.resolve(store.memberCount)),
-      // The issuer's membership: only read when they are not a platform admin.
-      findUnique: vi.fn(() => Promise.resolve(null)),
     },
     // The issuer ('inviter-1'), asked about by the first-owner bootstrap.
     user: {
@@ -147,7 +145,7 @@ async function refusal(fn: () => Promise<unknown>): Promise<APIError> {
 beforeEach(() => {
   store.rows = [];
   store.memberCount = 1;
-  store.issuer = { role: 'ADMIN' };
+  store.issuer = { role: 'ADMIN', orgMemberships: [] };
   seq = 0;
   addMember.mockReset();
   addMember.mockImplementation((orgId: string, _userId: string, role: string) =>
@@ -196,7 +194,7 @@ describe('acceptInvitationAsExistingUser', () => {
   // needs the issuer's owner standing when the invitation is accepted.
   it('does not make the invitee OWNER when the issuer no longer holds owner standing', async () => {
     store.memberCount = 0;
-    store.issuer = { role: DEFAULT_USER_ROLE }; // not a platform admin, and not a member
+    store.issuer = { role: DEFAULT_USER_ROLE, orgMemberships: [] }; // not a platform admin, and not a member
     invite('tok-a', { orgId: ORG_A, orgRole: DEFAULT_ORG_ROLE });
 
     await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
