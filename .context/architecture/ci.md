@@ -132,6 +132,12 @@ stays gated at the **step** level (`ESLint (code changes only)`) — docs-only P
 run only the Prettier check and the CHANGELOG check below, and stay cheap
 (~1m35s vs ~8m for a cold code PR).
 
+**It is also the whole-tree backstop for the local gate.** `/pre-pr` runs
+`npm run validate:changed`, which lints and formats only the files a branch
+changed (#863). That cannot see a type-aware rule firing in an unchanged file
+because a changed file's types moved. This job lints the whole tree on every
+code PR, so that case is caught before merge, on the PR rather than locally.
+
 ### The `CHANGELOG structure` step
 
 Ungated for the same reason as `format:check`: a CHANGELOG-only PR is

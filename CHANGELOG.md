@@ -303,6 +303,21 @@ release process.
   edit today, take upstream's version and drop yours. See
   `.context/architecture/ci.md` Knob 7.
 
+- **`npm run validate:changed`: `validate` with ESLint and Prettier scoped to
+  the branch's changed files, now what `/pre-pr` runs** (t-1021, #863). A gate
+  re-run after every review fix no longer lints and formats the whole tree.
+  Every other step, the whole-program type-check included, is unchanged. The
+  scope is the diff against the merge base with `origin/main` plus staged,
+  unstaged and untracked files. It fails closed when it cannot resolve the base.
+  A change to a lint or format config, a root `tsconfig*.json` or
+  `package-lock.json` widens that tool to the whole tree. CI's `Lint & format`
+  job still lints everything. Run whole-tree `validate` after a merge from main
+  or upstream and before a release cut. **Forks:** if you carry your own
+  `validate:changed` script or edit `/pre-pr` to call one, take upstream's and
+  drop yours. Lint a file by hand only with `--cache`: a bare `eslint <file>`
+  deletes `.eslintcache`, and on a large fork the next cold whole-tree lint can
+  abort with exit 134.
+
 ### Changed
 
 - **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`

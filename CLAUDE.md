@@ -84,8 +84,8 @@ when it conflicts), later syncs leave it alone. See
 In this order. Read **exit codes**, not piped output — a pipeline that swallows
 a failure reports success.
 
-1. `/pre-pr` — the platform's own checklist (`npm run validate` plus a scoped
-   test run and the anti-pattern scans), including the public-surface checks.
+1. `/pre-pr` — the platform's own checklist (`npm run validate:changed` plus a
+   scoped test run and the anti-pattern scans), including the public-surface checks.
 2. `/security-review`
 3. `/code-review`
 4. `npm run format`
@@ -98,6 +98,7 @@ Fix review findings as new commits; never amend a reviewed commit.
 # Development
 npm run dev                    # Start dev server
 npm run validate               # CHANGELOG + Node version + type-check + lint + format (Prettier + Prisma)
+npm run validate:changed       # ...lint + Prettier on changed files only (what /pre-pr runs)
 
 # Database
 npm run db:migrate:dev         # Create and apply migration (dev only)
