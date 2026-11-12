@@ -169,8 +169,8 @@ The stage acts in every mode.
   word, would otherwise leave a second copy in plaintext beside the
   placeholder for the first. A value that is one word of letters ("Will",
   "Grace") is not extended: elsewhere it is likelier an ordinary word, and
-  tier C already finds the other mentions of a name it learns. Each piece is masked in order with the
-  **scope's** token session (`maskMessages()`,
+  tier C already finds the other mentions of a name it learns. Each piece
+  is masked in order with the **scope's** token session (`maskMessages()`,
   `lib/orchestration/privacy/call-masking.ts`). The caller's messages are
   never changed: it keeps the real conversation and the next call masks it
   again. Options, tool definitions, images, documents and reasoning blocks
@@ -195,26 +195,29 @@ The stage acts in every mode.
 - **`redact`** masks with `escapeLookAlikes: false` and never restores, so
   the reply, and any tool call the model makes, carries placeholders.
 - **`block`** refuses a chat call with anything found (`content_blocked`,
-  code `privacy_blocked`). The refused message stays in the conversation and
-  every later turn resends it, so the reader is told to start a new
-  conversation, or ask an administrator if the details were not theirs.
-  Excluding a refused turn from later history is a follow-up.
-  A call with nothing found goes out untouched.
+  code `privacy_blocked`); a call with nothing found goes out untouched. The
+  refused message stays in the conversation and every later turn resends
+  it, so the reader is told to start a new conversation, or to ask an
+  administrator if the details were not theirs. Leaving a refused turn out
+  of later history is t-1014.
 - **A required detector that fails under `pseudonymise`, `redact` or
   `block` refuses a chat call** (`detector_failed`), whatever
   `onDetectorFailure` says: sent, it would carry in plaintext what that
-  detector would have found (under `block`, unrefused for want of a span). Owner ruling,
-  2026-11-11, after walking an HR grievance pack, a long tool loop and an
-  app's external detector being down: a silent, irreversible leak in exactly
-  the case protection was chosen for outweighs a rare refused turn. `detect`
-  keeps going ahead degraded. An app that does not want refusal on its own
-  detector registers it optional.
+  detector would have found. For the masking modes this is the owner's
+  ruling of 2026-11-11, after walking an HR grievance pack, a long tool loop
+  and an app's external detector being down: a silent, irreversible leak in
+  exactly the case protection was chosen for outweighs a rare refused turn.
+  `block` follows from it (t-992 code review): without the refusal, a call
+  whose detector failed would go out unrefused for want of a span, looser
+  than `pseudonymise`. `detect` keeps going ahead degraded. An app that does
+  not want refusal on its own detector registers it optional.
 - **Unscoped calls** (a background job, a summariser outside a turn): a chat
   call is always scanned under a stricter mode, since the scan is what
   protects it. An unscoped embedding call (knowledge ingestion, a reply's
-  embedding) is skipped in every mode when nothing reads the result: it is
-  never masked, so the scan would change nothing, and an external detector
-  would be sent whole documents for nothing.
+  embedding) is sent without a scan in every mode when nothing reads the
+  result: it is never masked, so the scan would change nothing, and an
+  external detector would be sent whole documents for nothing. The
+  `local_only` check runs before this, so it still refuses one.
 - **Embeddings policy.** See [Embeddings](#embeddings).
 - **On the trace.** A refusal records its reason in the scope, so the
   `PrivacySummary` on the turn's error marker or the step's trace entry
