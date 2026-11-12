@@ -57,15 +57,26 @@ const ORG_PATH = `/api/v1/admin/orgs/${ID}`;
 const POLICY_PATH = `/api/v1/admin/orgs/${ID}/providers`;
 const PROVIDERS_PATH = '/api/v1/admin/orchestration/providers?page=1&limit=100';
 const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
+const PRIVACY_PATH = `/api/v1/admin/orgs/${ID}/privacy`;
+
+/** An org that has never saved its privacy settings (§127 t-1010). */
+const PRIVACY = {
+  orgId: ID,
+  saved: false,
+  unreadable: false,
+  minimumMode: null,
+  protectedTerms: [],
+};
 
 /**
  * Answer each path with its body. A path mapped to `null` (or not mapped) is a
  * 404; one mapped to a number is that HTTP status. `metas` gives a path's
- * pagination meta.
+ * pagination meta. The privacy settings answer as never saved unless a test
+ * names them.
  */
 function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
   vi.mocked(serverFetch).mockImplementation(async (path: string) => {
-    const data = bodies[path];
+    const data = path === PRIVACY_PATH && !(path in bodies) ? PRIVACY : bodies[path];
     if (data === null || data === undefined) return apiFailure(404, 'NOT_FOUND');
     if (typeof data === 'number') return apiFailure(data);
     if (data instanceof Response) return data.clone();
@@ -252,7 +263,9 @@ describe('OrgPage', () => {
 
     expect(screen.getByText(/approved providers could not be loaded/)).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Save/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Save approved providers/ })
+    ).not.toBeInTheDocument();
     expect(logger.error).toHaveBeenCalledWith(expect.any(String), undefined, {
       path: POLICY_PATH,
       status: 500,
@@ -344,6 +357,37 @@ describe('OrgPage', () => {
         status: 500,
         code: 'INTERNAL_ERROR',
       });
+    });
+  });
+
+  describe('LLM privacy (§127 t-1010)', () => {
+    it('offers the privacy form, suggesting the org’s own name before a first save', async () => {
+      serve({ [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+
+      render(await OrgPage({ params }));
+
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(PRIVACY_PATH);
+      expect(screen.getByRole('heading', { name: 'LLM privacy' })).toBeInTheDocument();
+      expect(screen.getByTestId('org-privacy-terms')).toHaveTextContent('Acme');
+      expect(screen.getByTestId('org-privacy-suggested')).toBeInTheDocument();
+    });
+
+    it('says the privacy settings could not be loaded rather than offer an empty form', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PRIVACY_PATH]: 500,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(
+        screen.getByText('The privacy settings could not be loaded. Reload the page to try again.')
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId('org-privacy-terms')).not.toBeInTheDocument();
+      // The rest of the page still renders.
+      expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
     });
   });
 });

@@ -34,6 +34,13 @@ vi.mock('@/lib/db/client', () => ({
 
 // The privacy stage reads the install's settings on every call; this file's
 // database mock has none. See `tests/helpers/privacy-settings.ts`.
+// Core's agent-and-org privacy resolver reads the org too (t-1010); this
+// file counts the provider policy's reads, so that resolver reads nothing.
+vi.mock('@/lib/orchestration/privacy/scope-settings', async (importOriginal) =>
+  (await import('@/tests/helpers/privacy-settings')).scopeSettingsReadingNothing(
+    await importOriginal()
+  )
+);
 vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
   getOrchestrationSettings: vi.fn(async () =>

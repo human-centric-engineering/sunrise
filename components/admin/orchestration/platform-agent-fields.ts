@@ -26,6 +26,7 @@ const TUNABLE_FIELD_PHRASES: Record<string, string> = {
   rateLimitRpm: 'rate limit',
   serviceTier: 'service tier',
   retentionDays: 'how long its conversations are kept',
+  privacyMode: 'how strictly its calls protect personal details',
 };
 
 export interface DescribeTunableFieldsOptions {

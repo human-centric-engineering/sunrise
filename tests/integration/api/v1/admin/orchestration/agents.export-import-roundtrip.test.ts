@@ -130,6 +130,7 @@ function makeDbAgent() {
     inputGuardMode: 'block',
     outputGuardMode: 'warn_and_continue',
     citationGuardMode: 'log_only',
+    privacyMode: 'pseudonymise',
     maxHistoryTokens: 8000,
     maxHistoryMessages: 40,
     retentionDays: 60,
@@ -319,6 +320,7 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(created.rateLimitRpm).toBe(30);
     expect(created.inputGuardMode).toBe('block');
     expect(created.outputGuardMode).toBe('warn_and_continue');
+    expect(created.privacyMode).toBe('pseudonymise');
     expect(created.maxHistoryTokens).toBe(8000);
     expect(created.retentionDays).toBe(60);
     expect(created.visibility).toBe('invite_only');

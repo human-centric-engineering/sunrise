@@ -95,6 +95,11 @@ import { createContext } from '@/lib/orchestration/engine/context';
 import { logger } from '@/lib/logging';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { turnEntriesSchema } from '@/lib/validations/orchestration';
+import {
+  createPrivacyScope,
+  currentPrivacyScope,
+  runInPrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -237,6 +242,50 @@ describe('executeAgentCall', () => {
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith({
       where: { slug: 'eval-judge-relevance', isActive: true, isSystem: true },
       include: { profile: true },
+    });
+  });
+
+  describe('privacy scope (§127 t-1010)', () => {
+    it("runs the agent's calls in a scope carrying its id, inside the step's", async () => {
+      const step = createPrivacyScope({ scopeId: 'execution:exec_1:step:step1', orgId: 'org_1' });
+      const seen: { agentId?: string; orgId?: string; parent?: unknown }[] = [];
+      mockChat.mockImplementation(async () => {
+        const s = currentPrivacyScope();
+        seen.push({ agentId: s?.agentId, orgId: s?.orgId, parent: s?.parent });
+        return { content: 'done', usage: { inputTokens: 1, outputTokens: 1 }, model: 'm' };
+      });
+
+      await runInPrivacyScope(step, () => executeAgentCall(makeStep(), makeCtx()));
+
+      // What the stage hands the resolvers as `PolicyInput.agentId` and `orgId`.
+      expect(seen).toEqual([{ agentId: MOCK_AGENT.id, orgId: 'org_1', parent: step }]);
+      // The step's own scope is not bound to the agent.
+      expect(step.agentId).toBeUndefined();
+    });
+
+    it('keeps two agents apart when an orchestrator runs them at once on one step scope', async () => {
+      const step = createPrivacyScope({ scopeId: 'execution:exec_1:step:orch' });
+      vi.mocked(prisma.aiAgent.findFirst).mockImplementation((async (query: {
+        where: { slug: string };
+      }) => ({ ...MOCK_AGENT, id: `agent_${query.where.slug}`, slug: query.where.slug })) as never);
+      const seen = new Map<string, string | undefined>();
+      mockChat.mockImplementation(async (messages: { content: string }[]) => {
+        // Let the other delegation start before this one reads its scope.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        seen.set(messages[messages.length - 1].content, currentPrivacyScope()?.agentId);
+        return { content: 'done', usage: { inputTokens: 1, outputTokens: 1 }, model: 'm' };
+      });
+      vi.mocked(interpolatePrompt).mockImplementation((template: string) => template);
+
+      await runInPrivacyScope(step, () =>
+        Promise.all([
+          executeAgentCall(makeStep({ agentSlug: 'hr', message: 'to hr' }), makeCtx()),
+          executeAgentCall(makeStep({ agentSlug: 'faq', message: 'to faq' }), makeCtx()),
+        ])
+      );
+
+      expect(seen.get('to hr')).toBe('agent_hr');
+      expect(seen.get('to faq')).toBe('agent_faq');
     });
   });
 

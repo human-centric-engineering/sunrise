@@ -107,6 +107,11 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  createPrivacyScope,
+  currentPrivacyScope,
+  runInPrivacyScope,
+} from '@/lib/orchestration/privacy/scope';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -260,6 +265,33 @@ describe('chat_turn — happy path', () => {
         metadata: expect.objectContaining({ source: 'chat_turn', historyTurnsLoaded: 4 }),
       })
     );
+  });
+
+  it("makes the provider call in a scope carrying the agent's id, inside the step's (§127 t-1010)", async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      messages: [],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+    const seen: { agentId?: string; parent?: unknown }[] = [];
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: {
+        chat: vi.fn(async () => {
+          const s = currentPrivacyScope();
+          seen.push({ agentId: s?.agentId, parent: s?.parent });
+          return mockChatResponse;
+        }),
+      } as never,
+      usedSlug: 'openai',
+    });
+    const step = createPrivacyScope({ scopeId: 'execution:exec_1:step:turn' });
+
+    await runInPrivacyScope(step, () => executeChatTurn(makeStep(), makeCtx()));
+
+    // What the stage hands the resolvers as `PolicyInput.agentId`.
+    expect(seen).toEqual([{ agentId: mockAgent.id, parent: step }]);
+    expect(step.agentId).toBeUndefined();
   });
 
   it('honours historyLimit=0 — sends only [system, user]', async () => {

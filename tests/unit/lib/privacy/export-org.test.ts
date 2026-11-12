@@ -81,6 +81,25 @@ beforeEach(() => {
 });
 
 describe('exportOrgData', () => {
+  it("carries the org's whole settings column, its LLM privacy settings included (§127 t-1010)", async () => {
+    // Protected terms are people's names an org chose; they are the org's
+    // data and leave with it. Read with no `select`, so a key added to
+    // `settings` is exported without anyone listing it.
+    const settings = {
+      privacy: {
+        minimumMode: 'pseudonymise',
+        protectedTerms: [{ value: 'Jane Hart', type: 'PERSON' }],
+      },
+      providers: { approved: ['id-anthropic'] },
+    };
+    db.org.findUnique.mockResolvedValue({ ...orgRow, settings });
+
+    const bundle = await exportOrgData({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(db.org.findUnique).toHaveBeenCalledWith({ where: { id: ORG } });
+    expect(bundle.org.settings).toEqual(settings);
+  });
+
   it('assembles the org row, the data sections and the attributions, described in meta', async () => {
     const bundle = await exportOrgData({ orgId: ORG, actorUserId: ADMIN });
 

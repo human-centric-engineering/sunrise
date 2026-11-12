@@ -358,6 +358,40 @@ describe('importOrchestrationConfig', () => {
     expect(result.agents.updated).toBe(0);
   });
 
+  it("restores an agent's LLM privacy mode, and inherits when the backup predates it (§127 t-1010)", async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({});
+    const { privacyMode: _absent, ...older } = makeAgent() as Record<string, unknown>;
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [
+          { ...makeAgent(), slug: 'hr', privacyMode: 'redact' },
+          { ...older, slug: 'faq' },
+        ],
+      },
+    };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const created = mockTx.aiAgent.create.mock.calls.map(
+      (call) => (call[0] as { data: { slug: string; privacyMode: unknown } }).data
+    );
+    expect(created.find((d) => d.slug === 'hr')?.privacyMode).toBe('redact');
+    expect(created.find((d) => d.slug === 'faq')?.privacyMode).toBeNull();
+  });
+
+  it('refuses a backup naming an agent privacy mode that is not one, rather than restore it', async () => {
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, agents: [{ ...makeAgent(), privacyMode: 'off' }] },
+    };
+
+    await expect(importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE)).rejects.toThrow();
+    expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
+  });
+
   it('does not leak the dropped `knowledgeCategories` column into create on a fresh target (#353)', async () => {
     // The CREATE branch spreads the parsed agent into `tx.aiAgent.create`.
     // `knowledgeCategories` is kept on the wire (back-compat) but was dropped from

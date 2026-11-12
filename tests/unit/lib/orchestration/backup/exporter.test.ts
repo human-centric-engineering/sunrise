@@ -598,6 +598,26 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.agents[0].knowledgeAccessMode).toBe('restricted');
   });
 
+  it.each([
+    ['its mode', 'redact', 'redact'],
+    ['none for no mode', null, null],
+    // The source agent refuses every call until a mode is chosen; a restore
+    // inherits, as a settings mode that is not one is left out (§127 t-1010).
+    ['none for a stored value that is not a mode', 'off', null],
+  ])("exports an agent's LLM privacy mode as %s", async (_label, stored, exported) => {
+    mockFindMany
+      .mockResolvedValueOnce([{ ...agentRow, privacyMode: stored }]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    expect(payload.data.agents[0].privacyMode).toBe(exported);
+  });
+
   it('emits knowledgeAccessMode as "full" for any non-restricted value', async () => {
     // Any value that is not 'restricted' coerces to 'full' (the else branch)
     const fullAgentRow = {

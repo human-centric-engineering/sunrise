@@ -5,7 +5,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   basePolicyFromSettings,
+  isTighteningMode,
   parseEmbeddingsPolicy,
+  parseTighteningMode,
+  PRIVACY_MODE_LABELS,
+  PRIVACY_TIGHTENING_MODES,
   parseIgnoredEntityTypes,
   parsePrivacyMode,
   PRIVACY_MODES_AVAILABLE,
@@ -20,6 +24,33 @@ describe('parsePrivacyMode', () => {
     for (const bad of ['pseudonymize', 'OFF', '', null, undefined, 1]) {
       expect(parsePrivacyMode(bad)).toBeNull();
     }
+  });
+});
+
+describe('the modes an agent or an org can require (t-1010)', () => {
+  it('are every available mode but off, in strictness order', () => {
+    expect(PRIVACY_TIGHTENING_MODES).toEqual(PRIVACY_MODES_AVAILABLE.filter((m) => m !== 'off'));
+  });
+
+  it('read null and undefined as none set', () => {
+    expect(parseTighteningMode(null)).toBeNull();
+    expect(parseTighteningMode(undefined)).toBeNull();
+  });
+
+  it('read each mode as itself', () => {
+    for (const mode of PRIVACY_TIGHTENING_MODES) expect(parseTighteningMode(mode)).toBe(mode);
+  });
+
+  it.each(['off', 'Block', 'strict', 3, {}])(
+    'throw on a stored %j rather than read it as none: it may have been stricter',
+    (raw) => {
+      expect(() => parseTighteningMode(raw)).toThrow('stored privacy mode is not a mode');
+      expect(isTighteningMode(raw)).toBe(false);
+    }
+  );
+
+  it('have a label each', () => {
+    for (const mode of PRIVACY_MODES_AVAILABLE) expect(PRIVACY_MODE_LABELS[mode]).toBeTruthy();
   });
 });
 

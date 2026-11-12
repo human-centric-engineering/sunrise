@@ -567,7 +567,8 @@ export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
  * reconcile afterwards. Ruling on §116 (2026-09-29): provider, model and its
  * fallbacks and config, what the agent may spend, how fast it may be called,
  * and how long its conversations are kept. Its OpenAI service tier joined them
- * with t-911: a choice between cost and speed, like the budget.
+ * with t-911: a choice between cost and speed, like the budget. Its LLM
+ * privacy mode joined them with t-1010: how an org protects its own data.
  */
 export type PlatformAgentOrgTunableField = {
   [
