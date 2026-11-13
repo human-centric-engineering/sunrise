@@ -756,7 +756,17 @@ jobs:
     # files change; on push to main it runs as the production-image gate whenever
     # the push touched code at all (a docs-only push skips it — `code == 'true'`
     # gates both branches of the condition below).
+    #
+    # Economics knob 7 — repo variable `CI_DOCKER`. Unset (default): this job
+    # runs under its own gating above. `"off"`: the job is skipped everywhere —
+    # for a fork that deploys by other means (a platform's Git integration) and
+    # never ships the image. `ci-status` treats a skipped job as a pass, so
+    # nothing wedges. Actions compares strings case-insensitively, so `OFF`
+    # works too; any other value (`false`, `0`) leaves the job on. Delete the
+    # variable to bring it back. See `.context/architecture/ci.md`
+    # Knob 7.
     if: >-
+      vars.CI_DOCKER != 'off' &&
       needs.config.outputs.code == 'true' &&
       (github.event_name == 'push' || needs.config.outputs.docker == 'true')
     env:

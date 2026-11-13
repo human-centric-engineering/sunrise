@@ -11,9 +11,17 @@ Follow these steps precisely, in order:
 
 ### Step 1: Run automated checks
 
-Run `npm run validate` (CHANGELOG structure + type-check + lint + format (Prettier + Prisma)). Capture and report any failures.
+Run `npm run validate:changed`. Capture and report any failures.
 
-`validate` runs the CHANGELOG check **first** and short-circuits on failure, so a structural problem in `CHANGELOG.md` will report as a failure with nothing after it — that is the check working, not the type-check being skipped. Fix it and re-run rather than working around it; the rules and their reasoning are in `scripts/ci/changelog-structure.ts`. Note the history rule needs `origin/main`, so run `git fetch origin main` first if the local ref is stale.
+It is `npm run validate` (CHANGELOG structure + Node version + type-check + lint + format (Prettier + Prisma)) with one difference: **ESLint and Prettier check only the files this branch changed**, against the merge base with `origin/main`, plus staged, unstaged and untracked files. Every other step, the whole-program type-check included, runs exactly as in `validate`. A gate that re-runs after every review fix should not lint and format the whole tree each time (#863).
+
+It goes whole-tree by itself when the branch changes a lint or format config, a root `tsconfig*.json` or `package-lock.json`, and says which file did it, because those move results in files the branch never touched. Like the scoped test run below, it **fails closed**: `could not run` means it could not tell what changed, which is not a pass. Run `git fetch origin main` and re-run.
+
+Run the whole-tree `npm run validate` instead after a merge from `main` or upstream, and before a release cut. The scoped lint cannot see a type-aware rule firing in an **unchanged** file because a changed file's types moved (an export becoming `any` trips `no-unsafe-*` in its callers). CI's `Lint & format` job lints the whole tree on every PR and is the backstop for that.
+
+**To lint a file by hand, keep `--cache`** (`npx eslint --cache --cache-strategy content <file>`). ESLint deletes `.eslintcache` when run without it, so the next whole-tree lint runs cold. On a large fork a cold run can abort with exit 134 and, because an aborted run writes no cache, keep aborting until the cache is rebuilt (`.context/architecture/lint-toolchain.md`).
+
+`validate:changed` runs the CHANGELOG check **first** and short-circuits on failure, so a structural problem in `CHANGELOG.md` will report as a failure with nothing after it — that is the check working, not the type-check being skipped. Fix it and re-run rather than working around it; the rules and their reasoning are in `scripts/ci/changelog-structure.ts`. Note the history rule needs `origin/main`, so run `git fetch origin main` first if the local ref is stale.
 
 Then run `npm run test:changed:coverage`. Capture and report any test failures.
 
@@ -326,7 +334,7 @@ Flag imports of `@/lib/prisma`, `@/lib/db`, or `@prisma/client` — and any usag
 npm run check:router-mocks
 ```
 
-Run by `npm run validate` (Step 1) and by CI, so this is normally already answered by the time you get here. Run it directly only when Step 1 was skipped. It must print `Router mocks OK (N files ... scanned)`; any `file:line` it prints is a finding.
+Run by `npm run validate:changed` (Step 1) and by CI, so this is normally already answered by the time you get here. Run it directly only when Step 1 was skipped. It must print `Router mocks OK (N files ... scanned)`; any `file:line` it prints is a finding.
 
 Flags a router built by hand instead of with `createMockRouter()` from `@/tests/types/mocks`. **Repo-wide, not over the diff**: both invariants are meant to hold at zero, so a whole-repo count _is_ the check, and a diff-scoped one is blind to every pre-existing violation until someone happens to re-touch those exact lines. That blindness is not hypothetical twice over: the first version of this check was diff-scoped and could not see the 23 files it was written to catch, and its replacement reported CLEAN over 16 complete literals and 17 casts it could not parse in a fork (#936).
 
@@ -342,7 +350,7 @@ Nothing type-checks a `vi.mock` factory, so neither form fails the build. This s
 npm run check:save-errors
 ```
 
-Run by `npm run validate` (Step 1) and by CI, so this too is normally answered by Step 1. It must print `Save-error boxes OK (N files ... scanned)`; any `file:line` it prints is a finding.
+Run by `npm run validate:changed` (Step 1) and by CI, so this too is normally answered by Step 1. It must print `Save-error boxes OK (N files ... scanned)`; any `file:line` it prints is a finding.
 
 A failed save is shown one way: `<SaveError>`, fed by `useSaveFailure()`, beside the button that was pressed (§124, `.context/ui/form-errors.md`). This flags a component that renders its own red or destructive box around a state a **mutation**'s failure set: a `catch` after `apiClient.post|patch|put|delete`, a `fetch` with a method, or an `authClient` call that isn't a read; a `.catch()` on such a chain; better-auth's `onError`; or either branch of an `if` on such a call's result. A load error (`apiClient.get`, a bare `fetch`) is not reported, and nor is anything drawn by `<SaveError>` or `<FormError>`. **Repo-wide**, for 4m's reason.
 

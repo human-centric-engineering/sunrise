@@ -132,6 +132,12 @@ stays gated at the **step** level (`ESLint (code changes only)`) — docs-only P
 run only the Prettier check and the CHANGELOG check below, and stay cheap
 (~1m35s vs ~8m for a cold code PR).
 
+**It is also the whole-tree backstop for the local gate.** `/pre-pr` runs
+`npm run validate:changed`, which lints and formats only the files a branch
+changed (#863). That cannot see a type-aware rule firing in an unchanged file
+because a changed file's types moved. This job lints the whole tree on every
+code PR, so that case is caught before merge, on the PR rather than locally.
+
 ### The `CHANGELOG structure` step
 
 Ungated for the same reason as `format:check`: a CHANGELOG-only PR is
@@ -684,6 +690,27 @@ gh variable set CI_NEXT_CACHE_MAX_MB --body 4096
 Raise it if your fresh cache is already near the limit — the step's log line
 shows the size on every run, and a limit below a fresh cache's size makes every
 build cold. A value that is not a whole number logs a warning and uses 2048.
+
+### Knob 7: `CI_DOCKER`
+
+The other knobs tune the checks; this one switches off the most expensive job
+outright. `docker` (Docker Build + Stack Smoke) runs on every code push to
+`main` and on any PR touching a Docker-relevant file. That is right for a
+deployment that ships the image. A fork that deploys through a platform's Git
+integration (Vercel, say) never builds or runs that image anywhere, so the job
+gates nothing it ships, and it still pays a 1.4–1.9GB cache footprint and up to
+30 minutes on a 2-core runner for it.
+
+```bash
+gh variable set CI_DOCKER --body off
+```
+
+Unset (default): the job runs under its own gating. `"off"`: skipped
+everywhere; `ci-status` already passes on `skipped` (the docs-only path depends
+on it), so nothing wedges. The match ignores case (Actions compares strings
+case-insensitively), but any other value, `false` or `0` included, leaves the
+job on. Delete the variable to bring the job back, and do so before you ever deploy
+the image.
 
 ## Private-fork correctness (GHAS-dependent jobs)
 

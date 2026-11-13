@@ -189,6 +189,22 @@ describe('CSP app seam (lib/app/csp.ts)', () => {
     });
   });
 
+  it("never lets a fork put 'unsafe-eval' into the production header (#864)", async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const { getCSP } = await loadHeadersWith({
+      appScriptSrc: ["'unsafe-eval'", 'https://challenges.cloudflare.com'],
+    });
+
+    for (const csp of [getCSP(), getCSP('abc123')]) {
+      expect(csp).not.toContain('unsafe-eval');
+      expect(csp).toContain('https://challenges.cloudflare.com');
+    }
+    expect(warn).toHaveBeenCalledWith(
+      'Ignoring invalid script-src origin from lib/app/csp.ts',
+      expect.objectContaining({ origin: "'unsafe-eval'" })
+    );
+  });
+
   it('keeps the production nonce alongside a fork script origin', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     const { getCSPConfig } = await loadHeadersWith({

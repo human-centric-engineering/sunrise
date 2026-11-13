@@ -445,6 +445,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'no longer shares.',
   },
   {
+    path: 'tests/unit/scripts/ci/validate-changed.test.ts',
+    reason:
+      'reads `package.json` as text to hold `validate:changed` equal to ' +
+      '`validate` with only the lint and Prettier steps swapped, and its cache ' +
+      'flags equal to `lint` and `format:check`. A step added to `validate` ' +
+      'alone is a `package.json`-only edit that no import chain connects to ' +
+      'this test, and it would leave `/pre-pr` silently skipping that step.',
+  },
+  {
     path: 'tests/unit/app/app-icons.test.ts',
     reason:
       'checks `app/favicon.ico` / `app/icon.svg` exist and that `public/` holds no ' +

@@ -211,9 +211,14 @@ type-aware `eslint .` measured **18 Aug 2026**:
 | Repo                  | TS files | Prisma models | Cold lint peak | Minimum viable cap |
 | --------------------- | -------- | ------------- | -------------- | ------------------ |
 | Sunrise 0.9.0         | 2,260    | 61            | 4.05 GiB       | fits 4288, by ~2%  |
-| HCE Hub               | 2,653    | 75            | exit 134       | 5120               |
+| HCE Hub (9 Nov 2026)  | 4,012    | 94            | exit 134       | 8192               |
 | Daybreak              | 2,777    | 80            | exit 134       | 5120               |
 | ConQuest (~1.9x base) | 4,200    | 115           | exit 134       | 6144               |
+
+The HCE Hub row was re-measured on 9 Nov 2026 (it read 2,653 files and 5120 on
+18 Aug). At 4,012 files it aborts at the 6144 local default and passes at
+`NODE_HEAP_MB=8192`, in 4 to 5 minutes cold: a fork grows past the default, and
+the fix is to set `NODE_HEAP_MB`, not to wait for upstream to raise it.
 
 Base Sunrise clears the default by about 2%; every fork with real code on top
 does not. The failure is **exit 134** — SIGABRT, no message naming memory, no
@@ -226,6 +231,16 @@ warm, the same command needs 0.41 GiB and 2.3s versus 4.17 GiB and 93s. ESLint
 invalidates its entire cache when a plugin version changes, so a dependency bump
 makes the next run cold for every file, and an aborted run never writes a cache
 to warm the one after it.
+
+**A stray `eslint` without `--cache` empties the cache too.** ESLint deletes
+`.eslintcache` when run without `--cache` (its documented behaviour), so linting
+one file by hand with a bare `npx eslint <file>` makes the next whole-tree
+`npm run lint` cold. On a fork near its cap that run aborts, writes no cache,
+and every later run aborts the same way until `NODE_HEAP_MB` is raised or
+`npm run lint:ci` rebuilds the cache (#863). Nothing in the exit-134 output
+points at the cause. Lint by hand with `--cache --cache-strategy content`, or
+run `npm run validate:changed`, which does, and lints only what the branch
+changed.
 
 **The cap must never override an explicit one.** A command-line
 `--max-old-space-size` beats one in `NODE_OPTIONS` in both directions, so

@@ -154,6 +154,26 @@ describe('Security Headers', () => {
 
       expect(csp).toContain(`nonce-${testNonce}`);
     });
+
+    // The invariant `.context/security/overview.md` states: production never
+    // allows eval. Asserted on the BUILT header, with and without a nonce, and
+    // with an analytics provider adding script hosts — the config-object check
+    // in `getCSPConfig` above cannot see a regression made while the string is
+    // assembled (#864). An eval-using client chunk is fixed at the import,
+    // never by loosening this.
+    it.each([
+      ['no nonce', undefined],
+      ['a nonce', 'n0nce123'],
+    ])('never allows eval in the production header (%s)', (_label, nonce) => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+
+      const csp = getCSP(nonce);
+
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain('posthog.com');
+      expect(csp).not.toContain('unsafe-eval');
+    });
   });
 
   describe('setSecurityHeaders', () => {

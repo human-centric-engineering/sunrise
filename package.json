@@ -33,6 +33,7 @@
     "fix:lockfile-libc": "tsx scripts/ci/fix-lockfile-libc.ts",
     "fix:dom-tests": "tsx scripts/ci/mark-dom-tests.ts",
     "validate": "npm run check:changelog && npm run check:node-version && npm run check:client-env && npm run check:router-mocks && npm run check:save-errors && npm run type-check && npm run lint && npm run format:check && npm run format:prisma:check",
+    "validate:changed": "npm run check:changelog && npm run check:node-version && npm run check:client-env && npm run check:router-mocks && npm run check:save-errors && npm run type-check && node scripts/ci/validate-changed.mjs && npm run format:prisma:check",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",

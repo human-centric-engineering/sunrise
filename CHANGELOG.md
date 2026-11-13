@@ -295,6 +295,44 @@ release process.
   ask an existing account to sign in rather than set a password.
   `checkInvitationInto()` now returns the org instead of `void`.
 
+- **`CI_DOCKER`: a repo variable that switches off the `docker` CI job**
+  (t-1019, #802). Docker Build + Stack Smoke is the slowest CI job, and until
+  now a fork could only stop it by editing `ci.yml`. Unset, the job runs as
+  before. **Forks:** if you deploy by other means and never ship the image,
+  run `gh variable set CI_DOCKER --body off`. If you carry this clause as a fork
+  edit today, take upstream's version and drop yours. See
+  `.context/architecture/ci.md` Knob 7.
+
+- **`npm run validate:changed`: `validate` with ESLint and Prettier scoped to
+  the branch's changed files, now what `/pre-pr` runs** (t-1021, #863). A gate
+  re-run after every review fix no longer lints and formats the whole tree.
+  Every other step, the whole-program type-check included, is unchanged. The
+  scope is the diff against the merge base with `origin/main` plus staged,
+  unstaged and untracked files. It fails closed when it cannot resolve the base.
+  A change to a lint or format config, a root `tsconfig*.json` or
+  `package-lock.json` widens that tool to the whole tree. CI's `Lint & format`
+  job still lints everything. Run whole-tree `validate` after a merge from main
+  or upstream and before a release cut. **Forks:** if you carry your own
+  `validate:changed` script or edit `/pre-pr` to call one, take upstream's and
+  drop yours. Lint a file by hand only with `--cache`: a bare `eslint <file>`
+  deletes `.eslintcache`, and on a large fork the next cold whole-tree lint can
+  abort with exit 134.
+
+- **Production CSP: the no-eval rule is documented and tested on the built
+  header, and `server-only` modules load in unit tests** (t-1020, #864). An
+  eval-using client dependency passes in development and fails only in
+  production. `.context/security/overview.md` now says why, where it usually
+  comes from, how to find the chunk with `npx next analyze`, and to fix the
+  import rather than the policy. `vitest.config.ts` aliases `server-only` to an
+  empty stub, so marking a module `import 'server-only'` no longer costs its
+  tests. New tests assert the built production header, with and without a
+  nonce, never contains `unsafe-eval`, and a fork listing it in
+  `lib/app/csp.ts` is dropped. **Forks:** if you carry the `server-only` alias,
+  its stub or the built-string test as edits, take upstream's and drop yours.
+  If you carry an `ANALYZE=true` `@next/bundle-analyzer` wrap in
+  `next.config.js`, it does not analyse a Turbopack build. Use
+  `npx next analyze`.
+
 ### Changed
 
 - **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`

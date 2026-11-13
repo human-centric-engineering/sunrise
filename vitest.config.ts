@@ -288,6 +288,12 @@ export default defineConfig({
       // Aliasing it to the manual mock stub allows RedisRateLimitStore to be
       // imported in unit tests without a real Redis connection.
       ioredis: path.resolve(__dirname, './tests/mocks/ioredis.ts'),
+      // `server-only` is not installed on its own: Next resolves it from its
+      // compiled copy at build time, which is where its guarantee lives (a
+      // client graph reaching the module fails the build). Vitest has no such
+      // copy, so without this a module marked `import 'server-only'` cannot be
+      // imported by its own unit tests (#864).
+      'server-only': path.resolve(__dirname, './tests/mocks/server-only.ts'),
       // Allow tests to import mock helpers via @mocks/ alias
       '@mocks': path.resolve(__dirname, './tests/mocks'),
     },
