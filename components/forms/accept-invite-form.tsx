@@ -227,8 +227,6 @@ export function AcceptInviteForm() {
   const onSubmit = async (data: AcceptInvitationInput) => {
     try {
       setIsLoading(true);
-      // A new attempt answers an earlier OAuth failure.
-      setLoadError(null);
 
       // Submit to accept-invite endpoint (creates user, verifies email, sets role)
       await apiClient.post('/api/auth/accept-invite', {
@@ -366,7 +364,13 @@ export function AcceptInviteForm() {
           <form
             method="post"
             noValidate
-            onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+            onSubmit={(e) => {
+              // A new attempt answers an earlier OAuth failure, blocked or not:
+              // a blocked save's summary clears itself as fields are fixed
+              // (t-1013), and the old OAuth error must not come back then.
+              setLoadError(null);
+              save.submit(handleSubmit(onSubmit, save.invalid))(e);
+            }}
             className="space-y-4"
           >
             {/* Hidden Token Field */}

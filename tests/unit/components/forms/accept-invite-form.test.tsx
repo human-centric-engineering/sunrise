@@ -821,6 +821,30 @@ describe('components/forms/accept-invite-form', () => {
       });
     });
 
+    it('keeps the OAuth error gone after a blocked press, once the fields are fixed', async () => {
+      // t-1013 clears a blocked save's summary as fields are fixed. The OAuth
+      // error the press answered must not come back under a valid form.
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'token=abc123&email=test@example.com&error=some_error'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+      render(<AcceptInviteForm />);
+      await waitFor(() => expect(screen.getByText(/unable to sign in/i)).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /activate account/i }));
+      expect(await screen.findByText(/fields? needs? fixing/i)).toBeInTheDocument();
+      await user.type(screen.getByLabelText(/^password$/i), 'ValidPass123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'ValidPass123!');
+
+      await waitFor(() =>
+        expect(screen.queryByText(/fields? needs? fixing/i)).not.toBeInTheDocument()
+      );
+      expect(screen.queryByText(/unable to sign in/i)).not.toBeInTheDocument();
+    });
+
     it('should preserve OAuth error after invitation load', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');

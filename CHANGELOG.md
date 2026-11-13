@@ -498,7 +498,11 @@ release process.
   which held their failure themselves, move onto `useSaveFailure` to get it. **A fork's own forms
   wired that way get the fix only once they pass `errors`.** The sign-up,
   login and both reset-password forms now call `useForm` before
-  `useSaveFailure`; a fork that edited them should take that order. See
+  `useSaveFailure`; a fork that edited them should take that order. **Check
+  any UI you show only while `!save.failure`**: a blocked save's summary now
+  clears itself, so that UI comes back with no press. On sign-up, login and
+  accept-invite, an earlier OAuth error did exactly that; it is now cleared or
+  hidden on the first press. See
   `.context/ui/form-errors.md`, "Recipe: a react-hook-form form".
 - **An embedding model whose vectors are not the expected width is refused
   with a message that names it (t-1011).** `embedText()` and `embedBatch()` throw a
