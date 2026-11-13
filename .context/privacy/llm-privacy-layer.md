@@ -225,8 +225,10 @@ An agent and an org can each require more protection than the install gives.
   privacy refusal (the `local_only` policy, an agent's mode that is not a
   mode, an app's policy resolver), a provider refusal (an org's provider
   policy), or an error (a local model rejecting a long reply). The wait is
-  an hour after the first, doubling each time, at most a week
-  (`embeddingRetryDelayMs()`). The backfill reads replies that never failed
+  15 minutes after the first, one backfill interval, so a one-off error (a
+  provider's rate limit) is picked up by the next run as before; then it
+  doubles each time, at most a week from the eleventh failure on
+  (`embeddingRetryDelayMs()`; owner ruling 2026-11-13). The backfill reads replies that never failed
   first, newest first, and gives whatever room is left to those whose
   retry time has come, the earliest first, so none can fill the batch. A
   reply that can never be embedded settles to one attempt a week, so an

@@ -365,6 +365,8 @@ describe('backfillMissingEmbeddings', () => {
     }
 
     const HOUR = 60 * 60 * 1000;
+    /** The first wait: one backfill interval (owner ruling 2026-11-13). */
+    const FIRST = 15 * 60 * 1000;
 
     function reply(id: string, createdAt: Date): StoredReply {
       return {
@@ -471,7 +473,7 @@ describe('backfillMissingEmbeddings', () => {
       expect(store[1].embedded).toBe(true);
       expect(prisma.aiMessage.updateMany).toHaveBeenCalledTimes(1);
       refused.clear();
-      vi.setSystemTime(Date.now() + HOUR);
+      vi.setSystemTime(Date.now() + FIRST);
       vi.mocked(prisma.aiMessage.updateMany).mockClear();
 
       expect(await backfillMissingEmbeddings()).toMatchObject({ processed: 1 });
@@ -517,10 +519,12 @@ describe('backfillMissingEmbeddings', () => {
       });
     });
 
-    it('waits an hour after the first failure, doubling each time, at most a week', () => {
-      expect([1, 2, 3, 4].map(embeddingRetryDelayMs)).toEqual([HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR]);
-      expect(embeddingRetryDelayMs(8)).toBe(128 * HOUR);
-      expect(embeddingRetryDelayMs(9)).toBe(EMBEDDING_RETRY_MAX_MS);
+    it('waits one backfill interval after the first failure, doubling each time, at most a week', () => {
+      // A one-off error is picked up by the next 15-minute run, as before.
+      expect([1, 2, 3, 4].map(embeddingRetryDelayMs)).toEqual([FIRST, 2 * FIRST, HOUR, 2 * HOUR]);
+      expect(embeddingRetryDelayMs(10)).toBe(512 * FIRST);
+      expect(embeddingRetryDelayMs(11)).toBe(EMBEDDING_RETRY_MAX_MS);
+      expect(embeddingRetryDelayMs(9)).toBe(256 * FIRST);
       expect(embeddingRetryDelayMs(50)).toBe(EMBEDDING_RETRY_MAX_MS);
       expect(EMBEDDING_RETRY_MAX_MS).toBe(7 * 24 * HOUR);
     });
@@ -576,7 +580,7 @@ describe('backfillMissingEmbeddings', () => {
       resolverRefuses(refused);
 
       expect(await backfillMissingEmbeddings()).toMatchObject({ skipped: 1 });
-      vi.setSystemTime(Date.now() + HOUR - 1000);
+      vi.setSystemTime(Date.now() + FIRST - 1000);
       expect(await backfillMissingEmbeddings()).toMatchObject({
         processed: 0,
         failed: 0,
@@ -603,7 +607,7 @@ describe('backfillMissingEmbeddings', () => {
         waits.push(store[0].embeddingRetryAt!.getTime() - Date.now());
         vi.setSystemTime(store[0].embeddingRetryAt!);
       }
-      expect(waits).toEqual([HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR]);
+      expect(waits).toEqual([FIRST, 2 * FIRST, 4 * FIRST, 8 * FIRST]);
       expect(store[0].embeddingFailures).toBe(4);
     });
 
@@ -667,15 +671,15 @@ describe('backfillMissingEmbeddings', () => {
       });
       await vi.waitFor(() => expect(prisma.aiMessage.updateMany).toHaveBeenCalled());
 
-      // The first failure: an hour's wait, from when it failed.
+      // The first failure: one backfill interval's wait, from when it failed.
       const [[{ where, data }]] = vi.mocked(prisma.aiMessage.updateMany).mock.calls as unknown as [
         [{ where: { id: string }; data: { embeddingFailures: number; embeddingRetryAt: Date } }],
       ];
       expect(where).toEqual({ id: 'msg-live' });
       expect(data.embeddingFailures).toBe(1);
       const wait = data.embeddingRetryAt.getTime() - before;
-      expect(wait).toBeGreaterThanOrEqual(HOUR);
-      expect(wait).toBeLessThan(HOUR + 5000);
+      expect(wait).toBeGreaterThanOrEqual(FIRST);
+      expect(wait).toBeLessThan(FIRST + 5000);
     });
 
     it('warns, and goes on, when giving a reply its retry time fails', async () => {

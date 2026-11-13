@@ -107,21 +107,26 @@ export interface BackfillResult {
   filledBatch: boolean;
 }
 
-/** The wait after a reply's first failed or refused embedding (t-1016). */
-export const EMBEDDING_RETRY_BASE_MS = 60 * 60 * 1000;
+/**
+ * The wait after a reply's first failed or refused embedding (t-1016): one
+ * backfill interval, so a one-off error (a provider's rate limit) is picked
+ * up by the next run, as it was before any failure was backed off.
+ */
+export const EMBEDDING_RETRY_BASE_MS = 15 * 60 * 1000;
 
 /** The longest wait between attempts, however many have failed. */
 export const EMBEDDING_RETRY_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * How long to wait after the `failures`-th failed or refused attempt in a
- * row: an hour, doubling each time, at most a week (owner ruling 2026-11-12:
- * back off everything). A reply that can never be embedded, say an agent's
- * reply under `local_only` with no local model, settles to one attempt a week,
- * so an install where nothing can be embedded does little: at a week's wait
- * and a batch of 25 a quarter-hour, up to about 16,800 such replies per org
- * fit, and only a backlog larger than that keeps every run busy. One that is fixed
- * is tried again within its current wait.
+ * row: 15 minutes, doubling each time, at most a week from the eleventh
+ * failure on (owner rulings: back off everything, 2026-11-12; first wait one
+ * backfill interval, 2026-11-13). A reply that can never be embedded, say an
+ * agent's reply under `local_only` with no local model, settles to one
+ * attempt a week, so an install where nothing can be embedded does little:
+ * at a week's wait and a batch of 25 a quarter-hour, up to about 16,800 such
+ * replies per org fit, and only a backlog larger than that keeps every run
+ * busy. One that is fixed is tried again within its current wait.
  */
 export function embeddingRetryDelayMs(failures: number): number {
   return Math.min(EMBEDDING_RETRY_BASE_MS * 2 ** Math.max(failures - 1, 0), EMBEDDING_RETRY_MAX_MS);
@@ -231,7 +236,7 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
       await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content), scopes);
       processed++;
       // Embedded after failing: its count starts again, so a later failure
-      // (once `embeddings:reset` drops the embedding, say) waits an hour, not
+      // (once `embeddings:reset` drops the embedding, say) waits 15 minutes, not
       // the week its old count would give it.
       if (msg.embeddingFailures > 0) await clearDeferral(msg.id);
     } catch (err) {

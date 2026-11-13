@@ -58,7 +58,7 @@ release process.
   LLM privacy layer refuses, no longer holds the backfill back (§127,
   t-1016).** **Migration:** `AiMessage` gains `embeddingRetryAt` (nullable)
   and `embeddingFailures` (default 0). Any failed or refused attempt sets
-  them: an hour's wait after the first, doubling each time, at
+  them: a 15-minute wait after the first, doubling each time, at
   most a week (`embeddingRetryDelayMs()`). `backfillMissingEmbeddings()`
   reads replies that never failed first, then due ones, and no longer leaves
   out in SQL the agents it expected the privacy stage to refuse. The
