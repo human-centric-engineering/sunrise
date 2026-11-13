@@ -63,10 +63,16 @@ const mockLogCost = vi.mocked(logCost);
 
 type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
 
+/**
+ * A full-width vector whose first values tag it. The embedder refuses vectors
+ * of another width than the provider's (t-1011), so a fake must return 1536.
+ */
+const tagged = (...head: number[]): number[] => [...head, ...new Array(1536 - head.length).fill(0)];
+
 /** A provider whose `embedMany` returns one vector per text and reports 12 input tokens per call. */
 function installEmbedMany() {
   const impl: EmbedManyFn = async (texts) => ({
-    embeddings: texts.map(() => [0.1, 0.2]),
+    embeddings: texts.map(() => tagged(0.1, 0.2)),
     inputTokens: 12,
   });
   const embedMany = vi.fn(impl);
@@ -147,7 +153,7 @@ describe('embedText cost attribution', () => {
     // Guards against the fix turning attribution into a requirement: the
     // embedding vector is the contract, accounting is best-effort.
     const result = await embedText('a query');
-    expect(result.embedding).toEqual([0.1, 0.2]);
+    expect(result.embedding).toEqual(tagged(0.1, 0.2));
   });
 });
 
@@ -168,7 +174,7 @@ describe('embedText cost row provenance', () => {
 
   it('estimates ceil(chars / 4) input tokens when the provider reports none', async () => {
     const embedMany = vi.fn<EmbedManyFn>(async (texts) => ({
-      embeddings: texts.map(() => [0.1, 0.2]),
+      embeddings: texts.map(() => tagged(0.1, 0.2)),
     }));
     vi.mocked(getProvider).mockResolvedValue({
       name: 'fake',

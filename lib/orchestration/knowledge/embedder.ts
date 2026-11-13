@@ -236,21 +236,20 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
  * same reason, so a rule already written in a fork covers this path for free.
  *
  * A denial skips the arm and the chain tries the next one — the audio loop's
- * shape, and the right one here: a fork that permits a local embedder but not
- * Voyage should get the local embedder, not a failure. A rule that permits
- * nothing runs off the end of the chain, which is fail-closed.
+ * shape, and the right one here: a fork that permits OpenAI but not Voyage
+ * should get OpenAI, not a failure. A rule that permits nothing runs off the
+ * end of the chain, which is fail-closed.
  */
 async function permittedForEmbedding(
   slug: string,
   refusals: string[],
   seen: Map<string, boolean>
 ): Promise<boolean> {
-  // A row can match two arms — an Ollama row is `isLocal` AND
-  // `providerType: 'openai-compatible'`, which is the common local setup, not
-  // an exotic one. Without this the rule is evaluated twice for the same slug
-  // on every refusal, on the per-query knowledge-search path, and the slug is
-  // recorded as two refusals. The seam's own guidance anticipates rules that do
-  // policy lookups, so asking one twice per query is a cost worth not paying.
+  // One answer per slug per pass. Should a row ever match two arms, the rule
+  // is not evaluated twice for it on the per-query knowledge-search path, nor
+  // its slug recorded as two refusals. The seam's own guidance anticipates
+  // rules that do policy lookups, so asking one twice per query is a cost
+  // worth not paying.
   const cached = seen.get(slug);
   if (cached !== undefined) return cached;
 
@@ -275,14 +274,25 @@ async function permittedForEmbedding(
  * Preference order:
  *   1. `AiOrchestrationSettings.activeEmbeddingModelId` — the explicit
  *      operator pick, with dim and model coming from `AiProviderModel`.
- *   2. The legacy provider-priority chain: Voyage → local → OpenAI-
- *      compatible, over active provider rows. Used until the operator
+ *   2. The legacy provider-priority chain: Voyage → OpenAI-compatible, over
+ *      active provider rows that are not local. Used until the operator
  *      picks a model, and as a safety net if the picked model becomes
  *      invalid (deactivated, dim cleared, provider config removed).
  *
- * The fallback always reports `FALLBACK_DIMENSIONS` (1536) because all
- * of its concrete branches are configured to produce 1536-dim vectors
- * today.
+ * The fallback always reports `FALLBACK_DIMENSIONS` (1536), the size
+ * `embeddings:reset` gives the columns when no model is picked. Voyage and
+ * OpenAI's `text-embedding-3-*` are asked for that size.
+ *
+ * **The chain never picks a local provider** (t-1011). No local model makes
+ * 1536-dimension vectors (`nomic-embed-text` makes 768), so a local arm here
+ * could only fail, and it did: adding Ollama to try a local chat model broke
+ * every upload and search of an install embedding with OpenAI. A local model is
+ * used for embeddings only once it is picked, with the columns reset to its
+ * width. An install with only a local provider and no pick is told so (see
+ * the end of this function). Skipping it sends no text anywhere it was not
+ * going already: under the privacy layer's `local_only` policy the stage
+ * refuses the OpenAI call, and the privacy settings page warns that the
+ * embedder is not local.
  *
  * **Every arm of the chain is filtered by the provider-eligibility seam; the
  * operator's pin at (1) is not.** That is the same line the rest of the tree
@@ -354,36 +364,21 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     };
   }
 
-  // Prefer a local provider for embeddings (cheaper/faster). Local
-  // models (nomic-embed-text) produce a fixed native dim and ignore
-  // `dimensions`; `sendDimensions: false` keeps us from sending it.
-  for (const localProvider of providers) {
-    // Shape first, policy second: a row with no `baseUrl` is unusable whatever
-    // the rule says, and consulting the rule for it would record a refusal that
-    // never happened and steer the terminal error to the wrong message.
-    if (!localProvider.isLocal || !localProvider.baseUrl) continue;
-    if (!(await permittedForEmbedding(localProvider.slug, refusals, seen))) continue;
-    logger.debug('Embedding provider resolved by the fallback chain', {
-      arm: 'local',
-      providerSlug: localProvider.slug,
-    });
-    return {
-      slug: localProvider.slug,
-      model: 'nomic-embed-text',
-      dimensions: FALLBACK_DIMENSIONS,
-      sendDimensions: false,
-      isLocal: true,
-      providerType: localProvider.providerType,
-      source: 'primary',
-    };
-  }
-
   // Fall back to OpenAI-compatible provider. Without an explicit
   // active-model pick, only the canonical text-embedding-3-* family is
   // assumed schema-compatible — other openai-compatible hosts may
-  // error on `dimensions`, so default to false.
+  // error on `dimensions`, so default to false. A local row is skipped: see
+  // "The chain never picks a local provider" above.
+  //
+  // Shape first, policy second: a row with no `baseUrl` is unusable whatever
+  // the rule says, and consulting the rule for it would record a refusal that
+  // never happened and steer the terminal error to the wrong message.
   for (const openaiCompatible of providers) {
-    if (openaiCompatible.providerType !== 'openai-compatible' || !openaiCompatible.baseUrl)
+    if (
+      openaiCompatible.providerType !== 'openai-compatible' ||
+      !openaiCompatible.baseUrl ||
+      openaiCompatible.isLocal
+    )
       continue;
     if (!(await permittedForEmbedding(openaiCompatible.slug, refusals, seen))) continue;
     const model = settingsModel || DEFAULT_MODEL;
@@ -414,6 +409,16 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
         'have used was refused: at TENANCY_MODE=multi, by the org’s approved providers ' +
         '(PUT /api/v1/admin/orgs/[id]/providers); otherwise by the app provider-eligibility ' +
         'rule (lib/app/llm-providers.ts).'
+    );
+  }
+  // A local provider is set up and nothing else is: the operator most likely
+  // means to embed with it, and needs the step the chain will not take for them.
+  const local = providers.find((p) => p.isLocal);
+  if (local) {
+    throw new NoProviderConfiguredError(
+      `No embedding provider configured. The local provider "${local.slug}" is used for ` +
+        'embeddings only once one of its models is picked: pick it as the active embedding ' +
+        'model (Orchestration → Settings), then run `npm run embeddings:reset`.'
     );
   }
   // The bare-key arm is gone (t-740). An install that relied on it has the key
@@ -559,6 +564,25 @@ async function callEmbeddingProvider(
   if (result.embeddings.length !== texts.length) {
     throw new Error(
       `Embedding API returned ${result.embeddings.length} embeddings for ${texts.length} texts`
+    );
+  }
+
+  // Vectors of another size can be neither stored nor searched: the columns
+  // are sized for `provider.dimensions`. Say which model, and what to do, rather
+  // than leave pgvector to refuse the insert with "expected 1536 dimensions,
+  // not 768": a picked model recorded with the wrong width, or an
+  // OpenAI-compatible host whose model is not 1536 wide (t-1011).
+  const wrong = result.embeddings.find((e) => e.length !== provider.dimensions);
+  if (wrong) {
+    throw new ProviderError(
+      `Embedding model "${provider.model}" on provider "${provider.slug}" made ` +
+        `${wrong.length}-dimension vectors, but ${provider.dimensions} were expected. ` +
+        (provider.source === 'explicit'
+          ? 'Correct the dimensions recorded for the model, then run `npm run embeddings:reset`.'
+          : 'Pick the model as the active embedding model (Orchestration → Settings), then ' +
+            'run `npm run embeddings:reset`. A picked model is used only through an active ' +
+            'provider whose slug is the model’s provider slug.'),
+      { code: 'embedding_dimension_mismatch', retriable: false }
     );
   }
 

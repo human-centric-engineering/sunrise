@@ -132,8 +132,9 @@ export function ActiveEmbeddingModelForm({
               documents to apply the change.
             </p>
             <p className="mt-2">
-              Leave unset to fall back to the legacy provider-priority resolver (Voyage → local →
-              OpenAI), which always produces 1536-dim vectors.
+              Leave unset to fall back to the legacy provider-priority resolver (Voyage, then
+              OpenAI-compatible), which always produces 1536-dim vectors. A local provider such as
+              Ollama is used only when one of its models is picked here.
             </p>
           </FieldHelp>
         </CardTitle>

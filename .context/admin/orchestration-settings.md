@@ -110,7 +110,7 @@ Renders between `DefaultModelsForm` and `SettingsForm`. Picks `AiOrchestrationSe
 
 Distinct from the `embeddings` slot in `DefaultModelsForm`: that's the per-task default consumed by `getDefaultModelForTask('embeddings')` (chat-only registry view). This picker is FK-driven against the matrix — only rows with `capabilities ∋ 'embedding'`, `isActive: true`, and non-null `dimensions` appear, populated via `GET /provider-models?capability=embedding&isActive=true`.
 
-The form supports clearing back to the legacy provider-priority fallback (Voyage → local → OpenAI, 1536-dim). After any save that changes the dimension it renders an inline amber notice instructing the operator to run `npm run embeddings:reset` and re-upload — pgvector locks dimension at the column level so the picker alone doesn't migrate stored vectors. See [Knowledge Base — Active embedding model](../orchestration/knowledge.md#active-embedding-model) for the full switching workflow and the search-side validation that catches drift.
+The form supports clearing back to the legacy provider-priority fallback (Voyage → OpenAI-compatible, 1536-dim; a local provider is used only when its model is picked here). After any save that changes the dimension it renders an inline amber notice instructing the operator to run `npm run embeddings:reset` and re-upload — pgvector locks dimension at the column level so the picker alone doesn't migrate stored vectors. See [Knowledge Base — Active embedding model](../orchestration/knowledge.md#active-embedding-model) for the full switching workflow and the search-side validation that catches drift.
 
 ### `BackupPanel`
 

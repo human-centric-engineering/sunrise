@@ -15,6 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import providerModelsSeed from '@/prisma/seeds/009-provider-models';
 import type { SeedContext } from '@/prisma/runner';
+import { KNOWN_PROVIDERS } from '@/lib/orchestration/llm/known-providers';
 
 interface UpsertArgs {
   where: { slug: string };
@@ -112,5 +113,21 @@ describe('009-provider-models seed — pricing (t-774)', () => {
 
     expect(rows.has('openai-gpt-4o-mini')).toBe(false);
     expect(rows.has('openai-gpt-4o')).toBe(true);
+  });
+});
+
+describe('009-provider-models seed — local embedding rows (t-1011)', () => {
+  it('files the Ollama embedding models under the slug an Ollama provider is given', async () => {
+    // A picked embedding model is used only through an active provider whose
+    // slug is the row's `providerSlug`. The provider form and the setup wizard
+    // create Ollama as `ollama-local`; rows under any other slug could be
+    // picked, and every embedding then failed.
+    const ollama = KNOWN_PROVIDERS.find((p) => p.defaultBaseUrl === 'http://localhost:11434/v1');
+    expect(ollama?.slug).toBe('ollama-local');
+    const { rows } = await runSeed();
+    for (const slug of ['ollama-nomic-embed-text', 'ollama-mxbai-embed-large']) {
+      expect(rows.get(slug)?.create.providerSlug).toBe(ollama?.slug);
+      expect(rows.get(slug)?.update.providerSlug).toBe(ollama?.slug);
+    }
   });
 });

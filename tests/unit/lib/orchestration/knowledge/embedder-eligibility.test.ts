@@ -65,10 +65,16 @@ function row(overrides: Record<string, unknown>) {
 
 type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
 
+/**
+ * A full-width vector whose first values tag it. The embedder refuses vectors
+ * of another width than the provider's (t-1011), so a fake must return 1536.
+ */
+const tagged = (...head: number[]): number[] => [...head, ...new Array(1536 - head.length).fill(0)];
+
 /** Point `getProvider` at a fake whose `embedMany` is the returned mock. */
 function installEmbedMany() {
   const impl: EmbedManyFn = async (texts) => ({
-    embeddings: texts.map(() => [0.1]),
+    embeddings: texts.map(() => tagged(0.1)),
     inputTokens: 1,
   });
   const embedMany = vi.fn(impl);
@@ -103,10 +109,10 @@ afterEach(() => {
 
 describe('the fallback chain consults the eligibility seam', () => {
   it('skips a refused arm and uses the next permitted one', async () => {
-    // Arrange: both a Voyage row (first preference) and a local row.
+    // Arrange: a Voyage row (first preference) and an OpenAI-compatible row.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       row({ slug: 'voyage', providerType: 'voyage', baseUrl: null }),
-      row({ slug: 'ollama', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+      row({ slug: 'together' }),
     ] as never);
     registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'voyage'));
     const embedMany = installEmbedMany();
@@ -115,10 +121,10 @@ describe('the fallback chain consults the eligibility seam', () => {
     await embedText('hello');
 
     // Assert: skipping and trying the next is the audio loop's shape — a fork
-    // that permits a local embedder but not Voyage gets the local embedder,
-    // not a failure.
-    expect(fetchedSlug()).toBe('ollama');
-    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'nomic-embed-text' });
+    // that permits OpenAI-compatible but not Voyage gets the former, not a
+    // failure.
+    expect(fetchedSlug()).toBe('together');
+    expect(embedMany).toHaveBeenCalledTimes(1);
   });
 
   it('passes source:primary and task:embeddings, so an existing fork rule already covers it', async () => {
@@ -267,14 +273,48 @@ describe('resolveEmbeddingAvailability', () => {
 });
 
 describe('resolveEmbeddingStatus', () => {
-  it.each([true, false])('carries the resolved provider isLocal (%s)', async (isLocal) => {
+  it('carries isLocal false for a provider the chain picked', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      row({ slug: 'p1', isLocal, baseUrl: 'http://localhost:11434/v1' }),
+      row({ slug: 'p1', isLocal: false }),
     ] as never);
 
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'ok',
-      providerIsLocal: isLocal,
+      providerIsLocal: false,
+    });
+  });
+
+  it('carries isLocal true for a picked local model', async () => {
+    // A local provider is used only once its model is picked (t-1011).
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'm-local',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      providerSlug: 'ollama-local',
+      modelId: 'nomic-embed-text',
+      dimensions: 768,
+      schemaCompatible: false,
+      capabilities: ['embedding'],
+      isActive: true,
+    } as never);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      row({ slug: 'ollama-local', isLocal: true, baseUrl: 'http://localhost:11434/v1' }) as never
+    );
+
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'ok',
+      providerIsLocal: true,
+    });
+  });
+
+  it('reports none_configured when the only provider is local and no model is picked', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'ollama-local', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+    ] as never);
+
+    await expect(resolveEmbeddingStatus()).resolves.toEqual({
+      availability: 'none_configured',
+      providerIsLocal: null,
     });
   });
 
@@ -322,21 +362,26 @@ describe('resolveEmbeddingAvailability distinguishes a verdict from a failure', 
 });
 
 describe('the eligibility rule is asked once per slug', () => {
-  it('does not re-evaluate a row that matches two arms', async () => {
-    // Arrange: an Ollama row is `isLocal` AND `openai-compatible` — the common
-    // local setup, so it matches the local arm and the openai-compatible arm.
+  it('never offers a local row to the rule, and tells the operator to pick its model', async () => {
+    // Arrange: only a local Ollama row, and a rule that would refuse anything.
+    // The chain never picks a local provider (t-1011): no local model makes
+    // the 1536-wide vectors it assumes.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      row({ slug: 'ollama', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+      row({ slug: 'ollama-local', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
     ] as never);
     const resolver = vi.fn(() => [] as string[]);
     registerProviderEligibility(resolver);
 
     // Act
-    await expect(embedText('hello')).rejects.toThrow(/No permitted embedding provider/);
+    const err = await embedText('hello').catch((e: unknown) => e);
 
-    // Assert: one evaluation, not two. This runs per knowledge-search query and
-    // a fork's rule may do a policy lookup, so the duplicate was a real cost.
-    expect(resolver).toHaveBeenCalledTimes(1);
+    // Assert: not "refused by a rule" (nothing was asked), but the step the
+    // operator has to take.
+    expect(err).toBeInstanceOf(NoProviderConfiguredError);
+    expect((err as Error).message).toContain('"ollama-local" is used for embeddings only once');
+    expect((err as Error).message).toContain('npm run embeddings:reset');
+    expect(resolver).not.toHaveBeenCalled();
+    expect(getProvider).not.toHaveBeenCalled();
   });
 });
 

@@ -77,6 +77,12 @@ type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<Embed
 /** A simple 1536-dim zero vector */
 const zeroVec = new Array(1536).fill(0);
 
+/**
+ * A full-width vector whose first values tag it. The embedder refuses vectors
+ * of another width than the provider's (t-1011), so a fake must return 1536.
+ */
+const tagged = (...head: number[]): number[] => [...head, ...new Array(1536 - head.length).fill(0)];
+
 /** Install a fake provider whose `embedMany` is the returned mock. */
 function installEmbedMany(
   impl: EmbedManyFn = async (texts) => ({
@@ -258,18 +264,19 @@ describe('embedMany options by provider type (via embedText)', () => {
     });
   });
 
-  it('should not send dimensions to a local Ollama provider', async () => {
+  it('does not pick a local Ollama provider that has no model picked', async () => {
+    // The chain never picks a local provider (t-1011): its model is not
+    // 1536 wide, so it could only fail.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ slug: 'ollama', baseUrl: 'http://localhost:11434/v1', isLocal: true }),
+      makeProvider({ slug: 'ollama-local', baseUrl: 'http://localhost:11434/v1', isLocal: true }),
     ] as never);
     const embedMany = installEmbedMany();
 
-    await embedText('test');
-
-    expect(getProvider).toHaveBeenCalledWith('ollama', CHAIN_PICK);
-    expect(embedMany).toHaveBeenCalledTimes(1);
-    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
-    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
+    await expect(embedText('test')).rejects.toThrow(
+      /used for embeddings only once one of its models is picked/
+    );
+    expect(getProvider).not.toHaveBeenCalled();
+    expect(embedMany).not.toHaveBeenCalled();
   });
 });
 
@@ -292,7 +299,7 @@ describe('embedText() inputType parameter', () => {
   });
 
   it('should return a single embedding vector when called with inputType', async () => {
-    const expectedVector = [0.1, 0.2, 0.3];
+    const expectedVector = tagged(0.1, 0.2, 0.3);
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
     installEmbedMany(async () => ({ embeddings: [expectedVector], inputTokens: 2 }));
 
@@ -324,8 +331,8 @@ describe('embedBatch() inputType parameter', () => {
 
   it('should return embeddings for all texts in batch when inputType is provided', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
-    const vec1 = [1, 2, 3];
-    const vec2 = [4, 5, 6];
+    const vec1 = tagged(1, 2, 3);
+    const vec2 = tagged(4, 5, 6);
     installEmbedMany(async () => ({ embeddings: [vec1, vec2], inputTokens: 4 }));
 
     const results = await embedBatch(['first', 'second'], 10, 'document');
