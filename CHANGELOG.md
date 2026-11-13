@@ -18,8 +18,8 @@ release process.
 
 ## [0.19.0] — 2026-11-13
 
-> **Alpha release.** Twenty-sixth tagged Sunrise release. **MINOR bump**: a
-> new seam, new public API and seven migrations. The headline is the **LLM
+> **Alpha release.** Twenty-sixth tagged Sunrise release. **MINOR bump**:
+> three new fork seams, new public API and seven migrations. The headline is the **LLM
 > privacy layer** (§127). It finds personal details in what Sunrise sends to
 > an LLM vendor and, by the mode an operator picks, counts them, masks them
 > and restores the reply, or refuses the call. An org or an agent can only
@@ -43,8 +43,11 @@ release process.
 > - `20261112220000_message_embedding_retry` adds the embedding-retry columns
 >   on `AiMessage`.
 > - The seed refiles the Ollama embedding models from `ollama` to
->   `ollama-local`. An install that named its Ollama provider `ollama` by hand
->   renames it.
+>   `ollama-local`, the slug the provider form gives. It moves only rows an
+>   admin has not edited, and renames no provider. Act only if you named your
+>   Ollama provider `ollama` by hand **and** picked one of these models for
+>   embeddings: rename the provider to `ollama-local`, or edit the model's
+>   provider slug.
 >
 > **Run `npm install`.** Tailwind moves to 4.3.5 and `@hookform/resolvers` to
 > 7, beside minor and patch bumps. **Keep, when you merge `package.json`:**
@@ -69,15 +72,32 @@ release process.
 > **Three new fork-owned scaffolds** ship empty: `lib/app/privacy-adapters.ts`,
 > `lib/app/config-health.ts` and `lib/app/admin-breadcrumbs.ts`. Take them as
 > they are. A fork that built config health or breadcrumb labels itself moves
-> its own into them. `lib/app/db-drift.ts` changes only its comment.
+> its own into them.
 >
-> **One merge conflict to expect:** `Org` and `User` now end with two fixed
-> back-relation zones. Keep both markers and move your block of back-relations
-> below your tier's marker, then retire the ledger row for it.
+> **Conflicts to expect,** each resolved by taking Sunrise's version unless
+> said otherwise:
 >
-> **Your type-check will flag** a call to `scanOutput()` that uses its result
-> directly: it is now async, and takes the sent messages and
-> `{ ignoredEntityTypes }`.
+> - **`Org` and `User`** now end with two fixed back-relation zones. Keep both
+>   markers, move your block of back-relations below your tier's marker, and
+>   retire the ledger row for it.
+> - **`lib/app/db-drift.ts`**: Sunrise rewrote its header comment. Keep your
+>   registrations and take the new comment.
+> - **A fork that built config health or breadcrumb labels itself** (ConQuest's
+>   shape) conflicts on those files and on `components/admin/admin-header.tsx`
+>   and `app/admin/layout.tsx`.
+> - **A fork carrying `extraHeaders` or `idleClassName` on `<MicButton>`**
+>   (`components/admin/orchestration/chat/mic-button.tsx`, t-1023) conflicts
+>   there. Sunrise now has both props, so the ledger row for them can go.
+> - **A fork that already moved the tenant, subject or paid-call store onto
+>   `globalThis`** conflicts in `lib/tenancy/context.ts`,
+>   `lib/auth/subject-context.ts`, `lib/orchestration/llm/spend-caps.ts` and
+>   `lib/tenancy/process-state.ts`.
+>
+> **Your type-check will flag:**
+>
+> - a call to `scanOutput()` that uses its result directly: it is now async,
+>   and takes the sent messages and `{ ignoredEntityTypes }`;
+> - a method added to `LlmProvider` without a `PRIVACY_COVERAGE` entry.
 >
 > **Your tests will flag:**
 >
@@ -86,7 +106,6 @@ release process.
 > - a fork line outside its zone on `Org` or `User` (`back-relation-zones.test.ts`);
 > - fork models in a `prisma/schema` subfolder, which the export, org-export
 >   and classification guards now read for the first time;
-> - a method added to `LlmProvider` without a `PRIVACY_COVERAGE` entry;
 > - a `defaults.test.ts` that pins `lib/app/*`: it gains the three new
 >   scaffolds' rows. Pin them; don't delete them.
 >
@@ -103,11 +122,19 @@ release process.
 >   finds the user's memories as one message each, under a heading.
 > - **The output guard's labels** are `pii_<type>`: `pii_credit_card` is now
 >   `pii_card_number`, and a US SSN is no longer flagged.
-> - **Invitations:** `POST /api/v1/orgs/[id]/invitations` no longer answers
->   `409 EMAIL_TAKEN`. A template override should use the invitation email's
->   new `hasAccount`.
-> - **First ownership:** a platform admin added to an empty org with no role
->   now lands as `MEMBER`.
+> - **Invitations:**
+>   - `POST /api/v1/orgs/[id]/invitations` now invites an existing account
+>     where it answered `409 EMAIL_TAKEN`. So does `POST /api/v1/users/invite`,
+>     for an invitation into an org other than the install org at the default
+>     `USER` role. A client branching on that answer should drop the branch.
+>   - `POST /api/auth/accept-invite` answers `409 EMAIL_TAKEN` for an address
+>     with an account, where it gave a 500.
+>   - A template override should use the invitation email's new `hasAccount`.
+> - **Ownership:**
+>   - A platform admin added to an empty org with no role now lands as
+>     `MEMBER`.
+>   - An `OWNER` invitation whose issuer has since lost owner standing lands
+>     the invitee as `MEMBER`.
 > - **Admin audit log:** a fork route that changes an org other than the one
 >   it runs in passes `actingOrgId` to `logAdminAction()`.
 > - **Hook deliveries:** `nextRetryAt` on a hook delivery no longer means "has
@@ -127,8 +154,8 @@ release process.
 > summary, so after a blocked save their "N fields need fixing" still keeps
 > the count from the press. That is t-1029, for the next release.
 >
-> **Dependency alerts:** none open at the cut. The six open at 0.18.0 are
-> cleared; see Security below. Dependabot's newer PR #1258 (nine production
+> **Dependency alerts:** none open at the cut. The five accepted at 0.18.0,
+> and `fast-xml-parser`, opened since, are all cleared; see Security below. Dependabot's newer PR #1258 (nine production
 > minor and patch bumps) is not in this release.
 
 ### Added
