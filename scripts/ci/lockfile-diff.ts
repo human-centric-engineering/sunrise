@@ -199,7 +199,10 @@ export interface UnexplainedOverride {
  * `overrideReasons` and `lockfileMetadataReasons`, which share
  * {@link MIN_OVERRIDE_REASON} as their floor: raising it tightens both.
  */
-function reasonText(reasons: Record<string, unknown> | undefined, key: string): string | null {
+export function reasonText(
+  reasons: Record<string, unknown> | undefined,
+  key: string
+): string | null {
   const value = reasons?.[key];
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -352,7 +355,11 @@ export interface LockfileDiff {
   added: string[];
   removed: string[];
   changed: VersionChange[];
-  /** Every loss, explained or not: what gets printed. */
+  /**
+   * Every loss, grouped by lockfile path, explained or not. The report prints
+   * the per-key {@link explainedNativeMetadata} and
+   * {@link unexplainedNativeMetadata}; this is what "did anything move" reads.
+   */
   lostNativeMetadata: NativeMetadataChange[];
   /** Lost keys a `lockfileMetadataReasons` entry answers, with it (t-1028). */
   explainedNativeMetadata: ExplainedMetadataLoss[];

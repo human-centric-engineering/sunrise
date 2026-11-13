@@ -32,6 +32,7 @@ import {
   directDowngrades,
   hasRisk,
   MIN_OVERRIDE_REASON,
+  reasonText,
   type Lockfile,
   type Manifest,
   type UnexplainedOverride,
@@ -94,10 +95,7 @@ function parseLockfile(source: string, label: string): Lockfile | null {
 
 /** An `overrideReasons` entry as printable text, or `null` if there is none. */
 function readReason(manifest: Manifest | null, key: string): string | null {
-  const value = manifest?.overrideReasons?.[key];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
+  return reasonText(manifest?.overrideReasons, key);
 }
 
 /**

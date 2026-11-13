@@ -390,9 +390,12 @@ These help both repo types and cost nothing, so they're always on:
   the per-PR enforcement; the downgrade is still printed in its own block with
   that caveat.
 
-  **Lost `libc`/`os`/`cpu` still gates unconditionally. An `overrides` change
-  gates only when it is unexplained** — the key's `overrideReasons` entry in
-  `package.json` has to move in the same diff (#608). Before that the rule
+  **Lost `libc`/`os`/`cpu` and an `overrides` change each gate only when
+  unexplained.** For an override, the key's `overrideReasons` entry in
+  `package.json` has to move in the same diff (#608). For a lost key, a
+  `lockfileMetadataReasons` entry keyed `<package name>:<key>` does the same
+  (t-1028), for the rare loss the registry made on purpose. A loss with no
+  reason, which is what old npm produces, still fails. Before that the rule
   failed on every override change and ended with the word "Intentional?", which
   is a question a build cannot be told the answer to: wired into branch
   protection, the only routes past were bypassing the protection or weakening
