@@ -28,6 +28,21 @@ import { ProviderError } from '@/lib/orchestration/llm/provider';
  */
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const FALLBACK_DIMENSIONS = 1536;
+
+/**
+ * Embedding is set up but cannot run until one more step is taken, and the
+ * message names it: a local provider whose model is not picked, or a picked
+ * model that cannot be used and cannot fall back (t-1011). A
+ * {@link NoProviderConfiguredError}, so every caller that handles "nothing is
+ * set up" handles it; `resolveEmbeddingStatus()` passes its message on, because
+ * the generic remedy ("add a provider") would be the wrong one.
+ */
+export class EmbeddingSetupError extends NoProviderConfiguredError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmbeddingSetupError';
+  }
+}
 const DEFAULT_BATCH_SIZE = 100;
 
 /** Rate limit: pause between batches (ms) */
@@ -87,8 +102,10 @@ interface EmbeddingProvider {
  * full provider resolve.
  *
  * Returns null when no active model is set OR when the picked model
- * is unusable (inactive / chat-only / dim-less). Mirrors the same
- * validity gates as {@link resolveActiveEmbeddingConfig}.
+ * is unusable (inactive / chat-only / dim-less). It checks the model row
+ * only; {@link resolveActiveEmbeddingConfig} also needs an active provider of
+ * its slug with a base URL. `embeddings:reset` sizes the columns from this, so
+ * a pick that passes here and fails there cannot fall back (t-1011).
  */
 export async function getActiveEmbeddingModelSummary(): Promise<{
   modelId: string;
@@ -113,17 +130,29 @@ export async function getActiveEmbeddingModelSummary(): Promise<{
     })
     .catch(() => null);
 
-  if (
-    !model ||
-    !model.isActive ||
-    !model.capabilities.includes('embedding') ||
-    !model.dimensions ||
-    model.dimensions <= 0
-  ) {
-    return null;
-  }
+  if (!sizesTheColumns(model)) return null;
 
   return { modelId: model.modelId, dimensions: model.dimensions };
+}
+
+/**
+ * Whether a picked model row is one `embeddings:reset` sizes the columns for:
+ * active, with the `embedding` capability and a width. The one statement of
+ * those gates, shared by {@link getActiveEmbeddingModelSummary} (which the
+ * reset reads) and {@link resolveActiveEmbeddingConfig} (which decides whether
+ * a pick may fall back): the fallback rule is right only while the two agree
+ * (t-1011).
+ */
+function sizesTheColumns<
+  T extends { isActive: boolean; capabilities: string[]; dimensions: number | null },
+>(model: T | null): model is T & { dimensions: number } {
+  return (
+    !!model &&
+    model.isActive &&
+    model.capabilities.includes('embedding') &&
+    !!model.dimensions &&
+    model.dimensions > 0
+  );
 }
 
 /**
@@ -133,9 +162,18 @@ export async function getActiveEmbeddingModelSummary(): Promise<{
  * (chat-only model, missing provider config, missing dimensions); the
  * caller falls back to provider-priority resolution.
  *
+ * **Except where falling back cannot work** (t-1011). The chain embeds at
+ * 1536 dimensions. A pick that passes {@link getActiveEmbeddingModelSummary}
+ * (active, `embedding`, a width) is the one `embeddings:reset` sized the
+ * columns for, so when it is recorded at another width and its provider is
+ * missing or has no base URL, it throws {@link EmbeddingSetupError} naming it
+ * and the step that is missing, rather than send the text to the chain's
+ * provider for vectors the columns refuse. A pick that fails the summary's own
+ * gates falls back as before: a reset sizes the columns to 1536 for it.
+ *
  * This is the path that lets operators pick from `AiProviderModel`
  * rows in the admin UI rather than living with the implicit Voyage →
- * local → OpenAI ordering.
+ * OpenAI-compatible ordering, and the only path to a local provider.
  */
 async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null> {
   const settings = await prisma.aiOrchestrationSettings
@@ -164,6 +202,21 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
     })
     .catch(() => null);
 
+  // Falling back is right only when the chain's vectors fit the columns
+  // `embeddings:reset` sizes for this pick. Otherwise say which pick, and what
+  // to do.
+  const cannotFallBack = (reason: string, remedy: string): void => {
+    if (!sizesTheColumns(model) || model.dimensions === FALLBACK_DIMENSIONS) return;
+    throw new EmbeddingSetupError(
+      `The active embedding model "${model.modelId}" cannot be used: ${reason}. ${remedy} ` +
+        `Falling back is not possible: the fallback makes ${FALLBACK_DIMENSIONS}-dimension ` +
+        `vectors, and \`npm run embeddings:reset\` sizes the columns for this model at ` +
+        `${model.dimensions}.`
+    );
+  };
+  const pickAnother =
+    'Or pick another model (Orchestration → Settings) and run `npm run embeddings:reset`.';
+
   if (!model || !model.isActive) {
     logger.warn(
       'Active embedding model is missing or inactive; falling back to provider priority',
@@ -190,13 +243,26 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
     return null;
   }
 
+  // A failed read is not an answer: it falls back as before, rather than be
+  // reported as a provider that is not there.
+  let providerReadFailed = false;
   const providerConfig = await prisma.aiProviderConfig
     .findFirst({
       where: { slug: model.providerSlug, isActive: true },
     })
-    .catch(() => null);
+    .catch(() => {
+      providerReadFailed = true;
+      return null;
+    });
 
   if (!providerConfig) {
+    if (!providerReadFailed) {
+      cannotFallBack(
+        `no active provider has its provider slug, "${model.providerSlug}"`,
+        `Add or reactivate a provider with that slug (an Ollama provider made by the ` +
+          `Providers form is "ollama-local"). ${pickAnother}`
+      );
+    }
     logger.warn('Active embedding model has no matching active provider config; falling back', {
       activeEmbeddingModelId: modelId,
       providerSlug: model.providerSlug,
@@ -208,6 +274,10 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
   // else needs an explicit `baseUrl`. Bail to fallback if a non-Voyage
   // provider is missing it — the provider manager would refuse to build it.
   if (!providerConfig.baseUrl && providerConfig.providerType !== 'voyage') {
+    cannotFallBack(
+      `its provider "${providerConfig.slug}" has no base URL`,
+      `Set the provider's base URL. ${pickAnother}`
+    );
     logger.warn('Active embedding provider has no baseUrl configured; falling back', {
       activeEmbeddingModelId: modelId,
       providerSlug: model.providerSlug,
@@ -236,21 +306,20 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
  * same reason, so a rule already written in a fork covers this path for free.
  *
  * A denial skips the arm and the chain tries the next one — the audio loop's
- * shape, and the right one here: a fork that permits a local embedder but not
- * Voyage should get the local embedder, not a failure. A rule that permits
- * nothing runs off the end of the chain, which is fail-closed.
+ * shape, and the right one here: a fork that permits OpenAI but not Voyage
+ * should get OpenAI, not a failure. A rule that permits nothing runs off the
+ * end of the chain, which is fail-closed.
  */
 async function permittedForEmbedding(
   slug: string,
   refusals: string[],
   seen: Map<string, boolean>
 ): Promise<boolean> {
-  // A row can match two arms — an Ollama row is `isLocal` AND
-  // `providerType: 'openai-compatible'`, which is the common local setup, not
-  // an exotic one. Without this the rule is evaluated twice for the same slug
-  // on every refusal, on the per-query knowledge-search path, and the slug is
-  // recorded as two refusals. The seam's own guidance anticipates rules that do
-  // policy lookups, so asking one twice per query is a cost worth not paying.
+  // One answer per slug per pass. Should a row ever match two arms, the rule
+  // is not evaluated twice for it on the per-query knowledge-search path, nor
+  // its slug recorded as two refusals. The seam's own guidance anticipates
+  // rules that do policy lookups, so asking one twice per query is a cost
+  // worth not paying.
   const cached = seen.get(slug);
   if (cached !== undefined) return cached;
 
@@ -275,14 +344,25 @@ async function permittedForEmbedding(
  * Preference order:
  *   1. `AiOrchestrationSettings.activeEmbeddingModelId` — the explicit
  *      operator pick, with dim and model coming from `AiProviderModel`.
- *   2. The legacy provider-priority chain: Voyage → local → OpenAI-
- *      compatible, over active provider rows. Used until the operator
+ *   2. The legacy provider-priority chain: Voyage → OpenAI-compatible, over
+ *      active provider rows that are not local. Used until the operator
  *      picks a model, and as a safety net if the picked model becomes
  *      invalid (deactivated, dim cleared, provider config removed).
  *
- * The fallback always reports `FALLBACK_DIMENSIONS` (1536) because all
- * of its concrete branches are configured to produce 1536-dim vectors
- * today.
+ * The fallback always reports `FALLBACK_DIMENSIONS` (1536), the size
+ * `embeddings:reset` gives the columns when no model is picked. Voyage and
+ * OpenAI's `text-embedding-3-*` are asked for that size.
+ *
+ * **The chain never picks a local provider** (t-1011). No local model makes
+ * 1536-dimension vectors (`nomic-embed-text` makes 768), so a local arm here
+ * could only fail, and it did: adding Ollama to try a local chat model broke
+ * every upload and search of an install embedding with OpenAI. A local model is
+ * used for embeddings only once it is picked, with the columns reset to its
+ * width. An install with only a local provider and no pick is told so (see
+ * the end of this function). Skipping it sends no text anywhere it was not
+ * going already: under the privacy layer's `local_only` policy the stage
+ * refuses the OpenAI call, and the privacy settings page warns that the
+ * embedder is not local.
  *
  * **Every arm of the chain is filtered by the provider-eligibility seam; the
  * operator's pin at (1) is not.** That is the same line the rest of the tree
@@ -293,7 +373,10 @@ async function permittedForEmbedding(
  * capability; no `dimensions`; no active `AiProviderConfig`; non-Voyage with no
  * `baseUrl`). Deactivating one row
  * moves an install from the unfiltered line to the filtered one silently,
- * which is why the drop-through is logged.
+ * which is why the drop-through is logged. A pick recorded at a width other
+ * than 1536 does not drop through on the last two (no active provider of its
+ * slug; no `baseUrl`): it throws `EmbeddingSetupError`, because the chain's
+ * vectors would not fit the columns `embeddings:reset` sized for it (t-1011).
  *
  * **It chooses; it does not call.** The chosen row is fetched from the provider
  * manager and called through `LlmProvider.embedMany` (t-740), so embedding goes
@@ -322,9 +405,9 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     orderBy: { createdAt: 'asc' },
   });
 
-  // Resolve the operator-configured embedding model. Voyage and Ollama
-  // ignore this — they have their own canonical embedding models — but
-  // every other openai-compatible host honours it.
+  // Resolve the operator-configured embedding model. Voyage ignores this — it
+  // has its own canonical embedding model — but every OpenAI-compatible host
+  // the chain reaches honours it.
   const settingsModel = await getDefaultModelForTask('embeddings').catch(() => DEFAULT_MODEL);
 
   // Each category is walked in full, not sampled with `find`. A refusal has to
@@ -354,36 +437,21 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     };
   }
 
-  // Prefer a local provider for embeddings (cheaper/faster). Local
-  // models (nomic-embed-text) produce a fixed native dim and ignore
-  // `dimensions`; `sendDimensions: false` keeps us from sending it.
-  for (const localProvider of providers) {
-    // Shape first, policy second: a row with no `baseUrl` is unusable whatever
-    // the rule says, and consulting the rule for it would record a refusal that
-    // never happened and steer the terminal error to the wrong message.
-    if (!localProvider.isLocal || !localProvider.baseUrl) continue;
-    if (!(await permittedForEmbedding(localProvider.slug, refusals, seen))) continue;
-    logger.debug('Embedding provider resolved by the fallback chain', {
-      arm: 'local',
-      providerSlug: localProvider.slug,
-    });
-    return {
-      slug: localProvider.slug,
-      model: 'nomic-embed-text',
-      dimensions: FALLBACK_DIMENSIONS,
-      sendDimensions: false,
-      isLocal: true,
-      providerType: localProvider.providerType,
-      source: 'primary',
-    };
-  }
-
   // Fall back to OpenAI-compatible provider. Without an explicit
   // active-model pick, only the canonical text-embedding-3-* family is
   // assumed schema-compatible — other openai-compatible hosts may
-  // error on `dimensions`, so default to false.
+  // error on `dimensions`, so default to false. A local row is skipped: see
+  // "The chain never picks a local provider" above.
+  //
+  // Shape first, policy second: a row with no `baseUrl` is unusable whatever
+  // the rule says, and consulting the rule for it would record a refusal that
+  // never happened and steer the terminal error to the wrong message.
   for (const openaiCompatible of providers) {
-    if (openaiCompatible.providerType !== 'openai-compatible' || !openaiCompatible.baseUrl)
+    if (
+      openaiCompatible.providerType !== 'openai-compatible' ||
+      !openaiCompatible.baseUrl ||
+      openaiCompatible.isLocal
+    )
       continue;
     if (!(await permittedForEmbedding(openaiCompatible.slug, refusals, seen))) continue;
     const model = settingsModel || DEFAULT_MODEL;
@@ -408,6 +476,18 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // of the readers to the wrong place. The flag is what separates them — an
   // install with only an Anthropic row reaches the end of this chain having
   // been refused nothing, and must not be told a policy turned it away.
+  // A local provider is never offered to the rule, so "every provider was
+  // refused" may hide it. Picking its model is the remedy either way: the pick
+  // is not filtered by the rule.
+  const localProvider = providers.find((p) => p.isLocal);
+  if (refusals.length > 0 && localProvider) {
+    throw new EmbeddingSetupError(
+      'No permitted embedding provider: every provider the fallback could use was refused. ' +
+        `The local provider "${localProvider.slug}" is used for embeddings only once one of ` +
+        'its models is picked: pick it as the active embedding model (Orchestration → ' +
+        'Settings), then run `npm run embeddings:reset`.'
+    );
+  }
   if (refusals.length > 0) {
     throw new NoEligibleProviderError(
       'No permitted embedding provider. Every embedding provider this install could ' +
@@ -429,6 +509,18 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       'No embedding provider configured. OPENAI_API_KEY is set, but the key alone no longer ' +
         'enables embeddings: add OpenAI as a provider in the admin settings (the Providers ' +
         'page detects the key).'
+    );
+  }
+  // A local provider is set up and nothing else is: the operator most likely
+  // means to embed with it, and needs the step the chain will not take for them.
+  // After the bare-key check: an install that relied on OPENAI_API_KEY and adds
+  // Ollama for chat wants OpenAI added as a provider, not its knowledge emptied.
+  const local = providers.find((p) => p.isLocal);
+  if (local) {
+    throw new EmbeddingSetupError(
+      `No embedding provider configured. The local provider "${local.slug}" is used for ` +
+        'embeddings only once one of its models is picked: pick it as the active embedding ' +
+        'model (Orchestration → Settings), then run `npm run embeddings:reset`.'
     );
   }
   throw new NoProviderConfiguredError(
@@ -492,23 +584,33 @@ export async function resolveEmbeddingAvailability(): Promise<EmbeddingAvailabil
 export async function resolveEmbeddingStatus(): Promise<{
   availability: EmbeddingAvailability;
   providerIsLocal: boolean | null;
+  /**
+   * The step left to take, when embedding is set up but cannot run yet: an
+   * {@link EmbeddingSetupError}'s message (t-1011). `null` otherwise, where the
+   * availability's own remedy is the right one.
+   */
+  setupMessage: string | null;
 }> {
   try {
     const provider = await resolveProvider();
-    return { availability: 'ok', providerIsLocal: provider.isLocal };
+    return { availability: 'ok', providerIsLocal: provider.isLocal, setupMessage: null };
   } catch (err) {
     if (err instanceof NoProviderConfiguredError) {
       logger.info('No embedding provider configured', { reason: err.message });
-      return { availability: 'none_configured', providerIsLocal: null };
+      return {
+        availability: 'none_configured',
+        providerIsLocal: null,
+        setupMessage: err instanceof EmbeddingSetupError ? err.message : null,
+      };
     }
     if (err instanceof NoEligibleProviderError) {
       logger.warn('Every embedding provider was refused by the app eligibility rule', {
         reason: err.message,
       });
-      return { availability: 'none_permitted', providerIsLocal: null };
+      return { availability: 'none_permitted', providerIsLocal: null, setupMessage: null };
     }
     logger.error('Could not determine embedding availability', err, {});
-    return { availability: 'unknown', providerIsLocal: null };
+    return { availability: 'unknown', providerIsLocal: null, setupMessage: null };
   }
 }
 
@@ -566,6 +668,30 @@ async function callEmbeddingProvider(
     embeddings: result.embeddings,
     inputTokens: result.inputTokens ?? estimateEmbeddingTokens(texts),
   };
+}
+
+/**
+ * The refusal for vectors whose width is not the provider's, or `null` when
+ * every one fits. Vectors of another width can be neither stored nor
+ * searched: the columns are sized for `provider.dimensions`. It names the
+ * model and the remedy, rather than leave pgvector to refuse the insert with
+ * "expected 1536 dimensions, not 768": a picked model recorded with the wrong
+ * width, or an OpenAI-compatible host whose model is not 1536 wide (t-1011).
+ * Checked after the call's cost is logged, because the vendor has billed it.
+ */
+function widthMismatch(provider: EmbeddingProvider, embeddings: number[][]): ProviderError | null {
+  const wrong = embeddings.find((e) => e.length !== provider.dimensions);
+  if (!wrong) return null;
+  return new ProviderError(
+    `Embedding model "${provider.model}" on provider "${provider.slug}" made ` +
+      `${wrong.length}-dimension vectors, but ${provider.dimensions} were expected. ` +
+      (provider.source === 'explicit'
+        ? 'Correct the dimensions recorded for the model, then run `npm run embeddings:reset`.'
+        : 'Pick the model as the active embedding model (Orchestration → Settings), then ' +
+          'run `npm run embeddings:reset`. A picked model is used only through an active ' +
+          'provider whose slug is the model’s provider slug.'),
+    { code: 'embedding_dimension_mismatch', retriable: false }
+  );
 }
 
 /**
@@ -695,6 +821,9 @@ export async function embedText(
     isLocal: provider.isLocal || cost.isLocal,
   });
 
+  const mismatch = widthMismatch(provider, embeddings);
+  if (mismatch) throw mismatch;
+
   return {
     embedding: embeddings[0],
     model: provider.model,
@@ -736,6 +865,9 @@ export async function embedBatch(
   });
 
   const embeddedAt = new Date();
+  // A batch of the wrong width ends the run, after the batches so far are
+  // costed: the vendor billed them all.
+  let mismatch: ProviderError | null = null;
 
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
@@ -749,8 +881,10 @@ export async function embedBatch(
     });
 
     const { embeddings, inputTokens } = await callEmbeddingProvider(provider, batch, inputType);
-    allEmbeddings.push(...embeddings);
     totalInputTokens += inputTokens;
+    mismatch = widthMismatch(provider, embeddings);
+    if (mismatch) break;
+    allEmbeddings.push(...embeddings);
 
     // Rate limit between batches (skip for last batch)
     if (i + batchSize < texts.length) {
@@ -758,11 +892,19 @@ export async function embedBatch(
     }
   }
 
-  logger.info('Batch embedding complete', {
-    totalTexts: texts.length,
-    totalEmbeddings: allEmbeddings.length,
-    totalInputTokens,
-  });
+  if (mismatch) {
+    logger.warn('Batch embedding stopped: a batch was the wrong width', {
+      totalTexts: texts.length,
+      embeddedBeforeStop: allEmbeddings.length,
+      totalInputTokens,
+    });
+  } else {
+    logger.info('Batch embedding complete', {
+      totalTexts: texts.length,
+      totalEmbeddings: allEmbeddings.length,
+      totalInputTokens,
+    });
+  }
 
   // Best-effort: one cost row for the whole batch. Document-ingestion
   // batches typically run from the admin UI rather than per-turn, so a
@@ -783,6 +925,7 @@ export async function embedBatch(
     operation: CostOperation.EMBEDDING,
     isLocal: provider.isLocal || cost.isLocal,
   });
+  if (mismatch) throw mismatch;
 
   return {
     embeddings: allEmbeddings,

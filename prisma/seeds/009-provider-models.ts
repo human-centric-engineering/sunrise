@@ -848,10 +848,16 @@ const unit: SeedUnit = {
 
       // ========================================================================
       // Ollama — Local embedding models
+      //
+      // Filed under `ollama-local`, the slug the provider form and the setup
+      // wizard give an Ollama provider (`known-providers.ts`). A picked
+      // embedding model is used only through an active provider with its
+      // `providerSlug`; under `ollama` a pick fell through to the chain, and
+      // every embedding failed (t-1011).
       // ========================================================================
       {
         slug: 'ollama-nomic-embed-text',
-        providerSlug: 'ollama',
+        providerSlug: 'ollama-local',
         modelId: 'nomic-embed-text',
         name: 'nomic-embed-text',
         description:
@@ -876,7 +882,7 @@ const unit: SeedUnit = {
       },
       {
         slug: 'ollama-mxbai-embed-large',
-        providerSlug: 'ollama',
+        providerSlug: 'ollama-local',
         modelId: 'mxbai-embed-large',
         name: 'mxbai-embed-large',
         description:

@@ -57,16 +57,23 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 const { prisma } = await import('@/lib/db/client');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
+const { logger } = await import('@/lib/logging');
 const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
 
 const mockLogCost = vi.mocked(logCost);
 
 type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
 
+/**
+ * A full-width vector whose first values tag it. The embedder refuses vectors
+ * of another width than the provider's (t-1011), so a fake must return 1536.
+ */
+const tagged = (...head: number[]): number[] => [...head, ...new Array(1536 - head.length).fill(0)];
+
 /** A provider whose `embedMany` returns one vector per text and reports 12 input tokens per call. */
 function installEmbedMany() {
   const impl: EmbedManyFn = async (texts) => ({
-    embeddings: texts.map(() => [0.1, 0.2]),
+    embeddings: texts.map(() => tagged(0.1, 0.2)),
     inputTokens: 12,
   });
   const embedMany = vi.fn(impl);
@@ -147,7 +154,7 @@ describe('embedText cost attribution', () => {
     // Guards against the fix turning attribution into a requirement: the
     // embedding vector is the contract, accounting is best-effort.
     const result = await embedText('a query');
-    expect(result.embedding).toEqual([0.1, 0.2]);
+    expect(result.embedding).toEqual(tagged(0.1, 0.2));
   });
 });
 
@@ -168,7 +175,7 @@ describe('embedText cost row provenance', () => {
 
   it('estimates ceil(chars / 4) input tokens when the provider reports none', async () => {
     const embedMany = vi.fn<EmbedManyFn>(async (texts) => ({
-      embeddings: texts.map(() => [0.1, 0.2]),
+      embeddings: texts.map(() => tagged(0.1, 0.2)),
     }));
     vi.mocked(getProvider).mockResolvedValue({
       name: 'fake',
@@ -228,5 +235,61 @@ describe('embedBatch cost attribution', () => {
     const params = costParams();
     expect(params).not.toHaveProperty('agentId');
     expect(params).not.toHaveProperty('conversationId');
+  });
+});
+
+describe('a call refused for its width is still costed (t-1011)', () => {
+  // The vendor billed the call before its vectors were found to be the wrong
+  // width, so the cost row is written before the refusal is thrown.
+  it('embedText logs the call, then throws', async () => {
+    vi.mocked(getProvider).mockResolvedValue({
+      name: 'fake',
+      isLocal: false,
+      embedMany: vi.fn(async (texts: string[]) => ({
+        embeddings: texts.map(() => new Array(768).fill(0)),
+        inputTokens: 12,
+      })),
+    } as unknown as LlmProvider);
+
+    await expect(embedText('hello')).rejects.toMatchObject({
+      code: 'embedding_dimension_mismatch',
+    });
+    expect(costParams()).toMatchObject({ inputTokens: 12 });
+  });
+
+  it('embedBatch stops at the batch of the wrong width and logs every batch billed', async () => {
+    vi.useFakeTimers();
+    try {
+      let call = 0;
+      const embedMany = vi.fn(async (texts: string[]) => {
+        call++;
+        const width = call === 2 ? 768 : 1536;
+        return { embeddings: texts.map(() => new Array(width).fill(0)), inputTokens: 12 };
+      });
+      vi.mocked(getProvider).mockResolvedValue({
+        name: 'fake',
+        isLocal: false,
+        embedMany,
+      } as unknown as LlmProvider);
+
+      const promise = embedBatch(['a', 'b', 'c'], 1, 'document');
+      const settled = expect(promise).rejects.toMatchObject({
+        code: 'embedding_dimension_mismatch',
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      await settled;
+
+      // The third batch is never sent; the two that were are costed.
+      expect(embedMany).toHaveBeenCalledTimes(2);
+      expect(costParams()).toMatchObject({ inputTokens: 24 });
+      // Said as a stop, not as a run that completed.
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Batch embedding stopped: a batch was the wrong width',
+        expect.objectContaining({ embeddedBeforeStop: 1 })
+      );
+      expect(logger.info).not.toHaveBeenCalledWith('Batch embedding complete', expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

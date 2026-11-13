@@ -408,6 +408,79 @@ describe('ManageTab', () => {
     });
   });
 
+  it('shows the step left to take with nothing embedded, not "configure a provider" (t-1011)', async () => {
+    // A local-only install with no model picked: nothing is embedded yet, which
+    // is when the step matters most.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                total: 10,
+                embedded: 0,
+                pending: 10,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage:
+                  'The local provider "ollama-local" is used only once one of its models is picked: then run `npm run embeddings:reset`.',
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/is used only once one of its models is picked/i)
+      ).toBeInTheDocument();
+    });
+    // The command shows as code, not with its backticks.
+    expect(screen.getByText('npm run embeddings:reset', { selector: 'code' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /add an embedding provider/i })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /generate embeddings/i })[0]).toHaveAttribute(
+      'title',
+      'Embedding needs one more step: see the notice below'
+    );
+  });
+
+  it('shows the step with every chunk embedded, panel open (t-1011)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                total: 10,
+                embedded: 10,
+                pending: 0,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage: 'Add or reactivate a provider with that slug.',
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/add or reactivate a provider with that slug/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/embedding cannot run/i)).toBeInTheDocument();
+  });
+
   it('shows embed error message on HTTP error response', async () => {
     const user = userEvent.setup();
     mockFetch.mockImplementation((url: string) => {

@@ -127,12 +127,13 @@
  * point is the policy), and skips clean when no database is reachable.
  * Self-cleaning: everything it creates is removed on the way out, under the
  * system scope, whether or not the assertions held — and a cleanup that
- * fails, fails the run. An install with an embedding model pinned has the pin
- * cleared for the run and put back on the way out, so its embedding calls
- * reach the local provider the two orgs are confined to (#1144). The cleared
- * pin is recorded in a `SMOKE_ISO_EMBEDDING_PIN` feature flag, so a run that
- * is killed before it can put the pin back leaves the next run to do it; a
- * pin set while the smoke holds it is left as the operator set it.
+ * fails, fails the run. The install's embedding pin is set, for the run, to a
+ * model on the local provider the two orgs are confined to, and the
+ * operator's pin put back on the way out (#1144): a local provider is used for
+ * embeddings only through a pin (t-1011). An operator pin it replaced is
+ * recorded in a `SMOKE_ISO_EMBEDDING_PIN` feature flag, so a run that is
+ * killed before it can put the pin back leaves the next run to do it; a pin
+ * set while the smoke holds it is left as the operator set it.
  */
 import '@/prisma/load-env';
 import { NextRequest } from 'next/server';
@@ -258,6 +259,12 @@ const DIMENSIONS = 1536;
 const EMBEDDING_MODEL = 'nomic-embed-text';
 /** The local provider this smoke seeds, and answers itself: embeddings and chat. */
 const LOCAL_PROVIDER_SLUG = `${PREFIX}-embed-${stamp}`;
+/**
+ * The embedding model the run pins on that provider. A local provider is used
+ * for embeddings only through a pin; the fallback chain never picks one
+ * (t-1011). As wide as the columns, so the pin needs no reset.
+ */
+const LOCAL_EMBEDDING_MODEL_SLUG = `${PREFIX}-embed-model-${stamp}`;
 const CHAT_MODEL = 'smoke-chat';
 /** What the fake judge scores every case — the number the run must carry back. */
 const JUDGE_SCORE = 0.8;
@@ -703,8 +710,25 @@ async function clearEmbeddingPin(): Promise<string | null> {
 }
 
 /**
+ * Pin the run's own local embedding model (t-1011). Only over an empty
+ * setting: {@link clearEmbeddingPin} has run, and a pin set since is the
+ * operator's newer choice. Returns whether it pinned.
+ */
+async function pinLocalEmbeddingModel(modelRowId: string): Promise<boolean> {
+  return runAsSystem('smoke: pin the local embedding model', async () => {
+    const { count } = await prisma.aiOrchestrationSettings.updateMany({
+      where: { slug: 'global', activeEmbeddingModelId: null },
+      data: { activeEmbeddingModelId: modelRowId },
+    });
+    return count > 0;
+  });
+}
+
+/**
  * Put back an embedding pin this smoke (this run or a killed earlier one)
- * cleared, and drop the record. The pin is written only while the setting is
+ * cleared, and drop the record. First un-pins a model this smoke pinned (its
+ * row's slug carries the prefix), so the setting is empty again before the
+ * operator's pin is written back. The pin is written only while the setting is
  * still empty: one set during the run is the operator's newer choice and
  * stays. Returns what happened, or null when there was nothing to restore.
  */
@@ -715,6 +739,14 @@ async function restoreEmbeddingPin(): Promise<{
 } | null> {
   return runAsSystem('smoke: restore the embedding pin', () =>
     prisma.$transaction(async (tx) => {
+      // This run's pin, or one a killed run left: never the operator's.
+      await tx.aiOrchestrationSettings.updateMany({
+        where: {
+          slug: 'global',
+          activeEmbeddingModel: { slug: { startsWith: `${PREFIX}-` } },
+        },
+        data: { activeEmbeddingModelId: null },
+      });
       const marker = await tx.featureFlag.findUnique({
         where: { name: EMBEDDING_PIN_MARKER },
         select: { metadata: true },
@@ -794,15 +826,16 @@ async function main(): Promise<void> {
   process.once('SIGTERM', onSignal);
 
   try {
-    // ── The install's embedding pin, cleared for the run ──────────────────
+    // ── The install's embedding pin, the run's own for the run ────────────
     // The embedder takes a pinned model as the operator's explicit choice and
-    // never reroutes it, so with one set both orgs' embedding calls go to the
-    // pinned provider, which their policy (only the local provider below)
-    // rightly refuses. Clearing it sends them down the fallback chain to the
-    // local provider, which `interceptEmbeddings` answers: no vendor call.
-    // The clear is install-wide for the run's length, one more reason this
-    // smoke runs on a throwaway database only. A pin an earlier, killed run
-    // left cleared goes back first.
+    // never reroutes it, so with the operator's pin set both orgs' embedding
+    // calls go to the pinned provider, which their policy (only the local
+    // provider below) rightly refuses. The run clears it and pins a model on
+    // the local provider instead, which `interceptEmbeddings` answers: no
+    // vendor call. The fallback chain cannot do this: it never picks a local
+    // provider (t-1011). The pin is install-wide for the run's length, one more
+    // reason this smoke runs on a throwaway database only. A pin an earlier,
+    // killed run left goes back first.
     const stranded = await restoreEmbeddingPin();
     if (stranded) {
       console.log(
@@ -829,6 +862,30 @@ async function main(): Promise<void> {
         isActive: true,
       },
     });
+    const localModel = await prisma.aiProviderModel.create({
+      data: {
+        slug: LOCAL_EMBEDDING_MODEL_SLUG,
+        providerSlug: LOCAL_PROVIDER_SLUG,
+        modelId: EMBEDDING_MODEL,
+        name: `${PREFIX} local embeddings`,
+        description: 'smoke:tenancy-isolation — the run pins it, then deletes it',
+        capabilities: ['embedding'],
+        tierRole: 'embedding',
+        reasoningDepth: 'none',
+        latency: 'fast',
+        costEfficiency: 'very_high',
+        contextLength: 'n_a',
+        toolUse: 'none',
+        bestRole: 'Local embeddings',
+        dimensions: DIMENSIONS,
+        isActive: true,
+        local: true,
+      },
+    });
+    check(
+      await pinLocalEmbeddingModel(localModel.id),
+      'pinned the run’s local embedding model (the fallback chain never picks a local provider)'
+    );
     const tag = await prisma.knowledgeTag.create({ data: { slug: tagSlug, name: tagSlug } });
     const capability = await prisma.aiCapability.findFirst({ select: { id: true, slug: true } });
     if (!capability) throw new Error('no seeded capability — run the seed first');

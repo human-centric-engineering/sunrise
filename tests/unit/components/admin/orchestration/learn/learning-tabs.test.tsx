@@ -60,8 +60,16 @@ vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/knowledge/embedding-status-banner', () => ({
-  EmbeddingStatusBanner: ({ total, embedded }: { total: number; embedded: number }) => (
-    <div data-testid="embedding-status-banner">
+  EmbeddingStatusBanner: ({
+    total,
+    embedded,
+    setupMessage,
+  }: {
+    total: number;
+    embedded: number;
+    setupMessage?: string | null;
+  }) => (
+    <div data-testid="embedding-status-banner" data-setup-message={setupMessage ?? 'none'}>
       {embedded}/{total} embedded
     </div>
   ),
@@ -194,6 +202,77 @@ describe('LearningTabs', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('embedding-status-banner')).toBeInTheDocument();
+    });
+  });
+
+  it.each([
+    ['passes a setup message on', 'Pick the local model.', 'Pick the local model.'],
+    ['drops one that is not text', { html: '<b>x</b>' }, 'none'],
+  ])('%s to the banner (t-1011)', async (_label, providerSetupMessage, expected) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                total: 100,
+                embedded: 0,
+                pending: 100,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage,
+              },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('embedding-status-banner')).toHaveAttribute(
+        'data-setup-message',
+        expected
+      );
+    });
+  });
+
+  it('shows the banner for a setup step with nothing pending (t-1011)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                total: 100,
+                embedded: 100,
+                pending: 0,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage: 'Add or reactivate a provider with that slug.',
+              },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('embedding-status-banner')).toHaveAttribute(
+        'data-setup-message',
+        'Add or reactivate a provider with that slug.'
+      );
     });
   });
 

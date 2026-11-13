@@ -209,6 +209,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   cohere: 'Cohere',
   mistral: 'Mistral',
   ollama: 'Ollama',
+  'ollama-local': 'Ollama',
   meta: 'Meta',
 };
 

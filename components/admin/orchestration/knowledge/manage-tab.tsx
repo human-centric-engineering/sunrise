@@ -78,6 +78,7 @@ const embeddingStatusResponseSchema = z.object({
       pending: z.number(),
       hasActiveProvider: z.boolean(),
       providerState: z.enum(['ok', 'none_configured', 'none_permitted', 'unknown']).optional(),
+      providerSetupMessage: z.string().nullable().optional(),
     })
     .optional(),
 });
@@ -125,6 +126,7 @@ interface EmbeddingStatus {
   pending: number;
   hasActiveProvider: boolean;
   providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
+  providerSetupMessage?: string | null;
 }
 
 /**
@@ -499,6 +501,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // this the banner prints "add an embedding provider" whenever the endpoint is
   // briefly unreachable, which is the wrong remedy for a working install.
   const providerState = embeddingStatus === null ? 'unknown' : embeddingStatus.providerState;
+  // The step left to take when embedding is set up but cannot run yet (a local
+  // provider whose model is not picked, say). Shown even with nothing embedded,
+  // where "configure a provider" would be the wrong remedy (t-1011).
+  const setupMessage = embeddingStatus?.providerSetupMessage ?? null;
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
@@ -506,7 +512,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // Built-in setup panel: collapsed by default once setup is complete (chunks loaded
   // and all embedded). Manual user preference (open/closed) wins over the auto rule.
   const setupComplete = hasChunks && allEmbedded;
-  const setupOpen = setupPreference === null ? !setupComplete : setupPreference === 'open';
+  // Open by default while there is a step left to take, embedded or not (t-1011).
+  const setupOpen =
+    setupPreference === null ? !setupComplete || !!setupMessage : setupPreference === 'open';
 
   // Built-in setup panel JSX — assigned to a variable so we can render it
   // either near the top of the page (while setup is in progress) or at the
@@ -535,13 +543,15 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           </div>
           {!setupOpen && (
             <p className="text-muted-foreground mt-0.5 text-xs">
-              {setupComplete
-                ? 'Patterns loaded and embedded. Click to expand.'
-                : !hasChunks
-                  ? 'Load the built-in patterns to enable the Learning page.'
-                  : !hasProvider
-                    ? 'Configure an embedding provider to enable vector search.'
-                    : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
+              {!hasChunks
+                ? 'Load the built-in patterns to enable the Learning page.'
+                : setupMessage
+                  ? 'Embedding needs one more step. Expand for what to do.'
+                  : setupComplete
+                    ? 'Patterns loaded and embedded. Click to expand.'
+                    : !hasProvider
+                      ? 'Configure an embedding provider to enable vector search.'
+                      : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
             </p>
           )}
         </div>
@@ -607,7 +617,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                   !hasChunks
                     ? 'Load Agentic Design Patterns first'
                     : !hasProvider
-                      ? 'Configure an embedding provider first'
+                      ? setupMessage
+                        ? 'Embedding needs one more step: see the notice below'
+                        : 'Configure an embedding provider first'
                       : allEmbedded
                         ? 'All chunks are already embedded'
                         : undefined
@@ -638,7 +650,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                     <strong>OpenAI</strong> — text-embedding-3-small, low cost, native 1 536 dims
                   </li>
                   <li>
-                    <strong>Ollama</strong> — local, free, but 768-dim (requires schema change)
+                    <strong>Ollama</strong> — local and free. Pick its model as the active embedding
+                    model in Settings, then run{' '}
+                    <code className="font-mono">npm run embeddings:reset</code>, which empties the
+                    knowledge base
                   </li>
                 </ul>
                 <p className="mt-2 text-xs">
@@ -675,14 +690,17 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
               })}
             </p>
           )}
-          {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
-            <EmbeddingStatusBanner
-              providerState={providerState}
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={hasProvider}
-            />
-          )}
+          {embeddingStatus &&
+            hasChunks &&
+            (setupMessage || (!allEmbedded && embeddingStatus.embedded > 0)) && (
+              <EmbeddingStatusBanner
+                providerState={providerState}
+                setupMessage={setupMessage}
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={hasProvider}
+              />
+            )}
         </div>
       )}
     </div>

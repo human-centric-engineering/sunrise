@@ -79,6 +79,7 @@ interface EmbeddingStatus {
   pending: number;
   hasActiveProvider: boolean;
   providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
+  providerSetupMessage?: string | null;
 }
 
 export function LearningTabs({
@@ -96,6 +97,12 @@ export function LearningTabs({
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
+  // Rendered as text, so only a string gets through: the body is not
+  // schema-checked here (t-1011).
+  const setupMessage =
+    typeof embeddingStatus?.providerSetupMessage === 'string'
+      ? embeddingStatus.providerSetupMessage
+      : null;
   // Five prompts sampled from the advisor pool. Sampled on mount via
   // useEffect rather than lazy-init `useState` because this is a
   // 'use client' component that *also* gets server-rendered for the
@@ -176,14 +183,17 @@ export function LearningTabs({
 
       <TabsContent value="advisor" className="mt-4">
         <div className="flex flex-col gap-3">
-          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
-            <EmbeddingStatusBanner
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={embeddingStatus.hasActiveProvider}
-              providerState={embeddingStatus.providerState}
-            />
-          )}
+          {embeddingStatus &&
+            embeddingStatus.total > 0 &&
+            (embeddingStatus.pending > 0 || setupMessage) && (
+              <EmbeddingStatusBanner
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={embeddingStatus.hasActiveProvider}
+                providerState={embeddingStatus.providerState}
+                setupMessage={setupMessage}
+              />
+            )}
           <ChatInterface
             agentSlug="pattern-advisor"
             agentId={advisorAgent?.id}
@@ -235,14 +245,17 @@ export function LearningTabs({
 
       <TabsContent value="quiz" className="mt-4">
         <div className="flex flex-col gap-3">
-          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
-            <EmbeddingStatusBanner
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={embeddingStatus.hasActiveProvider}
-              providerState={embeddingStatus.providerState}
-            />
-          )}
+          {embeddingStatus &&
+            embeddingStatus.total > 0 &&
+            (embeddingStatus.pending > 0 || setupMessage) && (
+              <EmbeddingStatusBanner
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={embeddingStatus.hasActiveProvider}
+                providerState={embeddingStatus.providerState}
+                setupMessage={setupMessage}
+              />
+            )}
           {quizScore && (
             <div className="flex items-center gap-2">
               <Trophy className="text-muted-foreground h-4 w-4" aria-hidden="true" />

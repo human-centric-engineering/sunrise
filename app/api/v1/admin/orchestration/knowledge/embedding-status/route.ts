@@ -33,6 +33,7 @@ export const GET = withAdminAuth(
         hasActiveProvider: status.availability === 'ok',
         providerState: status.availability,
         providerIsLocal: status.providerIsLocal,
+        providerSetupMessage: status.setupMessage,
       });
     }
     const [total, embeddedRows, status] = await Promise.all([
@@ -66,6 +67,10 @@ export const GET = withAdminAuth(
       // Whether that provider is marked local; `null` when none resolves. The
       // privacy settings warn when protection is on and it is not (§127).
       providerIsLocal: status.providerIsLocal,
+      // The step left to take when embedding is set up but cannot run yet (a
+      // local provider whose model is not picked, say); `null` otherwise. The
+      // banner shows it in place of "add a provider" (t-1011).
+      providerSetupMessage: status.setupMessage,
     });
   },
   {

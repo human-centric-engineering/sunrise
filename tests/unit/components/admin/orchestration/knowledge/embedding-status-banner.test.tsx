@@ -56,4 +56,57 @@ describe('EmbeddingStatusBanner', () => {
     expect(screen.queryByRole('link', { name: /add an embedding provider/i })).toBeNull();
     expect(screen.getByRole('link', { name: /knowledge base/i })).toBeInTheDocument();
   });
+
+  it('shows the step left to take in place of "add a provider" when one is given (t-1011)', () => {
+    // A local-only install: telling it to add Voyage or OpenAI would send its
+    // text to a cloud vendor.
+    render(
+      <EmbeddingStatusBanner
+        total={10}
+        embedded={0}
+        hasActiveProvider={false}
+        providerState="none_configured"
+        setupMessage="The local provider is used only once one of its models is picked."
+      />
+    );
+    expect(
+      screen.getByText(/the local provider is used only once one of its models is picked/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /open settings/i })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/settings'
+    );
+    expect(screen.queryByRole('link', { name: /add an embedding provider/i })).toBeNull();
+  });
+
+  it('keeps "add a provider" when nothing is set up and no step is given', () => {
+    render(
+      <EmbeddingStatusBanner
+        total={10}
+        embedded={0}
+        hasActiveProvider={false}
+        providerState="none_configured"
+        setupMessage={null}
+      />
+    );
+    expect(screen.getByRole('link', { name: /add an embedding provider/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open settings/i })).toBeNull();
+  });
+
+  it('shows a step left to take even when every chunk is embedded (t-1011)', () => {
+    // A search still embeds its query, so it fails too.
+    render(
+      <EmbeddingStatusBanner
+        total={10}
+        embedded={10}
+        hasActiveProvider={false}
+        providerState="none_configured"
+        setupMessage="Add or reactivate a provider with that slug."
+      />
+    );
+    expect(
+      screen.getByText(/embedding cannot run, so search and new uploads fail/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/add or reactivate a provider with that slug/i)).toBeInTheDocument();
+  });
 });

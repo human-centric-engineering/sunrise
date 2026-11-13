@@ -59,7 +59,7 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 }));
 
 // Import SUT after mocks are in place
-const { embedText, embedBatch, getActiveEmbeddingModelSummary } =
+const { embedText, embedBatch, getActiveEmbeddingModelSummary, EmbeddingSetupError } =
   await import('@/lib/orchestration/knowledge/embedder');
 const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
 
@@ -80,10 +80,23 @@ type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<Embed
 // A simple 1536-dim zero vector
 const zeroVec = new Array(1536).fill(0);
 
+/**
+ * A full-width vector whose first values tag it. The embedder refuses vectors
+ * of another width than the provider's (t-1011), so a fake must return 1536.
+ */
+const tagged = (...head: number[]): number[] => [...head, ...new Array(1536 - head.length).fill(0)];
+
 /** One zero vector per input text, with a fixed reported token count. */
 const echoEmbedMany = (): EmbedManyFn =>
   vi.fn(async (texts: string[]) => ({
     embeddings: texts.map(() => zeroVec),
+    inputTokens: 7,
+  }));
+
+/** One zero vector per input text at `width`: a pinned model's width, not 1536. */
+const echoAtWidth = (width: number): EmbedManyFn =>
+  vi.fn(async (texts: string[]) => ({
+    embeddings: texts.map(() => new Array(width).fill(0)),
     inputTokens: 7,
   }));
 
@@ -132,21 +145,23 @@ describe('resolveProvider (via embedText)', () => {
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
   });
 
-  it('should prefer a local provider when one is present alongside openai-compatible', async () => {
+  it('skips a local provider and uses the openai-compatible one, whatever the order', async () => {
+    // Adding Ollama to try a local chat model must not change what embeds an
+    // install's knowledge: the chain never picks a local provider (t-1011).
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ id: 'local-1', slug: 'ollama-local', isLocal: true }),
       makeProvider({ id: 'remote-1', slug: 'remote', isLocal: false }),
-      makeProvider({ id: 'local-1', slug: 'ollama', isLocal: true }),
     ] as never);
     const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    // The local row wins even though the remote row sorts first.
     expect(getProvider).toHaveBeenCalledTimes(1);
-    expect(getProvider).toHaveBeenCalledWith('ollama', CHAIN_PICK);
-    // Local model is nomic-embed-text, and a fixed-width model is not asked for `dimensions`.
-    expect(embedMany).toHaveBeenCalledTimes(1);
-    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'nomic-embed-text' });
+    expect(getProvider).toHaveBeenCalledWith('remote', CHAIN_PICK);
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
   });
 
   it('should fall back to first openai-compatible provider when no local provider', async () => {
@@ -253,7 +268,7 @@ describe('embedText', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       makeProvider({ slug: 'together', isLocal: false }),
     ] as never);
-    const vec = [0.25, 0.5, 0.75];
+    const vec = tagged(0.25, 0.5, 0.75);
     const embedMany = installEmbedMany(async () => ({ embeddings: [vec], inputTokens: 11 }));
 
     const result = await embedText('my test text');
@@ -286,18 +301,17 @@ describe('embedText', () => {
     });
   });
 
-  it('should omit dimensions for local providers', async () => {
+  it('tells an install whose only provider is local to pick its model', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ isLocal: true }),
+      makeProvider({ slug: 'ollama-local', isLocal: true }),
     ] as never);
-    const embedMany = installEmbedMany();
+    installEmbedMany();
 
-    await embedText('test');
-
-    // Paired with proof the local path ran: the local model was requested.
-    expect(embedMany).toHaveBeenCalledTimes(1);
-    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
-    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
+    await expect(embedText('test')).rejects.toThrow(NoProviderConfiguredError);
+    await expect(embedText('test')).rejects.toThrow(
+      /pick it as the active embedding model \(Orchestration → Settings\), then run `npm run embeddings:reset`/
+    );
+    expect(getProvider).not.toHaveBeenCalled();
   });
 
   it('should forward inputType to embedMany when given, and omit it when not', async () => {
@@ -396,7 +410,7 @@ describe('embedBatch', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
     // Tag each vector with the text it came from so order across batches is checkable.
     const embedMany = installEmbedMany(async (texts) => ({
-      embeddings: texts.map((t) => [Number(t.split('-')[1])]),
+      embeddings: texts.map((t) => tagged(Number(t.split('-')[1]))),
       inputTokens: texts.length,
     }));
 
@@ -410,8 +424,8 @@ describe('embedBatch', () => {
     expect(embedMany.mock.calls[1][0][0]).toBe('text-100');
     expect(embedMany.mock.calls[2][0][0]).toBe('text-200');
     expect(result.embeddings).toHaveLength(250);
-    expect(result.embeddings[0]).toEqual([0]);
-    expect(result.embeddings[249]).toEqual([249]);
+    expect(result.embeddings[0]).toEqual(tagged(0));
+    expect(result.embeddings[249]).toEqual(tagged(249));
   });
 
   it('should pause 200ms between batches but not after the last batch', async () => {
@@ -439,9 +453,9 @@ describe('embedBatch', () => {
 
   it('should concatenate batch results in input order and report provenance', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
-    const vec0 = [10, 20];
-    const vec1 = [30, 40];
-    const vec2 = [50, 60];
+    const vec0 = tagged(10, 20);
+    const vec1 = tagged(30, 40);
+    const vec2 = tagged(50, 60);
     const byText: Record<string, number[]> = { a: vec0, b: vec1, c: vec2 };
     installEmbedMany(async (texts) => ({ embeddings: texts.map((t) => byText[t]) }));
 
@@ -827,7 +841,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
         baseUrl: 'https://active.example.com/v1',
       }) as never
     );
-    const embedMany = installEmbedMany();
+    const embedMany = installEmbedMany(echoAtWidth(3072));
 
     const result = await embedText('hello');
 
@@ -862,7 +876,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
         isLocal: true,
       }) as never
     );
-    const embedMany = installEmbedMany();
+    const embedMany = installEmbedMany(echoAtWidth(768));
 
     const result = await embedText('hello');
 
@@ -935,7 +949,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
         baseUrl: null, // null baseUrl is fine for Voyage
       }) as never
     );
-    const embedMany = installEmbedMany();
+    const embedMany = installEmbedMany(echoAtWidth(1024));
 
     const result = await embedText('hello', 'query');
 
@@ -966,5 +980,171 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
     expect(getProvider).toHaveBeenCalledWith('plain-host', OPERATOR_PIN);
     expect(embedMany).toHaveBeenCalledTimes(1);
     expect(embedMany.mock.calls[0][1]).toEqual({ model: 'text-embedding-3-small' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vectors of another width than the provider's (t-1011)
+// ---------------------------------------------------------------------------
+
+describe('a model that makes vectors of another width', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+  });
+
+  it('refuses a chain-picked host whose model is another width, naming the model and the remedy', async () => {
+    // pgvector would refuse the insert ("expected 1536 dimensions, not 768"),
+    // which says nothing about which model or what to do.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ slug: 'together', isLocal: false }),
+    ] as never);
+    installEmbedMany(echoAtWidth(768));
+
+    const err: unknown = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: 'embedding_dimension_mismatch', retriable: false });
+    const message = (err as Error).message;
+    expect(message).toContain(
+      '"text-embedding-3-small" on provider "together" made 768-dimension vectors'
+    );
+    expect(message).toContain('1536 were expected');
+    expect(message).toContain('Pick the model as the active embedding model');
+    expect(message).toContain('npm run embeddings:reset');
+  });
+
+  it('refuses a pinned model whose recorded width is wrong, pointing at the record', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'pinned',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'mxbai-embed-large',
+        dimensions: 768,
+        providerSlug: 'ollama',
+      }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeProvider({ slug: 'ollama', baseUrl: 'http://localhost:11434/v1', isLocal: true }) as never
+    );
+    installEmbedMany(echoAtWidth(1024));
+
+    const err: unknown = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: 'embedding_dimension_mismatch' });
+    expect((err as Error).message).toContain('made 1024-dimension vectors, but 768 were expected');
+    expect((err as Error).message).toContain('Correct the dimensions recorded for the model');
+  });
+
+  it('refuses a batch when any one vector is the wrong width', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async () => ({ embeddings: [zeroVec, new Array(768).fill(0)] }));
+
+    await expect(embedBatch(['a', 'b'], 10)).rejects.toMatchObject({
+      code: 'embedding_dimension_mismatch',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A picked model that cannot be used (t-1011)
+// ---------------------------------------------------------------------------
+
+describe('a picked model that cannot be used', () => {
+  // `embeddings:reset` sized the columns for the pick. The chain embeds at
+  // 1536, so falling back works only for a pick that is 1536 wide; any other
+  // pick stops, naming itself and the missing step, before any text is sent.
+  function pick(overrides: Record<string, unknown> = {}) {
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'pinned',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'nomic-embed-text',
+        dimensions: 768,
+        providerSlug: 'ollama',
+        schemaCompatible: false,
+        ...overrides,
+      }) as never
+    );
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // A chain provider is there to fall back to, so a test that expects none
+    // proves the fall-back was not taken.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+  });
+
+  it('stops when no active provider has its provider slug, naming the slug', async () => {
+    pick();
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    const embedMany = installEmbedMany();
+
+    const err: unknown = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(EmbeddingSetupError);
+    const message = (err as Error).message;
+    expect(message).toContain('"nomic-embed-text" cannot be used');
+    expect(message).toContain('no active provider has its provider slug, "ollama"');
+    expect(message).toContain('"ollama-local"');
+    expect(message).toContain(
+      '1536-dimension vectors, and `npm run embeddings:reset` sizes the columns for this model at 768'
+    );
+    expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
+    expect(embedMany).not.toHaveBeenCalled();
+  });
+
+  // `embeddings:reset` sizes the columns from `getActiveEmbeddingModelSummary()`,
+  // which drops an inactive or non-embedding pick: the columns it leaves take
+  // the chain's 1536, so these fall back rather than stop.
+  it('falls back when it is inactive, as the reset sizes the columns to 1536 for it', async () => {
+    pick({ isActive: false });
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(await getActiveEmbeddingModelSummary()).toBeNull();
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
+  });
+
+  it('falls back when it lacks the embedding capability, for the same reason', async () => {
+    pick({ capabilities: ['chat'] });
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(await getActiveEmbeddingModelSummary()).toBeNull();
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
+  });
+
+  it('stops when its provider has no base URL', async () => {
+    pick({ providerSlug: 'ollama-local' });
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeProvider({ slug: 'ollama-local', baseUrl: null, isLocal: true }) as never
+    );
+    installEmbedMany();
+
+    await expect(embedText('hello')).rejects.toThrow(/its provider "ollama-local" has no base URL/);
+  });
+
+  it('falls back when the pick is 1536 wide, so the chain fits the columns', async () => {
+    pick({ modelId: 'text-embedding-3-small', dimensions: 1536, providerSlug: 'gone' });
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
+  });
+
+  it('falls back when the provider read fails, rather than report it missing', async () => {
+    pick();
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(new Error('pool timeout'));
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
   });
 });

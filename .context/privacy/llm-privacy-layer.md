@@ -27,7 +27,7 @@ has merged; this table says what exists.
 | A `block` caused by an earlier message, the summary or the setup: placed and told      | t-1017 | **Built** |
 | A `block` caused by a memory: the memory is deleted, and the user carries on           | t-1018 | **Built** |
 | A reply whose embedding fails or is refused no longer holds the backfill back          | t-1016 | **Built** |
-| Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
+| Running a local embedding model: checked end to end, documented                        | t-1011 | **Built** |
 
 ## Quick Reference
 
@@ -1102,7 +1102,9 @@ Pseudonymised chat plus a local embedding model keeps names off every third
 party while search keeps full quality, because tool arguments are restored
 before dispatch. **`isLocal` means the provider runs on infrastructure the
 operator controls.** Marking a vendor's API `isLocal` already exempts it from
-spend caps; it also exempts it from this layer.
+spend caps; it also exempts it from this layer. Setting one up, the two places
+it can run, and what switching costs: [Running a local embedding
+model](../orchestration/knowledge.md#running-a-local-embedding-model).
 
 ## Testing
 

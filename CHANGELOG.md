@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **`providerSetupMessage` on `GET /api/v1/admin/orchestration/knowledge/embedding-status`,
+  and `EmbeddingSetupError` (§127 t-1011).** When embedding is set up but
+  cannot run yet, the status names the step left to take, and the knowledge
+  and learn pages' banner shows it in place of "add an embedding provider".
+  Examples are a local provider whose model is not picked, or a picked model
+  that cannot be used. `EmbeddingSetupError`, exported from
+  `lib/orchestration/knowledge/embedder.ts`, is a `NoProviderConfiguredError`, so
+  existing handlers still catch it; `resolveEmbeddingStatus()` gains
+  `setupMessage`.
+
 - **LLM privacy layer: a turn refused under `block` is left out of later
   history (§127, t-1014).** A refused turn's rows get the new
   `MessageMetadata.excludedFromHistory` (`'privacy_blocked'`):
@@ -345,6 +355,32 @@ release process.
 
 ### Changed
 
+- **The embedding provider chain no longer picks a local provider (§127
+  t-1011).** With no active embedding model picked, `resolveProvider()` in
+  `lib/orchestration/knowledge/embedder.ts` tries Voyage, then an
+  OpenAI-compatible provider that is not `isLocal`. A local provider such as
+  Ollama is used for embeddings only once one of its models is picked as the
+  active embedding model and `npm run embeddings:reset` has sized the columns
+  for it. Before, adding Ollama for chat made the chain embed with it at an
+  assumed 1536 dimensions, which no local model makes, and every upload and
+  search failed. An install whose only provider is local now gets
+  `EmbeddingSetupError` saying to pick its model.
+- **A picked embedding model that cannot be used no longer falls back when it
+  is not 1536 wide (t-1011).** The columns were sized for it, so the chain's
+  1536-dimension vectors could not be stored, and the text went to the chain's
+  provider for nothing. One with no active provider of its slug, or whose
+  provider has no base URL, now throws `EmbeddingSetupError`, naming it and the
+  missing step. A 1536-wide pick still falls back, and so does an inactive one
+  or one without the `embedding` capability, which `embeddings:reset` sizes the
+  columns to 1536 for.
+- **The seeded Ollama embedding models are filed under `ollama-local`**, the
+  slug the provider form and setup wizard give an Ollama provider (t-1011).
+  They were under `ollama`, so a picked model was silently ignored through a
+  provider made by the form. `db:seed` moves rows an admin has not edited. An
+  install that named its Ollama provider `ollama` by hand and picked one of
+  these models renames the provider to `ollama-local`, or edits the model's
+  provider slug.
+
 - **`POST /api/v1/orgs/[id]/invitations` no longer answers `409 EMAIL_TAKEN`
   for an address with an account (t-1006, #1199).** It stores and sends the
   invitation, and answers the same whether or not the account exists. An
@@ -383,6 +419,12 @@ release process.
   read refuses a new org invitation (`409 CONFLICT`), as on the org route.
 
 ### Fixed
+
+- **An embedding model whose vectors are not the expected width is refused
+  with a message that names it (t-1011).** `embedText()` and `embedBatch()` throw a
+  `ProviderError` with code `embedding_dimension_mismatch`, naming the model,
+  both widths and the remedy, where pgvector used to refuse the insert with
+  `expected 1536 dimensions, not 768`.
 
 - **An org's first member who isn't platform staff now becomes its `OWNER`,
   whoever is in it already (t-1001, #1178).** The per-org bootstrap fired only
