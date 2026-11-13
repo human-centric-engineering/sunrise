@@ -69,6 +69,7 @@ export function ContactForm() {
     fallback: 'An unexpected error occurred. Please try again.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const onSubmit = async (data: ContactClientInput) => {

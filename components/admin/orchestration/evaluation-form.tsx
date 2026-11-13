@@ -86,6 +86,7 @@ export function EvaluationForm({ agents }: EvaluationFormProps) {
     fallback: 'Failed to create evaluation. Please try again.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const agentId = watch('agentId');

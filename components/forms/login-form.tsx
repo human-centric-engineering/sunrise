@@ -41,7 +41,23 @@ export function LoginForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<SignInInput>({
+    resolver: zodResolver(signInSchema),
+    mode: 'onTouched',
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
+
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    errors,
+  });
   const [attemptedEmail, setAttemptedEmail] = useState<string | null>(null);
   const [notVerified, setNotVerified] = useState(false);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
@@ -59,19 +75,6 @@ export function LoginForm() {
     : null;
   // From better-auth's code, not its wording: a fork may reword the message.
   const unverified = notVerified && !!attemptedEmail && !!save.failure;
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<SignInInput>({
-    resolver: zodResolver(signInSchema),
-    mode: 'onTouched',
-    defaultValues: {
-      email: '',
-      password: '',
-    },
-  });
 
   // Handle sending verification email directly from login form
   const handleSendVerification = async () => {

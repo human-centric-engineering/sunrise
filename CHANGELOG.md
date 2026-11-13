@@ -484,6 +484,21 @@ release process.
   revealed field, or to the error box. Focus the person moved stays put, and
   nothing changes for a form whose switch commits in time. See
   `.context/ui/form-errors.md`, "A field on a hidden tab".
+- **"N fields need fixing" now follows the fields as they are fixed (t-1013).**
+  After a save the form's own validation blocked, the summary by Save kept the
+  count from the press. Once every field was fixed, the field messages went
+  and the summary stayed until Save was pressed again. `useSaveFailure()` takes
+  a new `errors` option, the form's live `formState.errors`. With it, the count
+  drops as fields are fixed and the summary goes when none are left. Each such
+  update is marked with the new optional `SaveFailure.updated`, and
+  `<SaveError>` doesn't move focus for it, so the field being typed in keeps
+  focus. A server's failure, and one from `show()` or `block()`, still stays
+  until the next Save. All 20 Sunrise forms wired as
+  `handleSubmit(onSubmit, save.invalid)` now pass it. **A fork's own forms
+  wired that way get the fix only once they pass `errors`.** The sign-up,
+  login and both reset-password forms now call `useForm` before
+  `useSaveFailure`; a fork that edited them should take that order. See
+  `.context/ui/form-errors.md`, "Recipe: a react-hook-form form".
 - **An embedding model whose vectors are not the expected width is refused
   with a message that names it (t-1011).** `embedText()` and `embedBatch()` throw a
   `ProviderError` with code `embedding_dimension_mismatch`, naming the model,

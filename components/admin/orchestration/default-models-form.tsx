@@ -315,6 +315,7 @@ export function DefaultModelsForm({
     fallback: 'Could not save settings. Try again in a moment.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   // Configured-provider gate. The form refuses to show dropdowns when

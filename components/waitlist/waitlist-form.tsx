@@ -157,6 +157,7 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
     fallback: text.failureMessage,
     fields: serverFields,
     setError,
+    errors,
   });
 
   const onSubmit = async (data: z.output<typeof schema>) => {

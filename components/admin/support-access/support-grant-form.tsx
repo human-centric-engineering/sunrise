@@ -111,6 +111,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
     fallback: 'An unexpected error occurred',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const onSubmit = async (data: GrantFormData) => {

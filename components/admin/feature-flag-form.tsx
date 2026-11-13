@@ -97,6 +97,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
     fallback: 'An unexpected error occurred',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
   const clearSaveFailure = save.clear;
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, type BaseSyntheticEvent } from 'react';
+import { useCallback, useMemo, useState, type BaseSyntheticEvent } from 'react';
 import type { FieldErrors, FieldValues } from 'react-hook-form';
 
 import {
@@ -67,6 +67,14 @@ export interface SaveFailureState<TField extends string> {
 interface Options {
   /** Shown when the server never answered with an error of its own. */
   fallback: string;
+  /**
+   * The form's live `formState.errors`. With it, a save the form's own
+   * validation blocked (`invalid`) follows the fields: the count by Save
+   * drops as they are fixed, and the summary goes when none are left (t-1013).
+   * A server's failure, or one the page showed itself, stays until the next
+   * Save either way.
+   */
+  errors?: FieldErrors<FieldValues>;
 }
 
 interface FormOptions<TField extends string> extends Options {
@@ -74,6 +82,19 @@ interface FormOptions<TField extends string> extends Options {
   fields: Partial<Record<string, TField>>;
   /** The form's `setError`, to put field messages under their fields. */
   setError?: SetFieldError<TField>;
+}
+
+/** The failure showing, and whether the form's own validation produced it. */
+interface Shown<TField extends string> {
+  failure: SaveFailure<TField> | null;
+  fromValidation: boolean;
+}
+
+const NONE: Shown<never> = { failure: null, fromValidation: false };
+
+/** What a failure says, so an update that says nothing new keeps the same object. */
+function failureKey(failure: SaveFailure<string>): string {
+  return JSON.stringify([failure.message, failure.fields]);
 }
 
 /**
@@ -96,8 +117,13 @@ export function useSaveFailure<TField extends string>(
 export function useSaveFailure<TField extends string>(
   options: Options | FormOptions<TField>
 ): SaveFailureState<TField | string> {
-  const [failure, setFailure] = useState<SaveFailure<TField | string> | null>(null);
-  const { fallback } = options;
+  const [state, setState] = useState<Shown<TField | string>>(NONE);
+  const setFailure = useCallback(
+    (failure: SaveFailure<TField | string> | null, fromValidation = false) =>
+      setState({ failure, fromValidation }),
+    []
+  );
+  const { fallback, errors } = options;
   const fields = 'fields' in options ? options.fields : undefined;
   const setError = 'fields' in options ? options.setError : undefined;
 
@@ -122,18 +148,19 @@ export function useSaveFailure<TField extends string>(
       setFailure(next);
       return next;
     },
-    [fallback, fields, setError]
+    [fallback, fields, setError, setFailure]
   );
 
   const show = useCallback(
     (message: string, named: SaveFailure<TField | string>['fields'] = []) =>
       setFailure({ message, stale: false, fields: named }),
-    []
+    [setFailure]
   );
 
   const invalid = useCallback(
-    <TValues extends FieldValues>(errors: FieldErrors<TValues>) => setFailure(invalidSave(errors)),
-    []
+    <TValues extends FieldValues>(blocked: FieldErrors<TValues>) =>
+      setFailure(invalidSave(blocked), true),
+    [setFailure]
   );
 
   const block = useCallback(
@@ -145,7 +172,7 @@ export function useSaveFailure<TField extends string>(
     [show]
   );
 
-  const clear = useCallback(() => setFailure(null), []);
+  const clear = useCallback(() => setFailure(null), [setFailure]);
 
   const submit = useCallback(
     (handler: (e?: BaseSyntheticEvent) => Promise<void> | void) => (e: BaseSyntheticEvent) => {
@@ -158,8 +185,21 @@ export function useSaveFailure<TField extends string>(
       setFailure(null);
       void handler(e);
     },
-    []
+    [setFailure]
   );
+
+  // A blocked save follows the live field errors. Keyed on what they say, not
+  // on the object: react-hook-form updates `formState.errors` in place.
+  const live = state.fromValidation && errors ? invalidSave(errors) : null;
+  const liveKey = live ? failureKey(live) : null;
+  const failure = useMemo(() => {
+    const shown = state.failure;
+    if (!shown || !live || liveKey === failureKey(shown)) return shown;
+    if (live.fields.length === 0 && !errors?.root?.message) return null;
+    return { ...live, updated: true };
+    // `live` is rebuilt every render; `liveKey` is what it says.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.failure, liveKey]);
 
   return { failure, report, show, invalid, block, clear, submit };
 }

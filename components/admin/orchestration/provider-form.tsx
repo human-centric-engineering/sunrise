@@ -511,6 +511,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
     fallback: 'Could not save provider. Try again in a moment.',
     fields: serverFields,
     setError,
+    errors,
   });
 
   // Auto-fill slug from name in create mode until the user edits the slug.

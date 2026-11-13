@@ -42,16 +42,6 @@ export function SignupForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
-
-  // An OAuth sign-up that failed comes back in the URL: it is shown where a
-  // failed sign-up is, until the form's own sign-up fails instead.
-  const oauthError = searchParams.get('error');
-  const oauthErrorDescription = searchParams.get('error_description');
-  const oauthMessage = oauthError
-    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
-    : null;
-
   const {
     register,
     handleSubmit,
@@ -67,6 +57,19 @@ export function SignupForm() {
       confirmPassword: '',
     },
   });
+
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    errors,
+  });
+
+  // An OAuth sign-up that failed comes back in the URL: it is shown where a
+  // failed sign-up is, until the form's own sign-up fails instead.
+  const oauthError = searchParams.get('error');
+  const oauthErrorDescription = searchParams.get('error_description');
+  const oauthMessage = oauthError
+    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
+    : null;
 
   // Watch password field for strength meter
   const password = watch('password');

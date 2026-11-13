@@ -132,11 +132,12 @@ milliseconds, and its field takes seconds.
 ## Recipe: a react-hook-form form
 
 ```tsx
-const { setError, handleSubmit, ... } = useForm<FormData>(...);
+const { setError, handleSubmit, formState: { errors }, ... } = useForm<FormData>(...);
 const save = useSaveFailure({
   fallback: 'Could not save. Try again in a moment.',
   fields: SERVER_FIELDS,
   setError,
+  errors, // the summary follows the fields as they are fixed
 });
 
 const onSubmit = async (values: FormData) => {
@@ -160,8 +161,24 @@ The field renders its message as it already does (`errors.x?.message`).
 `save.invalid` is react-hook-form's `onInvalid`: when the form's own
 validation blocks Save, it puts `"2 fields need fixing."` by Save and focus on
 the first blocked field in page order (a field in an array by its registered
-path, `variants.1.label`). A form that holds its failure in its own state
-passes `(errors) => setSaveFailure(invalidSave(errors))` instead.
+path, `variants.1.label`).
+
+**Pass `errors`** (`formState.errors`) **so the summary follows the fields**
+(t-1013). Without it the count stays as it was at the press. The person fixes
+every field, the field messages go, and `"3 fields need fixing."` stays by Save
+until they press it again: the form looks valid but says it is broken. With
+it, the count drops as fields are fixed and the summary goes when none are
+left. These are updates to the failure already showing (`updated: true`), so
+`<SaveError>` shows them without moving focus away from the field being typed
+in. Only a blocked save follows the fields. A server's failure, and one the
+page showed with `show()` or `block()`, stays until the next Save, because
+nothing on the page can tell it was fixed. Since `useSaveFailure` now reads
+`errors`, call it after `useForm`. The agent and capability forms build their
+own tab-aware summary through `show()`, so they don't follow fields.
+
+A form that holds its failure in its own state passes
+`(errors) => setSaveFailure(invalidSave(errors))` instead, and keeps the count
+from the press.
 `report()` passes `shouldFocus: false` to `setError`, because `<SaveError>`
 does the focusing and picks the first field in page order. It returns the
 failure, so a caller can branch on `stale`.

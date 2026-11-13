@@ -351,6 +351,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
     fallback: 'Something went wrong',
     fields: serverFields,
     setError,
+    errors,
   });
   // Subset check: when the selection is non-empty and contains only
   // storage-only capabilities, render a clarifying note so operators

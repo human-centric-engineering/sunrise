@@ -80,7 +80,8 @@ export interface SaveErrorProps<TField extends string> {
   /**
    * The failed save, from `readSaveError()`; null renders nothing. Each new
    * failure object brings the error into view again, so a second failure with
-   * the same message still moves.
+   * the same message still moves. One marked `updated` (the same failure, as
+   * fields were fixed) is shown without moving anything.
    */
   failure: SaveFailure<TField> | null;
   /**
@@ -168,7 +169,8 @@ export function SaveError<TField extends string>({
 
   useEffect(() => {
     const box = ref.current;
-    if (!failure || !box) return;
+    // An update to the failure showing (fields being fixed) moves nothing.
+    if (!failure || !box || failure.updated) return;
     const focusBox = () => {
       box.focus({ preventScroll: true });
       // Only when it is out of view: one in a sticky Save bar is always in

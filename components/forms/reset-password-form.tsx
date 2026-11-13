@@ -79,10 +79,6 @@ function RequestResetForm() {
   const { trackFormSubmitted } = useFormAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'Failed to send reset email. Please try again.' });
-  const [success, setSuccess] = useState(false);
-  const [submittedEmail, setSubmittedEmail] = useState('');
-
   const {
     register,
     handleSubmit,
@@ -92,6 +88,13 @@ function RequestResetForm() {
     mode: 'onTouched',
     defaultValues: { email: '' },
   });
+
+  const save = useSaveFailure({
+    fallback: 'Failed to send reset email. Please try again.',
+    errors,
+  });
+  const [success, setSuccess] = useState(false);
+  const [submittedEmail, setSubmittedEmail] = useState('');
 
   const onSubmit = async (data: ResetPasswordRequestInput) => {
     try {
@@ -219,11 +222,6 @@ function CompleteResetForm({ token }: { token: string }) {
   const router = useRouter();
   const schedule = useTimeout();
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
-  const [success, setSuccess] = useState(false);
-  const [linkRefused, setLinkRefused] = useState(false);
-  const linkExpired = linkRefused && !!save.failure;
-
   const {
     register,
     handleSubmit,
@@ -238,6 +236,14 @@ function CompleteResetForm({ token }: { token: string }) {
       confirmPassword: '',
     },
   });
+
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    errors,
+  });
+  const [success, setSuccess] = useState(false);
+  const [linkRefused, setLinkRefused] = useState(false);
+  const linkExpired = linkRefused && !!save.failure;
 
   const password = watch('password'); // For strength meter
 

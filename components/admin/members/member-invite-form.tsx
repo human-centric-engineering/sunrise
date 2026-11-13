@@ -90,6 +90,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
     fallback: 'An unexpected error occurred',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const send = async (

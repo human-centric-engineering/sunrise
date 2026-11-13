@@ -33,6 +33,12 @@ export interface SaveFailure<TField extends string = string> {
   stale: boolean;
   /** Form field → its messages, joined, for each field the server named, in the order sent. */
   fields: Array<{ field: TField; message: string }>;
+  /**
+   * True when this is the failure already showing, updated as the person
+   * fixed fields (`useSaveFailure`'s `errors` option), not a new one.
+   * `<SaveError>` shows it without moving focus: the person is typing.
+   */
+  updated?: boolean;
 }
 
 export interface ReadSaveErrorOptions<TField extends string> {

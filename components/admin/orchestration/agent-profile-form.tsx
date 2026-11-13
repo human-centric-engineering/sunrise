@@ -121,6 +121,7 @@ export function AgentProfileForm({ mode, profile }: Props) {
     fallback: 'Could not save the profile. Try again in a moment.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const nameValue = watch('name');

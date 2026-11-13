@@ -138,6 +138,7 @@ export function AcceptInviteForm() {
     fallback: 'Failed to accept invitation. Please try again.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   // Watch password field for strength meter
