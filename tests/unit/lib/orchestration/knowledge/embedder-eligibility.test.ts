@@ -272,6 +272,22 @@ describe('resolveEmbeddingAvailability', () => {
   });
 });
 
+describe('a bare OPENAI_API_KEY beside a local provider (t-1011)', () => {
+  it('is told to add OpenAI as a provider, not to pick the local model', async () => {
+    // Picking the local model means a reset that empties the knowledge base:
+    // the wrong remedy for an install that embedded with OpenAI through the key.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'ollama-local', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+    ] as never);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+
+    const err = await embedText('hello').catch((e: unknown) => e);
+
+    expect((err as Error).message).toMatch(/key alone no longer enables embeddings/);
+    expect((err as Error).message).not.toContain('embeddings:reset');
+  });
+});
+
 describe('resolveEmbeddingStatus', () => {
   it('carries isLocal false for a provider the chain picked', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([

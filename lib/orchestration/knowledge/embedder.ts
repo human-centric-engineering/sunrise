@@ -102,8 +102,10 @@ interface EmbeddingProvider {
  * full provider resolve.
  *
  * Returns null when no active model is set OR when the picked model
- * is unusable (inactive / chat-only / dim-less). Mirrors the same
- * validity gates as {@link resolveActiveEmbeddingConfig}.
+ * is unusable (inactive / chat-only / dim-less). It checks the model row
+ * only; {@link resolveActiveEmbeddingConfig} also needs an active provider of
+ * its slug with a base URL. `embeddings:reset` sizes the columns from this, so
+ * a pick that passes here and fails there cannot fall back (t-1011).
  */
 export async function getActiveEmbeddingModelSummary(): Promise<{
   modelId: string;
@@ -149,12 +151,13 @@ export async function getActiveEmbeddingModelSummary(): Promise<{
  * caller falls back to provider-priority resolution.
  *
  * **Except where falling back cannot work** (t-1011). The chain embeds at
- * 1536 dimensions, and `embeddings:reset` sized the columns for the pick. A
- * pick recorded at another width that cannot be used throws
- * {@link EmbeddingSetupError} naming it and the step that is missing, rather
- * than send the text to the chain's provider for vectors the columns refuse.
- * A pick that is missing, or has no width recorded, still falls back: there is
- * no width to compare.
+ * 1536 dimensions. A pick that passes {@link getActiveEmbeddingModelSummary}
+ * (active, `embedding`, a width) is the one `embeddings:reset` sized the
+ * columns for, so when it is recorded at another width and its provider is
+ * missing or has no base URL, it throws {@link EmbeddingSetupError} naming it
+ * and the step that is missing, rather than send the text to the chain's
+ * provider for vectors the columns refuse. A pick that fails the summary's own
+ * gates falls back as before: a reset sizes the columns to 1536 for it.
  *
  * This is the path that lets operators pick from `AiProviderModel`
  * rows in the admin UI rather than living with the implicit Voyage →
@@ -201,9 +204,6 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
   const pickAnother =
     'Or pick another model (Orchestration → Settings) and run `npm run embeddings:reset`.';
 
-  if (model && !model.isActive) {
-    cannotFallBack('it is inactive', `Reactivate it. ${pickAnother}`);
-  }
   if (!model || !model.isActive) {
     logger.warn(
       'Active embedding model is missing or inactive; falling back to provider priority',
@@ -215,7 +215,6 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
   }
 
   if (!model.capabilities.includes('embedding')) {
-    cannotFallBack('it lacks the embedding capability', `Add it. ${pickAnother}`);
     logger.warn('Active embedding model lacks the embedding capability; falling back', {
       activeEmbeddingModelId: modelId,
       capabilities: model.capabilities,
@@ -362,9 +361,9 @@ async function permittedForEmbedding(
  * `baseUrl`). Deactivating one row
  * moves an install from the unfiltered line to the filtered one silently,
  * which is why the drop-through is logged. A pick recorded at a width other
- * than 1536 does not drop through on the last four of those: it throws
- * `EmbeddingSetupError`, because the chain's vectors would not fit the columns
- * `embeddings:reset` sized for it (t-1011).
+ * than 1536 does not drop through on the last two (no active provider of its
+ * slug; no `baseUrl`): it throws `EmbeddingSetupError`, because the chain's
+ * vectors would not fit the columns `embeddings:reset` sized for it (t-1011).
  *
  * **It chooses; it does not call.** The chosen row is fetched from the provider
  * manager and called through `LlmProvider.embedMany` (t-740), so embedding goes
@@ -472,16 +471,6 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
         'rule (lib/app/llm-providers.ts).'
     );
   }
-  // A local provider is set up and nothing else is: the operator most likely
-  // means to embed with it, and needs the step the chain will not take for them.
-  const local = providers.find((p) => p.isLocal);
-  if (local) {
-    throw new EmbeddingSetupError(
-      `No embedding provider configured. The local provider "${local.slug}" is used for ` +
-        'embeddings only once one of its models is picked: pick it as the active embedding ' +
-        'model (Orchestration → Settings), then run `npm run embeddings:reset`.'
-    );
-  }
   // The bare-key arm is gone (t-740). An install that relied on it has the key
   // set and no row, and would otherwise read the plain "nothing configured"
   // and not know why a working setup stopped. Say what changed and the fix.
@@ -495,6 +484,18 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       'No embedding provider configured. OPENAI_API_KEY is set, but the key alone no longer ' +
         'enables embeddings: add OpenAI as a provider in the admin settings (the Providers ' +
         'page detects the key).'
+    );
+  }
+  // A local provider is set up and nothing else is: the operator most likely
+  // means to embed with it, and needs the step the chain will not take for them.
+  // After the bare-key check: an install that relied on OPENAI_API_KEY and adds
+  // Ollama for chat wants OpenAI added as a provider, not its knowledge emptied.
+  const local = providers.find((p) => p.isLocal);
+  if (local) {
+    throw new EmbeddingSetupError(
+      `No embedding provider configured. The local provider "${local.slug}" is used for ` +
+        'embeddings only once one of its models is picked: pick it as the active embedding ' +
+        'model (Orchestration → Settings), then run `npm run embeddings:reset`.'
     );
   }
   throw new NoProviderConfiguredError(
@@ -866,11 +867,19 @@ export async function embedBatch(
     }
   }
 
-  logger.info('Batch embedding complete', {
-    totalTexts: texts.length,
-    totalEmbeddings: allEmbeddings.length,
-    totalInputTokens,
-  });
+  if (mismatch) {
+    logger.warn('Batch embedding stopped: a batch was the wrong width', {
+      totalTexts: texts.length,
+      embeddedBeforeStop: allEmbeddings.length,
+      totalInputTokens,
+    });
+  } else {
+    logger.info('Batch embedding complete', {
+      totalTexts: texts.length,
+      totalEmbeddings: allEmbeddings.length,
+      totalInputTokens,
+    });
+  }
 
   // Best-effort: one cost row for the whole batch. Document-ingestion
   // batches typically run from the admin UI rather than per-turn, so a

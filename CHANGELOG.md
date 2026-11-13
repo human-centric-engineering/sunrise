@@ -368,10 +368,11 @@ release process.
 - **A picked embedding model that cannot be used no longer falls back when it
   is not 1536 wide (t-1011).** The columns were sized for it, so the chain's
   1536-dimension vectors could not be stored, and the text went to the chain's
-  provider for nothing. An inactive pick, one without the `embedding`
-  capability, or one with no active provider of its slug or no base URL now
-  throws `EmbeddingSetupError`, naming it and the missing step. A 1536-wide pick
-  still falls back.
+  provider for nothing. One with no active provider of its slug, or whose
+  provider has no base URL, now throws `EmbeddingSetupError`, naming it and the
+  missing step. A 1536-wide pick still falls back, and so does an inactive one
+  or one without the `embedding` capability, which `embeddings:reset` sizes the
+  columns to 1536 for.
 - **The seeded Ollama embedding models are filed under `ollama-local`**, the
   slug the provider form and setup wizard give an Ollama provider (t-1011).
   They were under `ollama`, so a picked model was silently ignored through a
@@ -420,7 +421,7 @@ release process.
 ### Fixed
 
 - **An embedding model whose vectors are not the expected width is refused
-  with a message that names it (t-1011).** `callEmbeddingProvider()` throws a
+  with a message that names it (t-1011).** `embedText()` and `embedBatch()` throw a
   `ProviderError` with code `embedding_dimension_mismatch`, naming the model,
   both widths and the remedy, where pgvector used to refuse the insert with
   `expected 1536 dimensions, not 768`.

@@ -1093,19 +1093,27 @@ describe('a picked model that cannot be used', () => {
     expect(embedMany).not.toHaveBeenCalled();
   });
 
-  it('stops when it is inactive', async () => {
+  // `embeddings:reset` sizes the columns from `getActiveEmbeddingModelSummary()`,
+  // which drops an inactive or non-embedding pick: the columns it leaves take
+  // the chain's 1536, so these fall back rather than stop.
+  it('falls back when it is inactive, as the reset sizes the columns to 1536 for it', async () => {
     pick({ isActive: false });
     installEmbedMany();
 
-    await expect(embedText('hello')).rejects.toThrow(/cannot be used: it is inactive/);
-    expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
+    await embedText('hello');
+
+    expect(await getActiveEmbeddingModelSummary()).toBeNull();
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
   });
 
-  it('stops when it lacks the embedding capability', async () => {
+  it('falls back when it lacks the embedding capability, for the same reason', async () => {
     pick({ capabilities: ['chat'] });
     installEmbedMany();
 
-    await expect(embedText('hello')).rejects.toThrow(/lacks the embedding capability/);
+    await embedText('hello');
+
+    expect(await getActiveEmbeddingModelSummary()).toBeNull();
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
   });
 
   it('stops when its provider has no base URL', async () => {

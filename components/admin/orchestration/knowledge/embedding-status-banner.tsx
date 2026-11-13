@@ -71,9 +71,22 @@ export function EmbeddingStatusBanner({
           ) : state === 'none_configured' && setupMessage ? (
             <>
               {' '}
-              {setupMessage}{' '}
+              {/* The message marks commands with backticks; show them as code. */}
+              {setupMessage.split('`').map((part, i) =>
+                i % 2 === 1 ? (
+                  <code key={i} className="font-mono">
+                    {part}
+                  </code>
+                ) : (
+                  <span key={i}>{part}</span>
+                )
+              )}{' '}
               <Link href="/admin/orchestration/settings" className="underline">
                 Open settings
+              </Link>{' '}
+              ·{' '}
+              <Link href="/admin/orchestration/providers" className="underline">
+                Providers
               </Link>
             </>
           ) : state === 'none_configured' ? (

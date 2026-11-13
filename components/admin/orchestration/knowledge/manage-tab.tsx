@@ -501,6 +501,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // this the banner prints "add an embedding provider" whenever the endpoint is
   // briefly unreachable, which is the wrong remedy for a working install.
   const providerState = embeddingStatus === null ? 'unknown' : embeddingStatus.providerState;
+  // The step left to take when embedding is set up but cannot run yet (a local
+  // provider whose model is not picked, say). Shown even with nothing embedded,
+  // where "configure a provider" would be the wrong remedy (t-1011).
+  const setupMessage = embeddingStatus?.providerSetupMessage ?? null;
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
@@ -542,7 +546,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                 : !hasChunks
                   ? 'Load the built-in patterns to enable the Learning page.'
                   : !hasProvider
-                    ? 'Configure an embedding provider to enable vector search.'
+                    ? setupMessage
+                      ? 'Embedding needs one more step. Expand for what to do.'
+                      : 'Configure an embedding provider to enable vector search.'
                     : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
             </p>
           )}
@@ -609,7 +615,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                   !hasChunks
                     ? 'Load Agentic Design Patterns first'
                     : !hasProvider
-                      ? 'Configure an embedding provider first'
+                      ? setupMessage
+                        ? 'Embedding needs one more step: see the notice below'
+                        : 'Configure an embedding provider first'
                       : allEmbedded
                         ? 'All chunks are already embedded'
                         : undefined
@@ -680,15 +688,18 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
               })}
             </p>
           )}
-          {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
-            <EmbeddingStatusBanner
-              providerState={providerState}
-              setupMessage={embeddingStatus.providerSetupMessage}
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={hasProvider}
-            />
-          )}
+          {embeddingStatus &&
+            hasChunks &&
+            !allEmbedded &&
+            (embeddingStatus.embedded > 0 || setupMessage) && (
+              <EmbeddingStatusBanner
+                providerState={providerState}
+                setupMessage={setupMessage}
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={hasProvider}
+              />
+            )}
         </div>
       )}
     </div>

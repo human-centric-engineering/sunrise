@@ -97,6 +97,12 @@ export function LearningTabs({
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
+  // Rendered as text, so only a string gets through: the body is not
+  // schema-checked here (t-1011).
+  const setupMessage =
+    typeof embeddingStatus?.providerSetupMessage === 'string'
+      ? embeddingStatus.providerSetupMessage
+      : null;
   // Five prompts sampled from the advisor pool. Sampled on mount via
   // useEffect rather than lazy-init `useState` because this is a
   // 'use client' component that *also* gets server-rendered for the
@@ -183,7 +189,7 @@ export function LearningTabs({
               embedded={embeddingStatus.embedded}
               hasActiveProvider={embeddingStatus.hasActiveProvider}
               providerState={embeddingStatus.providerState}
-              setupMessage={embeddingStatus.providerSetupMessage}
+              setupMessage={setupMessage}
             />
           )}
           <ChatInterface
@@ -243,7 +249,7 @@ export function LearningTabs({
               embedded={embeddingStatus.embedded}
               hasActiveProvider={embeddingStatus.hasActiveProvider}
               providerState={embeddingStatus.providerState}
-              setupMessage={embeddingStatus.providerSetupMessage}
+              setupMessage={setupMessage}
             />
           )}
           {quizScore && (

@@ -57,6 +57,7 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 const { prisma } = await import('@/lib/db/client');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
+const { logger } = await import('@/lib/logging');
 const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
 
 const mockLogCost = vi.mocked(logCost);
@@ -281,6 +282,12 @@ describe('a call refused for its width is still costed (t-1011)', () => {
       // The third batch is never sent; the two that were are costed.
       expect(embedMany).toHaveBeenCalledTimes(2);
       expect(costParams()).toMatchObject({ inputTokens: 24 });
+      // Said as a stop, not as a run that completed.
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Batch embedding stopped: a batch was the wrong width',
+        expect.objectContaining({ embeddedBeforeStop: 1 })
+      );
+      expect(logger.info).not.toHaveBeenCalledWith('Batch embedding complete', expect.anything());
     } finally {
       vi.useRealTimers();
     }
