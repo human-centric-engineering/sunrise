@@ -10,6 +10,3 @@
 -- AlterTable
 ALTER TABLE "ai_message" ADD COLUMN     "embeddingFailures" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN     "embeddingRetryAt" TIMESTAMP(3);
-
--- CreateIndex
-CREATE INDEX "ai_message_embeddingRetryAt_idx" ON "ai_message"("embeddingRetryAt");

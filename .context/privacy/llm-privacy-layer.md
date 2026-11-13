@@ -230,15 +230,17 @@ An agent and an org can each require more protection than the install gives.
   first, newest first, and gives whatever room is left to those whose
   retry time has come, the earliest first, so none can fill the batch. A
   reply that can never be embedded settles to one attempt a week, so an
-  install where nothing can be embedded goes quiet: a run of only failures
+  install where nothing can be embedded does little: a run of only failures
   that did not fill its batch is not work for the maintenance tick's idle
-  gate. Once nothing refuses a reply (a local embedding model installed,
+  gate. That holds while such replies fit the weekly retries, about 16,800
+  per org (a batch of 25 a quarter-hour); a larger backlog keeps every run
+  busy, and the gate open. A reply embedded after failing starts its count
+  again, and `npm run embeddings:reset` clears every reply's retry time. Once nothing refuses a reply (a local embedding model installed,
   say), it is tried again within its current wait, up to a week for one
   that has failed many times, and due replies are drained at up to one
   batch (25) a run, in the room fresh replies leave. The backfill copies
   none of the stage's rules: until t-1016 it left out in SQL the two
-  refusals it knew of, and could not see any other. The columns are left as
-  they were once a reply is embedded.
+  refusals it knew of, and could not see any other.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a

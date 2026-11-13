@@ -196,9 +196,10 @@ model AiMessage {
   // stays unindexed on purpose: a partial index needs raw SQL, and therefore a
   // drift probe to maintain forever, to save a filter on an already-narrow scan.
   @@index([role, createdAt])
-  // Serves the backfill's retry read: failed replies whose retry time has
-  // come, the earliest first (t-1016).
-  @@index([embeddingRetryAt])
+  // No index on `embeddingRetryAt`: the backfill's retry read costs about
+  // what its fresh read already does, while an index would cover every
+  // message (nearly all NULL) on this table's every insert, and building it
+  // would block writes to the table while a migration ran (t-1016).
   @@index([createdAt])
   @@index([rating])
   @@index([agentVersionId])

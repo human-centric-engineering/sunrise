@@ -118,7 +118,9 @@ export const EMBEDDING_RETRY_MAX_MS = 7 * 24 * 60 * 60 * 1000;
  * row: an hour, doubling each time, at most a week (owner ruling 2026-11-12:
  * back off everything). A reply that can never be embedded, say an agent's
  * reply under `local_only` with no local model, settles to one attempt a week,
- * so an install where nothing can be embedded goes quiet. One that is fixed
+ * so an install where nothing can be embedded does little: at a week's wait
+ * and a batch of 25 a quarter-hour, up to about 16,800 such replies per org
+ * fit, and only a backlog larger than that keeps every run busy. One that is fixed
  * is tried again within its current wait.
  */
 export function embeddingRetryDelayMs(failures: number): number {
@@ -146,6 +148,21 @@ async function deferEmbedding(messageId: string, previous: number): Promise<void
     });
   } catch (err) {
     logger.warn('Failed to defer a message embedding', {
+      messageId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Forget a reply's failed attempts once it is embedded. Best effort. */
+async function clearDeferral(messageId: string): Promise<void> {
+  try {
+    await prisma.aiMessage.updateMany({
+      where: { id: messageId },
+      data: { embeddingFailures: 0, embeddingRetryAt: null },
+    });
+  } catch (err) {
+    logger.warn('Failed to clear a message embedding deferral', {
       messageId,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -213,6 +230,10 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
     try {
       await inAgentScope(msg.agentId, () => generateAndStoreEmbedding(msg.id, msg.content), scopes);
       processed++;
+      // Embedded after failing: its count starts again, so a later failure
+      // (once `embeddings:reset` drops the embedding, say) waits an hour, not
+      // the week its old count would give it.
+      if (msg.embeddingFailures > 0) await clearDeferral(msg.id);
     } catch (err) {
       // Either way it waits before the next attempt, longer each time.
       await deferEmbedding(msg.id, msg.embeddingFailures);

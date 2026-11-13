@@ -257,8 +257,12 @@ describe('backfillMissingEmbeddings', () => {
 
   it('processes messages missing embeddings', async () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-      { id: 'msg-10', content: 'This is a test message that needs embedding' },
-      { id: 'msg-11', content: 'Another message that also needs embedding' },
+      {
+        id: 'msg-10',
+        content: 'This is a test message that needs embedding',
+        embeddingFailures: 0,
+      },
+      { id: 'msg-11', content: 'Another message that also needs embedding', embeddingFailures: 0 },
     ]);
 
     const result = await backfillMissingEmbeddings();
@@ -274,6 +278,7 @@ describe('backfillMissingEmbeddings', () => {
           id: 'msg-40',
           content: 'A reply from an org whose settings cannot be read',
           agentId: null,
+          embeddingFailures: 0,
         },
       ]);
       vi.mocked(embedText).mockRejectedValueOnce(
@@ -296,9 +301,24 @@ describe('backfillMissingEmbeddings', () => {
         return FAKE_EMBED_RESULT;
       });
       vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-        { id: 'msg-50', content: 'The first of two replies by one agent', agentId: 'agent-hr' },
-        { id: 'msg-51', content: 'The second of two replies by one agent', agentId: 'agent-hr' },
-        { id: 'msg-52', content: 'A reply by another agent altogether', agentId: 'agent-faq' },
+        {
+          id: 'msg-50',
+          content: 'The first of two replies by one agent',
+          agentId: 'agent-hr',
+          embeddingFailures: 0,
+        },
+        {
+          id: 'msg-51',
+          content: 'The second of two replies by one agent',
+          agentId: 'agent-hr',
+          embeddingFailures: 0,
+        },
+        {
+          id: 'msg-52',
+          content: 'A reply by another agent altogether',
+          agentId: 'agent-faq',
+          embeddingFailures: 0,
+        },
       ]);
 
       await backfillMissingEmbeddings();
@@ -309,8 +329,18 @@ describe('backfillMissingEmbeddings', () => {
 
     it('count a local-only refusal as skipped, not failed, and do not warn', async () => {
       vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-        { id: 'msg-30', content: 'A reply its agent will not let leave', agentId: 'agent-hr' },
-        { id: 'msg-31', content: 'A reply that embeds without trouble', agentId: null },
+        {
+          id: 'msg-30',
+          content: 'A reply its agent will not let leave',
+          agentId: 'agent-hr',
+          embeddingFailures: 0,
+        },
+        {
+          id: 'msg-31',
+          content: 'A reply that embeds without trouble',
+          agentId: null,
+          embeddingFailures: 0,
+        },
       ]);
       vi.mocked(embedText)
         .mockRejectedValueOnce(new PrivacyRefusedError('embeddings_local_only', 'openai'))
@@ -428,6 +458,48 @@ describe('backfillMissingEmbeddings', () => {
 
     afterEach(() => {
       vi.useRealTimers();
+    });
+
+    it('starts the count again once a reply that failed is embedded', async () => {
+      const store = replyStore(['reply', 'never-failed']);
+      const refused = new Set(['reply']);
+      resolverRefuses(refused);
+      await backfillMissingEmbeddings();
+      expect(store[0]).toMatchObject({ embeddingFailures: 1 });
+      // 'never-failed' was embedded on that run at no extra write: the one
+      // write is the refused reply's retry time.
+      expect(store[1].embedded).toBe(true);
+      expect(prisma.aiMessage.updateMany).toHaveBeenCalledTimes(1);
+      refused.clear();
+      vi.setSystemTime(Date.now() + HOUR);
+      vi.mocked(prisma.aiMessage.updateMany).mockClear();
+
+      expect(await backfillMissingEmbeddings()).toMatchObject({ processed: 1 });
+      expect(store[0]).toMatchObject({
+        embedded: true,
+        embeddingFailures: 0,
+        embeddingRetryAt: null,
+      });
+      // A reply that never failed costs no extra write.
+      expect(prisma.aiMessage.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns, and goes on, when starting the count again fails', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        {
+          id: 'msg-80',
+          content: 'A reply embedded at its third attempt',
+          agentId: null,
+          embeddingFailures: 2,
+        },
+      ]);
+      vi.mocked(prisma.aiMessage.updateMany).mockRejectedValueOnce(new Error('connection reset'));
+
+      expect(await backfillMissingEmbeddings()).toMatchObject({ processed: 1 });
+      expect(logger.warn).toHaveBeenCalledWith('Failed to clear a message embedding deferral', {
+        messageId: 'msg-80',
+        error: 'connection reset',
+      });
     });
 
     it('says whether it tried a full batch, so the idle gate knows if more may be behind', async () => {
@@ -640,8 +712,18 @@ describe('backfillMissingEmbeddings', () => {
       return FAKE_EMBED_RESULT;
     });
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-      { id: 'msg-20', content: 'An HR reply that needs its embedding', agentId: 'agent-hr' },
-      { id: 'msg-21', content: 'A reply whose conversation is gone now', agentId: null },
+      {
+        id: 'msg-20',
+        content: 'An HR reply that needs its embedding',
+        agentId: 'agent-hr',
+        embeddingFailures: 0,
+      },
+      {
+        id: 'msg-21',
+        content: 'A reply whose conversation is gone now',
+        agentId: null,
+        embeddingFailures: 0,
+      },
     ]);
 
     await backfillMissingEmbeddings();
@@ -653,8 +735,8 @@ describe('backfillMissingEmbeddings', () => {
 
   it('counts failures without stopping the batch', async () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-      { id: 'msg-10', content: 'Good message that will embed fine' },
-      { id: 'msg-11', content: 'Bad message that will fail embedding' },
+      { id: 'msg-10', content: 'Good message that will embed fine', embeddingFailures: 0 },
+      { id: 'msg-11', content: 'Bad message that will fail embedding', embeddingFailures: 0 },
     ]);
     vi.mocked(prisma.$executeRawUnsafe)
       .mockResolvedValueOnce(1)
@@ -672,8 +754,8 @@ describe('backfillMissingEmbeddings', () => {
   it('returns processed=0 and does not call logger.info when all embeddings fail', async () => {
     // Arrange: two messages; both fail — processed stays 0
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-      { id: 'msg-30', content: 'First message that will fail to embed' },
-      { id: 'msg-31', content: 'Second message that also fails to embed' },
+      { id: 'msg-30', content: 'First message that will fail to embed', embeddingFailures: 0 },
+      { id: 'msg-31', content: 'Second message that also fails to embed', embeddingFailures: 0 },
     ]);
     vi.mocked(embedText).mockRejectedValue(new Error('Provider down'));
 
@@ -691,8 +773,12 @@ describe('backfillMissingEmbeddings', () => {
   it('logs stringified non-Error rejection and completed info when processed > 0', async () => {
     // Arrange: two messages; first succeeds, second fails with a plain string
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
-      { id: 'msg-20', content: 'First message that embeds successfully now' },
-      { id: 'msg-21', content: 'Second message that will fail with string error' },
+      { id: 'msg-20', content: 'First message that embeds successfully now', embeddingFailures: 0 },
+      {
+        id: 'msg-21',
+        content: 'Second message that will fail with string error',
+        embeddingFailures: 0,
+      },
     ]);
     vi.mocked(embedText)
       .mockResolvedValueOnce(FAKE_EMBED_RESULT) // first call succeeds

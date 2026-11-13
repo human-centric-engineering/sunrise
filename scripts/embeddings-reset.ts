@@ -103,6 +103,12 @@ async function main(): Promise<void> {
   await prisma.$executeRawUnsafe(
     `TRUNCATE TABLE "ai_knowledge_chunk", "ai_knowledge_document", "ai_message_embedding" CASCADE`
   );
+  // Every reply is to be embedded again, so none waits out a back-off it
+  // earned under the old model (§127 t-1016).
+  await prisma.$executeRawUnsafe(
+    `UPDATE "ai_message" SET "embeddingRetryAt" = NULL, "embeddingFailures" = 0 ` +
+      `WHERE "embeddingRetryAt" IS NOT NULL OR "embeddingFailures" <> 0`
+  );
 
   // 3) Rebuild the embedding columns at the target dimension. Chunks
   // use a nullable column (seeder writes content first, embeds later);
