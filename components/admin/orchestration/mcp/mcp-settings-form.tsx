@@ -78,6 +78,7 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
     fallback: 'Could not save settings. Try again in a moment.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const onSubmit = async (data: McpSettingsFormData) => {

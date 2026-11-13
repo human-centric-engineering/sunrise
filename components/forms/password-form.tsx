@@ -69,6 +69,7 @@ export function PasswordForm() {
 
   const save = useSaveFailure({
     fallback: 'Could not change your password. Try again in a moment.',
+    errors,
   });
 
   const newPassword = watch('newPassword');

@@ -95,6 +95,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     fallback: 'Could not update your profile. Try again in a moment.',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const currentTimezone = watch('timezone');

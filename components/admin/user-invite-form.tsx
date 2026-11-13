@@ -101,6 +101,7 @@ export function UserInviteForm() {
     fallback: 'An unexpected error occurred',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const currentRole = watch('role');

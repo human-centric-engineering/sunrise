@@ -80,7 +80,8 @@ export interface SaveErrorProps<TField extends string> {
   /**
    * The failed save, from `readSaveError()`; null renders nothing. Each new
    * failure object brings the error into view again, so a second failure with
-   * the same message still moves.
+   * the same message still moves. One marked `updated` (the same failure, as
+   * fields were fixed) is shown without moving anything.
    */
   failure: SaveFailure<TField> | null;
   /**
@@ -124,6 +125,21 @@ function firstPresent(root: ParentNode, names: readonly string[]): HTMLElement |
 /** Frames to wait for a revealed tab to render before giving the summary focus. */
 const REVEAL_FRAMES = 5;
 
+/**
+ * How long to keep watching a field focus went to, in case a tab switch that
+ * commits late unmounts it (t-997). A switch slower than the reveal frames
+ * used to leave focus on `<body>`. Time, not frames: a commit can be held up
+ * by the scheduler for longer than any number of frames, and frames come
+ * further apart on a slow device.
+ */
+const WATCH_MS = 2000;
+
+/** Whether focus fell to the page, as it does when the focused element unmounts. */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body;
+}
+
 /** Focuses a field, reporting whether it took focus (a disabled one does not). */
 function focusField(el: HTMLElement): boolean {
   el.focus({ preventScroll: true });
@@ -150,10 +166,18 @@ export function SaveError<TField extends string>({
   onRevealField,
 }: SaveErrorProps<TField>) {
   const ref = useRef<HTMLDivElement>(null);
+  // The failure the last press produced. An `updated` one (fields being fixed)
+  // keeps it, so it neither moves focus nor ends a watch the press started.
+  const [pressed, setPressed] = useState(failure?.updated ? null : failure);
+  if (!failure) {
+    if (pressed !== null) setPressed(null);
+  } else if (!failure.updated && failure !== pressed) {
+    setPressed(failure);
+  }
 
   useEffect(() => {
     const box = ref.current;
-    if (!failure || !box) return;
+    if (!pressed || !box) return;
     const focusBox = () => {
       box.focus({ preventScroll: true });
       // Only when it is out of view: one in a sticky Save bar is always in
@@ -164,7 +188,7 @@ export function SaveError<TField extends string>({
         box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
     };
-    const names = failure.fields.map((f) => f.field);
+    const names = pressed.fields.map((f) => f.field);
     if (names.length === 0) return focusBox();
 
     const root = box.closest('form') ?? document;
@@ -178,31 +202,84 @@ export function SaveError<TField extends string>({
     // The form picks the tab. With errors on two tabs, the fields on the
     // others can't all be on the page at once, so focus goes to the first
     // named field the revealed tab shows: the summary by Save says how many.
+    // Where focus was when Save was pressed: until a field takes focus, focus
+    // anywhere else is the admin moving it.
+    const startedOn = document.activeElement;
     onRevealField(names);
     // The revealed tab renders on a later commit; look again until it has.
-    // A field found before that commit can be on the tab being left, so the
-    // look watches every frame, and finds another only if that one unmounts:
-    // focus the admin moved meanwhile stays where they put it.
+    // A field found before that commit can be on the tab being left, so once a
+    // field has focus the form is watched for it unmounting and taking focus
+    // with it, for WATCH_MS after the reveal: that is the switch landing,
+    // however late (t-997), and focus moves on to the revealed field. Focus the
+    // admin moved stays where they put it: the watch ends as soon as focus is
+    // anywhere else.
     let frame = 0;
     let tries = 0;
+    let done = false;
     let focused: HTMLElement | null = null;
-    const look = () => {
-      if (!focused?.isConnected) {
-        const revealed = firstPresent(root, names);
-        focused = revealed && focusField(revealed) ? revealed : null;
+    let observer: MutationObserver | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Focus leaving the field while it is still on the page is the admin
+    // moving it, even to nowhere: a click on blank space puts focus on
+    // <body>, which would otherwise read as the field taking focus with it.
+    const onLeave = (e: FocusEvent) => {
+      const left = e.currentTarget;
+      queueMicrotask(() => {
+        const held = focused;
+        if (held && left === held && held.isConnected && document.activeElement !== held) stop();
+      });
+    };
+    const stop = () => {
+      done = true;
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      clearTimeout(timer);
+      focused?.removeEventListener('focusout', onLeave);
+    };
+    // Whether focus is still where this put it, or where Save left it before a
+    // field took it. A field it focused that has unmounted counts only when
+    // focus fell to the page with it.
+    const stillOurs = () =>
+      focused
+        ? focused.isConnected
+          ? document.activeElement === focused
+          : focusLost()
+        : document.activeElement === startedOn || focusLost();
+    const refocus = () => {
+      if (done) return;
+      if (!stillOurs()) return stop(); // moved by the admin
+      if (focused?.isConnected) return;
+      const revealed = firstPresent(root, names);
+      focused?.removeEventListener('focusout', onLeave);
+      focused = revealed && focusField(revealed) ? revealed : null;
+      focused?.addEventListener('focusout', onLeave);
+      // Past the reveal frames with no field to take focus: the summary does.
+      if (!focused && tries >= REVEAL_FRAMES) {
+        stop();
+        focusBox();
       }
+    };
+    const look = () => {
+      refocus();
+      if (done) return;
       if (++tries < REVEAL_FRAMES) {
         frame = requestAnimationFrame(look);
       } else if (!focused?.isConnected) {
+        stop();
         focusBox();
       }
     };
     frame = requestAnimationFrame(look);
-    return () => cancelAnimationFrame(frame);
-    // Moves on a new failure only; a parent re-rendering with a new
+    if (typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(refocus);
+      observer.observe(root, { childList: true, subtree: true });
+      timer = setTimeout(stop, WATCH_MS);
+    }
+    return stop;
+    // Moves on a new press only; a parent re-rendering with a new
     // onRevealField must not pull focus back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [failure]);
+  }, [pressed]);
 
   if (!failure) return null;
 
@@ -210,6 +287,9 @@ export function SaveError<TField extends string>({
     <div
       ref={ref}
       role="alert"
+      // A count changing as fields are fixed is read out politely, not over
+      // the person's own typing as a new failure is.
+      aria-live={failure.updated ? 'polite' : undefined}
       tabIndex={-1}
       className="flex flex-col gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 outline-none focus-visible:ring-2 focus-visible:ring-red-400 sm:flex-row sm:items-start dark:border-red-800 dark:bg-red-950 dark:text-red-200"
     >

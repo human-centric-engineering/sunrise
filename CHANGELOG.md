@@ -473,6 +473,37 @@ release process.
 
 ### Fixed
 
+- **`<SaveError>` no longer leaves focus on the page when a tab switch lands
+  late (t-997).** After a failed save it asks a tabbed form to reveal the field
+  at fault, then looks for that field over the next few frames. A field found
+  in those frames can be on the tab being left. If the switch then committed
+  after the last look, as on a slow device or under a busy scheduler, it
+  unmounted the focused field, and focus fell to `<body>`. For two seconds
+  after the reveal, `<SaveError>` now watches the form: when the field it
+  focused unmounts and focus falls to the page with it, focus moves to the
+  revealed field, or to the error box. Focus the person moved stays put, and
+  nothing changes for a form whose switch commits in time. See
+  `.context/ui/form-errors.md`, "A field on a hidden tab".
+- **"N fields need fixing" now follows the fields as they are fixed (t-1013).**
+  After a save the form's own validation blocked, the summary by Save kept the
+  count from the press. Once every field was fixed, the field messages went
+  and the summary stayed until Save was pressed again. `useSaveFailure()` takes
+  a new `errors` option, the form's live `formState.errors`. With it, the count
+  drops as fields are fixed and the summary goes when none are left. Each such
+  update is marked with the new optional `SaveFailure.updated`, and
+  `<SaveError>` doesn't move focus for it, so the field being typed in keeps
+  focus. A server's failure, one from `show()` or `block()`, and an
+  unreadable number still stay until the next Save. All 22 Sunrise forms that report a blocked save this
+  way now pass it; the orchestration settings and webhook-subscription forms,
+  which held their failure themselves, move onto `useSaveFailure` to get it. **A fork's own forms
+  wired that way get the fix only once they pass `errors`.** The sign-up,
+  login and both reset-password forms now call `useForm` before
+  `useSaveFailure`; a fork that edited them should take that order. **Check
+  any UI you show only while `!save.failure`**: a blocked save's summary now
+  clears itself, so that UI comes back with no press. On sign-up, login and
+  accept-invite, an earlier OAuth error did exactly that; it is now cleared or
+  hidden on the first press. See
+  `.context/ui/form-errors.md`, "Recipe: a react-hook-form form".
 - **An embedding model whose vectors are not the expected width is refused
   with a message that names it (t-1011).** `embedText()` and `embedBatch()` throw a
   `ProviderError` with code `embedding_dimension_mismatch`, naming the model,
@@ -741,9 +772,12 @@ release process.
   animation frame isn't covered**, such as a field on a hidden tab: a test of
   that still needs `waitFor`. With React's scheduler slowed by 30ms, 70 focus
   tests failed before the fix and 1 after, `follows a tab switch that lands
-  after its first look` in `tests/unit/components/forms/save-error.test.tsx`,
-  which is built on exact frame timing. CPU load alone never reproduced the
-  failure, so the slowed scheduler stands in for what CI hit. `<SaveError>`
+  after its first look` in `tests/unit/components/forms/save-error.test.tsx`.
+  *Corrected in 0.19.0:* this note first called that test "built on exact
+  frame timing". It was exposing a real defect: a tab switch that commits
+  after `<SaveError>`'s last look left focus on `<body>`, which 0.19.0 fixes
+  (t-997). CPU load alone never reproduced the failure, so the slowed
+  scheduler stands in for what CI hit. `<SaveError>`
   itself is unchanged: **don't move its focus to a layout effect**, which loses
   focus to a closing dialog's trap (`.context/ui/form-errors.md`).
 

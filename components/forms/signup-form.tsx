@@ -42,21 +42,11 @@ export function SignupForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
-
-  // An OAuth sign-up that failed comes back in the URL: it is shown where a
-  // failed sign-up is, until the form's own sign-up fails instead.
-  const oauthError = searchParams.get('error');
-  const oauthErrorDescription = searchParams.get('error_description');
-  const oauthMessage = oauthError
-    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
-    : null;
-
   const {
     register,
     handleSubmit,
     watch,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
     mode: 'onTouched',
@@ -67,6 +57,21 @@ export function SignupForm() {
       confirmPassword: '',
     },
   });
+
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    errors,
+  });
+
+  // An OAuth sign-up that failed comes back in the URL: it is shown where a
+  // failed sign-up is, until the form's own Save is pressed
+  // (`isSubmitted`), even if that press was blocked: a blocked save's summary
+  // clears itself as fields are fixed (t-1013).
+  const oauthError = searchParams.get('error');
+  const oauthErrorDescription = searchParams.get('error_description');
+  const oauthMessage = oauthError
+    ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
+    : null;
 
   // Watch password field for strength meter
   const password = watch('password');
@@ -192,7 +197,7 @@ export function SignupForm() {
 
         {/* A failed sign-up, beside Create Account */}
         <SaveError failure={save.failure} />
-        {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {!isSubmitted && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
 
         {/* Submit Button */}
         <Button type="submit" className="w-full" disabled={isLoading}>

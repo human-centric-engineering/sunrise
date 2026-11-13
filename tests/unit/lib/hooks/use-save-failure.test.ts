@@ -16,6 +16,7 @@ import { renderHook, act } from '@testing-library/react';
 
 import { APIClientError } from '@/lib/api/client';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import type { FieldErrors, FieldValues } from 'react-hook-form';
 
 function validationError(errors: Array<{ path: string; message: string }>) {
   return new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400, { errors });
@@ -304,5 +305,122 @@ describe('useSaveFailure', () => {
     act(() => result.current.clear());
 
     expect(result.current.failure).toBeNull();
+  });
+
+  describe('given the live field errors (t-1013)', () => {
+    const name = { type: 'too_small', message: 'Name is required' };
+    const email = { type: 'invalid_string', message: 'Invalid email address' };
+
+    function setup(initial: FieldErrors<FieldValues>) {
+      const hook = renderHook(
+        ({ errors }: { errors: FieldErrors<FieldValues> }) =>
+          useSaveFailure({ fallback: 'x', errors }),
+        { initialProps: { errors: initial } }
+      );
+      act(() => hook.result.current.invalid(initial));
+      return hook;
+    }
+
+    it('lowers the count as fields are fixed, as an update that moves nothing', () => {
+      const { result, rerender } = setup({ name, email });
+      expect(result.current.failure?.message).toBe('2 fields need fixing.');
+
+      rerender({ errors: { email } });
+
+      expect(result.current.failure).toEqual({
+        message: '1 field needs fixing.',
+        stale: false,
+        fields: [{ field: 'email', message: 'Invalid email address' }],
+        updated: true,
+      });
+    });
+
+    it('removes the summary once the last field is fixed, without another press', () => {
+      const { result, rerender } = setup({ name });
+
+      rerender({ errors: {} });
+
+      expect(result.current.failure).toBeNull();
+    });
+
+    it('follows errors react-hook-form changed in place, on the same object', () => {
+      const errors: FieldErrors<FieldValues> = { name, email };
+      const { result, rerender } = setup(errors);
+
+      delete errors.name;
+      rerender({ errors });
+
+      expect(result.current.failure?.message).toBe('1 field needs fixing.');
+    });
+
+    it('keeps the same object while the errors say the same thing', () => {
+      const { result, rerender } = setup({ name, email });
+      const first = result.current.failure;
+
+      rerender({ errors: { name: { ...name }, email: { ...email } } });
+
+      expect(result.current.failure).toBe(first);
+    });
+
+    it("leaves a server's failure alone as the field errors change", () => {
+      const initial: FieldErrors<FieldValues> = { name };
+      const { result, rerender } = renderHook(
+        ({ errors }: { errors: FieldErrors<FieldValues> }) =>
+          useSaveFailure({ fallback: 'Could not save.', errors }),
+        { initialProps: { errors: initial } }
+      );
+      act(() => {
+        result.current.report(new Error('boom'));
+      });
+      const reported = result.current.failure;
+
+      rerender({ errors: {} });
+
+      expect(result.current.failure).toBe(reported);
+    });
+
+    it('moves again on the next press, as a new failure rather than an update', () => {
+      const { result, rerender } = setup({ name, email });
+      rerender({ errors: { email } });
+      expect(result.current.failure?.updated).toBe(true);
+
+      act(() => result.current.invalid({ email }));
+
+      expect(result.current.failure?.updated).toBeUndefined();
+      expect(result.current.failure?.message).toBe('1 field needs fixing.');
+    });
+
+    it('stays an update when the errors go back to what the press said', () => {
+      // Fix a field, then break it again: the count is back to the press's,
+      // but the person is typing, so it must not read as a new failure.
+      const { result, rerender } = setup({ name, email });
+      const pressed = result.current.failure;
+      rerender({ errors: { name } });
+
+      rerender({ errors: { name, email } });
+
+      expect(result.current.failure).not.toBe(pressed);
+      expect(result.current.failure).toMatchObject({
+        message: '2 fields need fixing.',
+        updated: true,
+      });
+    });
+
+    it('does not bring the summary back for a field broken after all were fixed', () => {
+      const { result, rerender } = setup({ name });
+      rerender({ errors: {} });
+      expect(result.current.failure).toBeNull();
+
+      rerender({ errors: { name } });
+
+      expect(result.current.failure).toBeNull();
+    });
+
+    it('without the live errors, keeps the count from the press until the next one', () => {
+      const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
+      act(() => result.current.invalid({ name, email }));
+
+      expect(result.current.failure?.message).toBe('2 fields need fixing.');
+    });
   });
 });

@@ -97,6 +97,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     fallback: 'An unexpected error occurred',
     fields: SERVER_FIELDS,
     setError,
+    errors,
   });
 
   const currentRole = watch('role');

@@ -132,11 +132,12 @@ milliseconds, and its field takes seconds.
 ## Recipe: a react-hook-form form
 
 ```tsx
-const { setError, handleSubmit, ... } = useForm<FormData>(...);
+const { setError, handleSubmit, formState: { errors }, ... } = useForm<FormData>(...);
 const save = useSaveFailure({
   fallback: 'Could not save. Try again in a moment.',
   fields: SERVER_FIELDS,
   setError,
+  errors, // the summary follows the fields as they are fixed
 });
 
 const onSubmit = async (values: FormData) => {
@@ -160,8 +161,32 @@ The field renders its message as it already does (`errors.x?.message`).
 `save.invalid` is react-hook-form's `onInvalid`: when the form's own
 validation blocks Save, it puts `"2 fields need fixing."` by Save and focus on
 the first blocked field in page order (a field in an array by its registered
-path, `variants.1.label`). A form that holds its failure in its own state
-passes `(errors) => setSaveFailure(invalidSave(errors))` instead.
+path, `variants.1.label`).
+
+**Pass `errors`** (`formState.errors`) **so the summary follows the fields**
+(t-1013). Without it the count stays as it was at the press. The person fixes
+every field, the field messages go, and `"3 fields need fixing."` stays by Save
+until they press it again: the form looks valid but says it is broken. With
+it, the count drops as fields are fixed and the summary goes when none are
+left. These are updates to the failure already showing (`updated: true`), so
+`<SaveError>` shows them without moving focus away from the field being typed
+in. Only a save react-hook-form's validation blocked follows the fields. A
+server's failure, one the page showed with `show()` or `block()`, and an
+unreadable number (`"1 field needs a number."`) stay until the next Save,
+because react-hook-form's errors don't say when they were fixed. A server
+message `report()` put on a field is still cleared from that field when it
+re-validates; only the summary by Save stays. Since `useSaveFailure` now reads
+`errors`, call it after `useForm`. The agent and capability forms build their
+own tab-aware summary through `show()`, so they don't follow fields yet (t-1029).
+
+Once the count reaches zero the failure is cleared, not hidden: a field broken
+again afterwards shows its own message, and the summary comes back only on the
+next press. A count that goes back up, even to what the press said, is still
+an update and moves nothing.
+
+A form that holds its failure in its own state passes
+`(errors) => setSaveFailure(invalidSave(errors))` instead, and keeps the count
+from the press. Prefer the hook: Sunrise's own forms all use it.
 `report()` passes `shouldFocus: false` to `setError`, because `<SaveError>`
 does the focusing and picks the first field in page order. It returns the
 failure, so a caller can branch on `stale`.
@@ -349,6 +374,23 @@ looks again over the next few frames and focuses the first named field on the
 page. With errors on two tabs, focus goes to the earlier tab's field; the
 summary by Save says how many fields need fixing, and the next save brings the
 other tab forward. Without `onRevealField`, the error box takes focus.
+
+**A switch that commits late.** A field found in those frames can be on the tab
+being left: the switch hasn't committed yet. So for two seconds after the
+reveal (`WATCH_MS`), `<SaveError>` watches the form. When the field it focused
+unmounts and focus falls to the page with it, that is the switch landing, and
+focus moves to the revealed field, or to the error box if none can take it.
+This is timed, not counted in frames, because a busy scheduler or a slow device
+can hold a commit back past any number of frames (t-997). Before this, such a
+switch left focus on `<body>`.
+
+Focus the person moved stays where they put it. If they click or tab elsewhere
+while it waits, including on blank space (focus then sits on `<body>` while the
+field is still there), the watch ends, so the field unmounting later moves
+nothing. An update to the failure while it waits (a field being fixed) leaves
+the watch running: `<SaveError>` keys its focus on the press, not on each
+failure object. A parent re-rendering, with a new `onRevealField` or not,
+starts nothing: only a new press does.
 
 The agent form derives its field → tab map from the agent field registry
 (`fieldToTab()`); the capability form declares one beside its table.

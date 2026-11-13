@@ -41,7 +41,23 @@ export function LoginForm() {
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
-  const save = useSaveFailure({ fallback: 'An unexpected error occurred. Please try again.' });
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitted },
+  } = useForm<SignInInput>({
+    resolver: zodResolver(signInSchema),
+    mode: 'onTouched',
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
+
+  const save = useSaveFailure({
+    fallback: 'An unexpected error occurred. Please try again.',
+    errors,
+  });
   const [attemptedEmail, setAttemptedEmail] = useState<string | null>(null);
   const [notVerified, setNotVerified] = useState(false);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
@@ -51,7 +67,9 @@ export function LoginForm() {
   });
 
   // An OAuth sign-in that failed comes back in the URL: it is shown where a
-  // failed sign-in is, until the form's own sign-in fails instead.
+  // failed sign-in is, until the form's own Save is pressed
+  // (`isSubmitted`), even if that press was blocked: a blocked save's summary
+  // clears itself as fields are fixed (t-1013).
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
   const oauthMessage = oauthError
@@ -59,19 +77,6 @@ export function LoginForm() {
     : null;
   // From better-auth's code, not its wording: a fork may reword the message.
   const unverified = notVerified && !!attemptedEmail && !!save.failure;
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<SignInInput>({
-    resolver: zodResolver(signInSchema),
-    mode: 'onTouched',
-    defaultValues: {
-      email: '',
-      password: '',
-    },
-  });
 
   // Handle sending verification email directly from login form
   const handleSendVerification = async () => {
@@ -198,7 +203,7 @@ export function LoginForm() {
 
         {/* A failed sign-in, beside Sign In */}
         <SaveError failure={save.failure} />
-        {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {!isSubmitted && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
         {/* Show send verification email button for unverified email errors */}
         {unverified && (
           <div className="space-y-3">
