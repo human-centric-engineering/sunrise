@@ -500,6 +500,46 @@ release process.
   `tests/unit/lib/tenancy/context-shared-store.test.ts` loads each module
   twice to prove it.
 
+### Security
+
+- **All six open Dependabot alerts cleared** (t-1027). Four needed a new
+  `overrides` entry, because the latest release of the package that brings
+  them in still pins the vulnerable copy. Each entry's `overrideReasons` says
+  when it can go. If your fork has its own `overrides` block, keep these four
+  when you merge.
+  - **GHSA-mrhx-c7xc-m3w5** (high, zod memory exhaustion). An old zod 4.1.11
+    arrives through `@vercel/blob` → `@vercel/oidc` 3 → `@vercel/cli-config`
+    0.2.0. The override `@vercel/cli-config` → `zod: "$zod"` gives it the app's
+    zod, which is the same major.
+  - **GHSA-rj75-hqrm-r3gf** (medium, postcss-selector-parser).
+    `@tailwindcss/typography` pins 6.0.10 exactly; it is overridden to
+    `^6.1.5`. The parser only runs at build time, on the app's own CSS.
+  - **GHSA-gcqx-w48m-w2h4** (low, deepmerge, which has no fixed release). It
+    came in through `@react-email/components`' exact pin of
+    `@react-email/render` 2.0.6. The override hands components the app's own
+    `@react-email/render` (now `^2.3.1`), whose `html-to-text` 10 no longer
+    uses deepmerge.
+  - **GHSA-g3hv-75wg-m249** (medium, minimatch). `typescript-eslint`'s copy is
+    overridden to `^11.0.1`. It is used by the linter only.
+  - **GHSA-3g3m-2fjr-6pw4** (medium, glob): fixed by `react-email` 6.11.8.
+  - **GHSA-474x-hrwr-fgx4** (low, fast-xml-parser): fixed by 5.12, which
+    arrives through `epub`.
+- **Dependency bumps** (t-1027):
+  - `@hookform/resolvers` 7. It is a major, but the only breaking change is the
+    typebox resolver, which now needs `typebox` 1.x. Sunrise uses only `/zod`.
+  - The production group: the AWS SDK, `cron-parser`, `lucide-react`,
+    `mermaid` 12.3, `openai`, `react-email` and `undici`.
+  - The dev group: `vitest` 5.1, `vite`, `typescript-eslint`, Next's ESLint
+    packages and others.
+  - CodeQL and TruffleHog actions.
+  - **Held back: Tailwind stays at 4.3.3.** From 4.3.4,
+    `@tailwindcss/oxide-wasm32-wasi` no longer declares `cpu: ["wasm32"]`.
+    Upstream did this on purpose: the WASI build is now the fallback for
+    platforms without a native binary (tailwindcss#20685). The result is that
+    npm installs it on every platform, and `check:lockfile` refuses the lost
+    `cpu`. Taking it needs that check to allow a loss the registry itself
+    made.
+
 ## [0.18.0] — 2026-11-09
 
 > **Alpha release.** Twenty-fifth tagged Sunrise release. **MINOR bump**: one
