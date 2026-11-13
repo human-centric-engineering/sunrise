@@ -17,7 +17,7 @@ import {
   hasRisk,
   isDowngrade,
   MIN_OVERRIDE_REASON,
-  unexplainedMetadataLosses,
+  explainMetadataLosses,
   unexplainedOverrides,
   type Lockfile,
   type OverrideChange,
@@ -102,6 +102,7 @@ describe('diffLockfiles', () => {
       removed: [],
       changed: [],
       lostNativeMetadata: [],
+      explainedNativeMetadata: [],
       unexplainedNativeMetadata: [],
       gainedNativeMetadata: [],
       overridesChanged: false,
@@ -399,6 +400,7 @@ describe('diffLockfiles', () => {
 
   describe('a loss the registry made, explained in lockfileMetadataReasons (t-1028)', () => {
     const PKG = '@napi-rs/canvas-linux-x64-gnu';
+    const CPU = `${PKG}:cpu`;
     /** The shape tailwindcss#20685 produced: a bump whose new version declares no cpu. */
     function droppedCpu(): Lockfile {
       const head = clone(BASE);
@@ -412,7 +414,7 @@ describe('diffLockfiles', () => {
       const diff = diffLockfiles(BASE, droppedCpu());
 
       expect(diff.unexplainedNativeMetadata).toEqual([
-        expect.objectContaining({ packageName: PKG, keys: ['cpu'], problem: 'no-reason' }),
+        expect.objectContaining({ key: 'cpu', reasonKey: CPU, problem: 'no-reason' }),
       ]);
       expect(hasRisk(diff)).toBe(true);
     });
@@ -420,18 +422,21 @@ describe('diffLockfiles', () => {
     it('passes a loss whose reason moved in this diff, and still reports it', () => {
       const diff = diffLockfiles(BASE, droppedCpu(), {
         baseMetadataReasons: {},
-        headMetadataReasons: { [PKG]: WHY },
+        headMetadataReasons: { [CPU]: WHY },
       });
 
       expect(diff.lostNativeMetadata).toEqual([{ name: `node_modules/${PKG}`, keys: ['cpu'] }]);
+      expect(diff.explainedNativeMetadata).toEqual([
+        { name: `node_modules/${PKG}`, key: 'cpu', reasonKey: CPU, reason: WHY },
+      ]);
       expect(diff.unexplainedNativeMetadata).toEqual([]);
       expect(hasRisk(diff)).toBe(false);
     });
 
     it('gates a loss whose reason was already there: a reason answers one diff, not every later one', () => {
       const diff = diffLockfiles(BASE, droppedCpu(), {
-        baseMetadataReasons: { [PKG]: WHY },
-        headMetadataReasons: { [PKG]: WHY },
+        baseMetadataReasons: { [CPU]: WHY },
+        headMetadataReasons: { [CPU]: WHY },
       });
 
       expect(diff.unexplainedNativeMetadata).toEqual([
@@ -444,7 +449,7 @@ describe('diffLockfiles', () => {
       const short = 'x'.repeat(MIN_OVERRIDE_REASON - 1);
       const diff = diffLockfiles(BASE, droppedCpu(), {
         baseMetadataReasons: {},
-        headMetadataReasons: { [PKG]: short },
+        headMetadataReasons: { [CPU]: short },
       });
 
       expect(diff.unexplainedNativeMetadata[0].problem).toBe('reason-thin');
@@ -460,10 +465,10 @@ describe('diffLockfiles', () => {
       head.packages![nested] = entry;
 
       expect(
-        unexplainedMetadataLosses([{ name: nested, keys: ['cpu'] }], {}, { [PKG]: WHY })
+        explainMetadataLosses([{ name: nested, keys: ['cpu'] }], {}, { [CPU]: WHY }).unexplained
       ).toEqual([]);
       expect(
-        diffLockfiles(base, head, { baseMetadataReasons: {}, headMetadataReasons: { [PKG]: WHY } })
+        diffLockfiles(base, head, { baseMetadataReasons: {}, headMetadataReasons: { [CPU]: WHY } })
           .unexplainedNativeMetadata
       ).toEqual([]);
     });
@@ -482,6 +487,24 @@ describe('diffLockfiles', () => {
       expect(hasRisk(diff)).toBe(false);
     });
 
+    it('explains only the key named: a cpu reason does not pass libc stripped from the same package', () => {
+      // The #571 shape riding along with a registry change: one reason must not
+      // answer both.
+      const head = droppedCpu();
+      delete head.packages![`node_modules/${PKG}`].libc;
+
+      const diff = diffLockfiles(BASE, head, {
+        baseMetadataReasons: {},
+        headMetadataReasons: { [CPU]: WHY },
+      });
+
+      expect(diff.explainedNativeMetadata.map((l) => l.key)).toEqual(['cpu']);
+      expect(diff.unexplainedNativeMetadata).toEqual([
+        expect.objectContaining({ key: 'libc', reasonKey: `${PKG}:libc`, problem: 'no-reason' }),
+      ]);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
     it('explains only the package named: another loss in the same diff still gates', () => {
       const head = droppedCpu();
       delete head.packages!['node_modules/left-pad'];
@@ -494,11 +517,12 @@ describe('diffLockfiles', () => {
 
       const diff = diffLockfiles(base, head, {
         baseMetadataReasons: {},
-        headMetadataReasons: { [PKG]: WHY },
+        headMetadataReasons: { [CPU]: WHY },
       });
 
-      expect(diff.unexplainedNativeMetadata.map((l) => l.packageName)).toEqual([
-        '@napi-rs/other-linux-x64-gnu',
+      expect(diff.unexplainedNativeMetadata.map((l) => l.reasonKey)).toEqual([
+        '@napi-rs/other-linux-x64-gnu:cpu',
+        '@napi-rs/other-linux-x64-gnu:libc',
       ]);
       expect(hasRisk(diff)).toBe(true);
     });

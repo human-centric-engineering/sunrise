@@ -124,8 +124,9 @@ every platform; check `npm -v`, then repair with `npm run fix:lockfile-libc` and
 re-run this. Rarely, the registry dropped it on purpose: `npm view
 <pkg>@<version> cpu os` shows nothing for the new version (tailwindcss#20685 did
 this to `@tailwindcss/oxide-wasm32-wasi`). Then answer it like an override: a
-`package.json` `lockfileMetadataReasons` entry for that package, which has to
-move in the same diff (t-1028). The loss is still printed, with its reason.
+`package.json` `lockfileMetadataReasons` entry keyed `<package name>:<key>`,
+which has to move in the same diff (t-1028). The loss is still printed, with
+its reason.
 
 **Answer an overrides change in `package.json`, not here.** Adding, re-pointing
 or removing an entry passes when that key's `overrideReasons` entry moves in the

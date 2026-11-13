@@ -134,12 +134,12 @@ describe('scripts/ci/check-lockfile', () => {
     }
 
     it('passes a loss whose lockfileMetadataReasons entry moved with it, and prints the reason', async () => {
-      lossWith({}, { lockfileMetadataReasons: { native: WHY_CPU } });
+      lossWith({}, { lockfileMetadataReasons: { 'native:libc': WHY_CPU } });
 
       await run();
 
       expect(process.exitCode).toBe(0);
-      expect(out()).toContain('node_modules/native lost libc — explained:');
+      expect(out()).toContain('node_modules/native lost libc — explained by "native:libc":');
       expect(out()).toContain(`reason: ${WHY_CPU}`);
       expect(out()).toContain('1 platform-metadata loss, each explained above');
       expect(out()).not.toContain('no lost platform metadata');
@@ -147,14 +147,20 @@ describe('scripts/ci/check-lockfile', () => {
 
     it('gates a loss whose reason was already there, and says why', async () => {
       lossWith(
-        { lockfileMetadataReasons: { native: WHY_CPU } },
-        { lockfileMetadataReasons: { native: WHY_CPU } }
+        { lockfileMetadataReasons: { 'native:libc': WHY_CPU } },
+        { lockfileMetadataReasons: { 'native:libc': WHY_CPU } }
       );
 
       await run();
 
       expect(process.exitCode).toBe(1);
-      expect(out()).toContain('lockfileMetadataReasons" entry did not change in this diff');
+      expect(out()).toContain(
+        '"lockfileMetadataReasons"."native:libc" did not change in this diff.'
+      );
+      // The standing reason is quoted, and the npm repair isn't offered: the
+      // author already called it a registry change.
+      expect(out()).toContain(`It says: ${WHY_CPU}`);
+      expect(out()).not.toContain('fix:lockfile-libc');
     });
 
     it('points a loss with no reason at the new key as well as the npm repair', async () => {
@@ -164,7 +170,8 @@ describe('scripts/ci/check-lockfile', () => {
 
       expect(process.exitCode).toBe(1);
       expect(out()).toContain('npm run fix:lockfile-libc');
-      expect(out()).toContain('"lockfileMetadataReasons", keyed by');
+      expect(out()).toContain('"lockfileMetadataReasons", keyed');
+      expect(out()).toContain('"<package name>:<key>"');
     });
   });
 
@@ -481,7 +488,7 @@ describe('scripts/ci/check-lockfile', () => {
       await run();
 
       expect(process.exitCode).toBe(0);
-      expect(out()).toContain('skipping the overrides comparison');
+      expect(out()).toContain('skipping the overrides and lockfileMetadataReasons comparisons');
       expect(out()).not.toContain('"overrides" changed');
     });
 

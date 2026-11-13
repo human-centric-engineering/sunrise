@@ -405,13 +405,16 @@ release process.
   platforms with no native binary (tailwindcss#20685). So npm installs it,
   about 6.5 MB, on every platform. `check:lockfile` read the lost `cpu` as npm
   stripping metadata (#571) and failed. A loss now passes when the package's
-  entry in the new `package.json` `lockfileMetadataReasons` block (keyed by
-  package name) moves in the same diff, the same rule as `overrideReasons`.
-  An unexplained loss still fails, and an explained one is still printed with
-  its reason. Sunrise carries one entry, for `@tailwindcss/oxide-wasm32-wasi`.
-  **Forks:** keep that block when you merge, or your Lockfile metadata job
-  fails on the Tailwind bump. A fork that took Tailwind 4.3.4+ itself can add
-  the same entry.
+  entry in the new `package.json` `lockfileMetadataReasons` block moves in the
+  same diff, the same rule as `overrideReasons`. Entries are keyed per lost
+  key, `<package name>:<key>`, so a reason for a dropped `cpu` can't also pass
+  a stripped `libc`. An unexplained loss still fails, and an explained one is
+  still printed with its reason. Sunrise carries one entry,
+  `@tailwindcss/oxide-wasm32-wasi:cpu`. **Forks:** keep that block when you
+  merge, or your Lockfile metadata job fails on the Tailwind bump. A fork
+  still holding Tailwind below 4.3.4 when it merges keeps the entry, then
+  edits it in the PR that finally bumps Tailwind, since a reason answers the
+  diff that makes the loss.
 - **The embedding provider chain no longer picks a local provider (§127
   t-1011).** With no active embedding model picked, `resolveProvider()` in
   `lib/orchestration/knowledge/embedder.ts` tries Voyage, then an
