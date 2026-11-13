@@ -363,10 +363,11 @@ describe('useSaveFailure', () => {
     });
 
     it("leaves a server's failure alone as the field errors change", () => {
+      const initial: FieldErrors<FieldValues> = { name };
       const { result, rerender } = renderHook(
         ({ errors }: { errors: FieldErrors<FieldValues> }) =>
           useSaveFailure({ fallback: 'Could not save.', errors }),
-        { initialProps: { errors: { name } } }
+        { initialProps: { errors: initial } }
       );
       act(() => {
         result.current.report(new Error('boom'));
