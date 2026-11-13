@@ -523,6 +523,32 @@ describe('components/forms/signup-form', () => {
       expect(screen.getByText(/user cancelled signup/i)).toBeInTheDocument();
     });
 
+    it('keeps the OAuth error hidden after a blocked press, even once every field is fixed', async () => {
+      // t-1013 clears a blocked save's summary as fields are fixed. The OAuth
+      // error it replaced must not come back under a valid form.
+      const user = userEvent.setup();
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'error=access_denied&error_description=User cancelled signup'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+      render(<SignupForm />);
+      expect(screen.getByText(/user cancelled signup/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /create account/i }));
+      expect(await screen.findByText(/fields need fixing/i)).toBeInTheDocument();
+      await user.type(screen.getByLabelText(/full name/i), 'John Doe');
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(screen.getByLabelText(/^password$/i), 'Password123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'Password123!');
+
+      await waitFor(() =>
+        expect(screen.queryByText(/fields? needs? fixing/i)).not.toBeInTheDocument()
+      );
+      expect(screen.queryByText(/user cancelled signup/i)).not.toBeInTheDocument();
+    });
+
     it('should display generic OAuth error when description missing', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');

@@ -64,9 +64,10 @@ export function SignupForm() {
   });
 
   // An OAuth sign-up that failed comes back in the URL: it is shown where a
-  // failed sign-up is, until the form's own sign-up fails instead.
+  // failed sign-up is, until the form's own Save is pressed.
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
+  const [tried, setTried] = useState(false);
   const oauthMessage = oauthError
     ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
     : null;
@@ -132,7 +133,13 @@ export function SignupForm() {
       <form
         method="post"
         noValidate
-        onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
+        onSubmit={(e) => {
+          // The OAuth error from the URL gives way to this form's own outcome
+          // for good, not only while a failure shows: a blocked save's summary
+          // clears itself as fields are fixed (t-1013).
+          setTried(true);
+          save.submit(handleSubmit(onSubmit, save.invalid))(e);
+        }}
         className="space-y-4"
       >
         {/* Name Field */}
@@ -195,7 +202,7 @@ export function SignupForm() {
 
         {/* A failed sign-up, beside Create Account */}
         <SaveError failure={save.failure} />
-        {!save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {!tried && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
 
         {/* Submit Button */}
         <Button type="submit" className="w-full" disabled={isLoading}>

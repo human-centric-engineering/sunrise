@@ -202,6 +202,9 @@ export function SaveError<TField extends string>({
     // The form picks the tab. With errors on two tabs, the fields on the
     // others can't all be on the page at once, so focus goes to the first
     // named field the revealed tab shows: the summary by Save says how many.
+    // Where focus was when Save was pressed: until a field takes focus, focus
+    // anywhere else is the admin moving it.
+    const startedOn = document.activeElement;
     onRevealField(names);
     // The revealed tab renders on a later commit; look again until it has.
     // A field found before that commit can be on the tab being left, so once a
@@ -233,10 +236,15 @@ export function SaveError<TField extends string>({
       clearTimeout(timer);
       focused?.removeEventListener('focusout', onLeave);
     };
-    // Whether focus is still where this put it. A field it focused that has
-    // unmounted counts only when focus fell to the page with it.
+    // Whether focus is still where this put it, or where Save left it before a
+    // field took it. A field it focused that has unmounted counts only when
+    // focus fell to the page with it.
     const stillOurs = () =>
-      !focused || (focused.isConnected ? document.activeElement === focused : focusLost());
+      focused
+        ? focused.isConnected
+          ? document.activeElement === focused
+          : focusLost()
+        : document.activeElement === startedOn || focusLost();
     const refocus = () => {
       if (done) return;
       if (!stillOurs()) return stop(); // moved by the admin
@@ -279,6 +287,9 @@ export function SaveError<TField extends string>({
     <div
       ref={ref}
       role="alert"
+      // A count changing as fields are fixed is read out politely, not over
+      // the person's own typing as a new failure is.
+      aria-live={failure.updated ? 'polite' : undefined}
       tabIndex={-1}
       className="flex flex-col gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 outline-none focus-visible:ring-2 focus-visible:ring-red-400 sm:flex-row sm:items-start dark:border-red-800 dark:bg-red-950 dark:text-red-200"
     >

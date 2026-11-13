@@ -492,8 +492,8 @@ release process.
   drops as fields are fixed and the summary goes when none are left. Each such
   update is marked with the new optional `SaveFailure.updated`, and
   `<SaveError>` doesn't move focus for it, so the field being typed in keeps
-  focus. A server's failure, and one from `show()` or `block()`, still stays
-  until the next Save. All 22 Sunrise forms that report a blocked save this
+  focus. A server's failure, one from `show()` or `block()`, and an
+  unreadable number still stay until the next Save. All 22 Sunrise forms that report a blocked save this
   way now pass it; the orchestration settings and webhook-subscription forms,
   which held their failure themselves, move onto `useSaveFailure` to get it. **A fork's own forms
   wired that way get the fix only once they pass `errors`.** The sign-up,

@@ -170,9 +170,12 @@ until they press it again: the form looks valid but says it is broken. With
 it, the count drops as fields are fixed and the summary goes when none are
 left. These are updates to the failure already showing (`updated: true`), so
 `<SaveError>` shows them without moving focus away from the field being typed
-in. Only a blocked save follows the fields. A server's failure, and one the
-page showed with `show()` or `block()`, stays until the next Save, because
-nothing on the page can tell it was fixed. Since `useSaveFailure` now reads
+in. Only a save react-hook-form's validation blocked follows the fields. A
+server's failure, one the page showed with `show()` or `block()`, and an
+unreadable number (`"1 field needs a number."`) stay until the next Save,
+because react-hook-form's errors don't say when they were fixed. A server
+message `report()` put on a field is still cleared from that field when it
+re-validates; only the summary by Save stays. Since `useSaveFailure` now reads
 `errors`, call it after `useForm`. The agent and capability forms build their
 own tab-aware summary through `show()`, so they don't follow fields.
 

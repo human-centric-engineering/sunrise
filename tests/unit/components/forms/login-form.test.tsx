@@ -447,6 +447,30 @@ describe('components/forms/login-form', () => {
       expect(screen.getByText(/user cancelled login/i)).toBeInTheDocument();
     });
 
+    it('keeps the OAuth error hidden after a blocked press, even once every field is fixed', async () => {
+      // t-1013 clears a blocked save's summary as fields are fixed. The OAuth
+      // error it replaced must not come back under a valid form.
+      const user = userEvent.setup();
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'error=access_denied&error_description=User cancelled login'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+      render(<LoginForm />);
+      expect(screen.getByText(/user cancelled login/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /sign in/i }));
+      expect(await screen.findByText(/fields? needs? fixing/i)).toBeInTheDocument();
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(screen.getByLabelText('Password'), 'Password123!');
+
+      await waitFor(() =>
+        expect(screen.queryByText(/fields? needs? fixing/i)).not.toBeInTheDocument()
+      );
+      expect(screen.queryByText(/user cancelled login/i)).not.toBeInTheDocument();
+    });
+
     it('should display generic OAuth error when description is missing', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');
