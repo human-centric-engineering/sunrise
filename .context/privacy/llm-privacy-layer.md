@@ -235,8 +235,9 @@ An agent and an org can each require more protection than the install gives.
   gate. That holds while such replies fit the weekly retries, about 16,800
   per org (a batch of 25 a quarter-hour); a larger backlog keeps every run
   busy, and the gate open. A reply embedded after failing starts its count
-  again, and `npm run embeddings:reset` clears every reply's retry time. Once nothing refuses a reply (a local embedding model installed,
-  say), it is tried again within its current wait, up to a week for one
+  again, and `npm run embeddings:reset` clears every reply's retry time.
+  Once nothing refuses a reply (a local embedding model installed, say), it
+  is tried again within its current wait, up to a week for one
   that has failed many times, and due replies are drained at up to one
   batch (25) a run, in the room fresh replies leave. The backfill copies
   none of the stage's rules: until t-1016 it left out in SQL the two
