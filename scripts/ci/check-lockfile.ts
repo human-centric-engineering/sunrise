@@ -101,6 +101,20 @@ function readReason(manifest: Manifest | null, key: string): string | null {
 }
 
 /**
+ * The `lockfileMetadataReasons` entry for a lockfile path, keyed by the
+ * package name after its last `node_modules/`, as the diff rule reads it.
+ */
+function readMetadataReason(manifest: Manifest | null, lockKey: string): string | null {
+  const marker = 'node_modules/';
+  const at = lockKey.lastIndexOf(marker);
+  const name = at === -1 ? lockKey : lockKey.slice(at + marker.length);
+  const value = manifest?.lockfileMetadataReasons?.[name];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
  * What to do about one unexplained override, as printable lines.
  *
  * Each branch names the edit that clears it, in `package.json`, in this PR.
@@ -222,6 +236,8 @@ export function main(argv: string[]): number {
           headOverrides: headManifest?.overrides,
           baseOverrideReasons: baseManifest?.overrideReasons,
           headOverrideReasons: headManifest?.overrideReasons,
+          baseMetadataReasons: baseManifest?.lockfileMetadataReasons,
+          headMetadataReasons: headManifest?.lockfileMetadataReasons,
         }
       : {}),
   });
@@ -279,6 +295,18 @@ export function main(argv: string[]): number {
   }
   for (const [label, count] of [...gainedByKeys].sort(([a], [b]) => a.localeCompare(b))) {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
+  }
+
+  // A loss a reason answers is printed with it, like an explained override:
+  // a reviewer who sees a reason they did not approve has caught something.
+  const unexplainedLossNames = new Set(diff.unexplainedNativeMetadata.map((loss) => loss.name));
+  const explainedLosses = diff.lostNativeMetadata.filter(
+    (loss) => !unexplainedLossNames.has(loss.name)
+  );
+  for (const loss of explainedLosses) {
+    const reason = readMetadataReason(headManifest, loss.name);
+    console.log(`  ${loss.name} lost ${loss.keys.join(', ')} — explained:`);
+    console.log(`    reason: ${reason ?? '(none)'}`);
   }
 
   // Every override change is printed here, whether or not it gates. An
@@ -351,9 +379,13 @@ export function main(argv: string[]): number {
         : unreasonedRemovals.length === 0
           ? `${count} override change${plural}, each explained above`
           : `${count} override change${plural} above, ${unreasonedRemovals.length} of them a removal with no reason on either side`;
+    const losses =
+      explainedLosses.length === 0
+        ? 'no lost platform metadata'
+        : `${explainedLosses.length} platform-metadata loss${explainedLosses.length === 1 ? '' : 'es'}, each explained above`;
     console.log('');
     console.log(
-      `Nothing needing a decision: no lost platform metadata and ${overrides}` +
+      `Nothing needing a decision: ${losses} and ${overrides}` +
         `${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;
@@ -362,14 +394,23 @@ export function main(argv: string[]): number {
   console.error('');
   console.error(`${LOCKFILE} needs a decision:`);
 
-  for (const lost of diff.lostNativeMetadata) {
-    console.error(`  ${lost.name} lost ${lost.keys.join(', ')}`);
+  for (const lost of diff.unexplainedNativeMetadata) {
+    const note =
+      lost.problem === 'reason-unchanged'
+        ? ` (its ${MANIFEST} "lockfileMetadataReasons" entry did not change in this diff)`
+        : lost.problem === 'reason-thin'
+          ? ` (its "lockfileMetadataReasons" entry is under ${MIN_OVERRIDE_REASON} characters)`
+          : '';
+    console.error(`  ${lost.name} lost ${lost.keys.join(', ')}${note}`);
   }
-  if (diff.lostNativeMetadata.length > 0) {
+  if (diff.unexplainedNativeMetadata.length > 0) {
     console.error('  → npm below 11.11.0 deletes `libc` from every entry it writes, on every');
     console.error('    platform — check `npm -v`. The lockfile will install fine locally and');
     console.error('    wrong on Alpine. Repair with `npm run fix:lockfile-libc`; background in');
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
+    console.error('    If the registry dropped it on purpose (`npm view <pkg>@<version> cpu os`');
+    console.error(`    shows none), say why in ${MANIFEST} "lockfileMetadataReasons", keyed by`);
+    console.error('    package name, in THIS diff.');
   }
 
   for (const unexplained of diff.unexplainedOverrides) {

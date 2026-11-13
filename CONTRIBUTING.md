@@ -361,7 +361,13 @@ rather than trusted**:
 6. **`npm run check:lockfile`** — the same rules `/pre-pr` runs, against the
    merge base. It gates on lost platform metadata and on an `overrides` change
    whose `package.json` `overrideReasons` entry did **not** move in the same
-   diff. Restored metadata and downgrades — direct or transitive — are reported
+   diff. A loss the registry made on purpose (the new version declares no
+   `cpu`/`os`/`libc`: check with `npm view <pkg>@<version> cpu os`) passes when
+   its `lockfileMetadataReasons` entry, keyed by package name, moves in the same
+   diff (t-1028). That is the same rule as overrides, so a reason written once
+   can't wave later losses through. The first was
+   `@tailwindcss/oxide-wasm32-wasi` 4.3.4+, which tailwindcss#20685 made the
+   fallback for every platform. Restored metadata and downgrades — direct or transitive — are reported
    without gating (the direct rule was retired in #584; this line used to say it
    still gated, which is the stale-prose shape #627 exists to catch).
 7. **`npm ci --dry-run`** to confirm the lockfile is still coherent.

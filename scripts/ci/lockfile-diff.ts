@@ -27,7 +27,10 @@
  *    writes** — not a macOS quirk, as an earlier version of this comment said,
  *    but `@npmcli/arborist` omitting the key from its serialised field list
  *    until 9.4.0. The resulting lockfile installs fine locally and wrong in
- *    production. This is the one that actually happened (#571).
+ *    production. This is the one that actually happened (#571). A loss the
+ *    registry made on purpose passes when the package's
+ *    `lockfileMetadataReasons` entry moves in the same diff, the same rule as
+ *    `overrides` below (t-1028).
  * 2. **Downgrades of a direct dependency.** A version going backwards is how a
  *    patched dependency quietly returns to a vulnerable one. Only *direct*
  *    ones gate, which is a measured decision rather than a taste — see
@@ -80,6 +83,13 @@ export interface Manifest {
    * place to forget.
    */
   overrideReasons?: Record<string, unknown>;
+  /**
+   * Why a package's `libc` / `os` / `cpu` went away, keyed by package name
+   * (`@tailwindcss/oxide-wasm32-wasi`), for a loss the registry made rather
+   * than npm (t-1028). Same rule as `overrideReasons`: it answers a loss only
+   * when it moves in the diff that makes it.
+   */
+  lockfileMetadataReasons?: Record<string, unknown>;
 }
 
 /**
@@ -185,7 +195,7 @@ export interface UnexplainedOverride {
 }
 
 /** An `overrideReasons` entry as text, or `null` for absent/blank/non-string. */
-function reasonText(reasons: Manifest['overrideReasons'], key: string): string | null {
+function reasonText(reasons: Record<string, unknown> | undefined, key: string): string | null {
   const value = reasons?.[key];
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -258,6 +268,51 @@ export interface NativeMetadataChange {
   keys: string[];
 }
 
+/** A lost-metadata entry whose `lockfileMetadataReasons` entry did not move with it. */
+export interface UnexplainedMetadataLoss extends NativeMetadataChange {
+  /** The package name a reason is keyed by. */
+  packageName: string;
+  problem: 'no-reason' | 'reason-thin' | 'reason-unchanged';
+  /** The reason standing at HEAD, printed so a reviewer sees what is claimed. */
+  reason: string | null;
+}
+
+/**
+ * The metadata losses no reason answers (t-1028).
+ *
+ * npm stripping `libc` (#571) and a registry dropping `cpu` on purpose look the
+ * same in a lockfile: tailwindcss#20685 made `@tailwindcss/oxide-wasm32-wasi`
+ * declare no `cpu` from 4.3.4, so it now installs everywhere as the fallback
+ * for platforms with no native build. Nothing offline can tell the two apart,
+ * so the author says which: a `lockfileMetadataReasons` entry for the package
+ * that **moves in this diff**, as `overrideReasons` does for `overrides` (see
+ * {@link unexplainedOverrides} for why "moved", not "exists").
+ *
+ * That keeps the gate on what it is for. A loss with no reason, which is what
+ * old npm produces on every package at once, still fails. So does a loss
+ * whose reason was written in an earlier PR: a reason pre-authorised once
+ * can't wave later losses through. And a later Tailwind bump, where the entry
+ * already had no `cpu` on both sides, is no loss at all.
+ */
+export function unexplainedMetadataLosses(
+  losses: readonly NativeMetadataChange[],
+  baseReasons: Manifest['lockfileMetadataReasons'],
+  headReasons: Manifest['lockfileMetadataReasons']
+): UnexplainedMetadataLoss[] {
+  const unexplained: UnexplainedMetadataLoss[] = [];
+  for (const loss of losses) {
+    const packageName = packageNameOf(loss.name) ?? loss.name;
+    const before = reasonText(baseReasons, packageName);
+    const after = reasonText(headReasons, packageName);
+    const found = (problem: UnexplainedMetadataLoss['problem']) =>
+      unexplained.push({ ...loss, packageName, problem, reason: after });
+    if (after === null) found('no-reason');
+    else if (after.length < MIN_OVERRIDE_REASON) found('reason-thin');
+    else if (after === before) found('reason-unchanged');
+  }
+  return unexplained;
+}
+
 /** @deprecated Kept as the original name for {@link NativeMetadataChange}. */
 export type LostNativeMetadata = NativeMetadataChange;
 
@@ -265,7 +320,13 @@ export interface LockfileDiff {
   added: string[];
   removed: string[];
   changed: VersionChange[];
+  /** Every loss, explained or not: what gets printed. */
   lostNativeMetadata: NativeMetadataChange[];
+  /**
+   * The subset of {@link lostNativeMetadata} no `lockfileMetadataReasons` entry
+   * answers: what gates (t-1028).
+   */
+  unexplainedNativeMetadata: UnexplainedMetadataLoss[];
   /**
    * Packages that gained `libc`/`os`/`cpu` at the same tree path.
    *
@@ -348,6 +409,12 @@ export function diffLockfiles(
      */
     baseOverrideReasons?: Manifest['overrideReasons'];
     headOverrideReasons?: Manifest['overrideReasons'];
+    /**
+     * `lockfileMetadataReasons` from `package.json` at each revision. Without
+     * them every loss is unexplained, which is the safe reading.
+     */
+    baseMetadataReasons?: Manifest['lockfileMetadataReasons'];
+    headMetadataReasons?: Manifest['lockfileMetadataReasons'];
   } = {}
 ): LockfileDiff {
   const directDependencies = options.directDependencies ?? new Set<string>();
@@ -481,6 +548,11 @@ export function diffLockfiles(
     removed,
     changed,
     lostNativeMetadata,
+    unexplainedNativeMetadata: unexplainedMetadataLosses(
+      lostNativeMetadata,
+      options.baseMetadataReasons,
+      options.headMetadataReasons
+    ),
     gainedNativeMetadata,
     // Sorted, so alphabetising or reformatting `overrides` is not reported as
     // a semantic change and answered with "Intentional?".
@@ -516,7 +588,7 @@ export function diffLockfiles(
  * visible; they just do not stop the run.
  */
 export function hasRisk(diff: LockfileDiff): boolean {
-  return diff.lostNativeMetadata.length > 0 || diff.unexplainedOverrides.length > 0;
+  return diff.unexplainedNativeMetadata.length > 0 || diff.unexplainedOverrides.length > 0;
 }
 
 /**

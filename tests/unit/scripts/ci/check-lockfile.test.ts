@@ -113,6 +113,61 @@ describe('scripts/ci/check-lockfile', () => {
     expect(out()).toContain('npm run fix:lockfile-libc');
   });
 
+  describe('a loss the registry made (t-1028)', () => {
+    const WHY_CPU = 'The registry dropped it on purpose (tailwindcss#20685): fallback build.';
+
+    /** Base lockfile has libc; head lost it. Manifests at each side as given. */
+    function lossWith(baseManifest: object, headManifest: object) {
+      mockExecFileSync.mockImplementation((_c: string, a: string[]) => {
+        if (a[0] === 'merge-base') return 'abc123\n';
+        if (String(a[1]).endsWith(':package.json')) {
+          return JSON.stringify({ dependencies: { native: '^1' }, ...baseManifest });
+        }
+        return LOCK;
+      });
+      mockReadFileSync.mockImplementation(
+        reads({
+          manifest: JSON.stringify({ dependencies: { native: '^1' }, ...headManifest }),
+          lock: LOCK_NO_LIBC,
+        })
+      );
+    }
+
+    it('passes a loss whose lockfileMetadataReasons entry moved with it, and prints the reason', async () => {
+      lossWith({}, { lockfileMetadataReasons: { native: WHY_CPU } });
+
+      await run();
+
+      expect(process.exitCode).toBe(0);
+      expect(out()).toContain('node_modules/native lost libc — explained:');
+      expect(out()).toContain(`reason: ${WHY_CPU}`);
+      expect(out()).toContain('1 platform-metadata loss, each explained above');
+      expect(out()).not.toContain('no lost platform metadata');
+    });
+
+    it('gates a loss whose reason was already there, and says why', async () => {
+      lossWith(
+        { lockfileMetadataReasons: { native: WHY_CPU } },
+        { lockfileMetadataReasons: { native: WHY_CPU } }
+      );
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('lockfileMetadataReasons" entry did not change in this diff');
+    });
+
+    it('points a loss with no reason at the new key as well as the npm repair', async () => {
+      lossWith({}, {});
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('npm run fix:lockfile-libc');
+      expect(out()).toContain('"lockfileMetadataReasons", keyed by');
+    });
+  });
+
   it('reports restored metadata without failing', async () => {
     // The #571 repair: 101 packages gained `libc`, nothing else moved. Before
     // this the all-clear read "no version or platform-metadata change", which
