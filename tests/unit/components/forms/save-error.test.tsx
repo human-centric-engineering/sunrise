@@ -13,7 +13,7 @@
 
 import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import { SaveError, type StaleSaveProps } from '@/components/forms/form-error';
 import type { SaveFailure } from '@/lib/errors/save-error';
@@ -91,6 +91,82 @@ function Harness({
 
 function save() {
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+}
+
+/** Runs `fn` after `n` animation frames. */
+function afterFrames(n: number, fn: () => void) {
+  const step = (left: number) => (left === 0 ? fn() : requestAnimationFrame(() => step(left - 1)));
+  step(n);
+}
+
+/** Resolves after `n` animation frames. */
+function frames(n: number) {
+  return new Promise<void>((resolve) => afterFrames(n, resolve));
+}
+
+/**
+ * A tabbed form whose reveal switches tabs `lateBy` frames after it is asked,
+ * as a slow device's does. Each Save fails naming `name` (on the showing tab)
+ * and `webhookUrl` (on the hidden one), so the first look finds `name` on the
+ * tab being left. `onReveal` runs when the form is asked to reveal, so a test
+ * can move focus meanwhile as an admin would.
+ */
+function LateTabs({
+  lateBy,
+  lateMs,
+  onReveal,
+  moveFocusAtSwitch = false,
+}: {
+  lateBy: number;
+  /** Switch this many milliseconds late instead, as a busy scheduler holds a commit. */
+  lateMs?: number;
+  onReveal?: () => void;
+  /** The admin moves focus to Notes in the frame the switch is made, before it commits. */
+  moveFocusAtSwitch?: boolean;
+}) {
+  const [current, setCurrent] = useState<SaveFailure | null>(null);
+  const [tab, setTab] = useState<'main' | 'advanced'>('main');
+  const [, setRenders] = useState(0);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        setCurrent(
+          failure({
+            fields: [
+              { field: 'name', message: 'Required' },
+              { field: 'webhookUrl', message: 'Must be https' },
+            ],
+          })
+        );
+      }}
+    >
+      {/* Keyed, so the switch unmounts the old field as Radix's tabs do. */}
+      {tab === 'main' ? (
+        <input key="name" aria-label="Name" name="name" />
+      ) : (
+        <input key="webhookUrl" aria-label="Webhook" name="webhookUrl" />
+      )}
+      <input aria-label="Notes" />
+      <SaveError
+        failure={current}
+        // A new function each render, as an inline handler is.
+        onRevealField={() => {
+          onReveal?.();
+          if (lateMs !== undefined) setTimeout(() => setTab('advanced'), lateMs);
+          else
+            afterFrames(lateBy, () => {
+              if (moveFocusAtSwitch) screen.getByLabelText('Notes').focus();
+              setTab('advanced');
+            });
+        }}
+      />
+      <button type="submit">Save</button>
+      <button type="button" onClick={() => setRenders((n) => n + 1)}>
+        Re-render
+      </button>
+    </form>
+  );
 }
 
 describe('SaveError', () => {
@@ -211,46 +287,79 @@ describe('SaveError', () => {
   });
 
   it('follows a tab switch that lands after its first look, rather than losing focus', async () => {
-    // The form switches tabs two frames late, so the first look still finds
-    // `name` on the tab being left. Focus must end on the revealed field.
-    function LateTabs() {
-      const [current, setCurrent] = useState<SaveFailure | null>(null);
-      const [tab, setTab] = useState<'main' | 'advanced'>('main');
-      return (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setCurrent(
-              failure({
-                fields: [
-                  { field: 'name', message: 'Required' },
-                  { field: 'webhookUrl', message: 'Must be https' },
-                ],
-              })
-            );
-          }}
-        >
-          {/* Keyed, so the switch unmounts the old field as Radix's tabs do. */}
-          {tab === 'main' ? (
-            <input key="name" aria-label="Name" name="name" />
-          ) : (
-            <input key="webhookUrl" aria-label="Webhook" name="webhookUrl" />
-          )}
-          <SaveError
-            failure={current}
-            onRevealField={() =>
-              requestAnimationFrame(() => requestAnimationFrame(() => setTab('advanced')))
-            }
-          />
-          <button type="submit">Save</button>
-        </form>
-      );
-    }
-    render(<LateTabs />);
+    // Two frames late: the first look still finds `name` on the tab being
+    // left. Focus must end on the revealed field.
+    render(<LateTabs lateBy={2} />);
 
     save();
 
     await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
+  });
+
+  it('follows a tab switch that lands after its last reveal frame, rather than leaving focus on the page', async () => {
+    // t-997: a switch later than the reveal frames, as on a slow device,
+    // unmounted the field focus had gone to and left focus on <body>.
+    render(<LateTabs lateBy={10} />);
+
+    save();
+    await act(() => frames(14));
+
+    expect(screen.getByLabelText('Webhook')).toHaveFocus();
+  });
+
+  it('follows a tab switch held up by a busy scheduler, long after its frames', async () => {
+    // Frames are no measure of a late commit: React can hold one back for
+    // longer than any number of frames take.
+    render(<LateTabs lateBy={0} lateMs={150} />);
+
+    save();
+
+    await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
+  });
+
+  it('leaves focus where the admin moved it while the tab was switching', async () => {
+    // The first look focuses `name`, and the admin then clicks into Notes.
+    // The switch lands after the reveal frames, while the look is still
+    // watching `name` for a late switch, and unmounts it. Taking focus back to
+    // the revealed field would pull it out from under them.
+    render(
+      <LateTabs
+        lateBy={10}
+        onReveal={() => afterFrames(2, () => screen.getByLabelText('Notes').focus())}
+      />
+    );
+
+    save();
+    await act(() => frames(14));
+
+    expect(screen.getByLabelText('Webhook')).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toHaveFocus();
+  });
+
+  it('leaves focus where the admin moved it just before the switch unmounts the field', async () => {
+    // Past the reveal frames nothing looks again until the switch commits. By
+    // then `name` is gone, but focus went to Notes, not with it: that is focus
+    // moved, not lost.
+    render(<LateTabs lateBy={10} moveFocusAtSwitch />);
+
+    save();
+    await act(() => frames(14));
+
+    expect(screen.getByLabelText('Webhook')).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toHaveFocus();
+  });
+
+  it('does not pull focus back when the form re-renders after the admin moved it', async () => {
+    render(<LateTabs lateBy={1} />);
+    save();
+    await waitFor(() => expect(screen.getByLabelText('Webhook')).toHaveFocus());
+    screen.getByLabelText('Notes').focus();
+
+    // A new onRevealField each render; the failure is the same object.
+    fireEvent.click(screen.getByRole('button', { name: 'Re-render' }));
+    await act(() => frames(8));
+
+    expect(screen.getByLabelText('Notes')).toHaveFocus();
   });
 
   it('with errors on two tabs, focuses the first named field the revealed tab shows', async () => {

@@ -350,6 +350,20 @@ page. With errors on two tabs, focus goes to the earlier tab's field; the
 summary by Save says how many fields need fixing, and the next save brings the
 other tab forward. Without `onRevealField`, the error box takes focus.
 
+**A switch that commits late.** A field found in those frames can be on the tab
+being left: the switch hasn't committed yet. So for two seconds after the
+reveal (`WATCH_MS`), `<SaveError>` watches the form. When the field it focused
+unmounts and focus falls to the page with it, that is the switch landing, and
+focus moves to the revealed field, or to the error box if none can take it.
+This is timed, not counted in frames, because a busy scheduler or a slow device
+can hold a commit back past any number of frames (t-997). Before this, such a
+switch left focus on `<body>`.
+
+Focus the person moved stays where they put it. If they click or tab elsewhere
+while it waits, the watch ends, including when the field then unmounts with
+focus already gone from it. A parent re-rendering, with a new `onRevealField`
+or not, starts nothing: only a new failure does.
+
 The agent form derives its field → tab map from the agent field registry
 (`fieldToTab()`); the capability form declares one beside its table.
 

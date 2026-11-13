@@ -124,6 +124,21 @@ function firstPresent(root: ParentNode, names: readonly string[]): HTMLElement |
 /** Frames to wait for a revealed tab to render before giving the summary focus. */
 const REVEAL_FRAMES = 5;
 
+/**
+ * How long to keep watching a field focus went to, in case a tab switch that
+ * commits late unmounts it (t-997). A switch slower than the reveal frames
+ * used to leave focus on `<body>`. Time, not frames: a commit can be held up
+ * by the scheduler for longer than any number of frames, and frames come
+ * further apart on a slow device.
+ */
+const WATCH_MS = 2000;
+
+/** Whether focus fell to the page, as it does when the focused element unmounts. */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body;
+}
+
 /** Focuses a field, reporting whether it took focus (a disabled one does not). */
 function focusField(el: HTMLElement): boolean {
   el.focus({ preventScroll: true });
@@ -180,25 +195,57 @@ export function SaveError<TField extends string>({
     // named field the revealed tab shows: the summary by Save says how many.
     onRevealField(names);
     // The revealed tab renders on a later commit; look again until it has.
-    // A field found before that commit can be on the tab being left, so the
-    // look watches every frame, and finds another only if that one unmounts:
-    // focus the admin moved meanwhile stays where they put it.
+    // A field found before that commit can be on the tab being left, so once a
+    // field has focus the form is watched for it unmounting and taking focus
+    // with it, for WATCH_MS after the reveal: that is the switch landing,
+    // however late (t-997), and focus moves on to the revealed field. Focus the
+    // admin moved stays where they put it: the watch ends as soon as focus is
+    // anywhere else.
     let frame = 0;
     let tries = 0;
+    let done = false;
     let focused: HTMLElement | null = null;
-    const look = () => {
-      if (!focused?.isConnected) {
-        const revealed = firstPresent(root, names);
-        focused = revealed && focusField(revealed) ? revealed : null;
+    let observer: MutationObserver | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      done = true;
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      clearTimeout(timer);
+    };
+    // Whether focus is still where this put it. A field it focused that has
+    // unmounted counts only when focus fell to the page with it.
+    const stillOurs = () =>
+      !focused || (focused.isConnected ? document.activeElement === focused : focusLost());
+    const refocus = () => {
+      if (done) return;
+      if (!stillOurs()) return stop(); // moved by the admin
+      if (focused?.isConnected) return;
+      const revealed = firstPresent(root, names);
+      focused = revealed && focusField(revealed) ? revealed : null;
+      // Past the reveal frames with no field to take focus: the summary does.
+      if (!focused && tries >= REVEAL_FRAMES) {
+        stop();
+        focusBox();
       }
+    };
+    const look = () => {
+      refocus();
+      if (done) return;
       if (++tries < REVEAL_FRAMES) {
         frame = requestAnimationFrame(look);
       } else if (!focused?.isConnected) {
+        stop();
         focusBox();
       }
     };
     frame = requestAnimationFrame(look);
-    return () => cancelAnimationFrame(frame);
+    if (typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(refocus);
+      observer.observe(root, { childList: true, subtree: true });
+      timer = setTimeout(stop, WATCH_MS);
+    }
+    return stop;
     // Moves on a new failure only; a parent re-rendering with a new
     // onRevealField must not pull focus back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
