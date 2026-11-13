@@ -107,8 +107,9 @@ updates:
       # `cpu: ["wasm32"]`. Upstream did this on purpose: the WASI build is now
       # the fallback for platforms with no native binary (tailwindcss#20685).
       # `check:lockfile` reads the lost `cpu` as npm stripping metadata and
-      # fails, which would block the whole development group. Remove both
-      # entries when check:lockfile can accept a loss the registry made (t-1028).
+      # fails, which would block the whole development group. Both are also
+      # pinned exactly in package.json. Remove both entries and the pins when
+      # check:lockfile can accept a loss the registry made (t-1028).
       - dependency-name: 'tailwindcss'
         versions: ['>=4.3.4']
       - dependency-name: '@tailwindcss/postcss'

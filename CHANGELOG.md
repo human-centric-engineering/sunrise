@@ -360,7 +360,9 @@ release process.
   No zod resolver file changed between 6.0.0 and 7.0.6, so forms on
   `@hookform/resolvers/zod` behave as before. A fork using another resolver
   should read its release notes.
-- **Tailwind is held at 4.3.3** (t-1027, `.github/dependabot.yml`). From
+- **Tailwind is held at 4.3.3** (t-1027). `tailwindcss` and
+  `@tailwindcss/postcss` are pinned exactly in `package.json`, and ignored from
+  4.3.4 in `.github/dependabot.yml`. From
   4.3.4, `@tailwindcss/oxide-wasm32-wasi` no longer declares
   `cpu: ["wasm32"]`. Upstream did this on purpose: the WASI build is now the
   fallback for platforms with no native binary (tailwindcss#20685). npm would
