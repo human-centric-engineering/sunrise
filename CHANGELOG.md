@@ -26,7 +26,7 @@ release process.
 > tighten that mode. Orgs can also now invite people who already have
 > accounts, and see their own admin history. The admin area says when missing
 > config has quietly switched a feature off. Every open Dependabot alert is
-> cleared. Measured against `v0.18.0`: 26 PRs merged, no direct commits, 11
+> cleared. Measured against `v0.18.0`: 26 PRs merged, no direct commits, 14
 > issues closed as fixed and 1 as a duplicate; the suite is 1,579 files
 > and 33,361 tests.
 >
