@@ -176,9 +176,14 @@ nothing on the page can tell it was fixed. Since `useSaveFailure` now reads
 `errors`, call it after `useForm`. The agent and capability forms build their
 own tab-aware summary through `show()`, so they don't follow fields.
 
+Once the count reaches zero the failure is cleared, not hidden: a field broken
+again afterwards shows its own message, and the summary comes back only on the
+next press. A count that goes back up, even to what the press said, is still
+an update and moves nothing.
+
 A form that holds its failure in its own state passes
 `(errors) => setSaveFailure(invalidSave(errors))` instead, and keeps the count
-from the press.
+from the press. Prefer the hook: Sunrise's own forms all use it.
 `report()` passes `shouldFocus: false` to `setError`, because `<SaveError>`
 does the focusing and picks the first field in page order. It returns the
 failure, so a caller can branch on `stale`.
@@ -377,9 +382,12 @@ can hold a commit back past any number of frames (t-997). Before this, such a
 switch left focus on `<body>`.
 
 Focus the person moved stays where they put it. If they click or tab elsewhere
-while it waits, the watch ends, including when the field then unmounts with
-focus already gone from it. A parent re-rendering, with a new `onRevealField`
-or not, starts nothing: only a new failure does.
+while it waits, including on blank space (focus then sits on `<body>` while the
+field is still there), the watch ends, so the field unmounting later moves
+nothing. An update to the failure while it waits (a field being fixed) leaves
+the watch running: `<SaveError>` keys its focus on the press, not on each
+failure object. A parent re-rendering, with a new `onRevealField` or not,
+starts nothing: only a new press does.
 
 The agent form derives its field → tab map from the agent field registry
 (`fieldToTab()`); the capability form declares one beside its table.

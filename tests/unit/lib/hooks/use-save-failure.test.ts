@@ -390,6 +390,32 @@ describe('useSaveFailure', () => {
       expect(result.current.failure?.message).toBe('1 field needs fixing.');
     });
 
+    it('stays an update when the errors go back to what the press said', () => {
+      // Fix a field, then break it again: the count is back to the press's,
+      // but the person is typing, so it must not read as a new failure.
+      const { result, rerender } = setup({ name, email });
+      const pressed = result.current.failure;
+      rerender({ errors: { name } });
+
+      rerender({ errors: { name, email } });
+
+      expect(result.current.failure).not.toBe(pressed);
+      expect(result.current.failure).toMatchObject({
+        message: '2 fields need fixing.',
+        updated: true,
+      });
+    });
+
+    it('does not bring the summary back for a field broken after all were fixed', () => {
+      const { result, rerender } = setup({ name });
+      rerender({ errors: {} });
+      expect(result.current.failure).toBeNull();
+
+      rerender({ errors: { name } });
+
+      expect(result.current.failure).toBeNull();
+    });
+
     it('without the live errors, keeps the count from the press until the next one', () => {
       const { result } = renderHook(() => useSaveFailure({ fallback: 'x' }));
       act(() => result.current.invalid({ name, email }));

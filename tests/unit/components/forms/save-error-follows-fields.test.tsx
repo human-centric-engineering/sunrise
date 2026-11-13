@@ -82,6 +82,39 @@ describe('a blocked save, given the live field errors', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('keeps focus in the field when a fix is undone and the count goes back up', async () => {
+    const user = userEvent.setup();
+    render(<SignupLike live onSave={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveFocus());
+
+    await user.click(screen.getByLabelText('Email'));
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.')
+    );
+    await user.clear(screen.getByLabelText('Email'));
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('2 fields need fixing.')
+    );
+    expect(screen.getByLabelText('Email')).toHaveFocus();
+  });
+
+  it('shows only the field message, not the summary, for a field broken after all were fixed', async () => {
+    const user = userEvent.setup();
+    render(<SignupLike live onSave={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+    await user.type(screen.getByLabelText('Name'), 'Ada');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+
+    await user.clear(screen.getByLabelText('Email'));
+
+    expect(await screen.findByText('Invalid email address')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('without them, keeps the count from the press, as before', async () => {
     const user = userEvent.setup();
     render(<SignupLike live={false} onSave={vi.fn()} />);

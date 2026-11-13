@@ -116,6 +116,7 @@ function LateTabs({
   lateMs,
   onReveal,
   moveFocusAtSwitch = false,
+  updateAt,
 }: {
   lateBy: number;
   /** Switch this many milliseconds late instead, as a busy scheduler holds a commit. */
@@ -123,6 +124,8 @@ function LateTabs({
   onReveal?: () => void;
   /** The admin moves focus to Notes in the frame the switch is made, before it commits. */
   moveFocusAtSwitch?: boolean;
+  /** Frames after the reveal at which the failure is updated, as a field being fixed does. */
+  updateAt?: number;
 }) {
   const [current, setCurrent] = useState<SaveFailure | null>(null);
   const [tab, setTab] = useState<'main' | 'advanced'>('main');
@@ -153,6 +156,10 @@ function LateTabs({
         // A new function each render, as an inline handler is.
         onRevealField={() => {
           onReveal?.();
+          if (updateAt !== undefined)
+            afterFrames(updateAt, () =>
+              setCurrent((c) => c && { ...c, message: '1 field needs fixing.', updated: true })
+            );
           if (lateMs !== undefined) setTimeout(() => setTab('advanced'), lateMs);
           else
             afterFrames(lateBy, () => {
@@ -347,6 +354,35 @@ describe('SaveError', () => {
 
     expect(screen.getByLabelText('Webhook')).toBeInTheDocument();
     expect(screen.getByLabelText('Notes')).toHaveFocus();
+  });
+
+  it('keeps watching for a late switch when the failure is updated meanwhile', async () => {
+    // The person starts fixing a field before the switch lands. That update
+    // must not end the watch the press started.
+    render(<LateTabs lateBy={10} updateAt={7} />);
+
+    save();
+    await act(() => frames(14));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.');
+    expect(screen.getByLabelText('Webhook')).toHaveFocus();
+  });
+
+  it('leaves focus on the page when the admin clicked away before the switch', async () => {
+    // A click on blank space puts focus on <body> while the field is still
+    // there. When the switch then unmounts it, that is not focus lost with it.
+    render(
+      <LateTabs
+        lateBy={10}
+        onReveal={() => afterFrames(7, () => screen.getByLabelText('Name').blur())}
+      />
+    );
+
+    save();
+    await act(() => frames(14));
+
+    expect(screen.getByLabelText('Webhook')).not.toHaveFocus();
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('does not pull focus back when the form re-renders after the admin moved it', async () => {

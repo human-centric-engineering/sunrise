@@ -166,11 +166,18 @@ export function SaveError<TField extends string>({
   onRevealField,
 }: SaveErrorProps<TField>) {
   const ref = useRef<HTMLDivElement>(null);
+  // The failure the last press produced. An `updated` one (fields being fixed)
+  // keeps it, so it neither moves focus nor ends a watch the press started.
+  const [pressed, setPressed] = useState(failure?.updated ? null : failure);
+  if (!failure) {
+    if (pressed !== null) setPressed(null);
+  } else if (!failure.updated && failure !== pressed) {
+    setPressed(failure);
+  }
 
   useEffect(() => {
     const box = ref.current;
-    // An update to the failure showing (fields being fixed) moves nothing.
-    if (!failure || !box || failure.updated) return;
+    if (!pressed || !box) return;
     const focusBox = () => {
       box.focus({ preventScroll: true });
       // Only when it is out of view: one in a sticky Save bar is always in
@@ -181,7 +188,7 @@ export function SaveError<TField extends string>({
         box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
     };
-    const names = failure.fields.map((f) => f.field);
+    const names = pressed.fields.map((f) => f.field);
     if (names.length === 0) return focusBox();
 
     const root = box.closest('form') ?? document;
@@ -209,11 +216,22 @@ export function SaveError<TField extends string>({
     let focused: HTMLElement | null = null;
     let observer: MutationObserver | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Focus leaving the field while it is still on the page is the admin
+    // moving it, even to nowhere: a click on blank space puts focus on
+    // <body>, which would otherwise read as the field taking focus with it.
+    const onLeave = (e: FocusEvent) => {
+      const left = e.currentTarget;
+      queueMicrotask(() => {
+        const held = focused;
+        if (held && left === held && held.isConnected && document.activeElement !== held) stop();
+      });
+    };
     const stop = () => {
       done = true;
       cancelAnimationFrame(frame);
       observer?.disconnect();
       clearTimeout(timer);
+      focused?.removeEventListener('focusout', onLeave);
     };
     // Whether focus is still where this put it. A field it focused that has
     // unmounted counts only when focus fell to the page with it.
@@ -224,7 +242,9 @@ export function SaveError<TField extends string>({
       if (!stillOurs()) return stop(); // moved by the admin
       if (focused?.isConnected) return;
       const revealed = firstPresent(root, names);
+      focused?.removeEventListener('focusout', onLeave);
       focused = revealed && focusField(revealed) ? revealed : null;
+      focused?.addEventListener('focusout', onLeave);
       // Past the reveal frames with no field to take focus: the summary does.
       if (!focused && tries >= REVEAL_FRAMES) {
         stop();
@@ -248,10 +268,10 @@ export function SaveError<TField extends string>({
       timer = setTimeout(stop, WATCH_MS);
     }
     return stop;
-    // Moves on a new failure only; a parent re-rendering with a new
+    // Moves on a new press only; a parent re-rendering with a new
     // onRevealField must not pull focus back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [failure]);
+  }, [pressed]);
 
   if (!failure) return null;
 

@@ -493,8 +493,9 @@ release process.
   update is marked with the new optional `SaveFailure.updated`, and
   `<SaveError>` doesn't move focus for it, so the field being typed in keeps
   focus. A server's failure, and one from `show()` or `block()`, still stays
-  until the next Save. All 20 Sunrise forms wired as
-  `handleSubmit(onSubmit, save.invalid)` now pass it. **A fork's own forms
+  until the next Save. All 22 Sunrise forms that report a blocked save this
+  way now pass it; the orchestration settings and webhook-subscription forms,
+  which held their failure themselves, move onto `useSaveFailure` to get it. **A fork's own forms
   wired that way get the fix only once they pass `errors`.** The sign-up,
   login and both reset-password forms now call `useForm` before
   `useSaveFailure`; a fork that edited them should take that order. See

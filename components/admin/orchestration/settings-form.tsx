@@ -46,13 +46,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiClient } from '@/lib/api/client';
-import {
-  applyFieldErrors,
-  invalidSave,
-  readSaveError,
-  unreadableNumbers,
-  type SaveFailure,
-} from '@/lib/errors/save-error';
+import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { API } from '@/lib/api/endpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -348,7 +342,6 @@ export function SettingsForm({
   embeddingProviderIsLocal = null,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
-  const [saveFailure, setSaveFailure] = React.useState<SaveFailure | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
@@ -513,6 +506,12 @@ export function SettingsForm({
     resolver: zodResolver(formSchema),
     defaultValues: defaults,
   });
+  const save = useSaveFailure({
+    fallback: 'Could not save settings. Try again in a moment.',
+    fields: SERVER_FIELDS,
+    setError,
+    errors,
+  });
 
   const watchedHybrid = watch('hybridEnabled');
   const watchedPrivacyMode = watch('privacyMode');
@@ -637,12 +636,7 @@ export function SettingsForm({
       }
       setSavedAt(new Date());
     } catch (err) {
-      const failure = readSaveError(err, {
-        fallback: 'Could not save settings. Try again in a moment.',
-        fields: SERVER_FIELDS,
-      });
-      applyFieldErrors(failure, setError);
-      setSaveFailure(failure);
+      save.report(err);
     }
   };
 
@@ -650,20 +644,9 @@ export function SettingsForm({
     <form
       method="post"
       noValidate
-      onSubmit={(e) => {
-        // A number the browser can't read would save as blank: block it first.
-        const unreadable = unreadableNumbers(e.currentTarget);
-        if (unreadable) {
-          e.preventDefault();
-          setSaveFailure(unreadable);
-          return;
-        }
-        // Cleared on every press: one client validation blocks never reaches onSubmit.
-        setSaveFailure(null);
-        void handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0], (errors) =>
-          setSaveFailure(invalidSave(errors))
-        )(e);
-      }}
+      onSubmit={save.submit(async (e) => {
+        await handleSubmit(onSubmit as Parameters<typeof handleSubmit>[0], save.invalid)(e);
+      })}
       className="max-w-3xl space-y-6"
     >
       {/* ── Safety ──────────────────────────────────────────────────────── */}
@@ -1725,7 +1708,7 @@ export function SettingsForm({
       {/* ── Submit ─────────────────────────────────────────────────────── */}
       <div className="sticky bottom-4 space-y-2">
         {/* Only the escalation list is versioned here, so a stale save is always it (§122). */}
-        <SaveError failure={saveFailure} stale={{ what: 'The escalation list' }} />
+        <SaveError failure={save.failure} stale={{ what: 'The escalation list' }} />
         <div className="flex items-center gap-3">
           <SharedSettingsSaveHint />
           <Button type="submit" disabled={readOnly || isSubmitting || !hasChanges}>

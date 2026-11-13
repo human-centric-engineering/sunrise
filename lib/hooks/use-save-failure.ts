@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState, type BaseSyntheticEvent } from 'react';
+import { useCallback, useState, type BaseSyntheticEvent } from 'react';
 import type { FieldErrors, FieldValues } from 'react-hook-form';
 
 import {
@@ -84,17 +84,26 @@ interface FormOptions<TField extends string> extends Options {
   setError?: SetFieldError<TField>;
 }
 
-/** The failure showing, and whether the form's own validation produced it. */
+/**
+ * The failure showing. For a save the form's own validation blocked, `key` is
+ * what its fields said when it was last shown, so the summary can follow them;
+ * null for any other failure, which stays as it is until the next Save.
+ */
 interface Shown<TField extends string> {
   failure: SaveFailure<TField> | null;
-  fromValidation: boolean;
+  key: string | null;
 }
 
-const NONE: Shown<never> = { failure: null, fromValidation: false };
+const NONE: Shown<never> = { failure: null, key: null };
 
 /** What a failure says, so an update that says nothing new keeps the same object. */
 function failureKey(failure: SaveFailure<string>): string {
   return JSON.stringify([failure.message, failure.fields]);
+}
+
+/** Whether the errors leave anything to fix: a field, or a form-level message. */
+function anyBlocked(errors: FieldErrors<FieldValues>, failure: SaveFailure<string>): boolean {
+  return failure.fields.length > 0 || typeof errors.root?.message === 'string';
 }
 
 /**
@@ -120,7 +129,7 @@ export function useSaveFailure<TField extends string>(
   const [state, setState] = useState<Shown<TField | string>>(NONE);
   const setFailure = useCallback(
     (failure: SaveFailure<TField | string> | null, fromValidation = false) =>
-      setState({ failure, fromValidation }),
+      setState({ failure, key: fromValidation && failure ? failureKey(failure) : null }),
     []
   );
   const { fallback, errors } = options;
@@ -188,18 +197,22 @@ export function useSaveFailure<TField extends string>(
     [setFailure]
   );
 
-  // A blocked save follows the live field errors. Keyed on what they say, not
-  // on the object: react-hook-form updates `formState.errors` in place.
-  const live = state.fromValidation && errors ? invalidSave(errors) : null;
-  const liveKey = live ? failureKey(live) : null;
-  const failure = useMemo(() => {
-    const shown = state.failure;
-    if (!shown || !live || liveKey === failureKey(shown)) return shown;
-    if (live.fields.length === 0 && !errors?.root?.message) return null;
-    return { ...live, updated: true };
-    // `live` is rebuilt every render; `liveKey` is what it says.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.failure, liveKey]);
+  // A blocked save follows the live field errors (t-1013), as derived state
+  // set during render: compared on what they say, because react-hook-form
+  // updates `formState.errors` in place. Every change is an update, marked so
+  // `<SaveError>` moves nothing, including one back to what the press said.
+  // When nothing is left to fix the failure is cleared, not hidden, so a field
+  // broken again later shows its own message without reviving the summary.
+  if (state.key !== null && errors) {
+    const live = invalidSave(errors);
+    const liveKey = failureKey(live);
+    if (liveKey !== state.key) {
+      setState(
+        anyBlocked(errors, live) ? { failure: { ...live, updated: true }, key: liveKey } : NONE
+      );
+    }
+  }
+  const failure = state.failure;
 
   return { failure, report, show, invalid, block, clear, submit };
 }
