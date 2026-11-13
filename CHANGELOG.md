@@ -44,7 +44,8 @@ release process.
     segment with `<BreadcrumbLabel segment={id} label={name} />`. The admin
     layout wraps the shell in the provider.
   - A segment nobody names is now title-cased (`some-section` →
-    `Some Section`) instead of shown as typed. The page title still uses only
+    `Some Section`) instead of shown as typed, unless it has a digit (almost
+    always a record id, still shown as typed). The page title still uses only
     a known label and otherwise says "Admin".
   - An empty `#admin-header-slot` beside the user actions, for a page to
     render into with `createPortal`.

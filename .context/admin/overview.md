@@ -74,7 +74,7 @@ Client component (`components/admin/admin-sidebar.tsx`) providing navigation:
 
 Client component (`components/admin/admin-header.tsx`) providing:
 
-- **Breadcrumb navigation**: Auto-generated from URL pathname. A segment's label comes from, in order: a `<BreadcrumbLabel>` the page registered (`components/admin/breadcrumb-context.tsx`, for record ids), the fork's `appSegmentLabels` (`lib/app/admin-breadcrumbs.ts`), core's own labels, then the segment title-cased. The page title uses only the first three, so it never shows a title-cased id; it falls back to "Admin"
+- **Breadcrumb navigation**: Auto-generated from URL pathname. A segment's label comes from, in order: a `<BreadcrumbLabel>` the page registered (`components/admin/breadcrumb-context.tsx`, for record ids), the fork's `appSegmentLabels` (`lib/app/admin-breadcrumbs.ts`), core's own labels, then the segment title-cased (a segment with a digit, almost always a record id, is left as typed). The page title uses only the first three, so it never shows a title-cased id; it falls back to "Admin"
 - **Header slot**: an empty `#admin-header-slot` beside the user actions, which a page can render into with `createPortal`
 - **Page title**: Derived from route or explicitly set
 - **User actions**: Session controls via `HeaderActions` component

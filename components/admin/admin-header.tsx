@@ -52,8 +52,14 @@ function ownLabel(map: Readonly<Record<string, string>>, segment: string): strin
   return Object.hasOwn(map, segment) ? map[segment] : undefined;
 }
 
-/** `some-new-section` → `Some New Section`. The last resort for an unnamed segment. */
+/**
+ * `some-new-section` → `Some New Section`. The last resort for an unnamed
+ * segment. A segment with a digit in it is left as typed: it is almost always
+ * a record id (a cuid always has one), and `Cmwf0pagx…` reads worse than the
+ * id itself. A page names its id with `<BreadcrumbLabel>` instead.
+ */
 function humanizeSegment(segment: string): string {
+  if (/\d/.test(segment)) return segment;
   return segment
     .split('-')
     .filter(Boolean)

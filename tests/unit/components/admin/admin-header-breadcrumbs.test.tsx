@@ -8,7 +8,8 @@
  *   1. a label the page registered with `<BreadcrumbLabel>` (a record id)
  *   2. the fork's map, `appSegmentLabels` in `lib/app/admin-breadcrumbs.ts`
  *   3. Sunrise's own labels for its core segments
- *   4. the segment title-cased
+ *   4. the segment title-cased, unless it has a digit (a record id), which
+ *      is left as typed
  *
  * The page title takes 1–3 only. A title-cased record id as a page heading is
  * the bug that rule prevents.
@@ -151,6 +152,13 @@ describe('AdminHeader breadcrumbs: the label order', () => {
     expect(heading()).toBe('Admin');
   });
 
+  it('leaves a segment with a digit as typed, since it is almost always a record id', () => {
+    nav.pathname = '/admin/users/cmwf0pagx00005i5nu6plj27x';
+    renderShell();
+
+    expect(trail()).toEqual(['Admin', 'Users', 'cmwf0pagx00005i5nu6plj27x']);
+  });
+
   it('drops a page’s label when the page unmounts', () => {
     nav.pathname = '/admin/widgets/w-1';
     const { rerender } = renderShell([{ segment: 'w-1', label: 'Blue widget' }]);
@@ -162,7 +170,7 @@ describe('AdminHeader breadcrumbs: the label order', () => {
       </BreadcrumbProvider>
     );
 
-    expect(trail()).toEqual(['Admin', 'Widgets', 'W 1']);
+    expect(trail()).toEqual(['Admin', 'Widgets', 'w-1']);
   });
 });
 
@@ -182,11 +190,11 @@ describe('AdminHeader breadcrumbs: the page title', () => {
     expect(heading()).toBe('Settings library');
   });
 
-  it('falls back to "Admin" rather than title-casing a record id', () => {
+  it('falls back to "Admin" rather than showing a record id as the heading', () => {
     nav.pathname = '/admin/widgets/cmg1abc234xyz';
     renderShell();
 
-    expect(trail()).toContain('Cmg1abc234xyz');
+    expect(trail()).toContain('cmg1abc234xyz');
     expect(heading()).toBe('Admin');
   });
 
@@ -209,7 +217,7 @@ describe('AdminHeader breadcrumbs: outside the provider', () => {
       </>
     );
 
-    expect(trail()).toEqual(['Admin', 'Widgets', 'W 1']);
+    expect(trail()).toEqual(['Admin', 'Widgets', 'w-1']);
   });
 });
 

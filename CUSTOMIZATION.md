@@ -812,7 +812,8 @@ too (see [Authorization → Admin tiers](./.context/auth/authorization.md#admin-
 **Admin breadcrumb labels — `lib/app/admin-breadcrumbs.ts`.** The admin
 breadcrumb is built from the URL. Name your own segments in `appSegmentLabels`;
 an entry also renames a core segment. A segment nobody names is title-cased
-(`some-section` → `Some Section`), and the page title then falls back to
+(`some-section` → `Some Section`); one with a digit in it, almost always a
+record id, is left as typed. Either way the page title then falls back to
 "Admin" rather than show a guess. A page names a record id in its own URL with
 `<BreadcrumbLabel>` from `components/admin/breadcrumb-context.tsx`:
 

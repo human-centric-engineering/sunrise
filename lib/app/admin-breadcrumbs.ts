@@ -16,7 +16,8 @@
  *      (`components/admin/breadcrumb-context.tsx`) — for record ids;
  *   2. this map;
  *   3. Sunrise's own labels for its core segments;
- *   4. the segment title-cased (`some-section` → `Some Section`).
+ *   4. the segment title-cased (`some-section` → `Some Section`), unless it
+ *      has a digit: that is almost always a record id, left as typed.
  * The page title takes 1–3 only, never a title-cased id.
  *
  * An entry here can rename a core segment too, since it wins over step 3.
