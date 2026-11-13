@@ -132,6 +132,9 @@ describe('ConfigHealthBanner', () => {
     );
     expect(container).toHaveTextContent(/could not run/i);
     expect(container).not.toHaveTextContent('Background jobs never run.');
+    // Its badge says so too, rather than claiming the configured severity.
+    expect(container).toHaveTextContent('Not checked');
+    expect(container).not.toHaveTextContent('Critical');
   });
 
   it('leaves a check that could not run off the strip on every page', () => {

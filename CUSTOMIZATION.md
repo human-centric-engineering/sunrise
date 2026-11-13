@@ -830,7 +830,11 @@ export const appSegmentLabels: Readonly<Record<string, string>> = {
 The order is: what the page registered, then this map, then core's labels, then
 the title-cased segment. The header also has an empty `#admin-header-slot`
 beside the user actions; a page can render into it with `createPortal`, for a
-brand mark or page actions.
+brand mark or page actions. Look the node up after mount (in an effect), not
+during render: it does not exist on the server or before the header commits.
+Use one `<BreadcrumbLabel>` per segment where you can: with two (a layout's
+and a page's), the most recently registered wins, and on first mount that is
+the layout's, since React runs a child's effects first.
 
 **Config health — `lib/app/config-health.ts`.** A platform admin sees a card on
 the admin overview listing settings that are missing, and a banner on every

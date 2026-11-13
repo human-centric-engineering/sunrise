@@ -123,7 +123,11 @@ export function ConfigHealthBanner({ report, variant }: ConfigHealthBannerProps)
                   ) : null}
                 </p>
               </div>
-              <SeverityBadge severity={check.severity} />
+              {check.failed ? (
+                <Badge variant="outline">Not checked</Badge>
+              ) : (
+                <SeverityBadge severity={check.severity} />
+              )}
             </li>
           ))}
         </ul>

@@ -17,6 +17,12 @@ vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/email/client', () => ({ isEmailEnabled: vi.fn(() => true) }));
 // The provider rows are faked; the reachability rule is core's real one
 // (`filterProvidersWithCredential`), so a local provider counts without a key.
+// The real reachability rule, wrapped so one test can make the resolver fail.
+vi.mock('@/lib/orchestration/llm/provider-credentials', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/llm/provider-credentials')>();
+  return { ...actual, classifyProvidersByCredential: vi.fn(actual.classifyProvidersByCredential) };
+});
 vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findMany: vi.fn() } },
 }));
@@ -55,6 +61,7 @@ import { runConfigHealthChecks } from '@/lib/config-health/run';
 import { isEmailEnabled } from '@/lib/email/client';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
+import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import type { EvaluatedConfigCheck } from '@/lib/config-health/types';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -101,7 +108,9 @@ describe('runConfigHealthChecks', () => {
 
   it('counts only active providers', async () => {
     await runConfigHealthChecks();
-    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledWith({ where: { isActive: true } });
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true } })
+    );
   });
 
   it('flags a production-only fork check as critical and unmet in production when unset', async () => {
@@ -136,6 +145,18 @@ describe('runConfigHealthChecks', () => {
     expect(email.present).toBe(false);
     expect(email.severity).toBe('warning');
     expect(report.summary.warning).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reports the LLM-provider check as failed, not missing, when the credential resolver fails', async () => {
+    const row = providerRow();
+    vi.mocked(classifyProvidersByCredential).mockResolvedValueOnce({
+      reachable: [],
+      unavailable: [{ config: row, error: new Error('vault timeout') }],
+    });
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'llm_provider')).toMatchObject({ failed: true });
+    expect(report.summary.critical).toBe(0);
+    expect(report.summary.failed).toBe(1);
   });
 
   it('passes the LLM-provider check for a local provider with no key', async () => {

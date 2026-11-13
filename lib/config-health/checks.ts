@@ -16,7 +16,7 @@
 
 import { isEmailEnabled } from '@/lib/email/client';
 import { prisma } from '@/lib/db/client';
-import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
+import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
 
 /**
@@ -44,15 +44,33 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
       'No active AI provider can be reached (a key set, or a local provider), so chat, ' +
       'extraction, and report generation will fail.',
     remediation:
-      'Configure a provider under Admin → Orchestration → Providers and set its API-key env var, ' +
-      'then redeploy.',
+      'Under Admin → Orchestration → Providers, make sure a provider is active and has its key ' +
+      '(its API-key env var, or your credential resolver), or add a local one.',
     docsPath: '.context/admin/orchestration-providers.md',
     detect: async (): Promise<boolean> => {
       // Only ACTIVE providers count — a disabled provider throws `provider_disabled` at runtime, so
       // a keyed-but-inactive row must not read as "usable". Reachable is core's own rule: a key
       // through the credential seam, or a local provider, which needs none.
-      const providers = await prisma.aiProviderConfig.findMany({ where: { isActive: true } });
-      return (await filterProvidersWithCredential(providers)).length > 0;
+      const providers = await prisma.aiProviderConfig.findMany({
+        where: { isActive: true },
+        // Only what the credential seam reads.
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          providerType: true,
+          apiKeyEnvVar: true,
+          isLocal: true,
+        },
+      });
+      const { reachable, unavailable } = await classifyProvidersByCredential(providers);
+      if (reachable.length > 0) return true;
+      // Nothing reachable because the resolver failed is not a missing key: the
+      // check could not tell, so it throws and the runner reports it as failed.
+      if (unavailable.length > 0) {
+        throw new Error(`credential resolver failed for ${unavailable.length} active provider(s)`);
+      }
+      return false;
     },
   },
   {

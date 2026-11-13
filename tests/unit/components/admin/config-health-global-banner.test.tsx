@@ -134,6 +134,24 @@ describe('ConfigHealthGlobalBanner', () => {
     expect(apiClient.get).toHaveBeenCalledTimes(2);
   });
 
+  it('shares one load across navigations made before it settles', async () => {
+    let resolve: (r: ConfigHealthReport) => void = () => {};
+    (apiClient.get as Mock).mockReturnValue(
+      new Promise<ConfigHealthReport>((r) => {
+        resolve = r;
+      })
+    );
+    const { rerender } = render(<ConfigHealthGlobalBanner />);
+    nav.pathname = '/admin/logs';
+    rerender(<ConfigHealthGlobalBanner />);
+    nav.pathname = '/admin/features';
+    rerender(<ConfigHealthGlobalBanner />);
+
+    resolve(reportWith(false));
+    await screen.findByRole('alert');
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
+  });
+
   it('clears the strip when a reload fails, rather than keep an earlier answer', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     (apiClient.get as Mock).mockResolvedValue(reportWith(false));

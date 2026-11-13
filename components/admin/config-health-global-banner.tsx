@@ -14,6 +14,8 @@
  * resolver) per click. A report under {@link REPORT_MAX_AGE_MS} old is reused instead.
  *
  * A failed load clears the strip rather than keep showing an earlier answer, and is logged.
+ *
+ * The cost, accepted: a problem fixed in the admin can stay on the strip for up to a minute.
  */
 
 import { useEffect, useState } from 'react';
@@ -34,9 +36,33 @@ export const REPORT_MAX_AGE_MS = 60_000;
 /** The last report loaded in this tab, shared across the layout's remounts. */
 let lastLoad: { report: ConfigHealthReport; at: number } | null = null;
 
+/**
+ * The load in flight, shared by every navigation that starts before it
+ * settles: one request, and an older response can never overwrite a newer one.
+ */
+let inFlight: Promise<ConfigHealthReport> | null = null;
+
 /** Forget the cached report. Tests only. */
 export function __resetConfigHealthBannerCacheForTests(): void {
   lastLoad = null;
+  inFlight = null;
+}
+
+function loadReport(): Promise<ConfigHealthReport> {
+  inFlight ??= apiClient
+    .get<ConfigHealthReport>(API.ADMIN.CONFIG_HEALTH)
+    .then((data) => {
+      lastLoad = { report: data, at: Date.now() };
+      return data;
+    })
+    .catch((err: unknown) => {
+      lastLoad = null;
+      throw err;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
 }
 
 function freshReport(): ConfigHealthReport | null {
@@ -56,14 +82,11 @@ export function ConfigHealthGlobalBanner() {
       return;
     }
     let cancelled = false;
-    apiClient
-      .get<ConfigHealthReport>(API.ADMIN.CONFIG_HEALTH)
+    loadReport()
       .then((data) => {
-        lastLoad = { report: data, at: Date.now() };
         if (!cancelled) setReport(data);
       })
       .catch((err: unknown) => {
-        lastLoad = null;
         if (!cancelled) setReport(null);
         logger.error('Failed to load config health', {
           error: err instanceof Error ? err.message : String(err),

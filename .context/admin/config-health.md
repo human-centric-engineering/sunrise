@@ -61,6 +61,8 @@ checks that could not run as `failed` only, never under a severity.
 not take the report down. It is logged as `Config health check failed` and
 reported `present: false, failed: true`. The card shows it as a check that could
 not run; the strip leaves it out, because the setting is not known to be missing.
+The provider check counts here too when the credential resolver fails for every
+active provider: the keys may well be set, so it is not reported as missing.
 
 ## Adding a check
 
