@@ -44,7 +44,7 @@ export function LoginForm() {
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = useForm<SignInInput>({
     resolver: zodResolver(signInSchema),
     mode: 'onTouched',
@@ -67,10 +67,11 @@ export function LoginForm() {
   });
 
   // An OAuth sign-in that failed comes back in the URL: it is shown where a
-  // failed sign-in is, until the form's own Save is pressed.
+  // failed sign-in is, until the form's own Save is pressed
+  // (`isSubmitted`), even if that press was blocked: a blocked save's summary
+  // clears itself as fields are fixed (t-1013).
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
-  const [tried, setTried] = useState(false);
   const oauthMessage = oauthError
     ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
     : null;
@@ -170,13 +171,7 @@ export function LoginForm() {
       <form
         method="post"
         noValidate
-        onSubmit={(e) => {
-          // The OAuth error from the URL gives way to this form's own outcome
-          // for good, not only while a failure shows: a blocked save's summary
-          // clears itself as fields are fixed (t-1013).
-          setTried(true);
-          save.submit(handleSubmit(onSubmit, save.invalid))(e);
-        }}
+        onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
         className="space-y-4"
       >
         {/* Email Field */}
@@ -208,7 +203,7 @@ export function LoginForm() {
 
         {/* A failed sign-in, beside Sign In */}
         <SaveError failure={save.failure} />
-        {!tried && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {!isSubmitted && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
         {/* Show send verification email button for unverified email errors */}
         {unverified && (
           <div className="space-y-3">

@@ -101,11 +101,6 @@ function failureKey(failure: SaveFailure<string>): string {
   return JSON.stringify([failure.message, failure.fields]);
 }
 
-/** Whether the errors leave anything to fix: a field, or a form-level message. */
-function anyBlocked(errors: FieldErrors<FieldValues>, failure: SaveFailure<string>): boolean {
-  return failure.fields.length > 0 || typeof errors.root?.message === 'string';
-}
-
 /**
  * The field table for a page that places no field messages: every server
  * message joins the summary by Save. One object, so `report` stays stable.
@@ -207,8 +202,10 @@ export function useSaveFailure<TField extends string>(
     const live = invalidSave(errors);
     const liveKey = failureKey(live);
     if (liveKey !== state.key) {
+      // No fields left is nothing left: react-hook-form never passes a root
+      // error to onInvalid, and one set later wouldn't clear on re-validation.
       setState(
-        anyBlocked(errors, live) ? { failure: { ...live, updated: true }, key: liveKey } : NONE
+        live.fields.length > 0 ? { failure: { ...live, updated: true }, key: liveKey } : NONE
       );
     }
   }

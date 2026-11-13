@@ -177,7 +177,7 @@ because react-hook-form's errors don't say when they were fixed. A server
 message `report()` put on a field is still cleared from that field when it
 re-validates; only the summary by Save stays. Since `useSaveFailure` now reads
 `errors`, call it after `useForm`. The agent and capability forms build their
-own tab-aware summary through `show()`, so they don't follow fields.
+own tab-aware summary through `show()`, so they don't follow fields yet (t-1029).
 
 Once the count reaches zero the failure is cleared, not hidden: a field broken
 again afterwards shows its own message, and the summary comes back only on the

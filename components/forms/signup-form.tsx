@@ -46,7 +46,7 @@ export function SignupForm() {
     register,
     handleSubmit,
     watch,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
     mode: 'onTouched',
@@ -64,10 +64,11 @@ export function SignupForm() {
   });
 
   // An OAuth sign-up that failed comes back in the URL: it is shown where a
-  // failed sign-up is, until the form's own Save is pressed.
+  // failed sign-up is, until the form's own Save is pressed
+  // (`isSubmitted`), even if that press was blocked: a blocked save's summary
+  // clears itself as fields are fixed (t-1013).
   const oauthError = searchParams.get('error');
   const oauthErrorDescription = searchParams.get('error_description');
-  const [tried, setTried] = useState(false);
   const oauthMessage = oauthError
     ? oauthErrorDescription || 'OAuth authentication failed. Please try again.'
     : null;
@@ -133,13 +134,7 @@ export function SignupForm() {
       <form
         method="post"
         noValidate
-        onSubmit={(e) => {
-          // The OAuth error from the URL gives way to this form's own outcome
-          // for good, not only while a failure shows: a blocked save's summary
-          // clears itself as fields are fixed (t-1013).
-          setTried(true);
-          save.submit(handleSubmit(onSubmit, save.invalid))(e);
-        }}
+        onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
         className="space-y-4"
       >
         {/* Name Field */}
@@ -202,7 +197,7 @@ export function SignupForm() {
 
         {/* A failed sign-up, beside Create Account */}
         <SaveError failure={save.failure} />
-        {!tried && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
+        {!isSubmitted && !save.failure && oauthMessage && <FormError message={oauthMessage} />}
 
         {/* Submit Button */}
         <Button type="submit" className="w-full" disabled={isLoading}>
