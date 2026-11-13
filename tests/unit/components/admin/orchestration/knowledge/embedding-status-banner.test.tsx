@@ -92,4 +92,21 @@ describe('EmbeddingStatusBanner', () => {
     expect(screen.getByRole('link', { name: /add an embedding provider/i })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /open settings/i })).toBeNull();
   });
+
+  it('shows a step left to take even when every chunk is embedded (t-1011)', () => {
+    // A search still embeds its query, so it fails too.
+    render(
+      <EmbeddingStatusBanner
+        total={10}
+        embedded={10}
+        hasActiveProvider={false}
+        providerState="none_configured"
+        setupMessage="Add or reactivate a provider with that slug."
+      />
+    );
+    expect(
+      screen.getByText(/embedding cannot run, so search and new uploads fail/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/add or reactivate a provider with that slug/i)).toBeInTheDocument();
+  });
 });

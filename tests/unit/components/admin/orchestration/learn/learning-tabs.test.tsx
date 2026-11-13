@@ -242,6 +242,40 @@ describe('LearningTabs', () => {
     });
   });
 
+  it('shows the banner for a setup step with nothing pending (t-1011)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                total: 100,
+                embedded: 100,
+                pending: 0,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage: 'Add or reactivate a provider with that slug.',
+              },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('embedding-status-banner')).toHaveAttribute(
+        'data-setup-message',
+        'Add or reactivate a provider with that slug.'
+      );
+    });
+  });
+
   it('loads persisted quiz score on mount and renders it on the quiz tab', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;

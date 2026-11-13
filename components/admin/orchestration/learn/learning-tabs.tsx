@@ -183,15 +183,17 @@ export function LearningTabs({
 
       <TabsContent value="advisor" className="mt-4">
         <div className="flex flex-col gap-3">
-          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
-            <EmbeddingStatusBanner
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={embeddingStatus.hasActiveProvider}
-              providerState={embeddingStatus.providerState}
-              setupMessage={setupMessage}
-            />
-          )}
+          {embeddingStatus &&
+            embeddingStatus.total > 0 &&
+            (embeddingStatus.pending > 0 || setupMessage) && (
+              <EmbeddingStatusBanner
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={embeddingStatus.hasActiveProvider}
+                providerState={embeddingStatus.providerState}
+                setupMessage={setupMessage}
+              />
+            )}
           <ChatInterface
             agentSlug="pattern-advisor"
             agentId={advisorAgent?.id}
@@ -243,15 +245,17 @@ export function LearningTabs({
 
       <TabsContent value="quiz" className="mt-4">
         <div className="flex flex-col gap-3">
-          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
-            <EmbeddingStatusBanner
-              total={embeddingStatus.total}
-              embedded={embeddingStatus.embedded}
-              hasActiveProvider={embeddingStatus.hasActiveProvider}
-              providerState={embeddingStatus.providerState}
-              setupMessage={setupMessage}
-            />
-          )}
+          {embeddingStatus &&
+            embeddingStatus.total > 0 &&
+            (embeddingStatus.pending > 0 || setupMessage) && (
+              <EmbeddingStatusBanner
+                total={embeddingStatus.total}
+                embedded={embeddingStatus.embedded}
+                hasActiveProvider={embeddingStatus.hasActiveProvider}
+                providerState={embeddingStatus.providerState}
+                setupMessage={setupMessage}
+              />
+            )}
           {quizScore && (
             <div className="flex items-center gap-2">
               <Trophy className="text-muted-foreground h-4 w-4" aria-hidden="true" />

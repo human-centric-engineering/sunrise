@@ -450,6 +450,37 @@ describe('ManageTab', () => {
     );
   });
 
+  it('shows the step with every chunk embedded, panel open (t-1011)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                total: 10,
+                embedded: 10,
+                pending: 0,
+                hasActiveProvider: false,
+                providerState: 'none_configured',
+                providerSetupMessage: 'Add or reactivate a provider with that slug.',
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/add or reactivate a provider with that slug/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/embedding cannot run/i)).toBeInTheDocument();
+  });
+
   it('shows embed error message on HTTP error response', async () => {
     const user = userEvent.setup();
     mockFetch.mockImplementation((url: string) => {

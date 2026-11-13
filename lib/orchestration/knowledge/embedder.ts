@@ -130,17 +130,29 @@ export async function getActiveEmbeddingModelSummary(): Promise<{
     })
     .catch(() => null);
 
-  if (
-    !model ||
-    !model.isActive ||
-    !model.capabilities.includes('embedding') ||
-    !model.dimensions ||
-    model.dimensions <= 0
-  ) {
-    return null;
-  }
+  if (!sizesTheColumns(model)) return null;
 
   return { modelId: model.modelId, dimensions: model.dimensions };
+}
+
+/**
+ * Whether a picked model row is one `embeddings:reset` sizes the columns for:
+ * active, with the `embedding` capability and a width. The one statement of
+ * those gates, shared by {@link getActiveEmbeddingModelSummary} (which the
+ * reset reads) and {@link resolveActiveEmbeddingConfig} (which decides whether
+ * a pick may fall back): the fallback rule is right only while the two agree
+ * (t-1011).
+ */
+function sizesTheColumns<
+  T extends { isActive: boolean; capabilities: string[]; dimensions: number | null },
+>(model: T | null): model is T & { dimensions: number } {
+  return (
+    !!model &&
+    model.isActive &&
+    model.capabilities.includes('embedding') &&
+    !!model.dimensions &&
+    model.dimensions > 0
+  );
 }
 
 /**
@@ -190,15 +202,16 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
     })
     .catch(() => null);
 
-  // Falling back is right only when the chain's vectors fit the columns the
-  // pick sized. Otherwise say which pick, and what to do.
+  // Falling back is right only when the chain's vectors fit the columns
+  // `embeddings:reset` sizes for this pick. Otherwise say which pick, and what
+  // to do.
   const cannotFallBack = (reason: string, remedy: string): void => {
-    if (!model?.dimensions || model.dimensions <= 0) return;
-    if (model.dimensions === FALLBACK_DIMENSIONS) return;
+    if (!sizesTheColumns(model) || model.dimensions === FALLBACK_DIMENSIONS) return;
     throw new EmbeddingSetupError(
       `The active embedding model "${model.modelId}" cannot be used: ${reason}. ${remedy} ` +
         `Falling back is not possible: the fallback makes ${FALLBACK_DIMENSIONS}-dimension ` +
-        `vectors, and the stored ones are ${model.dimensions}.`
+        `vectors, and \`npm run embeddings:reset\` sizes the columns for this model at ` +
+        `${model.dimensions}.`
     );
   };
   const pickAnother =
@@ -463,6 +476,18 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // of the readers to the wrong place. The flag is what separates them — an
   // install with only an Anthropic row reaches the end of this chain having
   // been refused nothing, and must not be told a policy turned it away.
+  // A local provider is never offered to the rule, so "every provider was
+  // refused" may hide it. Picking its model is the remedy either way: the pick
+  // is not filtered by the rule.
+  const localProvider = providers.find((p) => p.isLocal);
+  if (refusals.length > 0 && localProvider) {
+    throw new EmbeddingSetupError(
+      'No permitted embedding provider: every provider the fallback could use was refused. ' +
+        `The local provider "${localProvider.slug}" is used for embeddings only once one of ` +
+        'its models is picked: pick it as the active embedding model (Orchestration → ' +
+        'Settings), then run `npm run embeddings:reset`.'
+    );
+  }
   if (refusals.length > 0) {
     throw new NoEligibleProviderError(
       'No permitted embedding provider. Every embedding provider this install could ' +

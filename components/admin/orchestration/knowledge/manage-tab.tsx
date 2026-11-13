@@ -512,7 +512,9 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   // Built-in setup panel: collapsed by default once setup is complete (chunks loaded
   // and all embedded). Manual user preference (open/closed) wins over the auto rule.
   const setupComplete = hasChunks && allEmbedded;
-  const setupOpen = setupPreference === null ? !setupComplete : setupPreference === 'open';
+  // Open by default while there is a step left to take, embedded or not (t-1011).
+  const setupOpen =
+    setupPreference === null ? !setupComplete || !!setupMessage : setupPreference === 'open';
 
   // Built-in setup panel JSX — assigned to a variable so we can render it
   // either near the top of the page (while setup is in progress) or at the
@@ -541,15 +543,15 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           </div>
           {!setupOpen && (
             <p className="text-muted-foreground mt-0.5 text-xs">
-              {setupComplete
-                ? 'Patterns loaded and embedded. Click to expand.'
-                : !hasChunks
-                  ? 'Load the built-in patterns to enable the Learning page.'
-                  : !hasProvider
-                    ? setupMessage
-                      ? 'Embedding needs one more step. Expand for what to do.'
-                      : 'Configure an embedding provider to enable vector search.'
-                    : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
+              {!hasChunks
+                ? 'Load the built-in patterns to enable the Learning page.'
+                : setupMessage
+                  ? 'Embedding needs one more step. Expand for what to do.'
+                  : setupComplete
+                    ? 'Patterns loaded and embedded. Click to expand.'
+                    : !hasProvider
+                      ? 'Configure an embedding provider to enable vector search.'
+                      : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
             </p>
           )}
         </div>
@@ -690,8 +692,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           )}
           {embeddingStatus &&
             hasChunks &&
-            !allEmbedded &&
-            (embeddingStatus.embedded > 0 || setupMessage) && (
+            (setupMessage || (!allEmbedded && embeddingStatus.embedded > 0)) && (
               <EmbeddingStatusBanner
                 providerState={providerState}
                 setupMessage={setupMessage}

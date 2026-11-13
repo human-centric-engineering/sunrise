@@ -1088,7 +1088,9 @@ describe('a picked model that cannot be used', () => {
     expect(message).toContain('"nomic-embed-text" cannot be used');
     expect(message).toContain('no active provider has its provider slug, "ollama"');
     expect(message).toContain('"ollama-local"');
-    expect(message).toContain('1536-dimension vectors, and the stored ones are 768');
+    expect(message).toContain(
+      '1536-dimension vectors, and `npm run embeddings:reset` sizes the columns for this model at 768'
+    );
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
     expect(embedMany).not.toHaveBeenCalled();
   });

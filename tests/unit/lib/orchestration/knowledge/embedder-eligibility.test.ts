@@ -272,6 +272,34 @@ describe('resolveEmbeddingAvailability', () => {
   });
 });
 
+describe('a refusal beside a local provider (t-1011)', () => {
+  it('names the local step, since picking its model is the remedy', async () => {
+    // An org approved only for its local provider: the chain offers the rule
+    // the OpenAI row (refused) and never the local one, so "add or allow a
+    // provider" would be the wrong remedy. The pick is not filtered.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'openai' }),
+      row({ slug: 'ollama-local', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+    ] as never);
+    registerProviderEligibility(() => []);
+
+    const err = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(NoProviderConfiguredError);
+    expect((err as Error).message).toContain('every provider the fallback could use was refused');
+    expect((err as Error).message).toContain('"ollama-local" is used for embeddings only once');
+  });
+
+  it('keeps the refusal on its own when there is no local provider', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'openai' }),
+    ] as never);
+    registerProviderEligibility(() => []);
+
+    await expect(embedText('hello')).rejects.toThrow(/No permitted embedding provider\. Every/);
+  });
+});
+
 describe('a bare OPENAI_API_KEY beside a local provider (t-1011)', () => {
   it('is told to add OpenAI as a provider, not to pick the local model', async () => {
     // Picking the local model means a reset that empties the knowledge base:
