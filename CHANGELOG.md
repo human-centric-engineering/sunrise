@@ -355,6 +355,19 @@ release process.
 
 ### Changed
 
+- **`@hookform/resolvers` 7** (t-1027). This is a major, but its one
+  breaking change is in the typebox resolver, which now needs `typebox` 1.x.
+  No zod resolver file changed between 6.0.0 and 7.0.6, so forms on
+  `@hookform/resolvers/zod` behave as before. A fork using another resolver
+  should read its release notes.
+- **Tailwind is held at 4.3.3** (t-1027, `.github/dependabot.yml`). From
+  4.3.4, `@tailwindcss/oxide-wasm32-wasi` no longer declares
+  `cpu: ["wasm32"]`. Upstream did this on purpose: the WASI build is now the
+  fallback for platforms with no native binary (tailwindcss#20685). npm would
+  install it on every platform, and `check:lockfile` refuses the lost `cpu`.
+  If your fork takes Tailwind 4.3.4+ itself, its Lockfile metadata job fails
+  the same way. Tailwind can move once `check:lockfile` can accept a loss the
+  registry made.
 - **The embedding provider chain no longer picks a local provider (§127
   t-1011).** With no active embedding model picked, `resolveProvider()` in
   `lib/orchestration/knowledge/embedder.ts` tries Voyage, then an
@@ -524,21 +537,6 @@ release process.
   - **GHSA-3g3m-2fjr-6pw4** (medium, glob): fixed by `react-email` 6.11.8.
   - **GHSA-474x-hrwr-fgx4** (low, fast-xml-parser): fixed by 5.12, which
     arrives through `epub`.
-- **Dependency bumps** (t-1027):
-  - `@hookform/resolvers` 7. It is a major, but the only breaking change is the
-    typebox resolver, which now needs `typebox` 1.x. Sunrise uses only `/zod`.
-  - The production group: the AWS SDK, `cron-parser`, `lucide-react`,
-    `mermaid` 12.3, `openai`, `react-email` and `undici`.
-  - The dev group: `vitest` 5.1, `vite`, `typescript-eslint`, Next's ESLint
-    packages and others.
-  - CodeQL and TruffleHog actions.
-  - **Held back: Tailwind stays at 4.3.3.** From 4.3.4,
-    `@tailwindcss/oxide-wasm32-wasi` no longer declares `cpu: ["wasm32"]`.
-    Upstream did this on purpose: the WASI build is now the fallback for
-    platforms without a native binary (tailwindcss#20685). The result is that
-    npm installs it on every platform, and `check:lockfile` refuses the lost
-    `cpu`. Taking it needs that check to allow a loss the registry itself
-    made.
 
 ## [0.18.0] — 2026-11-09
 
