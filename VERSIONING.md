@@ -108,6 +108,7 @@ covered by the version contract.
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
   - `lib/app/capability-seed-pairs.ts` → `APP_CAPABILITY_PAIRS` / `APP_UNCHECKED_SEEDS` — which class goes with each slug the fork's capability seeds write, and which of its seeds the parity test cannot run, read by that test
   - `lib/app/ci.ts` → `appCoverageExclusions` / `appAlwaysRunTests` / `appOwnerlessSurfaceExceptions` — the fork's own coverage exclusions, whole-tree always-run tests, and files allowed to read an ownerless-capable model outside the access helpers
+  - `lib/app/config-health.ts` → `appConfigHealthChecks` — the fork's own config-health checks, run after Sunrise's (type: `ConfigHealthCheck` in `lib/config-health/types.ts`)
   - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/credential-paths.ts` → `appCredentialPaths` — route patterns whose dynamic segments are credentials, collapsed to `[param]` in every logged, reported and analytics path (read by `collapseDynamicSegments()` in `lib/logging/redact-path.ts`)
   - `lib/app/csp.ts` → `appFrameSrc` / `appScriptSrc` / `appConnectSrc` / `appMediaSrc` — extra CSP `frame-src`, `script-src`, `connect-src` and `media-src` origins

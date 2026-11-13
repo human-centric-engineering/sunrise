@@ -54,6 +54,7 @@ import { appCredentialPaths } from '@/lib/app/credential-paths';
 import { appEnvSchema } from '@/lib/app/env';
 import { footerCopyright } from '@/lib/app/footer';
 import { appSegmentLabels } from '@/lib/app/admin-breadcrumbs';
+import { appConfigHealthChecks } from '@/lib/app/config-health';
 import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
@@ -396,6 +397,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     seam: 'lib/app/protected-routes.ts',
     risk: 'a stray path would put a public route behind auth on every install',
     assert: () => expect(appProtectedRoutes).toEqual([]),
+  },
+  {
+    seam: 'lib/app/config-health.ts',
+    risk: 'a stray check would flag a setting as missing on every install, on the overview and, if critical, on every admin page',
+    assert: () => expect(appConfigHealthChecks).toEqual([]),
   },
   {
     seam: 'lib/app/credential-paths.ts',

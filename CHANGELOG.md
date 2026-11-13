@@ -18,6 +18,22 @@ release process.
 
 ### Added
 
+- **Config health: the admin area says when an optional setting has quietly
+  switched a feature off (#865, t-1025).** Before, a missing LLM provider key,
+  email setup or serverless pooler showed only as a log line.
+  - `GET /api/v1/admin/config-health` (platform admins): a report of each
+    check, presence only, never a value.
+  - A card on `/admin/overview` listing unmet checks with their fix, and a
+    critical-only strip on every admin page for platform admins.
+  - Sunrise's checks: `llm_provider` (critical; an active provider has its
+    key), `email` (warning), `db_pooler` (warning; on Vercel only).
+  - New fork-owned scaffold `lib/app/config-health.ts` →
+    `appConfigHealthChecks`, with the `ConfigHealthCheck` type in
+    `lib/config-health/types.ts`. Ships empty and is pinned in
+    `defaults.test.ts`. A fork's checks run after Sunrise's.
+
+  **A fork that built its own** at these paths (ConQuest's shape) takes
+  Sunrise's files and keeps its checks in `lib/app/config-health.ts`.
 - **Admin breadcrumb labels and a header slot (#1201, t-1024).** The admin
   breadcrumb no longer shows a fork's slugs and record ids as typed:
   - New fork-owned scaffold `lib/app/admin-breadcrumbs.ts` →

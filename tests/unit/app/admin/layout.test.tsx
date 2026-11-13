@@ -133,6 +133,12 @@ vi.mock('@/components/admin/admin-sidebar', () => ({
   ),
 }));
 
+// The config-health strip fetches a platform-only route on mount (#865). The
+// layout's job is only whether to mount it; its rendering is its own test's.
+vi.mock('@/components/admin/config-health-global-banner', () => ({
+  ConfigHealthGlobalBanner: () => <div data-testid="config-health-global-banner" />,
+}));
+
 vi.mock('@/components/admin/admin-header', () => ({
   AdminHeader: ({ orgName, orgTierPages }: { orgName?: string; orgTierPages: string[] }) => (
     <div
@@ -409,6 +415,8 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
         `Org ${CUSTOMER}`
       );
       expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-multi-tenant', 'true');
+      // #865: the config-health route is platform-only, so its strip is not mounted.
+      expect(screen.queryByTestId('config-health-global-banner')).not.toBeInTheDocument();
     }
   );
 
@@ -468,6 +476,8 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
 
     expect(screen.getByTestId('admin-content')).toBeInTheDocument();
     expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'platform');
+    // #865: a platform admin gets the config-health strip on every page.
+    expect(screen.getByTestId('config-health-global-banner')).toBeInTheDocument();
   });
 
   it('names no org and hides the multi-only nav at single (t-813)', async () => {

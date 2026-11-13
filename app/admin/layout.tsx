@@ -6,6 +6,7 @@ import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { BreadcrumbProvider } from '@/components/admin/breadcrumb-context';
 import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
+import { ConfigHealthGlobalBanner } from '@/components/admin/config-health-global-banner';
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import {
@@ -141,6 +142,8 @@ export default async function AdminLayout({
           {/* Every page of one org's rows, closed sections included: a platform
               admin there is still looking at the entered org's. */}
           <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />
+          {/* Config health reads a platform-only route, so an org admin is not shown it. */}
+          {reach === 'platform' && <ConfigHealthGlobalBanner />}
           <InFlightExecutionBanner />
           {/* Scroll padding: a field brought into view by focus clears the
               sticky Save bars forms pin to the top or bottom of this area. */}

@@ -105,6 +105,7 @@ All admin endpoints require authentication and ADMIN role:
 | Endpoint                            | Method             | Purpose                  |
 | ----------------------------------- | ------------------ | ------------------------ |
 | `/api/v1/admin/stats`               | GET                | System statistics        |
+| `/api/v1/admin/config-health`       | GET                | Missing config, by check |
 | `/api/v1/admin/logs`                | GET                | Application logs         |
 | `/api/v1/admin/feature-flags`       | GET, POST          | List/create flags        |
 | `/api/v1/admin/feature-flags/[id]`  | GET, PATCH, DELETE | Manage single flag       |

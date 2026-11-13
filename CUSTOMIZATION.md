@@ -455,6 +455,7 @@ small and conflict-free.)
 | `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)                          | the chat context builder (server route-handler)                                                                       |
 | `lib/app/admin-nav.ts`                     | admin sidebar sections                                                 | `admin-sidebar.tsx` (client)                                                                                          |
 | `lib/app/admin-breadcrumbs.ts`             | names for your admin URL segments in the breadcrumb and page title     | `admin-header.tsx` (client)                                                                                           |
+| `lib/app/config-health.ts`                 | settings your app needs that the env schema leaves optional            | `runConfigHealthChecks()` → the admin overview card and critical banner (server)                                      |
 | `lib/app/admin-tier.ts`                    | the fork's admin pages an org admin may open                           | `orgTierAdminPages()` → the admin layout (server), which hands the list to `<AdminTierGate>`                          |
 | `lib/app/admin-tier-routes.ts`             | the fork's admin API routes an org admin may call (`path#NAME`)        | `tests/unit/scripts/ci/admin-tier-roster.test.ts` (CI / `/pre-pr`); the guard reads the call site                     |
 | `lib/app/admin-landing.ts`                 | where an org admin lands at `/admin`                                   | `orgAdminLanding()` → `app/admin/page.tsx` (server)                                                                   |
@@ -829,6 +830,14 @@ The order is: what the page registered, then this map, then core's labels, then
 the title-cased segment. The header also has an empty `#admin-header-slot`
 beside the user actions; a page can render into it with `createPortal`, for a
 brand mark or page actions.
+
+**Config health — `lib/app/config-health.ts`.** A platform admin sees a card on
+the admin overview listing settings that are missing, and a banner on every
+admin page while a critical one is. Sunrise checks the LLM provider key, email
+and a pooled database on serverless. Add the settings your own app needs to
+`appConfigHealthChecks`; each check's `detect()` returns whether the setting is
+present, never its value. Fields and an example:
+[`.context/admin/config-health.md`](./.context/admin/config-health.md).
 
 **Org-tier admin pages — `lib/app/admin-tier.ts`.** Every admin page is the
 platform admins' alone unless it is listed as org-tier. Core lists its own in
