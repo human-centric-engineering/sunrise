@@ -159,6 +159,14 @@ model AiMessage {
   ratedAt        DateTime?
   createdAt      DateTime  @default(now())
 
+  // When the embedding backfill may next try this reply, after its embedding
+  // failed or the LLM privacy layer refused it, and how many attempts in a
+  // row have (§127 t-1016). Each failure doubles the wait, up to a week. The
+  // backfill reads replies that never failed first, so none can fill its
+  // batch and hold older replies back.
+  embeddingRetryAt  DateTime?
+  embeddingFailures Int       @default(0)
+
   // Provenance — version pins captured at message-creation time
   agentVersionId      String?
   workflowExecutionId String?
@@ -188,6 +196,10 @@ model AiMessage {
   // stays unindexed on purpose: a partial index needs raw SQL, and therefore a
   // drift probe to maintain forever, to save a filter on an already-narrow scan.
   @@index([role, createdAt])
+  // No index on `embeddingRetryAt`: the backfill's retry read costs about
+  // what its fresh read already does, while an index would cover every
+  // message (nearly all NULL) on this table's every insert, and building it
+  // would block writes to the table while a migration ran (t-1016).
   @@index([createdAt])
   @@index([rating])
   @@index([agentVersionId])

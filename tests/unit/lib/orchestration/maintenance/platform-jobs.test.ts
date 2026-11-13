@@ -142,7 +142,12 @@ function mockIdleTasks(): void {
     stalePending: 0,
     abandonedApprovals: 0,
   });
-  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0, skipped: 0 });
+  vi.mocked(backfillMissingEmbeddings).mockResolvedValue({
+    processed: 0,
+    failed: 0,
+    skipped: 0,
+    filledBatch: false,
+  });
   vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_IDLE);
   vi.mocked(runWaitlistRetention).mockResolvedValue({
     unconfirmedDeleted: 0,
@@ -368,6 +373,21 @@ describe('runDuePlatformJobs — foundWork', () => {
     expect(foundWork).toBe(false);
   });
 
+  it('is false for a backfill run of only refusals and failures that did not fill its batch (t-1016)', async () => {
+    // Each now waits for its retry time, so nothing is behind them: counting
+    // it would keep the idle gate open where nothing can ever be embedded.
+    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({
+      processed: 0,
+      failed: 2,
+      skipped: 22,
+      filledBatch: false,
+    });
+
+    const { foundWork } = await runDuePlatformJobs(T0);
+
+    expect(foundWork).toBe(false);
+  });
+
   it.each([
     ['webhookRetries', () => vi.mocked(processPendingRetries).mockResolvedValue(1)],
     ['hookRetries', () => vi.mocked(processPendingHookRetries).mockResolvedValue(1)],
@@ -399,7 +419,15 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(backfillMissingEmbeddings)
-          .mockResolvedValue({ processed: 25, failed: 0, skipped: 0 }),
+          .mockResolvedValue({ processed: 25, failed: 0, skipped: 0, filledBatch: true }),
+    ],
+    [
+      // A full batch of refusals or failures may have more behind it (t-1016).
+      'embeddingBackfill — a full batch of refusals and failures',
+      () =>
+        vi
+          .mocked(backfillMissingEmbeddings)
+          .mockResolvedValue({ processed: 0, failed: 5, skipped: 20, filledBatch: true }),
     ],
     [
       'retention',

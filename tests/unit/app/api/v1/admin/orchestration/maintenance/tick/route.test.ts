@@ -209,7 +209,7 @@ const DEFAULT_SCHEDULE_RESULT = {
 const DEFAULT_RETRY_RESULT = 3;
 const DEFAULT_HOOK_RETRY_RESULT = 2;
 const DEFAULT_REAPER_RESULT = { reaped: 1, stalePending: 0, abandonedApprovals: 0 };
-const DEFAULT_EMBEDDER_RESULT = { backfilled: 5, failed: 0 };
+const DEFAULT_EMBEDDER_RESULT = { processed: 5, failed: 0, skipped: 0, filledBatch: false };
 const DEFAULT_RETENTION_RESULT = {
   deleted: 10,
   agentsProcessed: 2,
@@ -248,7 +248,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(processPendingRetries).mockResolvedValue(DEFAULT_RETRY_RESULT);
     vi.mocked(processPendingHookRetries).mockResolvedValue(DEFAULT_HOOK_RETRY_RESULT);
     vi.mocked(reapZombieExecutions).mockResolvedValue(DEFAULT_REAPER_RESULT);
-    vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT as never);
+    vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT);
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
     vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue({
       auditLogsDeleted: 0,
@@ -292,7 +292,12 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       stalePending: 0,
       abandonedApprovals: 0,
     });
-    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 0, failed: 0, skipped: 0 });
+    vi.mocked(backfillMissingEmbeddings).mockResolvedValue({
+      processed: 0,
+      failed: 0,
+      skipped: 0,
+      filledBatch: false,
+    });
     vi.mocked(enforceRetentionPolicies).mockResolvedValue({
       ...DEFAULT_RETENTION_RESULT,
       deleted: 0,

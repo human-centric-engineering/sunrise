@@ -117,8 +117,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/orchestration/chat/message-embedder.ts',
-    calls: 2,
-    why: 'message-embedding vector INSERT/UPDATE (Prisma cannot write vector columns)',
+    calls: 3,
+    why: 'message-embedding vector INSERT/UPDATE (Prisma cannot write vector columns); the backfill reads (replies that never failed, then failed ones whose retry time has come, t-1016) need LENGTH(content) and an anti-join Prisma cannot express. Both reads touch ai_message, ai_conversation and ai_message_embedding only, each under org_isolation',
   },
   {
     file: 'lib/orchestration/config-versions.ts',

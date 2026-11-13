@@ -189,8 +189,12 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     scope: 'per-org',
     intervalMs: 15 * MINUTE,
     run: () => backfillMissingEmbeddings(),
-    // Batch-capped at 25, so any hit may mean more behind it.
-    foundWork: (r) => r.processed > 0 || r.failed > 0,
+    // Something embedded, or a full batch, which may mean more behind it. A
+    // failed or refused reply waits for its retry time (t-1016), so a run of
+    // only those that did not fill the batch left nothing behind: counting it
+    // would keep the idle gate open on an install where nothing can ever be
+    // embedded, and a scale-to-zero database awake.
+    foundWork: (r) => r.processed > 0 || r.filledBatch,
   }),
   job({
     name: 'retention',

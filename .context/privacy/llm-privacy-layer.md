@@ -26,6 +26,7 @@ has merged; this table says what exists.
 | A turn refused under `block` is left out of later history                              | t-1014 | **Built** |
 | A `block` caused by an earlier message, the summary or the setup: placed and told      | t-1017 | **Built** |
 | A `block` caused by a memory: the memory is deleted, and the user carries on           | t-1018 | **Built** |
+| A reply whose embedding fails or is refused no longer holds the backfill back          | t-1016 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | Planned   |
 
 ## Quick Reference
@@ -215,12 +216,34 @@ An agent and an org can each require more protection than the install gives.
   agent's mode refuses a remote embedding of its replies as it would inside
   the turn, on the first try and on every backfill tick. Nothing reads that
   scope's counts (`recordsNowhere`), so the stage skips the scan it skips
-  for a call with no scope. While the provider that resolves is not local,
-  the backfill leaves such agents' replies out of its query, or it would pick
-  the same newest refused ones every tick and never reach the rest. It always
-  leaves out an agent whose stored mode is not a mode, which refuses every
-  call. Any privacy refusal it does meet counts as `skipped`, not `failed`:
-  the stage has already logged why.
+  for a call with no scope. Any privacy refusal counts as `skipped`, not
+  `failed`: the stage has already logged why.
+- **No failed or refused reply can hold the backfill back** (t-1016;
+  owner ruling 2026-11-12: back off everything). Any failure of a reply's
+  embedding, on the first try or in the backfill, gives it a retry time
+  (`AiMessage.embeddingRetryAt`) and counts it (`embeddingFailures`): a
+  privacy refusal (the `local_only` policy, an agent's mode that is not a
+  mode, an app's policy resolver), a provider refusal (an org's provider
+  policy), or an error (a local model rejecting a long reply). The wait is
+  15 minutes after the first, one backfill interval, so a one-off error (a
+  provider's rate limit) is picked up by the next run as before; then it
+  doubles each time, at most a week from the eleventh failure on
+  (`embeddingRetryDelayMs()`; owner ruling 2026-11-13). The backfill reads replies that never failed
+  first, newest first, and gives whatever room is left to those whose
+  retry time has come, the earliest first, so none can fill the batch. A
+  reply that can never be embedded settles to one attempt a week, so an
+  install where nothing can be embedded does little: a run of only failures
+  that did not fill its batch is not work for the maintenance tick's idle
+  gate. That holds while such replies fit the weekly retries, about 16,800
+  per org (a batch of 25 a quarter-hour); a larger backlog keeps every run
+  busy, and the gate open. A reply embedded after failing starts its count
+  again, and `npm run embeddings:reset` clears every reply's retry time.
+  Once nothing refuses a reply (a local embedding model installed, say), it
+  is tried again within its current wait, up to a week for one
+  that has failed many times, and due replies are drained at up to one
+  batch (25) a run, in the room fresh replies leave. The backfill copies
+  none of the stage's rules: until t-1016 it left out in SQL the two
+  refusals it knew of, and could not see any other.
 - **Every named-agent run carries its agent.** A workflow `agent_call` step
   (and so an orchestrator's delegation, which runs one) and a `chat_turn`
   step run the agent's provider calls in `agentPrivacyScope(agent.id)`: a
