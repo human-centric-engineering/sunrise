@@ -31,7 +31,9 @@ export const metadata: Metadata = {
 export default async function AdminOverviewPage() {
   const [result, health] = await Promise.all([
     loadServerData<SystemStats>(API.ADMIN.STATS),
-    loadServerData<ConfigHealthReport>(API.ADMIN.CONFIG_HEALTH),
+    // An org admin reaches this page but not the platform-only route: their
+    // 403 is an answer, not a failure to log.
+    loadServerData<ConfigHealthReport>(API.ADMIN.CONFIG_HEALTH, { expected: [403] }),
   ]);
   const stats = result.ok ? result.data : null;
   const configHealth = health.ok ? health.data : null;

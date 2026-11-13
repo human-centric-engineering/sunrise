@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 
+const nav = vi.hoisted(() => ({ pathname: '/admin/users' }));
+vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
 vi.mock('@/lib/api/client', () => ({ apiClient: { get: vi.fn() } }));
 vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 
@@ -38,7 +40,10 @@ function reportWith(present: boolean): ConfigHealthReport {
   };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  nav.pathname = '/admin/users';
+});
 afterEach(() => cleanup());
 
 describe('ConfigHealthGlobalBanner', () => {
@@ -90,5 +95,25 @@ describe('ConfigHealthGlobalBanner', () => {
     const { container } = render(<ConfigHealthGlobalBanner />);
     await waitFor(() => expect(logger.error).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('loads the report again on each admin page, so a fix made in the admin clears it', async () => {
+    (apiClient.get as Mock).mockResolvedValue(reportWith(false));
+    const { rerender } = render(<ConfigHealthGlobalBanner />);
+    await screen.findByRole('alert');
+
+    (apiClient.get as Mock).mockResolvedValue(reportWith(true));
+    nav.pathname = '/admin/orchestration/providers';
+    rerender(<ConfigHealthGlobalBanner />);
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows nothing and loads nothing on the overview, which has the full card', () => {
+    nav.pathname = '/admin/overview';
+    const { container } = render(<ConfigHealthGlobalBanner />);
+    expect(container).toBeEmptyDOMElement();
+    expect(apiClient.get).not.toHaveBeenCalled();
   });
 });

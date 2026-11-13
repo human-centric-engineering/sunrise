@@ -41,6 +41,12 @@ export interface EvaluatedConfigCheck {
   present: boolean;
   /** Whether the check applies in the current environment/platform. */
   applicable: boolean;
+  /**
+   * The check threw, so whether the setting is present is unknown. Reported as
+   * `present: false` (not confirmed), and shown on the overview card as a check
+   * that could not run, never as a setting that is missing.
+   */
+  failed?: true;
 }
 
 /** The full report. `summary` counts only APPLICABLE + UNMET checks by severity (+ `ok`). */

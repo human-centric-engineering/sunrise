@@ -46,12 +46,19 @@ met ones as `ok`.
 - **Overview card:** `/admin/overview` loads the report on the server and
   renders `<ConfigHealthBanner variant="card" />`, listing every unmet check
   with its fix. Nothing when all pass, or when the load fails (an org admin
-  cannot read the route).
+  cannot read the route; the page treats their 403 as expected, so it is not
+  logged).
 - **Banner on every admin page:** `<ConfigHealthGlobalBanner />` in
   `app/admin/layout.tsx`, mounted for platform reach only. It loads the report
-  once and shows a one-line strip when a **critical** check fails.
+  on each admin page and shows a one-line strip when a **critical** check
+  fails. It loads per page, not once, because the provider check reads
+  database rows an admin can fix without a redeploy. It shows nothing on the
+  overview, where the card already lists the same thing.
 
-Config does not change while a deployment runs, so nothing polls.
+**A check that throws** (a database read failing, a bug in a fork's check) does
+not take the report down. It is logged as `Config health check failed` and
+reported `present: false, failed: true`. The card shows it as a check that could
+not run; the strip leaves it out, because the setting is not known to be missing.
 
 ## Adding a check
 

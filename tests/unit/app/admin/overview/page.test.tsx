@@ -244,6 +244,8 @@ describe('AdminOverviewPage', () => {
 
       expect(reportPassedToCard()).toBeNull();
       expect(statsPassedTo('stats-cards')).toEqual(STATS);
+      // A 403 is the expected answer for an org admin, not an error to log.
+      expect(logger.error).not.toHaveBeenCalled();
     });
   });
 });

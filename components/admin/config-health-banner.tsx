@@ -10,6 +10,7 @@
  * carries presence booleans (see `lib/config-health/run.ts`).
  */
 
+import Link from 'next/link';
 import { AlertTriangle } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,7 +61,9 @@ export function ConfigHealthBanner({ report, variant }: ConfigHealthBannerProps)
   if (unmet.length === 0) return null;
 
   if (variant === 'global') {
-    const critical = unmet.filter((c) => c.severity === 'critical');
+    // A check that could not run is not a setting known to be missing: it is
+    // shown on the card, not announced on every page.
+    const critical = unmet.filter((c) => c.severity === 'critical' && !c.failed);
     if (critical.length === 0) return null;
     const summary =
       critical.length === 1
@@ -75,9 +78,9 @@ export function ConfigHealthBanner({ report, variant }: ConfigHealthBannerProps)
         <span>
           <span className="font-semibold">Configuration required:</span> {summary} not set — some
           features are disabled. See{' '}
-          <a href="/admin/overview" className="underline">
+          <Link href="/admin/overview" className="underline">
             the dashboard
-          </a>{' '}
+          </Link>{' '}
           for details.
         </span>
       </div>
@@ -106,7 +109,11 @@ export function ConfigHealthBanner({ report, variant }: ConfigHealthBannerProps)
             <li key={check.key} className="flex items-start justify-between gap-4 py-3">
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="font-medium">{check.label}</div>
-                <p className="text-muted-foreground text-xs">{check.description}</p>
+                <p className="text-muted-foreground text-xs">
+                  {check.failed
+                    ? 'This check could not run, so whether it is set is unknown. The server log has the error.'
+                    : check.description}
+                </p>
                 <p className="text-muted-foreground text-xs">
                   <span className="font-medium">Fix:</span> {check.remediation}
                   {check.docsPath ? (

@@ -134,6 +134,17 @@ describe('AdminHeader breadcrumbs: the label order', () => {
   });
 
   it.each([
+    ['/admin/orgs', 'Organisations'],
+    ['/admin/orchestration/mcp', 'MCP Server'],
+    ['/admin/orchestration/event-subscriptions/dlq', 'Dead Letter Queue'],
+  ])('names core segments title-casing would get wrong: %s', (pathname, label) => {
+    nav.pathname = pathname;
+    renderShell();
+
+    expect(trail()).toContain(label);
+  });
+
+  it.each([
     ['/admin/some-new-section', 'Some New Section'],
     ['/admin/widgets', 'Widgets'],
     ['/admin/a--b', 'A B'],

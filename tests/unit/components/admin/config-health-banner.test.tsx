@@ -121,4 +121,32 @@ describe('ConfigHealthBanner', () => {
       /2 critical settings \(Cron secret, LLM provider\)/i
     );
   });
+
+  it('shows a check that could not run as unknown on the card, not as missing', () => {
+    const { container } = render(
+      <ConfigHealthBanner
+        report={report([evaluated({ label: 'LLM provider', failed: true })])}
+        variant="card"
+      />
+    );
+    expect(container).toHaveTextContent(/could not run/i);
+    expect(container).not.toHaveTextContent('Background jobs never run.');
+  });
+
+  it('leaves a check that could not run off the strip on every page', () => {
+    const { container } = render(
+      <ConfigHealthBanner report={report([evaluated({ failed: true })])} variant="global" />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('links the strip to the overview with a client-side link', () => {
+    const { container } = render(
+      <ConfigHealthBanner report={report([evaluated()])} variant="global" />
+    );
+    expect(within(container).getByRole('link', { name: 'the dashboard' })).toHaveAttribute(
+      'href',
+      '/admin/overview'
+    );
+  });
 });

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // env.NODE_ENV is read by the runner; mutate per test.
 const envMock = vi.hoisted(() => ({ env: { NODE_ENV: 'production' } }));
 vi.mock('@/lib/env', () => envMock);
+vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/email/client', () => ({ isEmailEnabled: vi.fn(() => true) }));
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   listProvidersWithStatus: vi.fn(async () => [{ apiKeyPresent: true }]),
@@ -37,6 +38,7 @@ const FORK_CRON_CHECK = {
 
 import { runConfigHealthChecks } from '@/lib/config-health/run';
 import { isEmailEnabled } from '@/lib/email/client';
+import { logger } from '@/lib/logging';
 import { listProvidersWithStatus } from '@/lib/orchestration/llm/provider-manager';
 import type { EvaluatedConfigCheck } from '@/lib/config-health/types';
 
@@ -152,6 +154,40 @@ describe('runConfigHealthChecks', () => {
     );
     report = await runConfigHealthChecks();
     expect(check(report.checks, 'db_pooler').present).toBe(true);
+  });
+
+  it('reports a check that throws as failed, logs it, and still runs the others', async () => {
+    (listProvidersWithStatus as Mock).mockRejectedValue(new Error('db down'));
+    (isEmailEnabled as Mock).mockReturnValue(false);
+    const report = await runConfigHealthChecks();
+
+    const provider = check(report.checks, 'llm_provider');
+    expect(provider).toMatchObject({ present: false, applicable: true, failed: true });
+    expect(check(report.checks, 'email')).toMatchObject({ present: false });
+    expect(check(report.checks, 'email')).not.toHaveProperty('failed');
+    expect(logger.error).toHaveBeenCalledWith('Config health check failed', {
+      check: 'llm_provider',
+      error: 'db down',
+    });
+  });
+
+  it('reports a fork check whose applicability test throws as failed', async () => {
+    appSeam.appConfigHealthChecks = [
+      {
+        ...FORK_CRON_CHECK,
+        applicable: () => {
+          // A non-Error throw, to prove the log still names what was thrown.
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'bad gate';
+        },
+      },
+    ];
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'CRON_SECRET')).toMatchObject({ failed: true });
+    expect(logger.error).toHaveBeenCalledWith('Config health check failed', {
+      check: 'CRON_SECRET',
+      error: 'bad gate',
+    });
   });
 
   it('db_pooler flags an unset DATABASE_URL on Vercel', async () => {
