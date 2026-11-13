@@ -154,6 +154,13 @@ describe('runConfigHealthChecks', () => {
     expect(check(report.checks, 'db_pooler').present).toBe(true);
   });
 
+  it('db_pooler flags an unset DATABASE_URL on Vercel', async () => {
+    vi.stubEnv('VERCEL', '1');
+    vi.stubEnv('DATABASE_URL', undefined);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'db_pooler').present).toBe(false);
+  });
+
   it('never includes any config VALUE in the report (presence only)', async () => {
     const secret = 'super-secret-cron-value-not-a-boolean';
     vi.stubEnv('CRON_SECRET', secret);

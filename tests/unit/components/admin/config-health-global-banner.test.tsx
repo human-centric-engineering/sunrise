@@ -56,6 +56,35 @@ describe('ConfigHealthGlobalBanner', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('logs a non-Error rejection as its string form', async () => {
+    (apiClient.get as Mock).mockRejectedValue('offline');
+    render(<ConfigHealthGlobalBanner />);
+    await waitFor(() =>
+      expect(logger.error).toHaveBeenCalledWith('Failed to load config health', {
+        error: 'offline',
+      })
+    );
+  });
+
+  it('ignores a report that arrives after it unmounted', async () => {
+    let resolve: (r: ConfigHealthReport) => void = () => {};
+    (apiClient.get as Mock).mockReturnValue(
+      new Promise<ConfigHealthReport>((r) => {
+        resolve = r;
+      })
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { unmount } = render(<ConfigHealthGlobalBanner />);
+    unmount();
+
+    resolve(reportWith(false));
+    await Promise.resolve();
+
+    // No state update on an unmounted component, so React reports nothing.
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('fails silent (renders nothing, logs) when the fetch rejects', async () => {
     (apiClient.get as Mock).mockRejectedValue(new Error('boom'));
     const { container } = render(<ConfigHealthGlobalBanner />);
