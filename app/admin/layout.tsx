@@ -4,7 +4,9 @@ import { headers } from 'next/headers';
 import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
+import { BreadcrumbProvider } from '@/components/admin/breadcrumb-context';
 import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
+import { ConfigHealthGlobalBanner } from '@/components/admin/config-health-global-banner';
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import {
@@ -126,41 +128,45 @@ export default async function AdminLayout({
   ]);
 
   return (
-    <div className="bg-background flex h-screen overflow-hidden">
-      <AdminSidebar
-        reach={reach}
-        multiTenant={multiTenant}
-        orgTierPages={orgTierPages}
-        namedTierPages={namedTierPages}
-        waitlistEnabled={isWaitlistEnabled()}
-      />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {supportSession && <SupportBanner view={supportSession} />}
-        {/* Every page of one org's rows, closed sections included: a platform
-            admin there is still looking at the entered org's. */}
-        <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />
-        <InFlightExecutionBanner />
-        {/* Scroll padding: a field brought into view by focus clears the
-            sticky Save bars forms pin to the top or bottom of this area. */}
-        <main className="flex-1 scroll-py-32 overflow-y-auto overscroll-contain">
-          <div className="p-6">
-            <SharedSettingsAccessProvider
-              readOnly={sharedSettings.readOnly}
-              canSwitch={sharedSettings.canSwitch}
-              installOrgMember={sharedSettings.installOrgMember}
-              isInstallOrg={sharedSettings.isInstallOrg}
-            >
-              <AdminTierGate
-                reach={reach}
-                orgTierPages={orgTierPages}
-                namedTierPages={namedTierPages}
+    <BreadcrumbProvider>
+      <div className="bg-background flex h-screen overflow-hidden">
+        <AdminSidebar
+          reach={reach}
+          multiTenant={multiTenant}
+          orgTierPages={orgTierPages}
+          namedTierPages={namedTierPages}
+          waitlistEnabled={isWaitlistEnabled()}
+        />
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {supportSession && <SupportBanner view={supportSession} />}
+          {/* Every page of one org's rows, closed sections included: a platform
+              admin there is still looking at the entered org's. */}
+          <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />
+          {/* Config health reads a platform-only route, so an org admin is not shown it. */}
+          {reach === 'platform' && <ConfigHealthGlobalBanner />}
+          <InFlightExecutionBanner />
+          {/* Scroll padding: a field brought into view by focus clears the
+              sticky Save bars forms pin to the top or bottom of this area. */}
+          <main className="flex-1 scroll-py-32 overflow-y-auto overscroll-contain">
+            <div className="p-6">
+              <SharedSettingsAccessProvider
+                readOnly={sharedSettings.readOnly}
+                canSwitch={sharedSettings.canSwitch}
+                installOrgMember={sharedSettings.installOrgMember}
+                isInstallOrg={sharedSettings.isInstallOrg}
               >
-                {children}
-              </AdminTierGate>
-            </SharedSettingsAccessProvider>
-          </div>
-        </main>
+                <AdminTierGate
+                  reach={reach}
+                  orgTierPages={orgTierPages}
+                  namedTierPages={namedTierPages}
+                >
+                  {children}
+                </AdminTierGate>
+              </SharedSettingsAccessProvider>
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </BreadcrumbProvider>
   );
 }

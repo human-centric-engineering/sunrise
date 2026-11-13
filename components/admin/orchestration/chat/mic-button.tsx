@@ -54,8 +54,22 @@ export interface MicButtonProps {
   disabled?: boolean;
   /** Override the client-side recording cap. */
   maxDurationMs?: number;
-  /** Additional class names for the button element. */
+  /**
+   * Extra request headers merged into the transcribe POST (e.g. an
+   * `X-Session-Token` for a no-login questionnaire respondent, who has no
+   * cookie to ride on). The multipart `Content-Type` is set by the browser
+   * from the FormData body, so don't pass it here.
+   */
+  extraHeaders?: Record<string, string>;
+  /** Additional class names for the button element (applied in every state). */
   className?: string;
+  /**
+   * Extra class names applied only in the idle state (not recording, not
+   * transcribing). Use this to give the "start voice input" affordance a
+   * branded, stands-out look without overriding the red `destructive`
+   * recording cue. Applied after the variant classes, so its colours win.
+   */
+  idleClassName?: string;
 }
 
 type SubmitState = 'idle' | 'transcribing' | 'error';
@@ -81,7 +95,9 @@ export function MicButton({
   onError,
   disabled = false,
   maxDurationMs = DEFAULT_MAX_DURATION_MS,
+  extraHeaders,
   className,
+  idleClassName,
 }: MicButtonProps) {
   const recording = useVoiceRecording({ maxDurationMs });
   const schedule = useTimeout();
@@ -151,6 +167,7 @@ export function MicButton({
         const res = await fetch(endpoint, {
           method: 'POST',
           credentials: 'include',
+          ...(extraHeaders ? { headers: extraHeaders } : {}),
           body: fd,
         });
 
@@ -177,11 +194,25 @@ export function MicButton({
         schedule(() => setSubmit('idle'), 0);
       }
     }
-  }, [agentId, disabled, endpoint, language, onError, onTranscript, recording, submit, schedule]);
+  }, [
+    agentId,
+    disabled,
+    endpoint,
+    extraHeaders,
+    language,
+    onError,
+    onTranscript,
+    recording,
+    submit,
+    schedule,
+  ]);
 
   const isRecording = recording.state === 'recording';
   const isBusy = submit === 'transcribing' || recording.state === 'requesting';
   const buttonDisabled = disabled || isBusy;
+  // The branded idle treatment applies only when we're showing the plain
+  // "start voice input" mic — never over the red recording/transcribing states.
+  const isIdle = !isRecording && submit !== 'transcribing';
   // Render the hint only on the very first session — once the user has seen
   // the panel during a record, the localStorage flag flips and we drop to the
   // level-meter-only layout from then on.
@@ -196,7 +227,7 @@ export function MicButton({
         aria-label={ariaLabel}
         onClick={() => void handleClick()}
         disabled={buttonDisabled}
-        className={cn('shrink-0', className)}
+        className={cn('shrink-0', className, isIdle && idleClassName)}
       >
         {submit === 'transcribing' ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

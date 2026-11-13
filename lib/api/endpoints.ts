@@ -74,6 +74,8 @@ export const API = {
   /** Admin endpoints */
   ADMIN: {
     STATS: '/api/v1/admin/stats',
+    /** Whether the settings that quietly switch features off are set (presence only, #865) */
+    CONFIG_HEALTH: '/api/v1/admin/config-health',
     LOGS: '/api/v1/admin/logs',
     INVITATIONS: '/api/v1/admin/invitations',
     /** Every org, the vendor's view */

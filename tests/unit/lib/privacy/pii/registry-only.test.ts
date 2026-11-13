@@ -39,7 +39,17 @@ const STRATEGY_CALL = /\bstatelessTokenStrategy\s*\(/;
 
 const MAY_IMPORT_DETECTORS = (file: string) =>
   file === 'lib/privacy/adapters/core-defaults.ts' || file.startsWith('lib/privacy/pii/');
-const MAY_CALL_DETECT = (file: string) => file === 'lib/privacy/adapters/run.ts';
+/**
+ * Files whose `.detect(` is some other object's method, not a privacy
+ * detector's. The scan matches on the name, so each is listed with what it
+ * calls; a privacy detector called from one of them would still be wrong.
+ */
+const NOT_A_PRIVACY_DETECTOR: Readonly<Record<string, string>> = {
+  // `ConfigHealthCheck.detect()`: whether a setting is present (#865).
+  'lib/config-health/run.ts': 'config-health presence check',
+};
+const MAY_CALL_DETECT = (file: string) =>
+  file === 'lib/privacy/adapters/run.ts' || Object.hasOwn(NOT_A_PRIVACY_DETECTOR, file);
 const MAY_BUILD_STRATEGY = (file: string) =>
   file === 'lib/privacy/adapters/core-defaults.ts' || file === 'lib/privacy/pii/token-strategy.ts';
 

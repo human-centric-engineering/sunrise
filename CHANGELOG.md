@@ -18,6 +18,44 @@ release process.
 
 ### Added
 
+- **Config health: the admin area says when an optional setting has quietly
+  switched a feature off (#865, t-1025).** Before, a missing LLM provider key,
+  email setup or serverless pooler showed only as a log line.
+  - `GET /api/v1/admin/config-health` (platform admins): a report of each
+    check, presence only, never a value.
+  - A card on `/admin/overview` listing unmet checks with their fix, and a
+    critical-only strip on every admin page for platform admins.
+  - Sunrise's checks: `llm_provider` (critical; an active provider can be
+    reached, with a key or as a local provider), `email` (warning),
+    `db_pooler` (warning; on Vercel only). A check that throws is reported
+    `failed`, counted apart in `summary.failed`, and does not take the
+    report down.
+  - New fork-owned scaffold `lib/app/config-health.ts` →
+    `appConfigHealthChecks`, with the `ConfigHealthCheck` type in
+    `lib/config-health/types.ts`. Ships empty and is pinned in
+    `defaults.test.ts`. A fork's checks run after Sunrise's.
+
+  **A fork that built its own** at these paths (ConQuest's shape) takes
+  Sunrise's files and keeps its checks in `lib/app/config-health.ts`.
+- **Admin breadcrumb labels and a header slot (#1201, t-1024).** The admin
+  breadcrumb no longer shows a fork's slugs and record ids as typed:
+  - New fork-owned scaffold `lib/app/admin-breadcrumbs.ts` →
+    `appSegmentLabels`: names for the fork's admin URL segments (it can also
+    rename a core one). Ships empty and is pinned in `defaults.test.ts`.
+  - `BreadcrumbProvider`, `BreadcrumbLabel` and `useBreadcrumbLabels` in
+    `components/admin/breadcrumb-context.tsx`: a page names its record-id
+    segment with `<BreadcrumbLabel segment={id} label={name} />`. The admin
+    layout wraps the shell in the provider.
+  - A segment nobody names is now title-cased (`some-section` →
+    `Some Section`) instead of shown as typed, unless it has a digit (almost
+    always a record id, still shown as typed). The page title still uses only
+    a known label and otherwise says "Admin".
+  - An empty `#admin-header-slot` beside the user actions, for a page to
+    render into with `createPortal`.
+
+  **A fork that edited `components/admin/admin-header.tsx` or
+  `app/admin/layout.tsx` for this** takes Sunrise's and moves its segment
+  names into `appSegmentLabels`.
 - **`providerSetupMessage` on `GET /api/v1/admin/orchestration/knowledge/embedding-status`,
   and `EmbeddingSetupError` (§127 t-1011).** When embedding is set up but
   cannot run yet, the status names the step left to take, and the knowledge

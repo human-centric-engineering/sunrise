@@ -59,6 +59,43 @@ GET /api/v1/admin/stats
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
 
+## Get Config Health
+
+✅ **Implemented in:** `app/api/v1/admin/config-health/route.ts`
+
+**Purpose**: Say which optional settings that quietly switch a feature off are missing. Presence only: no value is ever returned. See [`.context/admin/config-health.md`](../admin/config-health.md).
+
+```
+GET /api/v1/admin/config-health
+```
+
+**Authentication**: Required (platform admin; no org tier)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "environment": "production",
+    "platform": "vercel",
+    "checks": [
+      {
+        "key": "email",
+        "label": "Transactional email",
+        "severity": "warning",
+        "description": "Email is not configured, so invitations, email verification, and report-ready notifications will not be sent.",
+        "remediation": "Set RESEND_API_KEY and EMAIL_FROM.",
+        "docsPath": ".context/email/overview.md",
+        "present": false,
+        "applicable": true
+      }
+    ],
+    "summary": { "critical": 0, "warning": 1, "info": 0, "ok": 2 }
+  }
+}
+```
+
 ## Get Application Logs
 
 ✅ **Implemented in:** `app/api/v1/admin/logs/route.ts`

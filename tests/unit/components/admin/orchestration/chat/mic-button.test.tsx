@@ -157,6 +157,54 @@ describe('MicButton', () => {
     await waitFor(() => expect(props.onTranscript).toHaveBeenCalledWith('hi there'));
   });
 
+  it('sends no headers of its own, so the cookie is the only credential by default', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { text: 'hi' } }), { status: 200 })
+    );
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...makeProps()} />);
+    await user.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const init = (fetchMock.mock.calls[0] as [string, RequestInit])[1];
+    expect(init.credentials).toBe('include');
+    expect(init).not.toHaveProperty('headers');
+  });
+
+  it('merges extraHeaders into the transcribe POST, for a caller with no cookie', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { text: 'hi' } }), { status: 200 })
+    );
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...makeProps({ extraHeaders: { 'X-Session-Token': 'tok-123' } })} />);
+    await user.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const init = (fetchMock.mock.calls[0] as [string, RequestInit])[1];
+    expect(init.headers).toEqual({ 'X-Session-Token': 'tok-123' });
+    // The multipart body still goes as FormData, so the browser sets its boundary.
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it('applies idleClassName while idle', () => {
+    render(<MicButton {...makeProps({ className: 'always', idleClassName: 'brand-idle' })} />);
+    const button = screen.getByRole('button', { name: /start voice input/i });
+    expect(button).toHaveClass('always');
+    expect(button).toHaveClass('brand-idle');
+  });
+
+  it('drops idleClassName while recording, so it cannot repaint the red recording cue', () => {
+    hookState.state = 'recording';
+    render(<MicButton {...makeProps({ className: 'always', idleClassName: 'brand-idle' })} />);
+    const button = screen.getByRole('button', { name: /stop recording/i });
+    expect(button).toHaveClass('always');
+    expect(button).not.toHaveClass('brand-idle');
+  });
+
   it('forwards optional language hint as a form field', async () => {
     const props = makeProps({ language: 'es' });
     fetchMock.mockResolvedValue(

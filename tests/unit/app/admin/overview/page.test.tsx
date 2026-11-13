@@ -59,6 +59,14 @@ vi.mock('@/components/status/status-page', () => ({
   ),
 }));
 
+// The config-health card (#865) is stubbed for the same reason, recording the
+// report it was handed; its rendering is config-health-banner.test.tsx's.
+vi.mock('@/components/admin/config-health-banner', () => ({
+  ConfigHealthBanner: (props: { report: unknown }) => (
+    <div data-testid="config-health-banner" data-report={JSON.stringify(props.report)} />
+  ),
+}));
+
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import AdminOverviewPage from '@/app/admin/overview/page';
@@ -67,6 +75,7 @@ import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import type { SystemStats } from '@/types/admin';
+import type { ConfigHealthReport } from '@/lib/config-health/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -176,5 +185,67 @@ describe('AdminOverviewPage', () => {
     expect(screen.getByTestId('stats-cards')).toBeInTheDocument();
     expect(screen.getByTestId('status-page')).toBeInTheDocument();
     expect(screen.getByTestId('system-info')).toBeInTheDocument();
+  });
+
+  // ── Config health (#865) ─────────────────────────────────────────────────
+
+  describe('config-health card', () => {
+    const REPORT: ConfigHealthReport = {
+      environment: 'production',
+      platform: 'other',
+      checks: [
+        {
+          key: 'email',
+          label: 'Transactional email',
+          severity: 'warning',
+          description: 'Email is not configured.',
+          remediation: 'Set RESEND_API_KEY and EMAIL_FROM.',
+          present: false,
+          applicable: true,
+        },
+      ],
+      summary: { critical: 0, warning: 1, info: 0, ok: 0, failed: 0 },
+    };
+
+    /** Answer each endpoint on its own, so neither load reads the other's body. */
+    function answer(byPath: Record<string, () => Response>): void {
+      vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+        const respond = byPath[path];
+        if (!respond) throw new Error(`unexpected fetch: ${path}`);
+        return respond();
+      });
+    }
+
+    function reportPassedToCard(): unknown {
+      const raw = screen.getByTestId('config-health-banner').getAttribute('data-report');
+      return raw === null ? undefined : JSON.parse(raw);
+    }
+
+    it('hands the config-health report to the card', async () => {
+      answer({
+        [API.ADMIN.STATS]: () => apiSuccess(STATS),
+        [API.ADMIN.CONFIG_HEALTH]: () => apiSuccess(REPORT),
+      });
+
+      render(await AdminOverviewPage());
+
+      expect(reportPassedToCard()).toEqual(REPORT);
+      expect(statsPassedTo('stats-cards')).toEqual(STATS);
+    });
+
+    it('hands the card null when the report fails to load, and the stats still show', async () => {
+      // An org admin cannot read the platform-only route: they get no card.
+      answer({
+        [API.ADMIN.STATS]: () => apiSuccess(STATS),
+        [API.ADMIN.CONFIG_HEALTH]: () => apiFailure(403, 'FORBIDDEN'),
+      });
+
+      render(await AdminOverviewPage());
+
+      expect(reportPassedToCard()).toBeNull();
+      expect(statsPassedTo('stats-cards')).toEqual(STATS);
+      // A 403 is the expected answer for an org admin, not an error to log.
+      expect(logger.error).not.toHaveBeenCalled();
+    });
   });
 });

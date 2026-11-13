@@ -64,12 +64,14 @@ describe('AdminHeader', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Members');
   });
 
-  it('links each breadcrumb but the last, and labels an unknown segment by its name', () => {
-    nav.pathname = '/admin/orchestration';
+  it('links each breadcrumb but the last, and title-cases an unknown segment', () => {
+    nav.pathname = '/admin/some-section';
     render(<AdminHeader orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('href', '/admin');
-    expect(screen.queryByRole('link', { name: 'orchestration' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Some Section' })).not.toBeInTheDocument();
+    expect(screen.getByText('Some Section')).toBeInTheDocument();
+    // The title never adopts a title-cased guess: it could be a record id.
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Admin');
   });
 
