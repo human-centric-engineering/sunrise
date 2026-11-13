@@ -364,6 +364,17 @@ rather than trusted**:
    diff. Restored metadata and downgrades — direct or transitive — are reported
    without gating (the direct rule was retired in #584; this line used to say it
    still gated, which is the stale-prose shape #627 exists to catch).
+
+   A loss the registry made on purpose passes when its
+   `lockfileMetadataReasons` entry moves in the same diff (t-1028). Check first
+   that the new version really declares none (`npm view <pkg>@<version> cpu
+os`). The entry is keyed per lost key, `<package name>:<key>`
+   (`@tailwindcss/oxide-wasm32-wasi:cpu`), so a reason for a dropped `cpu`
+   can't also pass a stripped `libc`. As with overrides, a reason answers the
+   diff that makes the loss: one written earlier fails as unchanged. The first
+   was `@tailwindcss/oxide-wasm32-wasi` 4.3.4+, which tailwindcss#20685 made
+   the fallback for every platform.
+
 7. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
 
 For 0.8.1 this turned a "221 packages changed" install into a verified **3

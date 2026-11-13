@@ -113,6 +113,107 @@ describe('scripts/ci/check-lockfile', () => {
     expect(out()).toContain('npm run fix:lockfile-libc');
   });
 
+  describe('a loss the registry made (t-1028)', () => {
+    const WHY_CPU = 'The registry dropped it on purpose (tailwindcss#20685): fallback build.';
+    // A registry-made loss is a `cpu` here, as tailwindcss#20685's was: `libc`
+    // is the key old npm strips (#571), and a passing test should not show
+    // that being explained away.
+    const LOCK_CPU = JSON.stringify({
+      packages: {
+        '': { version: '0.8.1' },
+        'node_modules/native': { version: '1.0.0', os: ['linux'], cpu: ['x64'], libc: ['glibc'] },
+      },
+    });
+    const LOCK_NO_CPU = JSON.stringify({
+      packages: {
+        '': { version: '0.8.1' },
+        'node_modules/native': { version: '1.0.1', os: ['linux'], libc: ['glibc'] },
+      },
+    });
+
+    /** Base lockfile has cpu; head lost it. Manifests at each side as given. */
+    function lossWith(baseManifest: object | null, headManifest: object) {
+      mockExecFileSync.mockImplementation((_c: string, a: string[]) => {
+        if (a[0] === 'merge-base') return 'abc123\n';
+        if (String(a[1]).endsWith(':package.json')) {
+          if (baseManifest === null) throw new Error('fatal: path not in tree');
+          return JSON.stringify({ dependencies: { native: '^1' }, ...baseManifest });
+        }
+        return LOCK_CPU;
+      });
+      mockReadFileSync.mockImplementation(
+        reads({
+          manifest: JSON.stringify({ dependencies: { native: '^1' }, ...headManifest }),
+          lock: LOCK_NO_CPU,
+        })
+      );
+    }
+
+    it('passes a loss whose lockfileMetadataReasons entry moved with it, and prints the reason', async () => {
+      lossWith({}, { lockfileMetadataReasons: { 'native:cpu': WHY_CPU } });
+
+      await run();
+
+      expect(process.exitCode).toBe(0);
+      expect(out()).toContain('node_modules/native lost cpu — explained by "native:cpu":');
+      expect(out()).toContain(`reason: ${WHY_CPU}`);
+      expect(out()).toContain('1 platform-metadata loss, each explained above');
+      expect(out()).not.toContain('no lost platform metadata');
+    });
+
+    it('gates a loss whose reason was already there, quotes it, and does not offer the npm repair', async () => {
+      lossWith(
+        { lockfileMetadataReasons: { 'native:cpu': WHY_CPU } },
+        { lockfileMetadataReasons: { 'native:cpu': WHY_CPU } }
+      );
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain(
+        '"lockfileMetadataReasons"."native:cpu" did not change in this diff.'
+      );
+      expect(out()).toContain(`It says: ${WHY_CPU}`);
+      expect(out()).not.toContain('fix:lockfile-libc');
+    });
+
+    it('gates a reason under the floor, naming its length and not the npm repair', async () => {
+      lossWith({}, { lockfileMetadataReasons: { 'native:cpu': 'registry did it' } });
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain(
+        '"lockfileMetadataReasons"."native:cpu" is 15 characters; 20 is the floor.'
+      );
+      expect(out()).not.toContain('fix:lockfile-libc');
+    });
+
+    it('points a loss with no reason at the new key as well as the npm repair', async () => {
+      lossWith({}, {});
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('npm run fix:lockfile-libc');
+      expect(out()).toContain('"lockfileMetadataReasons", keyed');
+      expect(out()).toContain('"<package name>:<key>"');
+    });
+
+    it('fails a loss when the base package.json is unreadable, even with a reason at HEAD', async () => {
+      // Without the base side, "moved in this diff" can't be told: the safe
+      // reading is unexplained, and the note says the comparison was skipped.
+      lossWith(null, { lockfileMetadataReasons: { 'native:cpu': WHY_CPU } });
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('every lost key will read as unexplained');
+      expect(out()).toContain('node_modules/native lost cpu');
+      expect(out()).not.toContain('explained by');
+    });
+  });
+
   it('reports restored metadata without failing', async () => {
     // The #571 repair: 101 packages gained `libc`, nothing else moved. Before
     // this the all-clear read "no version or platform-metadata change", which
@@ -426,7 +527,7 @@ describe('scripts/ci/check-lockfile', () => {
       await run();
 
       expect(process.exitCode).toBe(0);
-      expect(out()).toContain('skipping the overrides comparison');
+      expect(out()).toContain('skipping the overrides and lockfileMetadataReasons comparisons');
       expect(out()).not.toContain('"overrides" changed');
     });
 

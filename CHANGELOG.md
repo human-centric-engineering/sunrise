@@ -398,16 +398,23 @@ release process.
   No zod resolver file changed between 6.0.0 and 7.0.6, so forms on
   `@hookform/resolvers/zod` behave as before. A fork using another resolver
   should read its release notes.
-- **Tailwind is held at 4.3.3** (t-1027). `tailwindcss` and
-  `@tailwindcss/postcss` are pinned exactly in `package.json`, and ignored from
-  4.3.4 in `.github/dependabot.yml`. From
-  4.3.4, `@tailwindcss/oxide-wasm32-wasi` no longer declares
-  `cpu: ["wasm32"]`. Upstream did this on purpose: the WASI build is now the
-  fallback for platforms with no native binary (tailwindcss#20685). npm would
-  install it on every platform, and `check:lockfile` refuses the lost `cpu`.
-  If your fork takes Tailwind 4.3.4+ itself, its Lockfile metadata job fails
-  the same way. Tailwind can move once `check:lockfile` can accept a loss the
-  registry made.
+- **`check:lockfile` accepts a platform-metadata loss the registry made, given
+  a reason; Tailwind moves to 4.3.5** (t-1028). From 4.3.4,
+  `@tailwindcss/oxide-wasm32-wasi` no longer declares `cpu: ["wasm32"]`.
+  Upstream did this on purpose: the WASI build is now the fallback for
+  platforms with no native binary (tailwindcss#20685). So npm installs it,
+  about 6.5 MB, on every platform. `check:lockfile` read the lost `cpu` as npm
+  stripping metadata (#571) and failed. A loss now passes when the package's
+  entry in the new `package.json` `lockfileMetadataReasons` block moves in the
+  same diff, the same rule as `overrideReasons`. Entries are keyed per lost
+  key, `<package name>:<key>`, so a reason for a dropped `cpu` can't also pass
+  a stripped `libc`. An unexplained loss still fails, and an explained one is
+  still printed with its reason. Sunrise carries one entry,
+  `@tailwindcss/oxide-wasm32-wasi:cpu`. **Forks:** keep that block when you
+  merge, or your Lockfile metadata job fails on the Tailwind bump. A fork
+  still holding Tailwind below 4.3.4 when it merges keeps the entry, then
+  edits it in the PR that finally bumps Tailwind, since a reason answers the
+  diff that makes the loss.
 - **The embedding provider chain no longer picks a local provider (§127
   t-1011).** With no active embedding model picked, `resolveProvider()` in
   `lib/orchestration/knowledge/embedder.ts` tries Voyage, then an

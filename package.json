@@ -207,6 +207,9 @@
     "hono": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive hono. Nothing in the tree has declared hono since v0.8.0, so this entry currently forces nothing — kept as a floor in case it returns. Verify against the lockfile before removing.",
     "valibot": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive valibot. @prisma/dev pins 1.4.2 today, which already satisfies this range, so the entry is a floor rather than a live force."
   },
+  "lockfileMetadataReasons": {
+    "@tailwindcss/oxide-wasm32-wasi:cpu": "Added 2026-11-13 (t-1028). From 4.3.4 the package declares no cpu, on purpose: tailwindcss#20685 made the WASI build the fallback for platforms with no native binary (OpenBSD, s390x and others). npm therefore installs it, about 6.5 MB, on every platform alongside the native binary. Not npm stripping metadata: npm view @tailwindcss/oxide-wasm32-wasi@4.3.5 cpu prints nothing. Remove this once no lockfile you merge from still has the 4.3.3 entry."
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
     "@eslint/js": "^9.39.5",
@@ -215,7 +218,7 @@
     "@opentelemetry/context-async-hooks": "^2.12.1",
     "@opentelemetry/sdk-trace-base": "^2.12.0",
     "@react-email/ui": "^6.11.10",
-    "@tailwindcss/postcss": "4.3.3",
+    "@tailwindcss/postcss": "^4.3.5",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -243,7 +246,7 @@
     "postcss": "^8.5.32",
     "prettier": "^3.9.10",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "tailwindcss": "4.3.3",
+    "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
     "tw-animate-css": "^1.4.0",
     "typescript": "^6.0.3",

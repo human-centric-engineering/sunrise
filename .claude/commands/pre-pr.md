@@ -121,7 +121,12 @@ lost — including across a hoist — or an **unexplained** `overrides` change.
 Lost metadata is the one that has actually bitten (#571). The cause is almost
 always **npm below 11.11.0**, which deletes `libc` from every entry it writes on
 every platform; check `npm -v`, then repair with `npm run fix:lockfile-libc` and
-re-run this.
+re-run this. Rarely, the registry dropped it on purpose: `npm view
+<pkg>@<version> cpu os` shows nothing for the new version (tailwindcss#20685 did
+this to `@tailwindcss/oxide-wasm32-wasi`). Then answer it like an override: a
+`package.json` `lockfileMetadataReasons` entry keyed `<package name>:<key>`,
+which has to move in the same diff (t-1028). The loss is still printed, with
+its reason.
 
 **Answer an overrides change in `package.json`, not here.** Adding, re-pointing
 or removing an entry passes when that key's `overrideReasons` entry moves in the

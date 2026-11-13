@@ -103,17 +103,6 @@ updates:
         versions: ['>=3']
       - dependency-name: '@opentelemetry/api'
         versions: ['>=1.10']
-      # From 4.3.4, @tailwindcss/oxide-wasm32-wasi no longer declares
-      # `cpu: ["wasm32"]`. Upstream did this on purpose: the WASI build is now
-      # the fallback for platforms with no native binary (tailwindcss#20685).
-      # `check:lockfile` reads the lost `cpu` as npm stripping metadata and
-      # fails, which would block the whole development group. Both are also
-      # pinned exactly in package.json. Remove both entries and the pins when
-      # check:lockfile can accept a loss the registry made (t-1028).
-      - dependency-name: 'tailwindcss'
-        versions: ['>=4.3.4']
-      - dependency-name: '@tailwindcss/postcss'
-        versions: ['>=4.3.4']
 
   # GitHub Actions pinned in .github/workflows/**
   - package-ecosystem: 'github-actions'

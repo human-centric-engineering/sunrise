@@ -32,6 +32,7 @@ import {
   directDowngrades,
   hasRisk,
   MIN_OVERRIDE_REASON,
+  reasonText,
   type Lockfile,
   type Manifest,
   type UnexplainedOverride,
@@ -94,10 +95,7 @@ function parseLockfile(source: string, label: string): Lockfile | null {
 
 /** An `overrideReasons` entry as printable text, or `null` if there is none. */
 function readReason(manifest: Manifest | null, key: string): string | null {
-  const value = manifest?.overrideReasons?.[key];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
+  return reasonText(manifest?.overrideReasons, key);
 }
 
 /**
@@ -188,7 +186,7 @@ export function main(argv: string[]): number {
     // claiming `"overrides" changed`, which is a true failure with an entirely
     // invented cause.
     console.error(
-      `Note: could not read ${MANIFEST} — treating every downgrade as transitive, and skipping the overrides comparison.`
+      `Note: could not read ${MANIFEST} — treating every downgrade as transitive, and skipping the overrides and lockfileMetadataReasons comparisons; every lost key will read as unexplained.`
     );
   }
 
@@ -198,14 +196,14 @@ export function main(argv: string[]): number {
   const baseManifestSource = base ? git(['show', `${base}:${MANIFEST}`]) : null;
   if (baseManifestSource === null) {
     console.error(
-      `Note: could not read ${MANIFEST} at ${base} — skipping the overrides comparison.`
+      `Note: could not read ${MANIFEST} at ${base} — skipping the overrides and lockfileMetadataReasons comparisons; every lost key will read as unexplained.`
     );
   } else {
     try {
       baseManifest = JSON.parse(baseManifestSource) as Manifest;
     } catch {
       console.error(
-        `Note: could not parse ${MANIFEST} at ${base} — skipping the overrides comparison.`
+        `Note: could not parse ${MANIFEST} at ${base} — skipping the overrides and lockfileMetadataReasons comparisons; every lost key will read as unexplained.`
       );
     }
   }
@@ -222,6 +220,8 @@ export function main(argv: string[]): number {
           headOverrides: headManifest?.overrides,
           baseOverrideReasons: baseManifest?.overrideReasons,
           headOverrideReasons: headManifest?.overrideReasons,
+          baseMetadataReasons: baseManifest?.lockfileMetadataReasons,
+          headMetadataReasons: headManifest?.lockfileMetadataReasons,
         }
       : {}),
   });
@@ -279,6 +279,14 @@ export function main(argv: string[]): number {
   }
   for (const [label, count] of [...gainedByKeys].sort(([a], [b]) => a.localeCompare(b))) {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
+  }
+
+  // A loss a reason answers is printed with it, like an explained override:
+  // a reviewer who sees a reason they did not approve has caught something.
+  const explainedLosses = diff.explainedNativeMetadata;
+  for (const loss of explainedLosses) {
+    console.log(`  ${loss.name} lost ${loss.key} — explained by "${loss.reasonKey}":`);
+    console.log(`    reason: ${loss.reason}`);
   }
 
   // Every override change is printed here, whether or not it gates. An
@@ -351,9 +359,13 @@ export function main(argv: string[]): number {
         : unreasonedRemovals.length === 0
           ? `${count} override change${plural}, each explained above`
           : `${count} override change${plural} above, ${unreasonedRemovals.length} of them a removal with no reason on either side`;
+    const losses =
+      explainedLosses.length === 0
+        ? 'no lost platform metadata'
+        : `${explainedLosses.length} platform-metadata loss${explainedLosses.length === 1 ? '' : 'es'}, each explained above`;
     console.log('');
     console.log(
-      `Nothing needing a decision: no lost platform metadata and ${overrides}` +
+      `Nothing needing a decision: ${losses} and ${overrides}` +
         `${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;
@@ -362,14 +374,31 @@ export function main(argv: string[]): number {
   console.error('');
   console.error(`${LOCKFILE} needs a decision:`);
 
-  for (const lost of diff.lostNativeMetadata) {
-    console.error(`  ${lost.name} lost ${lost.keys.join(', ')}`);
+  for (const lost of diff.unexplainedNativeMetadata) {
+    console.error(`  ${lost.name} lost ${lost.key}`);
+    if (lost.problem === 'reason-unchanged') {
+      // The author already called it a registry change; the npm repair can't
+      // help, since the registry has no such key to restore.
+      console.error(
+        `    "lockfileMetadataReasons"."${lost.reasonKey}" did not change in this diff.`
+      );
+      console.error(`    It says: ${lost.reason}`);
+      console.error('    A reason answers the diff that makes the loss: edit it here to say');
+      console.error('    this loss is the same registry change.');
+    } else if (lost.problem === 'reason-thin') {
+      console.error(
+        `    "lockfileMetadataReasons"."${lost.reasonKey}" is ${lost.reason?.length ?? 0} characters; ${MIN_OVERRIDE_REASON} is the floor.`
+      );
+    }
   }
-  if (diff.lostNativeMetadata.length > 0) {
+  if (diff.unexplainedNativeMetadata.some((lost) => lost.problem === 'no-reason')) {
     console.error('  → npm below 11.11.0 deletes `libc` from every entry it writes, on every');
     console.error('    platform — check `npm -v`. The lockfile will install fine locally and');
     console.error('    wrong on Alpine. Repair with `npm run fix:lockfile-libc`; background in');
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
+    console.error('    If the registry dropped it on purpose (`npm view <pkg>@<version> cpu os`');
+    console.error(`    shows none), say why in ${MANIFEST} "lockfileMetadataReasons", keyed`);
+    console.error('    "<package name>:<key>", in THIS diff.');
   }
 
   for (const unexplained of diff.unexplainedOverrides) {
