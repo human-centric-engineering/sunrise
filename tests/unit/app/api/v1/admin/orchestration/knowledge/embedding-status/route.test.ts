@@ -113,17 +113,27 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
   });
 
   it('reports providerIsLocal true when the resolved provider is local', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      {
-        id: 'prov-2',
-        slug: 'ollama',
-        providerType: 'openai-compatible',
-        baseUrl: 'http://localhost:11434/v1',
-        apiKeyEnvVar: null,
-        isLocal: true,
-        isActive: true,
-      },
-    ] as never);
+    // A local provider is used only through a picked model (t-1011).
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'm-local',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      providerSlug: 'ollama-local',
+      modelId: 'nomic-embed-text',
+      dimensions: 768,
+      schemaCompatible: false,
+      capabilities: ['embedding'],
+      isActive: true,
+    } as never);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue({
+      id: 'prov-2',
+      slug: 'ollama-local',
+      providerType: 'openai-compatible',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKeyEnvVar: null,
+      isLocal: true,
+      isActive: true,
+    } as never);
 
     const res = await GET(makeRequest());
     const body = await res.json();
