@@ -454,6 +454,7 @@ small and conflict-free.)
 | `lib/app/capabilities.ts`                  | agent capabilities (tools)                                             | the capability registry (server route-handler)                                                                        |
 | `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)                          | the chat context builder (server route-handler)                                                                       |
 | `lib/app/admin-nav.ts`                     | admin sidebar sections                                                 | `admin-sidebar.tsx` (client)                                                                                          |
+| `lib/app/admin-breadcrumbs.ts`             | names for your admin URL segments in the breadcrumb and page title     | `admin-header.tsx` (client)                                                                                           |
 | `lib/app/admin-tier.ts`                    | the fork's admin pages an org admin may open                           | `orgTierAdminPages()` → the admin layout (server), which hands the list to `<AdminTierGate>`                          |
 | `lib/app/admin-tier-routes.ts`             | the fork's admin API routes an org admin may call (`path#NAME`)        | `tests/unit/scripts/ci/admin-tier-roster.test.ts` (CI / `/pre-pr`); the guard reads the call site                     |
 | `lib/app/admin-landing.ts`                 | where an org admin lands at `/admin`                                   | `orgAdminLanding()` → `app/admin/page.tsx` (server)                                                                   |
@@ -806,6 +807,28 @@ only unless it carries `tier: 'org'`, which also shows it to an org OWNER/ADMIN
 at `multi`, or one of your named tiers, which also shows it to that tier's
 holders (see named tiers below). Mark it only when the page and the routes behind it are org-tier
 too (see [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers)).
+
+**Admin breadcrumb labels — `lib/app/admin-breadcrumbs.ts`.** The admin
+breadcrumb is built from the URL. Name your own segments in `appSegmentLabels`;
+an entry also renames a core segment. A segment nobody names is title-cased
+(`some-section` → `Some Section`), and the page title then falls back to
+"Admin" rather than show a guess. A page names a record id in its own URL with
+`<BreadcrumbLabel>` from `components/admin/breadcrumb-context.tsx`:
+
+```tsx
+// lib/app/admin-breadcrumbs.ts — yours to edit (ships empty)
+export const appSegmentLabels: Readonly<Record<string, string>> = {
+  'settings-profiles': 'Settings library',
+};
+
+// app/admin/widgets/[id]/page.tsx — a client child of the page
+<BreadcrumbLabel segment={widget.id} label={widget.name} />;
+```
+
+The order is: what the page registered, then this map, then core's labels, then
+the title-cased segment. The header also has an empty `#admin-header-slot`
+beside the user actions; a page can render into it with `createPortal`, for a
+brand mark or page actions.
 
 **Org-tier admin pages — `lib/app/admin-tier.ts`.** Every admin page is the
 platform admins' alone unless it is listed as org-tier. Core lists its own in

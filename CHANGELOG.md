@@ -18,6 +18,24 @@ release process.
 
 ### Added
 
+- **Admin breadcrumb labels and a header slot (#1201, t-1024).** The admin
+  breadcrumb no longer shows a fork's slugs and record ids as typed:
+  - New fork-owned scaffold `lib/app/admin-breadcrumbs.ts` →
+    `appSegmentLabels`: names for the fork's admin URL segments (it can also
+    rename a core one). Ships empty and is pinned in `defaults.test.ts`.
+  - `BreadcrumbProvider`, `BreadcrumbLabel` and `useBreadcrumbLabels` in
+    `components/admin/breadcrumb-context.tsx`: a page names its record-id
+    segment with `<BreadcrumbLabel segment={id} label={name} />`. The admin
+    layout wraps the shell in the provider.
+  - A segment nobody names is now title-cased (`some-section` →
+    `Some Section`) instead of shown as typed. The page title still uses only
+    a known label and otherwise says "Admin".
+  - An empty `#admin-header-slot` beside the user actions, for a page to
+    render into with `createPortal`.
+
+  **A fork that edited `components/admin/admin-header.tsx` or
+  `app/admin/layout.tsx` for this** takes Sunrise's and moves its segment
+  names into `appSegmentLabels`.
 - **`providerSetupMessage` on `GET /api/v1/admin/orchestration/knowledge/embedding-status`,
   and `EmbeddingSetupError` (§127 t-1011).** When embedding is set up but
   cannot run yet, the status names the step left to take, and the knowledge

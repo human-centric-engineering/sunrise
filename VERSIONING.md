@@ -95,6 +95,7 @@ covered by the version contract.
   empty (or, for `surface.ts`, as a default it may replace):
   - `lib/app/account-sections.ts` → `initAppAccountSections()` — account-page section registry
   - `lib/app/admin-landing.ts` → `appOrgAdminLandingRoute` — where an org admin lands at `/admin` (checked by `orgAdminLandingProblem()` in `lib/auth/admin-landing.ts`)
+  - `lib/app/admin-breadcrumbs.ts` → `appSegmentLabels` — names for the fork's admin URL segments in the breadcrumb and page title
   - `lib/app/admin-nav.ts` → `initAppNav()` — admin nav registry (`registerNavSection()`)
   - `lib/app/admin-tier.ts` → `initAppOrgTierAdminPages()` — the fork's org-tier admin pages, and the core sections it keeps platform-only (primitives: `registerOrgTierAdminPage()` and its `{ tier }` option, `registerAdminTier()` and `closeCoreOrgTierSection()` in `lib/auth/admin-tier.ts`)
   - `lib/app/admin-tier-routes.ts` → `APP_ORG_TIER_ADMIN_ROUTES` — the fork's org-tier admin API routes and wrappers, as `path#NAME`, read by the roster test
@@ -172,6 +173,7 @@ covered by the version contract.
     fork's model is tested against. Enabling it is
     [`.context/architecture/multi-tenancy.md`](./.context/architecture/multi-tenancy.md))
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
+  - admin breadcrumb labels and header slot (`BreadcrumbLabel` / `useBreadcrumbLabels` from `components/admin/breadcrumb-context.tsx`, and the `#admin-header-slot` element in `components/admin/admin-header.tsx`) — how a page names its record-id segment, and where it can render header content
   - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
   - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)
   - browser-tab icons (`app/favicon.ico`, `app/icon.svg` — fork-replaced assets on the Next file convention, linked by Next with no `layout.tsx` entry)

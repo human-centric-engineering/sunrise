@@ -53,6 +53,7 @@ import { appProtectedRoutes } from '@/lib/app/protected-routes';
 import { appCredentialPaths } from '@/lib/app/credential-paths';
 import { appEnvSchema } from '@/lib/app/env';
 import { footerCopyright } from '@/lib/app/footer';
+import { appSegmentLabels } from '@/lib/app/admin-breadcrumbs';
 import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
@@ -284,6 +285,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(appAuthLandingRoute).toBeNull();
       expect(appAuthLandingLabel).toBeNull();
     },
+  },
+  {
+    seam: 'lib/app/admin-breadcrumbs.ts',
+    risk: 'a stray label would rename a breadcrumb segment, and the page title, on every install’s admin',
+    assert: () => expect(appSegmentLabels).toEqual({}),
   },
   {
     seam: 'lib/app/footer.ts',
