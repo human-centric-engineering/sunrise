@@ -50,7 +50,7 @@ const REPORT = {
       applicable: true,
     },
   ],
-  summary: { critical: 1, warning: 0, info: 0, ok: 2 },
+  summary: { critical: 1, warning: 0, info: 0, ok: 2, failed: 0 },
 };
 
 function req(): NextRequest {

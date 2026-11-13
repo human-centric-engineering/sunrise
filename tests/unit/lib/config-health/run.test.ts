@@ -15,9 +15,24 @@ const envMock = vi.hoisted(() => ({ env: { NODE_ENV: 'production' } }));
 vi.mock('@/lib/env', () => envMock);
 vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/email/client', () => ({ isEmailEnabled: vi.fn(() => true) }));
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  listProvidersWithStatus: vi.fn(async () => [{ apiKeyPresent: true }]),
+// The provider rows are faked; the reachability rule is core's real one
+// (`filterProvidersWithCredential`), so a local provider counts without a key.
+vi.mock('@/lib/db/client', () => ({
+  prisma: { aiProviderConfig: { findMany: vi.fn() } },
 }));
+
+/** An active provider row as the check reads it. */
+function providerRow(overrides: { isLocal?: boolean; apiKeyEnvVar?: string | null } = {}) {
+  return {
+    id: 'p1',
+    slug: 'p1',
+    name: 'Provider',
+    providerType: 'openai-compatible',
+    apiKeyEnvVar: 'TEST_PROVIDER_KEY',
+    isLocal: false,
+    ...overrides,
+  };
+}
 const appSeam = vi.hoisted(
   (): { appConfigHealthChecks: import('@/lib/config-health/types').ConfigHealthCheck[] } => ({
     appConfigHealthChecks: [],
@@ -39,7 +54,7 @@ const FORK_CRON_CHECK = {
 import { runConfigHealthChecks } from '@/lib/config-health/run';
 import { isEmailEnabled } from '@/lib/email/client';
 import { logger } from '@/lib/logging';
-import { listProvidersWithStatus } from '@/lib/orchestration/llm/provider-manager';
+import { prisma } from '@/lib/db/client';
 import type { EvaluatedConfigCheck } from '@/lib/config-health/types';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -55,7 +70,8 @@ beforeEach(() => {
   envMock.env.NODE_ENV = 'production';
   appSeam.appConfigHealthChecks = [FORK_CRON_CHECK];
   (isEmailEnabled as Mock).mockReturnValue(true);
-  (listProvidersWithStatus as Mock).mockResolvedValue([{ apiKeyPresent: true }]);
+  (prisma.aiProviderConfig.findMany as Mock).mockResolvedValue([providerRow()]);
+  vi.stubEnv('TEST_PROVIDER_KEY', 'sk-test-not-a-real-key');
   // Healthy defaults; individual tests unset what they exercise.
   vi.stubEnv('CRON_SECRET', 'x'.repeat(40));
   vi.stubEnv('DATABASE_URL', 'postgresql://user:pass@ep-x-pooler.aws.neon.tech:5432/db');
@@ -85,7 +101,7 @@ describe('runConfigHealthChecks', () => {
 
   it('counts only active providers', async () => {
     await runConfigHealthChecks();
-    expect(listProvidersWithStatus).toHaveBeenCalledWith({ where: { isActive: true } });
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledWith({ where: { isActive: true } });
   });
 
   it('flags a production-only fork check as critical and unmet in production when unset', async () => {
@@ -122,10 +138,19 @@ describe('runConfigHealthChecks', () => {
     expect(report.summary.warning).toBeGreaterThanOrEqual(1);
   });
 
+  it('passes the LLM-provider check for a local provider with no key', async () => {
+    (prisma.aiProviderConfig.findMany as Mock).mockResolvedValue([
+      providerRow({ isLocal: true, apiKeyEnvVar: null }),
+    ]);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'llm_provider').present).toBe(true);
+  });
+
   it('flags the LLM-provider check (critical) when no provider has its key set', async () => {
-    (listProvidersWithStatus as Mock).mockResolvedValue([
-      { apiKeyPresent: false },
-      { apiKeyPresent: false },
+    vi.stubEnv('TEST_PROVIDER_KEY', undefined);
+    (prisma.aiProviderConfig.findMany as Mock).mockResolvedValue([
+      providerRow(),
+      providerRow({ apiKeyEnvVar: null }),
     ]);
     const report = await runConfigHealthChecks();
     const provider = check(report.checks, 'llm_provider');
@@ -157,7 +182,7 @@ describe('runConfigHealthChecks', () => {
   });
 
   it('reports a check that throws as failed, logs it, and still runs the others', async () => {
-    (listProvidersWithStatus as Mock).mockRejectedValue(new Error('db down'));
+    (prisma.aiProviderConfig.findMany as Mock).mockRejectedValue(new Error('db down'));
     (isEmailEnabled as Mock).mockReturnValue(false);
     const report = await runConfigHealthChecks();
 
@@ -165,6 +190,8 @@ describe('runConfigHealthChecks', () => {
     expect(provider).toMatchObject({ present: false, applicable: true, failed: true });
     expect(check(report.checks, 'email')).toMatchObject({ present: false });
     expect(check(report.checks, 'email')).not.toHaveProperty('failed');
+    // Counted apart: nothing is known to be missing, so no critical.
+    expect(report.summary).toMatchObject({ critical: 0, warning: 1, failed: 1 });
     expect(logger.error).toHaveBeenCalledWith('Config health check failed', {
       check: 'llm_provider',
       error: 'db down',
@@ -188,6 +215,18 @@ describe('runConfigHealthChecks', () => {
       check: 'CRON_SECRET',
       error: 'bad gate',
     });
+  });
+
+  it.each([
+    ['Supabase session mode', 'postgresql://u:p@aws-0-eu.pooler.supabase.com:5432/postgres'],
+    ['PgBouncer flag as 1', 'postgresql://u:p@ep-x.neon.tech/db?pgbouncer=1'],
+    ['Prisma Accelerate', 'prisma://accelerate.prisma-data.net/?api_key=k'],
+    ['Prisma Postgres', 'prisma+postgres://accelerate.prisma-data.net/?api_key=k'],
+  ])('db_pooler passes %s on Vercel', async (_label, url) => {
+    vi.stubEnv('VERCEL', '1');
+    vi.stubEnv('DATABASE_URL', url);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'db_pooler').present).toBe(true);
   });
 
   it('db_pooler flags an unset DATABASE_URL on Vercel', async () => {

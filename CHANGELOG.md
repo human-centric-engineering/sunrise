@@ -25,8 +25,11 @@ release process.
     check, presence only, never a value.
   - A card on `/admin/overview` listing unmet checks with their fix, and a
     critical-only strip on every admin page for platform admins.
-  - Sunrise's checks: `llm_provider` (critical; an active provider has its
-    key), `email` (warning), `db_pooler` (warning; on Vercel only).
+  - Sunrise's checks: `llm_provider` (critical; an active provider can be
+    reached, with a key or as a local provider), `email` (warning),
+    `db_pooler` (warning; on Vercel only). A check that throws is reported
+    `failed`, counted apart in `summary.failed`, and does not take the
+    report down.
   - New fork-owned scaffold `lib/app/config-health.ts` →
     `appConfigHealthChecks`, with the `ConfigHealthCheck` type in
     `lib/config-health/types.ts`. Ships empty and is pinned in

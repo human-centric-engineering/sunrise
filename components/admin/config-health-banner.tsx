@@ -1,7 +1,9 @@
 /**
  * Config-health banner — surfaces missing operationally-critical configuration in the admin app.
  *
- * Server component (presentational, prop-driven). Two variants:
+ * Presentational and prop-driven, with no server-only imports: the overview renders it on the
+ * server and the global banner renders it in the browser, so keep it safe on both sides. Two
+ * variants:
  *   - `card`   — full detail (all unmet checks, any severity). Rendered on the admin dashboard.
  *   - `global` — slim strip, CRITICAL-only. Rendered in the admin layout (via the client wrapper
  *                `config-health-global-banner.tsx`) so a critical misconfig shows on every page.

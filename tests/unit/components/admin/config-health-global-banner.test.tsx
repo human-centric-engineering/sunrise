@@ -16,7 +16,11 @@ vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 
 import { apiClient } from '@/lib/api/client';
 import { logger } from '@/lib/logging';
-import { ConfigHealthGlobalBanner } from '@/components/admin/config-health-global-banner';
+import {
+  ConfigHealthGlobalBanner,
+  REPORT_MAX_AGE_MS,
+  __resetConfigHealthBannerCacheForTests,
+} from '@/components/admin/config-health-global-banner';
 import type { ConfigHealthReport } from '@/lib/config-health/types';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -36,15 +40,19 @@ function reportWith(present: boolean): ConfigHealthReport {
         applicable: true,
       },
     ],
-    summary: { critical: present ? 0 : 1, warning: 0, info: 0, ok: present ? 1 : 0 },
+    summary: { critical: present ? 0 : 1, warning: 0, info: 0, ok: present ? 1 : 0, failed: 0 },
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   nav.pathname = '/admin/users';
+  __resetConfigHealthBannerCacheForTests();
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('ConfigHealthGlobalBanner', () => {
   it('renders the critical banner once the report loads with a missing critical setting', async () => {
@@ -97,17 +105,48 @@ describe('ConfigHealthGlobalBanner', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('loads the report again on each admin page, so a fix made in the admin clears it', async () => {
+  it('reuses a report under a minute old across navigations, so clicking around costs no loads', async () => {
     (apiClient.get as Mock).mockResolvedValue(reportWith(false));
     const { rerender } = render(<ConfigHealthGlobalBanner />);
     await screen.findByRole('alert');
 
+    nav.pathname = '/admin/logs';
+    rerender(<ConfigHealthGlobalBanner />);
+    nav.pathname = '/admin/features';
+    rerender(<ConfigHealthGlobalBanner />);
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads again on the first navigation after a minute, so a fix made in the admin clears it', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    (apiClient.get as Mock).mockResolvedValue(reportWith(false));
+    const { rerender } = render(<ConfigHealthGlobalBanner />);
+    await screen.findByRole('alert');
+
+    now.mockReturnValue(1_000_000 + REPORT_MAX_AGE_MS);
     (apiClient.get as Mock).mockResolvedValue(reportWith(true));
     nav.pathname = '/admin/orchestration/providers';
     rerender(<ConfigHealthGlobalBanner />);
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
     expect(apiClient.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the strip when a reload fails, rather than keep an earlier answer', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    (apiClient.get as Mock).mockResolvedValue(reportWith(false));
+    const { rerender } = render(<ConfigHealthGlobalBanner />);
+    await screen.findByRole('alert');
+
+    now.mockReturnValue(1_000_000 + REPORT_MAX_AGE_MS);
+    (apiClient.get as Mock).mockRejectedValue(new Error('429'));
+    nav.pathname = '/admin/users/u1';
+    rerender(<ConfigHealthGlobalBanner />);
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it('shows nothing and loads nothing on the overview, which has the full card', () => {

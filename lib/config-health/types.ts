@@ -49,10 +49,13 @@ export interface EvaluatedConfigCheck {
   failed?: true;
 }
 
-/** The full report. `summary` counts only APPLICABLE + UNMET checks by severity (+ `ok`). */
+/**
+ * The full report. `summary` counts APPLICABLE + UNMET checks by severity, met ones as `ok`,
+ * and checks that could not run as `failed` only, never under a severity.
+ */
 export interface ConfigHealthReport {
   environment: 'production' | 'development' | 'test';
   platform: 'vercel' | 'other';
   checks: EvaluatedConfigCheck[];
-  summary: { critical: number; warning: number; info: number; ok: number };
+  summary: { critical: number; warning: number; info: number; ok: number; failed: number };
 }

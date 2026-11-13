@@ -28,7 +28,7 @@ function evaluated(overrides: Partial<EvaluatedConfigCheck> = {}): EvaluatedConf
 }
 
 function report(checks: EvaluatedConfigCheck[]): ConfigHealthReport {
-  const unmet = checks.filter((c) => c.applicable && !c.present);
+  const unmet = checks.filter((c) => c.applicable && !c.present && !c.failed);
   return {
     environment: 'production',
     platform: 'vercel',
@@ -38,6 +38,7 @@ function report(checks: EvaluatedConfigCheck[]): ConfigHealthReport {
       warning: unmet.filter((c) => c.severity === 'warning').length,
       info: unmet.filter((c) => c.severity === 'info').length,
       ok: checks.filter((c) => c.applicable && c.present).length,
+      failed: checks.filter((c) => c.failed).length,
     },
   };
 }

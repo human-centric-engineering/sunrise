@@ -10,11 +10,11 @@ admin area (#865).
 
 Sunrise's checks, in `lib/config-health/checks.ts`:
 
-| Key            | Severity | Applies     | Passes when                                                                                     |
-| -------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `llm_provider` | critical | always      | an **active** provider row has its key (`listProvidersWithStatus`, through the credential seam) |
-| `email`        | warning  | always      | `isEmailEnabled()` (Resend is configured)                                                       |
-| `db_pooler`    | warning  | Vercel only | `DATABASE_URL` looks pooled (`-pooler`, `:6543` or `pgbouncer=true`)                            |
+| Key            | Severity | Applies     | Passes when                                                                                                                                                 |
+| -------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_provider` | critical | always      | an **active** provider can be reached: a key through the credential seam, or a local provider (`filterProvidersWithCredential`)                             |
+| `email`        | warning  | always      | `isEmailEnabled()` (Resend is configured)                                                                                                                   |
+| `db_pooler`    | warning  | Vercel only | `DATABASE_URL` looks pooled: Neon `-pooler`, Supabase `.pooler.` or `:6543`, `pgbouncer=true`/`1`, or Prisma Accelerate (`prisma://`, `prisma+postgres://`) |
 
 Required settings (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
 `NEXT_PUBLIC_APP_URL`) are not checked: the app does not start without them.
@@ -38,8 +38,8 @@ secret set in the environment never appears in the report.
 `runConfigHealthChecks()` (`lib/config-health/run.ts`) runs Sunrise's checks,
 then the fork's. A `productionOnly` check, and one whose `applicable()` returns
 false, is reported `applicable: false, present: true`, so it is never flagged.
-`summary` counts the applicable checks by severity, unmet ones per severity and
-met ones as `ok`.
+`summary` counts the unmet applicable checks by severity, met ones as `ok`, and
+checks that could not run as `failed` only, never under a severity.
 
 - **API:** `GET /api/v1/admin/config-health` (`API.ADMIN.CONFIG_HEALTH`),
   `withAdminAuth` with no tier, so platform admins only.
@@ -49,11 +49,13 @@ met ones as `ok`.
   cannot read the route; the page treats their 403 as expected, so it is not
   logged).
 - **Banner on every admin page:** `<ConfigHealthGlobalBanner />` in
-  `app/admin/layout.tsx`, mounted for platform reach only. It loads the report
-  on each admin page and shows a one-line strip when a **critical** check
-  fails. It loads per page, not once, because the provider check reads
-  database rows an admin can fix without a redeploy. It shows nothing on the
-  overview, where the card already lists the same thing.
+  `app/admin/layout.tsx`, mounted for platform reach only. It shows a one-line
+  strip when a **critical** check fails. It loads the report on navigation, but
+  reuses one under a minute old: once only would leave a provider fixed in the
+  admin flagged until a reload, and every click would spend the `admin`
+  rate-limit budget the pages themselves need. A failed load clears the strip.
+  It shows nothing on the overview, where the card already lists the same
+  thing.
 
 **A check that throws** (a database read failing, a bug in a fork's check) does
 not take the report down. It is logged as `Config health check failed` and

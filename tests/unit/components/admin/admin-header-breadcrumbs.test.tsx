@@ -185,6 +185,71 @@ describe('AdminHeader breadcrumbs: the label order', () => {
   });
 });
 
+describe('AdminHeader breadcrumbs: two markers for one segment', () => {
+  /** A detail layout's marker, with a page's marker for the same id that can come and go. */
+  function Shell({ withPage }: { withPage: boolean }) {
+    return (
+      <BreadcrumbProvider>
+        <AdminHeader orgTierPages={[]} />
+        <BreadcrumbLabel segment="w-1" label="From the layout" />
+        {withPage && <BreadcrumbLabel segment="w-1" label="From the page" />}
+      </BreadcrumbProvider>
+    );
+  }
+
+  it('shows the most recent marker’s label', () => {
+    nav.pathname = '/admin/widgets/w-1/parts';
+    render(<Shell withPage />);
+    expect(trail()).toContain('From the page');
+  });
+
+  it('updates a marker’s label in place when its record’s name changes', () => {
+    nav.pathname = '/admin/widgets/w-1';
+    const { rerender } = render(
+      <BreadcrumbProvider>
+        <AdminHeader orgTierPages={[]} />
+        <BreadcrumbLabel segment="w-1" label="Old name" />
+      </BreadcrumbProvider>
+    );
+    expect(trail()).toContain('Old name');
+
+    rerender(
+      <BreadcrumbProvider>
+        <AdminHeader orgTierPages={[]} />
+        <BreadcrumbLabel segment="w-1" label="New name" />
+      </BreadcrumbProvider>
+    );
+    expect(trail()).toContain('New name');
+    expect(trail()).not.toContain('Old name');
+  });
+
+  it('moves a marker’s label when its segment changes, leaving none behind', () => {
+    nav.pathname = '/admin/widgets/w-2';
+    const { rerender } = render(
+      <BreadcrumbProvider>
+        <AdminHeader orgTierPages={[]} />
+        <BreadcrumbLabel segment="w-1" label="Widget" />
+      </BreadcrumbProvider>
+    );
+    rerender(
+      <BreadcrumbProvider>
+        <AdminHeader orgTierPages={[]} />
+        <BreadcrumbLabel segment="w-2" label="Widget" />
+      </BreadcrumbProvider>
+    );
+    expect(trail()).toEqual(['Admin', 'Widgets', 'Widget']);
+  });
+
+  it('keeps the layout’s label when the page’s marker unmounts', () => {
+    nav.pathname = '/admin/widgets/w-1/parts';
+    const { rerender } = render(<Shell withPage />);
+    rerender(<Shell withPage={false} />);
+
+    expect(trail()).toContain('From the layout');
+    expect(trail()).not.toContain('w-1');
+  });
+});
+
 describe('AdminHeader breadcrumbs: the page title', () => {
   it('takes a registered label for the last segment', () => {
     nav.pathname = '/admin/widgets/w-1';

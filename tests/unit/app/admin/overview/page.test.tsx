@@ -204,7 +204,7 @@ describe('AdminOverviewPage', () => {
           applicable: true,
         },
       ],
-      summary: { critical: 0, warning: 1, info: 0, ok: 0 },
+      summary: { critical: 0, warning: 1, info: 0, ok: 0, failed: 0 },
     };
 
     /** Answer each endpoint on its own, so neither load reads the other's body. */

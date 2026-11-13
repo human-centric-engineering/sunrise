@@ -49,12 +49,15 @@ export async function runConfigHealthChecks(): Promise<ConfigHealthReport> {
     })
   );
 
-  const unmet = checks.filter((c) => c.applicable && !c.present);
+  // A check that could not run is not known to be missing, so it is counted
+  // apart from the severities (alerting on `critical > 0` must not fire on it).
+  const unmet = checks.filter((c) => c.applicable && !c.present && !c.failed);
   const summary = {
     critical: unmet.filter((c) => c.severity === 'critical').length,
     warning: unmet.filter((c) => c.severity === 'warning').length,
     info: unmet.filter((c) => c.severity === 'info').length,
     ok: checks.filter((c) => c.applicable && c.present).length,
+    failed: checks.filter((c) => c.failed).length,
   };
 
   return { environment, platform, checks, summary };
