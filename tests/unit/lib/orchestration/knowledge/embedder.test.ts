@@ -59,7 +59,7 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 }));
 
 // Import SUT after mocks are in place
-const { embedText, embedBatch, getActiveEmbeddingModelSummary } =
+const { embedText, embedBatch, getActiveEmbeddingModelSummary, EmbeddingSetupError } =
   await import('@/lib/orchestration/knowledge/embedder');
 const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
 
@@ -1043,5 +1043,98 @@ describe('a model that makes vectors of another width', () => {
     await expect(embedBatch(['a', 'b'], 10)).rejects.toMatchObject({
       code: 'embedding_dimension_mismatch',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A picked model that cannot be used (t-1011)
+// ---------------------------------------------------------------------------
+
+describe('a picked model that cannot be used', () => {
+  // `embeddings:reset` sized the columns for the pick. The chain embeds at
+  // 1536, so falling back works only for a pick that is 1536 wide; any other
+  // pick stops, naming itself and the missing step, before any text is sent.
+  function pick(overrides: Record<string, unknown> = {}) {
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'pinned',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'nomic-embed-text',
+        dimensions: 768,
+        providerSlug: 'ollama',
+        schemaCompatible: false,
+        ...overrides,
+      }) as never
+    );
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // A chain provider is there to fall back to, so a test that expects none
+    // proves the fall-back was not taken.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+  });
+
+  it('stops when no active provider has its provider slug, naming the slug', async () => {
+    pick();
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    const embedMany = installEmbedMany();
+
+    const err: unknown = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(EmbeddingSetupError);
+    const message = (err as Error).message;
+    expect(message).toContain('"nomic-embed-text" cannot be used');
+    expect(message).toContain('no active provider has its provider slug, "ollama"');
+    expect(message).toContain('"ollama-local"');
+    expect(message).toContain('1536-dimension vectors, and the stored ones are 768');
+    expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
+    expect(embedMany).not.toHaveBeenCalled();
+  });
+
+  it('stops when it is inactive', async () => {
+    pick({ isActive: false });
+    installEmbedMany();
+
+    await expect(embedText('hello')).rejects.toThrow(/cannot be used: it is inactive/);
+    expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
+  });
+
+  it('stops when it lacks the embedding capability', async () => {
+    pick({ capabilities: ['chat'] });
+    installEmbedMany();
+
+    await expect(embedText('hello')).rejects.toThrow(/lacks the embedding capability/);
+  });
+
+  it('stops when its provider has no base URL', async () => {
+    pick({ providerSlug: 'ollama-local' });
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeProvider({ slug: 'ollama-local', baseUrl: null, isLocal: true }) as never
+    );
+    installEmbedMany();
+
+    await expect(embedText('hello')).rejects.toThrow(/its provider "ollama-local" has no base URL/);
+  });
+
+  it('falls back when the pick is 1536 wide, so the chain fits the columns', async () => {
+    pick({ modelId: 'text-embedding-3-small', dimensions: 1536, providerSlug: 'gone' });
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
+  });
+
+  it('falls back when the provider read fails, rather than report it missing', async () => {
+    pick();
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(new Error('pool timeout'));
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('test-provider', CHAIN_PICK);
   });
 });

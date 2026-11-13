@@ -78,6 +78,7 @@ const embeddingStatusResponseSchema = z.object({
       pending: z.number(),
       hasActiveProvider: z.boolean(),
       providerState: z.enum(['ok', 'none_configured', 'none_permitted', 'unknown']).optional(),
+      providerSetupMessage: z.string().nullable().optional(),
     })
     .optional(),
 });
@@ -125,6 +126,7 @@ interface EmbeddingStatus {
   pending: number;
   hasActiveProvider: boolean;
   providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
+  providerSetupMessage?: string | null;
 }
 
 /**
@@ -638,7 +640,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
                     <strong>OpenAI</strong> — text-embedding-3-small, low cost, native 1 536 dims
                   </li>
                   <li>
-                    <strong>Ollama</strong> — local, free, but 768-dim (requires schema change)
+                    <strong>Ollama</strong> — local and free. Pick its model as the active embedding
+                    model in Settings, then run{' '}
+                    <code className="font-mono">npm run embeddings:reset</code>, which empties the
+                    knowledge base
                   </li>
                 </ul>
                 <p className="mt-2 text-xs">
@@ -678,6 +683,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
             <EmbeddingStatusBanner
               providerState={providerState}
+              setupMessage={embeddingStatus.providerSetupMessage}
               total={embeddingStatus.total}
               embedded={embeddingStatus.embedded}
               hasActiveProvider={hasProvider}

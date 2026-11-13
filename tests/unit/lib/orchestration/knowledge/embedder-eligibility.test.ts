@@ -281,6 +281,7 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'ok',
       providerIsLocal: false,
+      setupMessage: null,
     });
   });
 
@@ -304,6 +305,7 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'ok',
       providerIsLocal: true,
+      setupMessage: null,
     });
   });
 
@@ -315,6 +317,8 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'none_configured',
       providerIsLocal: null,
+      // The step left to take, for the banner: not "add a provider".
+      setupMessage: expect.stringContaining('pick it as the active embedding model'),
     });
   });
 
@@ -323,6 +327,7 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'none_configured',
       providerIsLocal: null,
+      setupMessage: null,
     });
   });
 
@@ -334,6 +339,7 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'none_permitted',
       providerIsLocal: null,
+      setupMessage: null,
     });
   });
 
@@ -342,6 +348,7 @@ describe('resolveEmbeddingStatus', () => {
     await expect(resolveEmbeddingStatus()).resolves.toEqual({
       availability: 'unknown',
       providerIsLocal: null,
+      setupMessage: null,
     });
   });
 });

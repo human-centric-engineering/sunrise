@@ -236,3 +236,53 @@ describe('embedBatch cost attribution', () => {
     expect(params).not.toHaveProperty('conversationId');
   });
 });
+
+describe('a call refused for its width is still costed (t-1011)', () => {
+  // The vendor billed the call before its vectors were found to be the wrong
+  // width, so the cost row is written before the refusal is thrown.
+  it('embedText logs the call, then throws', async () => {
+    vi.mocked(getProvider).mockResolvedValue({
+      name: 'fake',
+      isLocal: false,
+      embedMany: vi.fn(async (texts: string[]) => ({
+        embeddings: texts.map(() => new Array(768).fill(0)),
+        inputTokens: 12,
+      })),
+    } as unknown as LlmProvider);
+
+    await expect(embedText('hello')).rejects.toMatchObject({
+      code: 'embedding_dimension_mismatch',
+    });
+    expect(costParams()).toMatchObject({ inputTokens: 12 });
+  });
+
+  it('embedBatch stops at the batch of the wrong width and logs every batch billed', async () => {
+    vi.useFakeTimers();
+    try {
+      let call = 0;
+      const embedMany = vi.fn(async (texts: string[]) => {
+        call++;
+        const width = call === 2 ? 768 : 1536;
+        return { embeddings: texts.map(() => new Array(width).fill(0)), inputTokens: 12 };
+      });
+      vi.mocked(getProvider).mockResolvedValue({
+        name: 'fake',
+        isLocal: false,
+        embedMany,
+      } as unknown as LlmProvider);
+
+      const promise = embedBatch(['a', 'b', 'c'], 1, 'document');
+      const settled = expect(promise).rejects.toMatchObject({
+        code: 'embedding_dimension_mismatch',
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      await settled;
+
+      // The third batch is never sent; the two that were are costed.
+      expect(embedMany).toHaveBeenCalledTimes(2);
+      expect(costParams()).toMatchObject({ inputTokens: 24 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

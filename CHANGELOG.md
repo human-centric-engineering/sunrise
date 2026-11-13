@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **`providerSetupMessage` on `GET /api/v1/admin/orchestration/knowledge/embedding-status`,
+  and `EmbeddingSetupError` (§127 t-1011).** When embedding is set up but
+  cannot run yet, the status names the step left to take, and the knowledge
+  and learn pages' banner shows it in place of "add an embedding provider".
+  Examples are a local provider whose model is not picked, or a picked model
+  that cannot be used. `EmbeddingSetupError`, exported from
+  `lib/orchestration/knowledge/embedder.ts`, is a `NoProviderConfiguredError`, so
+  existing handlers still catch it; `resolveEmbeddingStatus()` gains
+  `setupMessage`.
+
 - **LLM privacy layer: a turn refused under `block` is left out of later
   history (§127, t-1014).** A refused turn's rows get the new
   `MessageMetadata.excludedFromHistory` (`'privacy_blocked'`):
@@ -354,7 +364,14 @@ release process.
   for it. Before, adding Ollama for chat made the chain embed with it at an
   assumed 1536 dimensions, which no local model makes, and every upload and
   search failed. An install whose only provider is local now gets
-  `NoProviderConfiguredError` saying to pick its model.
+  `EmbeddingSetupError` saying to pick its model.
+- **A picked embedding model that cannot be used no longer falls back when it
+  is not 1536 wide (t-1011).** The columns were sized for it, so the chain's
+  1536-dimension vectors could not be stored, and the text went to the chain's
+  provider for nothing. An inactive pick, one without the `embedding`
+  capability, or one with no active provider of its slug or no base URL now
+  throws `EmbeddingSetupError`, naming it and the missing step. A 1536-wide pick
+  still falls back.
 - **The seeded Ollama embedding models are filed under `ollama-local`**, the
   slug the provider form and setup wizard give an Ollama provider (t-1011).
   They were under `ollama`, so a picked model was silently ignored through a

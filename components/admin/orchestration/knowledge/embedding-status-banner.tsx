@@ -13,6 +13,13 @@ interface EmbeddingStatusBannerProps {
    * remedy, which is right for a fresh install and wrong for the other two.
    */
   providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
+  /**
+   * The step left to take when embedding is set up but cannot run yet (a local
+   * provider whose model is not picked, say), from the status endpoint's
+   * `providerSetupMessage`. Shown in place of "add a provider", which would
+   * send the operator to a cloud vendor (t-1011).
+   */
+  setupMessage?: string | null;
 }
 
 /**
@@ -27,6 +34,7 @@ export function EmbeddingStatusBanner({
   embedded,
   hasActiveProvider,
   providerState,
+  setupMessage,
 }: EmbeddingStatusBannerProps) {
   if (total === 0 || embedded >= total) return null;
 
@@ -59,6 +67,14 @@ export function EmbeddingStatusBanner({
               We could not check whether an embedding provider is available — this is a temporary
               failure, not a verdict. Reload to try again; the chunk counts above are still
               accurate.
+            </>
+          ) : state === 'none_configured' && setupMessage ? (
+            <>
+              {' '}
+              {setupMessage}{' '}
+              <Link href="/admin/orchestration/settings" className="underline">
+                Open settings
+              </Link>
             </>
           ) : state === 'none_configured' ? (
             <>

@@ -79,6 +79,7 @@ interface EmbeddingStatus {
   pending: number;
   hasActiveProvider: boolean;
   providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
+  providerSetupMessage?: string | null;
 }
 
 export function LearningTabs({
@@ -182,6 +183,7 @@ export function LearningTabs({
               embedded={embeddingStatus.embedded}
               hasActiveProvider={embeddingStatus.hasActiveProvider}
               providerState={embeddingStatus.providerState}
+              setupMessage={embeddingStatus.providerSetupMessage}
             />
           )}
           <ChatInterface
@@ -241,6 +243,7 @@ export function LearningTabs({
               embedded={embeddingStatus.embedded}
               hasActiveProvider={embeddingStatus.hasActiveProvider}
               providerState={embeddingStatus.providerState}
+              setupMessage={embeddingStatus.providerSetupMessage}
             />
           )}
           {quizScore && (
