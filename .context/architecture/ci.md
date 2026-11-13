@@ -707,8 +707,9 @@ gh variable set CI_DOCKER --body off
 
 Unset (default): the job runs under its own gating. `"off"`: skipped
 everywhere; `ci-status` already passes on `skipped` (the docs-only path depends
-on it), so nothing wedges. Any value other than exactly `"off"` leaves the job
-on. Delete the variable to bring the job back, and do so before you ever deploy
+on it), so nothing wedges. The match ignores case (Actions compares strings
+case-insensitively), but any other value, `false` or `0` included, leaves the
+job on. Delete the variable to bring the job back, and do so before you ever deploy
 the image.
 
 ## Private-fork correctness (GHAS-dependent jobs)

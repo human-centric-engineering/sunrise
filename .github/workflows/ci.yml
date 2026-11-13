@@ -761,8 +761,9 @@ jobs:
     # runs under its own gating above. `"off"`: the job is skipped everywhere —
     # for a fork that deploys by other means (a platform's Git integration) and
     # never ships the image. `ci-status` treats a skipped job as a pass, so
-    # nothing wedges. Any value other than exactly `"off"` leaves the job on;
-    # delete the variable to bring it back. See `.context/architecture/ci.md`
+    # nothing wedges. Actions compares strings case-insensitively, so `OFF`
+    # works too; any other value (`false`, `0`) leaves the job on. Delete the
+    # variable to bring it back. See `.context/architecture/ci.md`
     # Knob 7.
     if: >-
       vars.CI_DOCKER != 'off' &&

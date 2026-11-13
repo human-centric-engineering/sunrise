@@ -36,6 +36,7 @@ import {
   widenedBy,
   LINT_WIDENERS,
   FORMAT_WIDENERS,
+  PRETTIER_BATCH,
 } from '@/scripts/ci/validate-changed.mjs';
 
 const BASE = 'abc1234def5678';
@@ -92,9 +93,23 @@ describe('resolveBase', () => {
     expect(git).not.toHaveBeenCalled();
   });
 
+  it('accepts --base=<ref> without asking git', () => {
+    const git = vi.fn();
+    expect(resolveBase(['--base=upstream/main'], git)).toEqual({ base: 'upstream/main' });
+    expect(git).not.toHaveBeenCalled();
+  });
+
   it('refuses --base with no revision, or with a flag in its place', () => {
     expect(resolveBase(['--base'], vi.fn())).toHaveProperty('error');
     expect(resolveBase(['--base', '--other'], vi.fn())).toHaveProperty('error');
+    expect(resolveBase(['--base='], vi.fn())).toHaveProperty('error');
+  });
+
+  it('refuses an unknown argument rather than falling back to origin/main', () => {
+    const git = fakeGit();
+    const result = resolveBase(['--bsae', 'upstream/main'], git);
+    expect(result).toEqual({ error: expect.stringContaining('--bsae') });
+    expect(git).not.toHaveBeenCalled();
   });
 
   it('falls back to the merge base with origin/main, trimmed', () => {
@@ -123,7 +138,7 @@ describe('changedFiles', () => {
     ]);
     // The branch half is diffed against the base, three-dot.
     expect(git).toHaveBeenCalledWith(
-      expect.arrayContaining(['diff', '--name-only', '-z', `${BASE}...HEAD`])
+      expect.arrayContaining(['diff', '--relative', '--name-only', '-z', `${BASE}...HEAD`])
     );
   });
 
@@ -235,9 +250,40 @@ describe('main', () => {
   it('runs a widened tool over the whole tree and says why', async () => {
     const d = deps({ git: fakeGit({ branch: ['package-lock.json', 'lib/a.ts'] }) });
     await main([], d);
-    expect(d.lint).toHaveBeenCalledWith(['.']);
+    // `undefined` is chunked-lint's whole-tree enumeration.
+    expect(d.lint).toHaveBeenCalledWith(undefined);
     expect(d.format).toHaveBeenCalledWith(['.']);
     expect(d.log).toHaveBeenCalledWith(expect.stringContaining('package-lock.json changed'));
+  });
+
+  it('widens Prettier for a nested config or .editorconfig', async () => {
+    for (const file of ['lib/app/.prettierrc', '.editorconfig', 'lib/prettier.config.mjs']) {
+      const d = deps({ git: fakeGit({ branch: [file, 'lib/a.ts'] }) });
+      await main([], d);
+      expect(d.format).toHaveBeenCalledWith(['.']);
+    }
+  });
+
+  it('logs a named base verbatim and a SHA shortened', async () => {
+    const named = deps();
+    await main(['--base', 'upstream/main'], named);
+    expect(named.log).toHaveBeenCalledWith(expect.stringContaining('against upstream/main.'));
+
+    const sha = 'a'.repeat(40);
+    const shaDeps = deps({ git: fakeGit({ mergeBase: `${sha}\n` }) });
+    await main([], shaDeps);
+    expect(shaDeps.log).toHaveBeenCalledWith(expect.stringContaining('against aaaaaaaaa.'));
+  });
+
+  it('splits a large Prettier run into batches and returns the worst code', async () => {
+    const files = Array.from({ length: PRETTIER_BATCH * 2 + 1 }, (_, i) => `docs/f${i}.md`);
+    const format = vi.fn(async (batch: string[]) => (batch.length === 1 ? 2 : 0));
+    const d = deps({ git: fakeGit({ branch: files }), format });
+    expect(await main([], d)).toBe(2);
+    expect(format).toHaveBeenCalledTimes(3);
+    const sent = (format.mock.calls as unknown as string[][][]).flatMap((c) => c[0]);
+    expect(sent).toHaveLength(files.length);
+    expect(new Set(sent).size).toBe(files.length);
   });
 
   it('runs Prettier after a lint failure and returns the worst exit code', async () => {

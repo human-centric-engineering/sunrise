@@ -45,10 +45,15 @@
 // "clean" as a real one — `.context/architecture/checks.md`'s "I could not look"
 // reported as "I found nothing".
 //
+// LINT GOES THROUGH `chunked-lint.mjs`'s `main`, scoped or whole-tree, so the
+// fork's `CI_LINT_CHUNKS` / `LINT_CHUNKS` applies here too. A fork that needs
+// chunks to keep a whole-tree lint inside the heap would otherwise abort with
+// 134 on every lockfile bump, which is exactly when this widens.
+//
 // PLAIN .mjs, NO BUILD STEP — same rule as `chunked-lint.mjs` and
 // `run-capped.mjs`, and for a second reason: it reuses `chunked-lint.mjs`'s
-// ESLint runner (heap cap, `--` before filenames, `shell: false`, signal exit
-// codes) instead of restating it, and a `.ts` script run by `tsx` is CommonJS,
+// ESLint runner (heap cap, chunking, `--` before filenames, `shell: false`,
+// signal exit codes) instead of restating it, and a `.ts` script run by `tsx` is CommonJS,
 // which cannot import an ES module with top-level `await`.
 //
 // Exit codes: 0 — both tools clean, or nothing in scope. 1 or the tool's own
@@ -61,7 +66,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ESLint } from 'eslint';
 
-import { LINTABLE, ROOT, runChunk } from './chunked-lint.mjs';
+import { LINTABLE, ROOT, main as chunkedLint } from './chunked-lint.mjs';
 
 /**
  * The ESLint flags `npm run lint` passes, so this path and a whole-tree lint
@@ -113,13 +118,26 @@ export const LINT_WIDENERS = [
   /^package-lock\.json$/,
 ];
 
-/** As {@link LINT_WIDENERS}, for Prettier: its config, its ignore file, or a version bump. */
+/**
+ * As {@link LINT_WIDENERS}, for Prettier: a config at any depth (Prettier
+ * resolves the nearest one per file), `.editorconfig` (the CLI reads it by
+ * default), its ignore file, or a version bump.
+ */
 export const FORMAT_WIDENERS = [
-  /^\.prettierrc/,
-  /^prettier\.config\./,
+  /(^|\/)\.prettierrc/,
+  /(^|\/)prettier\.config\./,
+  /(^|\/)\.editorconfig$/,
   /^\.prettierignore$/,
   /^package-lock\.json$/,
 ];
+
+/**
+ * Files per Prettier process. A branch carrying a merge from upstream can
+ * change thousands of files, and one argv holding them all can exceed the OS
+ * argument limit (E2BIG), which surfaces as "Failed to start prettier" — a
+ * tool failure reported as a format failure.
+ */
+export const PRETTIER_BATCH = 500;
 
 /**
  * Split a NUL-delimited git listing. On NUL only, untrimmed: `-z` exists so a
@@ -149,20 +167,36 @@ export function runGit(args) {
 }
 
 /**
- * The base revision: `--base <ref>` when given, otherwise the merge base with
- * `origin/main` (the base `test:changed` and `check:missing-tests` use).
+ * The base revision: `--base <ref>` or `--base=<ref>` when given, otherwise
+ * the merge base with `origin/main` (the base `test:changed` and
+ * `check:missing-tests` use).
+ *
+ * Any other argument is an error, not ignored: a mistyped flag silently falling
+ * back to `origin/main` would check a different file set from the one asked
+ * for and still report clean.
  *
  * @param {readonly string[]} argv
  * @param {(args: readonly string[]) => string | null} git
  * @returns {{ base: string } | { error: string }}
  */
 export function resolveBase(argv, git) {
-  const flag = argv.indexOf('--base');
-  if (flag !== -1) {
-    const ref = argv[flag + 1];
-    if (!ref || ref.startsWith('-')) return { error: '`--base` needs a revision.' };
-    return { base: ref };
+  /** @type {string | undefined} */
+  let ref;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--base') {
+      const value = argv[++i];
+      if (!value || value.startsWith('-')) return { error: '`--base` needs a revision.' };
+      ref = value;
+    } else if (arg.startsWith('--base=')) {
+      const value = arg.slice('--base='.length);
+      if (!value || value.startsWith('-')) return { error: '`--base` needs a revision.' };
+      ref = value;
+    } else {
+      return { error: `unknown argument "${arg}". The only option is \`--base <ref>\`.` };
+    }
   }
+  if (ref) return { base: ref };
   const base = git(['merge-base', 'origin/main', 'HEAD'])?.trim();
   if (!base) {
     return {
@@ -177,6 +211,11 @@ export function resolveBase(argv, git) {
  * Every path this branch touched that exists on disk, sorted, or `null` when
  * any listing failed.
  *
+ * Every listing is ROOT-relative: `--relative` makes the two diffs match
+ * `ls-files`, which is already relative to the cwd (`-C ROOT`), so a checkout
+ * whose ROOT is below the git toplevel (a monorepo package) still finds its
+ * committed changes on disk.
+ *
  * All three listings are required. A failed branch diff (a mistyped `--base`, a
  * base the clone does not have) leaves the uncommitted listings looking like a
  * whole answer, so it has to fail the run rather than shrink it.
@@ -188,9 +227,17 @@ export function resolveBase(argv, git) {
 export function changedFiles(base, { git, exists }) {
   const listings = [
     // Committed on this branch since it left the base.
-    git(['-c', 'core.quotePath=false', 'diff', '--name-only', '-z', `${base}...HEAD`]),
+    git([
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--relative',
+      '--name-only',
+      '-z',
+      `${base}...HEAD`,
+    ]),
     // Staged and unstaged, in one pass against HEAD.
-    git(['-c', 'core.quotePath=false', 'diff', '--name-only', '-z', 'HEAD']),
+    git(['-c', 'core.quotePath=false', 'diff', '--relative', '--name-only', '-z', 'HEAD']),
     // New files nobody has `git add`ed yet.
     git(['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '-z']),
   ];
@@ -232,12 +279,9 @@ export async function plan(files, isLintIgnored) {
   if (lintWidener) {
     lint = { whole: lintWidener };
   } else {
-    const lintable = [];
-    for (const file of files) {
-      if (!LINTABLE.some((ext) => file.endsWith(ext))) continue;
-      if (!(await isLintIgnored(file))) lintable.push(file);
-    }
-    lint = { files: lintable };
+    const candidates = files.filter((file) => LINTABLE.some((ext) => file.endsWith(ext)));
+    const ignored = await Promise.all(candidates.map((file) => isLintIgnored(file)));
+    lint = { files: candidates.filter((_, i) => !ignored[i]) };
   }
 
   const format = formatWidener ? { whole: formatWidener } : { files: [...files] };
@@ -254,6 +298,32 @@ export async function plan(files, isLintIgnored) {
  */
 export function asPathArgs(files) {
   return files.map((file) => `./${file}`);
+}
+
+/**
+ * Split a list into consecutive batches of at most `size`.
+ *
+ * @template T
+ * @param {readonly T[]} items
+ * @param {number} size
+ * @returns {T[][]}
+ */
+export function batches(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * How to show the base in the log: a full SHA shortened, a named ref
+ * (`origin/main`, `v0.18.0`) verbatim, since cutting a name hides which base
+ * was used.
+ *
+ * @param {string} base
+ * @returns {string}
+ */
+export function describeBase(base) {
+  return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(base) ? base.slice(0, 9) : base;
 }
 
 /**
@@ -295,7 +365,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
       eslint ??= new ESLint({ cwd: ROOT });
       return eslint.isPathIgnored(join(ROOT, file));
     },
-    lint = (/** @type {string[]} */ targets) => runChunk(targets, ESLINT_ARGS),
+    // `undefined` targets: the whole tree, as `chunked-lint` enumerates it.
+    lint = (/** @type {string[] | undefined} */ targets) =>
+      chunkedLint(ESLINT_ARGS, targets ? { targets } : {}),
     format = runPrettier,
     log = console.log,
     error = console.error,
@@ -317,7 +389,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
 
   log(
     `validate:changed — ${files.length} changed file${files.length === 1 ? '' : 's'} ` +
-      `against ${base.slice(0, 9)}.`
+      `against ${describeBase(base)}.`
   );
 
   const { lint: lintPlan, format: formatPlan } = await plan(files, isLintIgnored);
@@ -325,7 +397,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
 
   if ('whole' in lintPlan) {
     log(`ESLint: whole tree, because ${lintPlan.whole} changed.`);
-    worst = Math.max(worst, await lint(['.']));
+    worst = Math.max(worst, await lint(undefined));
   } else if (lintPlan.files.length > 0) {
     log(`ESLint: ${lintPlan.files.length} file(s).`);
     worst = Math.max(worst, await lint(lintPlan.files));
@@ -340,7 +412,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     worst = Math.max(worst, await format(['.']));
   } else if (formatPlan.files.length > 0) {
     log(`Prettier: ${formatPlan.files.length} file(s).`);
-    worst = Math.max(worst, await format(asPathArgs(formatPlan.files)));
+    for (const batch of batches(asPathArgs(formatPlan.files), PRETTIER_BATCH)) {
+      worst = Math.max(worst, await format(batch));
+    }
   } else {
     log('Prettier: nothing in scope.');
   }
