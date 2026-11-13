@@ -239,8 +239,8 @@ describe('runConfigHealthChecks', () => {
   });
 
   it.each([
-    ['Supabase session mode', 'postgresql://u:p@aws-0-eu.pooler.supabase.com:5432/postgres'],
-    ['PgBouncer flag as 1', 'postgresql://u:p@ep-x.neon.tech/db?pgbouncer=1'],
+    ['Supabase session mode', 'postgresql://user:pass@aws-0-eu.pooler.supabase.com:5432/postgres'],
+    ['PgBouncer flag as 1', 'postgresql://user:pass@ep-x.neon.tech/db?pgbouncer=1'],
     ['Prisma Accelerate', 'prisma://accelerate.prisma-data.net/?api_key=k'],
     ['Prisma Postgres', 'prisma+postgres://accelerate.prisma-data.net/?api_key=k'],
   ])('db_pooler passes %s on Vercel', async (_label, url) => {
