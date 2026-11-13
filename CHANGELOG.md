@@ -16,6 +16,148 @@ release process.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-11-13
+
+> **Alpha release.** Twenty-sixth tagged Sunrise release. **MINOR bump**:
+> three new fork seams, new public API and seven migrations. The headline is the **LLM
+> privacy layer** (§127). It finds personal details in what Sunrise sends to
+> an LLM vendor and, by the mode an operator picks, counts them, masks them
+> and restores the reply, or refuses the call. An org or an agent can only
+> tighten that mode. Orgs can also now invite people who already have
+> accounts, and see their own admin history. The admin area says when missing
+> config has quietly switched a feature off. Every open Dependabot alert is
+> cleared. Measured against `v0.18.0`: 26 PRs merged, no direct commits, 14
+> issues closed as fixed and 1 as a duplicate; the suite is 1,579 files
+> and 33,361 tests.
+>
+> ## What a fork has to do
+>
+> **Run the seven migrations** (`npm run db:migrate:deploy`), then
+> **`npm run db:seed`**:
+>
+> - `20261110120000_audit_log_acting_org` and its two backfills add
+>   `AiAdminAuditLog.actingOrgId` and fill it for earlier rows.
+> - `20261111120000_privacy_settings`, `20261111200000_privacy_embeddings_policy`
+>   and `20261112100000_agent_privacy_mode` add the privacy settings and
+>   `AiAgent.privacyMode`.
+> - `20261112220000_message_embedding_retry` adds the embedding-retry columns
+>   on `AiMessage`.
+> - The seed refiles the Ollama embedding models from `ollama` to
+>   `ollama-local`, the slug the provider form gives. It moves only rows an
+>   admin has not edited, and renames no provider. Act only if you named your
+>   Ollama provider `ollama` by hand **and** picked one of these models for
+>   embeddings: rename the provider to `ollama-local`, or edit the model's
+>   provider slug.
+>
+> **Run `npm install`.** Tailwind moves to 4.3.5 and `@hookform/resolvers` to
+> 7, beside minor and patch bumps. **Keep, when you merge `package.json`:**
+>
+> - the four new `overrides` entries and their `overrideReasons`, or the alerts
+>   they cleared come back;
+> - the new `lockfileMetadataReasons` block, or your Lockfile metadata job
+>   fails on the Tailwind bump;
+> - your own `version`, in `package.json` and the lockfile, if you set one.
+>
+> **An existing install's LLM calls go out as before until an operator turns
+> privacy on, with one exception.** The migration reads an existing install as
+> `off`; a new install starts in `detect`. The exception holds in every mode,
+> `off` included, so that a stricter rule can't go missing silently:
+>
+> - if `initAppPrivacyAdapters()` throws, every LLM call is refused until it
+>   is fixed (the scaffold ships empty, so only once you register something);
+> - a call whose policy resolver fails is refused. Core's own,
+>   `core.scope-settings`, reads the agent's privacy mode and the org's floor,
+>   so a stored value it cannot read refuses that call.
+>
+> **Three new fork-owned scaffolds** ship empty: `lib/app/privacy-adapters.ts`,
+> `lib/app/config-health.ts` and `lib/app/admin-breadcrumbs.ts`. Take them as
+> they are. A fork that built config health or breadcrumb labels itself moves
+> its own into them.
+>
+> **Conflicts to expect,** each resolved by taking Sunrise's version unless
+> said otherwise:
+>
+> - **`Org` and `User`** now end with two fixed back-relation zones. Keep both
+>   markers, move your block of back-relations below your tier's marker, and
+>   retire the ledger row for it.
+> - **`lib/app/db-drift.ts`**: Sunrise rewrote its header comment. Keep your
+>   registrations and take the new comment.
+> - **A fork that built config health or breadcrumb labels itself** (ConQuest's
+>   shape) conflicts on those files and on `components/admin/admin-header.tsx`
+>   and `app/admin/layout.tsx`.
+> - **A fork carrying `extraHeaders` or `idleClassName` on `<MicButton>`**
+>   (`components/admin/orchestration/chat/mic-button.tsx`, t-1023) conflicts
+>   there. Sunrise now has both props, so the ledger row for them can go.
+> - **A fork that already moved the tenant, subject or paid-call store onto
+>   `globalThis`** conflicts in `lib/tenancy/context.ts`,
+>   `lib/auth/subject-context.ts`, `lib/orchestration/llm/spend-caps.ts` and
+>   `lib/tenancy/process-state.ts`.
+>
+> **Your type-check will flag:**
+>
+> - a call to `scanOutput()` that uses its result directly: it is now async,
+>   and takes the sent messages and `{ ignoredEntityTypes }`;
+> - a method added to `LlmProvider` without a `PRIVACY_COVERAGE` entry.
+>
+> **Your tests will flag:**
+>
+> - a `User` relation without `onDelete` (the new
+>   `user-relation-on-delete.test.ts`);
+> - a fork line outside its zone on `Org` or `User` (`back-relation-zones.test.ts`);
+> - fork models in a `prisma/schema` subfolder, which the export, org-export
+>   and classification guards now read for the first time;
+> - a `defaults.test.ts` that pins `lib/app/*`: it gains the three new
+>   scaffolds' rows. Pin them; don't delete them.
+>
+> **Changes a build will not catch:**
+>
+> - **Forms:** a form gets the "N fields need fixing" fix only once it passes
+>   `errors` to `useSaveFailure()`. UI shown only while `!save.failure` now
+>   comes back without a press, because the summary clears itself.
+> - **Chat clients:** handling `privacy_blocked` means also handling
+>   `privacy_blocked_earlier`, `privacy_blocked_setup` and
+>   `privacy_blocked_memory`.
+> - **Code that resends a conversation to a provider** skips rows for which
+>   `isLeftOutOfHistory(metadata)` is true. Code that reads the built messages
+>   finds the user's memories as one message each, under a heading.
+> - **The output guard's labels** are `pii_<type>`: `pii_credit_card` is now
+>   `pii_card_number`, and a US SSN is no longer flagged.
+> - **Invitations:**
+>   - `POST /api/v1/orgs/[id]/invitations` now invites an existing account
+>     where it answered `409 EMAIL_TAKEN`. So does `POST /api/v1/users/invite`,
+>     for an invitation into an org other than the install org at the default
+>     `USER` role. A client branching on that answer should drop the branch.
+>   - `POST /api/auth/accept-invite` answers `409 EMAIL_TAKEN` for an address
+>     with an account, where it gave a 500.
+>   - A template override should use the invitation email's new `hasAccount`.
+> - **Ownership:**
+>   - A platform admin added to an empty org with no role now lands as
+>     `MEMBER`.
+>   - An `OWNER` invitation whose issuer has since lost owner standing lands
+>     the invitee as `MEMBER`.
+> - **Admin audit log:** a fork route that changes an org other than the one
+>   it runs in passes `actingOrgId` to `logAdminAction()`.
+> - **Hook deliveries:** `nextRetryAt` on a hook delivery no longer means "has
+>   failed"; check `status` too.
+>
+> Each is explained under its entry below.
+>
+> **§127's deployed-build check was not run.** Its done-when asks for a
+> privacy-mode call to be checked on a deployed build; that was not done before
+> this release. What was run is the suite and `npm run smoke:privacy`, which
+> passed locally: a chat turn and a workflow step under `pseudonymise`, against
+> the dev database, through fake providers that record what they are sent. So
+> no deployed build or real vendor has yet seen a masked call. Check one on your
+> own deployment before turning on `pseudonymise` or stricter for real users.
+>
+> **Known gap:** the agent and capability forms build their own tab-aware
+> summary, so after a blocked save their "N fields need fixing" still keeps
+> the count from the press. That is t-1029, for the next release.
+>
+> **Dependency alerts:** none open at the cut. The five accepted at 0.18.0,
+> and `fast-xml-parser`, opened since, are all cleared; see Security below. Dependabot's newer PR #1258 (nine production
+> minor and patch bumps) is not in this release.
+
 ### Added
 
 - **Config health: the admin area says when an optional setting has quietly
@@ -11425,7 +11567,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.16.0...v0.17.0
