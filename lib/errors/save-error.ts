@@ -131,6 +131,13 @@ export function invalidSave<TValues extends FieldValues>(
   };
 }
 
+/** Whether react-hook-form's validation still blocks any field (`root` is not one). */
+export function hasBlockedFields<TValues extends FieldValues>(
+  errors: FieldErrors<TValues>
+): boolean {
+  return blockedFields(errors).length > 0;
+}
+
 /**
  * The number fields in `form` the browser could not read (`1,000` in Firefox,
  * `1e` in Chrome), as a failure, or null when there are none. Such a field's

@@ -345,7 +345,14 @@ describe('the real collaborators, against this checkout', () => {
     expect(error).not.toHaveBeenCalled();
     expect(code).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^validate:changed — \d+ changed file/));
-    for (const call of lint.mock.calls as unknown as string[][][]) {
+    for (const call of lint.mock.calls as unknown as Array<[string[] | undefined]>) {
+      // An uncommitted lint widener (a lockfile bump in progress, a cut before
+      // its commit) lints the whole tree: no list to check, and the log says
+      // why (t-1030).
+      if (call[0] === undefined) {
+        expect(log).toHaveBeenCalledWith(expect.stringMatching(/^ESLint: whole tree, because /));
+        continue;
+      }
       for (const file of call[0]) expect(file).not.toMatch(/^node_modules\//);
     }
   });

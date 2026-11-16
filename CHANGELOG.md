@@ -16,6 +16,20 @@ release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent and capability forms' blocked-save summary now follows the
+  fields (t-1029).** The two tabbed forms built their own summary in
+  `onInvalid` and passed it to `show()`, so after t-1013 they still kept
+  "3 fields need fixing." (the agent form: its per-tab list) by Save after
+  every field was fixed. `useSaveFailure()` takes a new optional `summarise`,
+  a function of the errors that builds a blocked save's failure in place of
+  `invalidSave`. The hook runs it on the press and again as the fields
+  change; the summary goes once no field is blocked. Both forms now use it,
+  with their wording unchanged. `lib/errors/save-error.ts` adds
+  `hasBlockedFields()`. **A fork whose own form builds a blocked-save summary
+  for `show()` gets the fix only once it moves that builder to `summarise`.**
+
 ## [0.19.0] — 2026-11-13
 
 > **Alpha release.** Twenty-sixth tagged Sunrise release. **MINOR bump**:
