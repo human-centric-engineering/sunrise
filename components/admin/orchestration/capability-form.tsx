@@ -135,17 +135,30 @@ function makeCapabilityFormSchema(mode: 'create' | 'edit') {
       executionType: z.enum(['internal', 'api', 'webhook']),
       executionHandler: z.string().min(1, 'Execution handler is required').max(500),
       requiresApproval: z.boolean(),
-      approvalTimeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
-        .nullable()
-        .optional(),
+      // Range-checked in superRefine, and only while approval is on: the input
+      // is drawn only then, and the value is not sent otherwise (t-1031).
+      approvalTimeoutMs: z.number().nullable().optional(),
       rateLimit: z.number().int().min(1).max(10000).optional(),
       isActive: z.boolean(),
     })
     .superRefine((data, ctx) => {
+      const timeout = data.approvalTimeoutMs;
+      if (data.requiresApproval && timeout !== null && timeout !== undefined) {
+        const problem = !Number.isInteger(timeout)
+          ? 'Must be a whole number of ms'
+          : timeout <= 0
+            ? 'Must be greater than 0'
+            : timeout > 3_600_000
+              ? 'Must be at most 3,600,000 ms (1 hour)'
+              : null;
+        if (problem) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: problem,
+            path: ['approvalTimeoutMs'],
+          });
+        }
+      }
       if (
         (data.executionType === 'api' || data.executionType === 'webhook') &&
         data.executionHandler
@@ -609,6 +622,7 @@ export function CapabilityForm({
     handleSubmit,
     setError,
     setValue,
+    clearErrors,
     watch,
     reset,
     formState: { errors },
@@ -989,6 +1003,9 @@ export function CapabilityForm({
     try {
       const payload = {
         ...data,
+        // Unused while approval is off, so not saved: a value kept in the form
+        // for turning approval back on, or loaded with a row, is dropped here.
+        approvalTimeoutMs: data.requiresApproval ? data.approvalTimeoutMs : null,
         functionDefinition: effectiveFn,
         executionConfig: execConfigParsed,
         metadata: metadataParsed,
@@ -1708,12 +1725,12 @@ export function CapabilityForm({
               id="requiresApproval"
               checked={currentRequiresApproval}
               onCheckedChange={(v) => {
+                // The timeout is only drawn, checked and saved while approval
+                // is on. Its value stays, so turning approval back on restores
+                // it; its error goes first, so the summary by Save follows it
+                // out in the same render (t-1031).
+                if (!v) clearErrors('approvalTimeoutMs');
                 setValue('requiresApproval', v);
-                // The timeout is only drawn while approval is on. Clear it as
-                // approval goes off, and re-validate it, so a value typed then
-                // hidden (over the limit, say) never blocks Save from a field
-                // nobody can see, and no unused timeout is saved (t-1031).
-                if (!v) setValue('approvalTimeoutMs', null, { shouldValidate: true });
               }}
             />
           </div>

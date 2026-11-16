@@ -141,7 +141,7 @@ Help: **"When enabled, the agent will pause and ask a human to approve before ru
 
 ### Approval timeout (ms)
 
-Number input, 1–3,600,000 (max 1 hour). **Only visible when "Requires approval" is toggled on**; turning approval off clears it, so a hidden value never blocks Save or gets saved (t-1031). Overrides the global default timeout from orchestration settings. Leave blank to use the global default.
+Number input, 1–3,600,000 (max 1 hour). **Only visible, checked and saved when "Requires approval" is on** (t-1031): while approval is off the form keeps what was typed, so turning approval back on restores it, but never range-checks it (a hidden value can't block Save) and saves `null`, including for a row stored with approval off and a timeout. Overrides the global default timeout from orchestration settings. Leave blank to use the global default.
 
 Help: **"How many milliseconds the system waits for a human to approve or reject this call before falling back to the global default action (deny or allow). Leave blank to use the global default timeout from orchestration settings. Maximum is 3,600,000 ms (1 hour)."**
 
