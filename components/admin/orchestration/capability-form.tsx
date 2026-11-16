@@ -26,7 +26,7 @@
  * touching form state — no `as` casts.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
@@ -37,6 +37,7 @@ import type { FieldErrors } from 'react-hook-form';
 
 import { SaveError } from '@/components/forms/form-error';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { fieldCount, type SaveFailure } from '@/lib/errors/save-error';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -635,10 +636,33 @@ export function CapabilityForm({
         : SERVER_FIELDS,
     [currentRequiresApproval]
   );
+  /**
+   * What a save client validation blocked says by Save. A field it blocked can
+   * be on a tab that isn't showing, so it goes to <SaveError> like a server
+   * rejection, which brings that tab forward. The hook re-runs it as the
+   * fields change, so the count drops as they are fixed (t-1029).
+   */
+  const summariseBlocked = useCallback(
+    (formErrors: FieldErrors<CapabilityFormData>): SaveFailure<keyof CapabilityFormData> => {
+      const named = Object.keys(formErrors).flatMap((key) => {
+        const field = serverFields[key];
+        const message = field && formErrors[field]?.message;
+        return field && message ? [{ field, message }] : [];
+      });
+      return {
+        message: named.length === 0 ? 'Some fields need fixing.' : fieldCount(named.length),
+        stale: false,
+        fields: named,
+      };
+    },
+    [serverFields]
+  );
   const save = useSaveFailure({
     fallback: 'Could not save capability. Try again in a moment.',
     fields: serverFields,
     setError,
+    errors,
+    summarise: summariseBlocked,
   });
 
   const currentName = watch('name');
@@ -912,27 +936,6 @@ export function CapabilityForm({
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   };
 
-  /**
-   * Client validation blocked the save. A field it blocked can be on a tab
-   * that isn't showing, so it goes to <SaveError> like a server rejection,
-   * which brings that tab forward.
-   */
-  const onInvalid = (formErrors: FieldErrors<CapabilityFormData>) => {
-    const named = Object.keys(formErrors).flatMap((key) => {
-      const field = serverFields[key];
-      const message = field && formErrors[field]?.message;
-      return field && message ? [{ field, message }] : [];
-    });
-    save.show(
-      named.length === 0
-        ? 'Some fields need fixing.'
-        : named.length === 1
-          ? '1 field needs fixing.'
-          : `${named.length} fields need fixing.`,
-      named
-    );
-  };
-
   const onSubmit = async (data: CapabilityFormData) => {
     // Land a pending JSON parse first, and use its RESULT — `setParsedFn` will
     // not have taken effect by the next line. Without this, saving inside the
@@ -1059,7 +1062,7 @@ export function CapabilityForm({
     <form
       method="post"
       noValidate
-      onSubmit={save.submit(handleSubmit(onSubmit, onInvalid))}
+      onSubmit={save.submit(handleSubmit(onSubmit, save.invalid))}
       className="space-y-6"
     >
       {/* Sticky action bar, with the save error under it so it stays in view */}

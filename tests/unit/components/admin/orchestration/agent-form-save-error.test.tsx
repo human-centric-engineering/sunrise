@@ -198,4 +198,55 @@ describe('AgentForm — failed save', () => {
     const { apiClient } = await import('@/lib/api/client');
     expect(apiClient.patch).not.toHaveBeenCalled();
   });
+
+  // t-1029: the tab-aware summary follows the fields as they are fixed, as
+  // every other form's count does since t-1013.
+  it('drops a field from the summary as it is fixed, and the summary with the last, focus staying put', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.clear(field('name'));
+    await user.clear(field('description'));
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/General: Name, Description/);
+    await waitFor(() => expect(field('name')).toHaveFocus());
+
+    await user.type(field('name'), 'Support bot');
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/General: Description$/)
+    );
+    expect(field('name')).toHaveFocus();
+
+    await user.type(field('description'), 'Answers questions');
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(field('description')).toHaveFocus();
+    const { apiClient } = await import('@/lib/api/client');
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it('follows fields on two tabs, keeping the other tab in the summary as one is fixed', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.click(screen.getByRole('tab', { name: /instructions/i }));
+    await user.clear(screen.getByRole('textbox', { name: /^system instructions/i }));
+    await user.click(screen.getByRole('tab', { name: /general/i }));
+    await user.clear(field('name'));
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/General: Name/);
+    expect(alert).toHaveTextContent(/Instructions: System instructions/i);
+    await waitFor(() => expect(field('name')).toHaveFocus());
+
+    await user.type(field('name'), 'Support bot');
+
+    await waitFor(() => expect(screen.getByRole('alert')).not.toHaveTextContent(/General/));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Instructions: System instructions/i);
+    expect(field('name')).toHaveFocus();
+  });
 });

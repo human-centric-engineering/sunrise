@@ -14,7 +14,7 @@
  * rest of Phase 4 — copy the voice, not just the structure.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -44,6 +44,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SaveError } from '@/components/forms/form-error';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
+import type { SaveFailure } from '@/lib/errors/save-error';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -535,10 +536,65 @@ export function AgentForm({
     }),
     [currentRuntimePromptManaged, currentRetrievalMode]
   );
+  /**
+   * What a save validation blocked says by Save. Without it the button click
+   * is a silent no-op — `provider` and `model` live on the Model tab, so an
+   * operator sitting on General sees nothing happen and gets no reason why.
+   * That dead end became reachable far more often once the form stopped
+   * inventing a provider when none could be resolved (t-661): refusing to
+   * submit is the correct behaviour, but refusing silently is not. The hook
+   * re-runs it as the fields change, so the list shrinks as they are fixed
+   * (t-1029).
+   */
+  const summariseBlocked = useCallback(
+    (formErrors: FieldErrors<AgentFormData>): SaveFailure<keyof AgentFormData> => {
+      const labels = fieldLabels();
+      const tabs = fieldToTab();
+
+      // `root` is react-hook-form's own key for form-level issues. It is not a
+      // field and has no control to point at, so rendering it would send the
+      // operator hunting for a "root" input that does not exist.
+      const keys = Object.keys(formErrors).filter((key) => key !== 'root');
+
+      // Group by tab, because the fields that block a save are routinely NOT on
+      // the tab the operator is looking at — provider and model live on Model
+      // while the save button sits under General. Labels come from the agent
+      // field registry so the banner says what the <Label> says; the humanised
+      // key is only a fallback for a form field the registry does not describe.
+      const byTab = new Map<string, string[]>();
+      for (const key of keys) {
+        const label = labels[key] ?? key.replace(/([A-Z])/g, ' $1').toLowerCase();
+        const tab = tabs[key] ?? 'Other';
+        const bucket = byTab.get(tab);
+        if (bucket) bucket.push(label);
+        else byTab.set(tab, [label]);
+      }
+
+      // The fields go to <SaveError> too, so it brings their tab forward and
+      // focuses the first, as it does for fields the server rejected.
+      return {
+        message:
+          byTab.size > 0
+            ? `Cannot save — these fields need attention. ${[...byTab.entries()]
+                .map(([tab, fields]) => `${tab}: ${fields.join(', ')}`)
+                .join(' · ')}`
+            : 'Cannot save — some required fields are missing.',
+        stale: false,
+        fields: keys.flatMap((key) => {
+          const field = serverFields[key];
+          const message = field && firstErrorMessage(formErrors[field]);
+          return field && message ? [{ field, message }] : [];
+        }),
+      };
+    },
+    [serverFields]
+  );
   const save = useSaveFailure({
     fallback: 'Could not save agent. Try again in a moment.',
     fields: serverFields,
     setError,
+    errors,
+    summarise: summariseBlocked,
   });
 
   const currentProvider = watch('provider');
@@ -721,52 +777,11 @@ export function AgentForm({
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  /**
-   * Validation blocked the submit. Without this the button click is a silent
-   * no-op — `provider` and `model` live on the Model tab, so an operator
-   * sitting on General sees nothing happen and gets no reason why. That dead
-   * end became reachable far more often once the form stopped inventing a
-   * provider when none could be resolved (t-661): refusing to submit is the
-   * correct behaviour, but refusing silently is not.
-   */
+  // Validation blocked the submit (see `summariseBlocked`); the summary by
+  // Save then follows the fields as they are fixed.
   const onInvalid = (formErrors: FieldErrors<AgentFormData>) => {
-    const labels = fieldLabels();
-    const tabs = fieldToTab();
-
-    // `root` is react-hook-form's own key for form-level issues. It is not a
-    // field and has no control to point at, so rendering it would send the
-    // operator hunting for a "root" input that does not exist.
-    const keys = Object.keys(formErrors).filter((key) => key !== 'root');
-
-    // Group by tab, because the fields that block a save are routinely NOT on
-    // the tab the operator is looking at — provider and model live on Model
-    // while the save button sits under General. Labels come from the agent
-    // field registry so the banner says what the <Label> says; the humanised
-    // key is only a fallback for a form field the registry does not describe.
-    const byTab = new Map<string, string[]>();
-    for (const key of keys) {
-      const label = labels[key] ?? key.replace(/([A-Z])/g, ' $1').toLowerCase();
-      const tab = tabs[key] ?? 'Other';
-      const bucket = byTab.get(tab);
-      if (bucket) bucket.push(label);
-      else byTab.set(tab, [label]);
-    }
-
     setSaved(false);
-    // The fields go to <SaveError> too, so it brings their tab forward and
-    // focuses the first, as it does for fields the server rejected.
-    save.show(
-      byTab.size > 0
-        ? `Cannot save — these fields need attention. ${[...byTab.entries()]
-            .map(([tab, fields]) => `${tab}: ${fields.join(', ')}`)
-            .join(' · ')}`
-        : 'Cannot save — some required fields are missing.',
-      keys.flatMap((key) => {
-        const field = serverFields[key];
-        const message = field && firstErrorMessage(formErrors[field]);
-        return field && message ? [{ field, message }] : [];
-      })
-    );
+    save.invalid(formErrors);
   };
 
   const onSubmit = async (data: AgentFormData) => {

@@ -143,4 +143,32 @@ describe('CapabilityForm — failed save', () => {
     expect(screen.getByRole('tab', { name: /execution/i })).toHaveAttribute('data-state', 'active');
     expect(screen.getByRole('alert')).toHaveTextContent('2 fields need fixing.');
   });
+
+  // t-1029: the summary follows the fields as they are fixed, as every other
+  // form's count does since t-1013.
+  it('lowers the count as fields are fixed and drops it with the last, focus staying put', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.clear(field('name'));
+    await user.clear(field('description'));
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('2 fields need fixing.');
+    await waitFor(() => expect(field('name')).toHaveFocus());
+
+    await user.type(field('name'), 'Lookup');
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('1 field needs fixing.')
+    );
+    expect(field('name')).toHaveFocus();
+
+    await user.type(field('description'), 'Looks things up');
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(field('description')).toHaveFocus();
+    const { apiClient } = await import('@/lib/api/client');
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
 });

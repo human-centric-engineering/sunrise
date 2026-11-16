@@ -422,5 +422,51 @@ describe('useSaveFailure', () => {
 
       expect(result.current.failure?.message).toBe('2 fields need fixing.');
     });
+
+    describe("with the form's own summary (t-1029)", () => {
+      // A tabbed form's wording, naming only the fields it can bring forward:
+      // here, none of them, so only the message says what is blocked.
+      const summarise = (errors: FieldErrors<FieldValues>) => ({
+        message: `Fix: ${Object.keys(errors).join(', ')}`,
+        stale: false,
+        fields: [],
+      });
+
+      function setupOwn(initial: FieldErrors<FieldValues>) {
+        const hook = renderHook(
+          ({ errors }: { errors: FieldErrors<FieldValues> }) =>
+            useSaveFailure({ fallback: 'x', errors, summarise }),
+          { initialProps: { errors: initial } }
+        );
+        act(() => hook.result.current.invalid(initial));
+        return hook;
+      }
+
+      it('shows it on the press, and re-runs it as the fields are fixed', () => {
+        const { result, rerender } = setupOwn({ name, email });
+        expect(result.current.failure).toEqual({
+          message: 'Fix: name, email',
+          stale: false,
+          fields: [],
+        });
+
+        rerender({ errors: { email } });
+
+        expect(result.current.failure).toEqual({
+          message: 'Fix: email',
+          stale: false,
+          fields: [],
+          updated: true,
+        });
+      });
+
+      it('goes when no field is blocked, though it names none itself', () => {
+        const { result, rerender } = setupOwn({ name });
+
+        rerender({ errors: {} });
+
+        expect(result.current.failure).toBeNull();
+      });
+    });
   });
 });
