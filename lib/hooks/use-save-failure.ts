@@ -92,6 +92,8 @@ interface FormOptions<
 > extends Options<TValues> {
   /** Server path → the form field that shows it (see `readSaveError`). */
   fields: Partial<Record<string, TField>>;
+  /** As in {@link Options}, naming only the form's own fields. */
+  summarise?: (errors: FieldErrors<TValues>) => SaveFailure<TField>;
   /** The form's `setError`, to put field messages under their fields. */
   setError?: SetFieldError<TField>;
 }

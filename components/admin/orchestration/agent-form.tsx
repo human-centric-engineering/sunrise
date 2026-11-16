@@ -547,7 +547,7 @@ export function AgentForm({
    * (t-1029).
    */
   const summariseBlocked = useCallback(
-    (formErrors: FieldErrors<AgentFormData>): SaveFailure<string> => {
+    (formErrors: FieldErrors<AgentFormData>): SaveFailure<keyof AgentFormData> => {
       const labels = fieldLabels();
       const tabs = fieldToTab();
 

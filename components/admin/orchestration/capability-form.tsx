@@ -643,7 +643,7 @@ export function CapabilityForm({
    * fields change, so the count drops as they are fixed (t-1029).
    */
   const summariseBlocked = useCallback(
-    (formErrors: FieldErrors<CapabilityFormData>): SaveFailure<string> => {
+    (formErrors: FieldErrors<CapabilityFormData>): SaveFailure<keyof CapabilityFormData> => {
       const named = Object.keys(formErrors).flatMap((key) => {
         const field = serverFields[key];
         const message = field && formErrors[field]?.message;
