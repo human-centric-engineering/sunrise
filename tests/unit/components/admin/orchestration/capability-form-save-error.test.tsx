@@ -171,4 +171,111 @@ describe('CapabilityForm — failed save', () => {
     const { apiClient } = await import('@/lib/api/client');
     expect(apiClient.patch).not.toHaveBeenCalled();
   });
+
+  // t-1031: the approval timeout is only drawn, checked and saved while
+  // approval is on, so a hidden value can never block Save.
+  describe('the approval timeout, while approval is off (t-1031)', () => {
+    async function approvalSwitch() {
+      return screen.getByRole('switch', { name: /requires approval/i });
+    }
+
+    it('stops blocking Save once hidden, comes back with its error, and is not saved', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue(makeCapability());
+      const user = userEvent.setup();
+      renderForm();
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      await user.click(await approvalSwitch());
+      await user.type(field('approvalTimeoutMs'), '5000000');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('1 field needs fixing.');
+
+      await user.click(await approvalSwitch());
+
+      // The summary goes with the field, without another press, and never
+      // passes through "Some fields need fixing." on the way.
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+      // Back on before a save: the value is restored, and says why Save refused it.
+      await user.click(await approvalSwitch());
+      expect(field('approvalTimeoutMs')).toHaveValue(5000000);
+      expect(
+        await screen.findByText('Approval timeout must be at most 1 hour')
+      ).toBeInTheDocument();
+      await user.click(await approvalSwitch());
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+      const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
+      expect(options?.body).toMatchObject({ requiresApproval: false, approvalTimeoutMs: null });
+
+      // After the save, the form holds what was saved: no timeout.
+      await user.click(await approvalSwitch());
+      expect(field('approvalTimeoutMs')).toHaveValue(null);
+    });
+
+    it('keeps a stored timeout when approval is turned off and straight back on', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue(makeCapability());
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={{ ...makeCapability(), requiresApproval: true, approvalTimeoutMs: 60000 }}
+          availableCategories={['api']}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      await user.click(await approvalSwitch());
+      await user.click(await approvalSwitch());
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+      const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
+      expect(options?.body).toMatchObject({ requiresApproval: true, approvalTimeoutMs: 60000 });
+    });
+
+    it('does not check or save a timeout a row was stored with, when approval loads off', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue(makeCapability());
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={{
+            ...makeCapability(),
+            requiresApproval: false,
+            approvalTimeoutMs: 9_999_999,
+          }}
+          availableCategories={['api']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+      const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
+      expect(options?.body).toMatchObject({ requiresApproval: false, approvalTimeoutMs: null });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('still checks the range while approval is on', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      renderForm();
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      await user.click(await approvalSwitch());
+      await user.type(field('approvalTimeoutMs'), '5000000');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      expect(
+        await screen.findByText('Approval timeout must be at most 1 hour')
+      ).toBeInTheDocument();
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+  });
 });

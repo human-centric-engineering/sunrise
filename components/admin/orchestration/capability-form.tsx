@@ -61,7 +61,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
-import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
+import {
+  approvalTimeoutMsSchema,
+  capabilityFunctionDefinitionSchema,
+} from '@/lib/validations/orchestration';
 import { jsonEquals } from '@/lib/utils/json-equal';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { AiCapability } from '@/types/prisma';
@@ -135,17 +138,24 @@ function makeCapabilityFormSchema(mode: 'create' | 'edit') {
       executionType: z.enum(['internal', 'api', 'webhook']),
       executionHandler: z.string().min(1, 'Execution handler is required').max(500),
       requiresApproval: z.boolean(),
-      approvalTimeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
-        .nullable()
-        .optional(),
+      // Range-checked in superRefine, and only while approval is on: the input
+      // is drawn only then, and the value is not sent otherwise (t-1031).
+      approvalTimeoutMs: z.number().nullable().optional(),
       rateLimit: z.number().int().min(1).max(10000).optional(),
       isActive: z.boolean(),
     })
     .superRefine((data, ctx) => {
+      const timeout = data.approvalTimeoutMs;
+      if (data.requiresApproval && timeout !== null && timeout !== undefined) {
+        const checked = approvalTimeoutMsSchema.safeParse(timeout);
+        if (!checked.success) {
+          ctx.addIssue({
+            code: 'custom',
+            message: checked.error.issues[0]?.message ?? 'Approval timeout is not valid',
+            path: ['approvalTimeoutMs'],
+          });
+        }
+      }
       if (
         (data.executionType === 'api' || data.executionType === 'webhook') &&
         data.executionHandler
@@ -609,9 +619,11 @@ export function CapabilityForm({
     handleSubmit,
     setError,
     setValue,
+    clearErrors,
+    trigger,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = useForm<CapabilityFormData>({
     resolver: zodResolver(capabilityFormSchema),
     defaultValues: {
@@ -989,6 +1001,9 @@ export function CapabilityForm({
     try {
       const payload = {
         ...data,
+        // Unused while approval is off, so not saved: a value kept in the form
+        // for turning approval back on, or loaded with a row, is dropped here.
+        approvalTimeoutMs: data.requiresApproval ? data.approvalTimeoutMs : null,
         functionDefinition: effectiveFn,
         executionConfig: execConfigParsed,
         metadata: metadataParsed,
@@ -1024,7 +1039,9 @@ export function CapabilityForm({
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
           body: editPayload,
         });
-        reset(data);
+        // The baseline is what was saved: a timeout kept while approval was
+        // off was sent as null, so it must not come back as though stored.
+        reset({ ...data, approvalTimeoutMs: payload.approvalTimeoutMs });
         // The saved definition becomes the new baseline. Without this, deleting
         // a parameter and re-adding one with the same name and type in the same
         // session silently re-attached the deleted one's keywords.
@@ -1707,7 +1724,16 @@ export function CapabilityForm({
             <Switch
               id="requiresApproval"
               checked={currentRequiresApproval}
-              onCheckedChange={(v) => setValue('requiresApproval', v)}
+              onCheckedChange={(v) => {
+                // The timeout is only drawn, checked and saved while approval
+                // is on (t-1031). Its value stays until a save, so turning
+                // approval back on restores it. Off, its error goes with it,
+                // and the summary by Save follows; back on after a Save, it
+                // is checked again, so a value Save refused says so.
+                setValue('requiresApproval', v);
+                if (!v) clearErrors('approvalTimeoutMs');
+                else if (isSubmitted) void trigger('approvalTimeoutMs');
+              }}
             />
           </div>
 

@@ -47,6 +47,17 @@ import {
 // Shared Schemas
 // ============================================================================
 
+/**
+ * A capability's approval timeout, in ms: a whole number up to one hour. The
+ * create and update schemas use it, and so does the capability form, which
+ * checks it only while approval is on (t-1031).
+ */
+export const approvalTimeoutMsSchema = z
+  .number()
+  .int('Approval timeout must be an integer')
+  .positive('Approval timeout must be positive')
+  .max(3_600_000, 'Approval timeout must be at most 1 hour');
+
 /** Valid agent visibility values */
 export const agentVisibilitySchema = z.enum(['internal', 'public', 'invite_only']);
 
@@ -689,13 +700,7 @@ export const createCapabilitySchema = z
 
     requiresApproval: z.boolean().default(false),
 
-    approvalTimeoutMs: z
-      .number()
-      .int('Approval timeout must be an integer')
-      .positive('Approval timeout must be positive')
-      .max(3_600_000, 'Approval timeout must be at most 1 hour')
-      .nullable()
-      .optional(),
+    approvalTimeoutMs: approvalTimeoutMsSchema.nullable().optional(),
 
     rateLimit: z
       .number()
@@ -792,13 +797,7 @@ export const updateCapabilitySchema = z
 
     requiresApproval: z.boolean().optional(),
 
-    approvalTimeoutMs: z
-      .number()
-      .int('Approval timeout must be an integer')
-      .positive('Approval timeout must be positive')
-      .max(3_600_000, 'Approval timeout must be at most 1 hour')
-      .nullable()
-      .optional(),
+    approvalTimeoutMs: approvalTimeoutMsSchema.nullable().optional(),
 
     rateLimit: z
       .number()
