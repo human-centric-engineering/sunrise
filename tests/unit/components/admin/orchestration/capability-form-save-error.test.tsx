@@ -179,7 +179,7 @@ describe('CapabilityForm — failed save', () => {
       return screen.getByRole('switch', { name: /requires approval/i });
     }
 
-    it('stops blocking Save once hidden, and is not saved, but comes back with approval', async () => {
+    it('stops blocking Save once hidden, comes back with its error, and is not saved', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockResolvedValue(makeCapability());
       const user = userEvent.setup();
@@ -197,14 +197,23 @@ describe('CapabilityForm — failed save', () => {
       // passes through "Some fields need fixing." on the way.
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 
+      // Back on before a save: the value is restored, and says why Save refused it.
+      await user.click(await approvalSwitch());
+      expect(field('approvalTimeoutMs')).toHaveValue(5000000);
+      expect(
+        await screen.findByText('Approval timeout must be at most 1 hour')
+      ).toBeInTheDocument();
+      await user.click(await approvalSwitch());
+
       await user.click(screen.getByRole('button', { name: /save changes/i }));
 
       await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
       const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
       expect(options?.body).toMatchObject({ requiresApproval: false, approvalTimeoutMs: null });
 
+      // After the save, the form holds what was saved: no timeout.
       await user.click(await approvalSwitch());
-      expect(field('approvalTimeoutMs')).toHaveValue(5000000);
+      expect(field('approvalTimeoutMs')).toHaveValue(null);
     });
 
     it('keeps a stored timeout when approval is turned off and straight back on', async () => {
@@ -263,7 +272,9 @@ describe('CapabilityForm — failed save', () => {
 
       await user.click(screen.getByRole('button', { name: /save changes/i }));
 
-      expect(await screen.findByText('Must be at most 3,600,000 ms (1 hour)')).toBeInTheDocument();
+      expect(
+        await screen.findByText('Approval timeout must be at most 1 hour')
+      ).toBeInTheDocument();
       expect(apiClient.patch).not.toHaveBeenCalled();
     });
   });

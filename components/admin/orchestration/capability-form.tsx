@@ -61,7 +61,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
-import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
+import {
+  approvalTimeoutMsSchema,
+  capabilityFunctionDefinitionSchema,
+} from '@/lib/validations/orchestration';
 import { jsonEquals } from '@/lib/utils/json-equal';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { AiCapability } from '@/types/prisma';
@@ -144,17 +147,11 @@ function makeCapabilityFormSchema(mode: 'create' | 'edit') {
     .superRefine((data, ctx) => {
       const timeout = data.approvalTimeoutMs;
       if (data.requiresApproval && timeout !== null && timeout !== undefined) {
-        const problem = !Number.isInteger(timeout)
-          ? 'Must be a whole number of ms'
-          : timeout <= 0
-            ? 'Must be greater than 0'
-            : timeout > 3_600_000
-              ? 'Must be at most 3,600,000 ms (1 hour)'
-              : null;
-        if (problem) {
+        const checked = approvalTimeoutMsSchema.safeParse(timeout);
+        if (!checked.success) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: problem,
+            code: 'custom',
+            message: checked.error.issues[0]?.message ?? 'Approval timeout is not valid',
             path: ['approvalTimeoutMs'],
           });
         }
@@ -623,9 +620,10 @@ export function CapabilityForm({
     setError,
     setValue,
     clearErrors,
+    trigger,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = useForm<CapabilityFormData>({
     resolver: zodResolver(capabilityFormSchema),
     defaultValues: {
@@ -1041,7 +1039,9 @@ export function CapabilityForm({
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
           body: editPayload,
         });
-        reset(data);
+        // The baseline is what was saved: a timeout kept while approval was
+        // off was sent as null, so it must not come back as though stored.
+        reset({ ...data, approvalTimeoutMs: payload.approvalTimeoutMs });
         // The saved definition becomes the new baseline. Without this, deleting
         // a parameter and re-adding one with the same name and type in the same
         // session silently re-attached the deleted one's keywords.
@@ -1726,11 +1726,13 @@ export function CapabilityForm({
               checked={currentRequiresApproval}
               onCheckedChange={(v) => {
                 // The timeout is only drawn, checked and saved while approval
-                // is on. Its value stays, so turning approval back on restores
-                // it; its error goes first, so the summary by Save follows it
-                // out in the same render (t-1031).
-                if (!v) clearErrors('approvalTimeoutMs');
+                // is on (t-1031). Its value stays until a save, so turning
+                // approval back on restores it. Off, its error goes with it,
+                // and the summary by Save follows; back on after a Save, it
+                // is checked again, so a value Save refused says so.
                 setValue('requiresApproval', v);
+                if (!v) clearErrors('approvalTimeoutMs');
+                else if (isSubmitted) void trigger('approvalTimeoutMs');
               }}
             />
           </div>
