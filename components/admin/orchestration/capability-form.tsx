@@ -1707,7 +1707,14 @@ export function CapabilityForm({
             <Switch
               id="requiresApproval"
               checked={currentRequiresApproval}
-              onCheckedChange={(v) => setValue('requiresApproval', v)}
+              onCheckedChange={(v) => {
+                setValue('requiresApproval', v);
+                // The timeout is only drawn while approval is on. Clear it as
+                // approval goes off, and re-validate it, so a value typed then
+                // hidden (over the limit, say) never blocks Save from a field
+                // nobody can see, and no unused timeout is saved (t-1031).
+                if (!v) setValue('approvalTimeoutMs', null, { shouldValidate: true });
+              }}
             />
           </div>
 

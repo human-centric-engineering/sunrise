@@ -171,4 +171,34 @@ describe('CapabilityForm — failed save', () => {
     const { apiClient } = await import('@/lib/api/client');
     expect(apiClient.patch).not.toHaveBeenCalled();
   });
+
+  // t-1031: a timeout typed while approval was on, then hidden by turning it
+  // off, must not block every save with nothing on screen to fix.
+  it('clears the approval timeout when approval is turned off, so a hidden value never blocks Save', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue(makeCapability());
+    const user = userEvent.setup();
+    renderForm();
+    await user.click(screen.getByRole('tab', { name: /safety/i }));
+    await user.click(screen.getByRole('switch', { name: /requires approval/i }));
+    await user.type(field('approvalTimeoutMs'), '5000000');
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 field needs fixing.');
+
+    await user.click(screen.getByRole('switch', { name: /requires approval/i }));
+
+    // The summary goes with the field it was about, without another press.
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+    const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
+    expect(options?.body).toMatchObject({ requiresApproval: false, approvalTimeoutMs: null });
+
+    // Turning approval back on starts from an empty box, not the old value.
+    await user.click(screen.getByRole('switch', { name: /requires approval/i }));
+    expect(field('approvalTimeoutMs')).toHaveValue(null);
+  });
 });
