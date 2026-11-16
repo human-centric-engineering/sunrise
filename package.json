@@ -244,7 +244,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "postcss": "^8.5.32",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
