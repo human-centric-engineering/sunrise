@@ -52,7 +52,8 @@ release process.
   not permit, in every mode, with the new `PrivacyRefusalReason`s
   `confidential_blocked` and `confidential_not_permitted` and the code
   `privacy_confidential`; a classifier failure counts as flagged under the
-  three strict policies. New exports: `isConfidentialRefusal()`
+  three strict policies and refuses as `confidential_unchecked`. Knowledge
+  being ingested (`embedBatch`) is not classified. New exports: `isConfidentialRefusal()`
   (`privacy-stage.ts`) and `isTrustedProvider()` (`provider-manager.ts`).
   Chat leaves a refused turn, or the earlier message that held the content,
   out of later history; the embed widget now shows the warn note. Nothing is

@@ -48,6 +48,7 @@ import { PRIVACY_CONFIDENTIAL } from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   createPrivacyScope,
+  operatorContentScope,
   privacySummary,
   runInPrivacyScope,
   type PrivacyScope,
@@ -292,22 +293,27 @@ describe('a classifier that fails', () => {
   it.each(['approved_only', 'local_only', 'block'] as const)(
     'counts as flagged under %s: a call it could not check is refused',
     async (strict) => {
+      const { classifier, classify } = failingClassifier();
       seam.init.mockImplementation(() => {
-        registerSensitivityClassifier(failingClassifier().classifier);
+        registerSensitivityClassifier(classifier);
       });
       policies(strict, 'allow');
       const scope = newScope();
       // Nothing confidential in the text: the failure alone refuses it.
       const err = await refusal(run(chatCall(chat(PLAIN)), scope));
-      expect(err.reason).toBe(
-        strict === 'block' ? 'confidential_blocked' : 'confidential_not_permitted'
-      );
+      // Not told as confidential content, which nobody found: the generic
+      // refusal, left in the history, and never placed.
+      expect(err.reason).toBe('confidential_unchecked');
+      expect(err.code).toBe('privacy_refused');
+      expect(isConfidentialRefusal(err)).toBe(false);
+      expect(err.message).not.toMatch(/confidential/);
+      expect(err.found).toBeUndefined();
+      expect(classify).toHaveBeenCalledTimes(1);
       expect(privacySummary(scope)).toMatchObject({
         degraded: true,
         failedAdapters: ['acme.failing'],
+        refused: ['confidential_unchecked'],
       });
-      // No content was found, so there is no group to place it by.
-      expect(err.found).toBeUndefined();
     }
   );
 
@@ -492,8 +498,15 @@ describe('external classifiers', () => {
     policies('block', 'allow', 'off');
     const scope = newScope();
     const err = await refusal(run(chatCall(chat(PLAIN), 'local'), scope));
-    expect(err.reason).toBe('confidential_blocked');
+    expect(err.reason).toBe('confidential_unchecked');
     expect(privacySummary(scope)?.failedAdapters).toEqual(['privacy-stage.no-classifier']);
+  });
+
+  it('do not refuse a call with no text in it for want of one', async () => {
+    spy('external', true);
+    policies('block', 'allow', 'off');
+    const noText: LlmMessage[] = [{ role: 'user', content: [] }];
+    await expect(run(chatCall(noText, 'local'))).resolves.toBeDefined();
   });
 });
 
@@ -580,5 +593,35 @@ describe('review round 1 (t-1037)', () => {
     await expect(run(call, scope)).rejects.toMatchObject({ code: 'aborted' });
     expect(privacySummary(scope)?.confidential).toBeUndefined();
     expect(privacySummary(scope)?.refused).toBeUndefined();
+  });
+});
+
+describe('review round 2 (t-1037)', () => {
+  it("does not classify the operator's own content (knowledge being ingested), whatever the policy", async () => {
+    policies('block', 'block');
+    const scope = operatorContentScope('knowledge-embedding');
+    const call = embeddingCall([`HR handbook: ${HEALTH}. Redundancies are handled by HR.`]);
+    await expect(run(call, scope)).resolves.toEqual({ args: call.args });
+  });
+
+  it("keeps an agent's settings for its own ingestion: a child of the current scope", () => {
+    const turn = newScope();
+    const ingestion = runInPrivacyScope(turn, () => operatorContentScope('knowledge-embedding'));
+    expect(ingestion).toMatchObject({ agentId: 'agent-1', operatorContent: true, parent: turn });
+    expect(operatorContentScope('x')).toMatchObject({
+      recordsNowhere: true,
+      operatorContent: true,
+    });
+  });
+
+  it('asks whether the provider is trusted only when a decision needs it', async () => {
+    policies('approved_only', 'approved_only');
+    const plain = chatCall(chat(PLAIN));
+    await run(plain);
+    // A recorded scope, nothing found: nothing to decide, nothing to ask.
+    expect(plain.isTrusted).not.toHaveBeenCalled();
+    const flagged = chatCall(chat(HEALTH), 'trusted');
+    await run(flagged);
+    expect(flagged.isTrusted).toHaveBeenCalledTimes(1);
   });
 });

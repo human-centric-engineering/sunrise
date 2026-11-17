@@ -19,6 +19,7 @@ import {
 } from '@/lib/orchestration/llm/agent-resolver';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { operatorContentScope, runInPrivacyScope } from '@/lib/orchestration/privacy/scope';
 
 /**
  * Static fallback embedding model. Only used when neither
@@ -852,6 +853,19 @@ export async function embedBatch(
   batchSize: number = DEFAULT_BATCH_SIZE,
   inputType?: 'document' | 'query',
   attribution?: EmbeddingAttribution
+): Promise<EmbedBatchResult> {
+  // Knowledge being ingested is the operator's content, not a user's: the
+  // privacy layer does not classify it for confidential content (§130).
+  return runInPrivacyScope(operatorContentScope('knowledge-embedding'), () =>
+    embedBatchInScope(texts, batchSize, inputType, attribution)
+  );
+}
+
+async function embedBatchInScope(
+  texts: string[],
+  batchSize: number,
+  inputType: 'document' | 'query' | undefined,
+  attribution: EmbeddingAttribution | undefined
 ): Promise<EmbedBatchResult> {
   const provider = await resolveProvider();
   const allEmbeddings: number[][] = [];

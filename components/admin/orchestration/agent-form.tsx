@@ -21,6 +21,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
 import {
+  CONFIDENTIAL_GROUP_DESCRIPTIONS,
   CONFIDENTIAL_POLICY_LABELS,
   CONFIDENTIAL_TIGHTENING_POLICIES,
   isConfidentialTighteningPolicy,
@@ -380,11 +381,11 @@ type ConfidentialField = (typeof CONFIDENTIAL_FIELDS)[number];
 const CONFIDENTIAL_FIELD_TEXT: Record<ConfidentialField, { label: string; help: string }> = {
   privacyConfidentialPersonal: {
     label: 'Confidential content: personal',
-    help: "Someone's health, ethnicity, religion, politics, trade-union membership, sexuality or criminal record, an HR or legal matter about them, or their debts.",
+    help: CONFIDENTIAL_GROUP_DESCRIPTIONS.personal,
   },
   privacyConfidentialCommercial: {
     label: 'Confidential content: commercial',
-    help: "The organisation's own secrets: unannounced or embargoed plans, a deal, restructuring or redundancies, a business in trouble, a legal dispute.",
+    help: CONFIDENTIAL_GROUP_DESCRIPTIONS.commercial,
   },
 };
 

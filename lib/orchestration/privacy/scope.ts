@@ -96,6 +96,12 @@ export interface PrivacyScopeInit {
    */
   recordsNowhere?: boolean;
   /**
+   * What this scope's calls send is the operator's own content (knowledge
+   * being ingested), not what a user wrote: not classified for confidential
+   * content (§130). See {@link operatorContentScope}.
+   */
+  operatorContent?: boolean;
+  /**
    * Loads more known values (the user's own name and email, say), once per
    * scope and only when a call is actually scanned, so mode `off` costs
    * nothing. A loader that fails leaves just `knownValues`: tier B then finds
@@ -118,6 +124,8 @@ export interface PrivacyScope {
   loadKnownValues?: () => Promise<readonly KnownValue[]>;
   /** See {@link PrivacyScopeInit.recordsNowhere}. */
   recordsNowhere?: boolean;
+  /** See {@link PrivacyScopeInit.operatorContent}. */
+  operatorContent?: boolean;
   /** The loader's result, once asked for. Shared with child scopes. */
   loaded?: Promise<readonly KnownValue[]>;
   /**
@@ -171,6 +179,7 @@ export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope
     knownValues: frozenValues(init.knownValues ?? []),
     ...(init.loadKnownValues ? { loadKnownValues: init.loadKnownValues } : {}),
     ...(init.recordsNowhere ? { recordsNowhere: true } : {}),
+    ...(init.operatorContent ? { operatorContent: true } : {}),
     tally: emptyTally(),
     ...(parent ? { parent } : {}),
   };
@@ -224,6 +233,24 @@ export function agentPrivacyScope(
     ? childPrivacyScope(parent, `${parent.scopeId}:agent:${agentId}`)
     : createPrivacyScope({ scopeId: `agent:${agentId}` });
   bindPrivacyScope(scope, { agentId });
+  return scope;
+}
+
+/**
+ * A scope for calls that send the operator's own content: knowledge being
+ * chunked and embedded (§130). Inside the current scope when there is one, so
+ * its agent's and org's privacy settings still apply and what it counts is
+ * recorded there; one that records nowhere when there is not, as an unscoped
+ * call's would. Its calls are not classified for confidential content: the
+ * policies are about what users write, and an HR handbook would otherwise
+ * fail to upload under a strict policy for saying "redundancies".
+ */
+export function operatorContentScope(scopeId: string): PrivacyScope {
+  const parent = currentPrivacyScope();
+  const scope = parent
+    ? childPrivacyScope(parent, `${parent.scopeId}:${scopeId}`)
+    : createPrivacyScope({ scopeId, recordsNowhere: true });
+  scope.operatorContent = true;
   return scope;
 }
 

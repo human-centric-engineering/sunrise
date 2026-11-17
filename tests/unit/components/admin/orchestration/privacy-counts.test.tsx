@@ -202,6 +202,13 @@ describe('PrivacyCounts confidential content', () => {
     );
   });
 
+  it('names a refusal because a classifier failed, without saying anything was found', () => {
+    render(<PrivacyCounts summary={{ ...offOnly, refused: ['confidential_unchecked'] }} />);
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      'refused: a confidential-content classifier failed under a strict policy'
+    );
+  });
+
   it('names a block-policy refusal, and shows a decision it does not know as written', () => {
     render(
       <PrivacyCounts

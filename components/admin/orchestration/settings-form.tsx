@@ -32,6 +32,7 @@ import {
   type CoreEntityType,
 } from '@/lib/privacy/adapters/types';
 import {
+  CONFIDENTIAL_GROUP_DESCRIPTIONS,
   CONFIDENTIAL_POLICY_LABELS,
   EMBEDDINGS_POLICIES,
   type EmbeddingsPolicy,
@@ -1037,10 +1038,8 @@ export function SettingsForm({
               label="Personal"
               help={
                 <>
-                  Someone&apos;s health, ethnicity, religion, politics, trade-union membership,
-                  sexuality or criminal record, an HR or legal matter about them, or their debts.
-                  The person it is about did not choose to share it with an AI provider, and the law
-                  puts duties on whoever does.
+                  {CONFIDENTIAL_GROUP_DESCRIPTIONS.personal} The person it is about did not choose
+                  to share it with an AI provider, and the law puts duties on whoever does.
                 </>
               }
             />
@@ -1050,11 +1049,9 @@ export function SettingsForm({
               label="Commercial"
               help={
                 <>
-                  Your organisation&apos;s own secrets: unannounced or embargoed plans, a deal,
-                  restructuring or redundancies, a business in trouble, a legal dispute. A provider
-                  you hold a contract with can be ticked &ldquo;Trusted with confidential
-                  content&rdquo; on its provider page, for &ldquo;trusted or local providers
-                  only&rdquo;.
+                  {CONFIDENTIAL_GROUP_DESCRIPTIONS.commercial} A provider you hold a contract with
+                  can be ticked &ldquo;Trusted with confidential content&rdquo; on its provider
+                  page, for &ldquo;trusted or local providers only&rdquo;.
                 </>
               }
             />

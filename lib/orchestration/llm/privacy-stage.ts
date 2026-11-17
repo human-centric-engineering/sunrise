@@ -123,6 +123,7 @@ export type PrivacyRefusalReason =
   | 'embeddings_local_only'
   | 'confidential_blocked'
   | 'confidential_not_permitted'
+  | 'confidential_unchecked'
   | 'stage_error';
 
 const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
@@ -144,6 +145,8 @@ const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
     'The LLM privacy layer refused the call: it held confidential content of a group whose policy is block, or a confidential-content classifier failed under that policy. Choose a looser policy for the group in the orchestration settings or on the agent, or leave the agent as it is if the content should never be sent.',
   confidential_not_permitted:
     'The LLM privacy layer refused the call: it held confidential content of a group whose policy sends it only to local providers (local_only) or to trusted and local ones (approved_only), or a confidential-content classifier failed under that policy, and the call\'s provider is neither. Put the agent on a local provider, tick the provider "Trusted with confidential content" if your contract with it covers this content, or loosen the group\'s policy.',
+  confidential_unchecked:
+    'The LLM privacy layer refused the call: a confidential-content classifier failed or ran out of time, and a group whose policy is approved_only, local_only or block would have refused the call had it found that content, so a call it could not check is not sent. See the server log for which classifier; it is tried again on the next call.',
   stage_error:
     'The LLM privacy layer refused the call because of an internal error. Nothing was sent. See the server log.',
 };
@@ -536,6 +539,76 @@ async function confidentialVerdict(
 }
 
 /**
+ * The backstop (§130): classify the call, then refuse it if a group it holds
+ * has a policy that does not permit its provider. Runs after the policy is
+ * resolved and before the returns for `off` and a skipped local provider, so
+ * it holds in every mode. Records what was found and what was decided.
+ */
+async function applyConfidentialPolicy(
+  call: PrivacyStageCall,
+  policy: PrivacyPolicy,
+  opts: {
+    scope: PrivacyScope;
+    orgId: string | undefined;
+    abandoned: AbortSignal | undefined;
+    ephemeral: boolean;
+    forwardedUntouched: boolean;
+    /** Whether any registered classifier is not external. */
+    anyInHouse: boolean;
+  }
+): Promise<void> {
+  const { scope, orgId, abandoned, ephemeral, forwardedUntouched, anyInHouse } = opts;
+  const isTrusted = trustedOnce(call);
+  // Whether a policy could refuse this call matters only to a call that
+  // records nowhere (classified only if so) and to one forwarded untouched
+  // (external classifiers run only if so): elsewhere, asking would look the
+  // provider up for nothing.
+  const couldRefuse =
+    (ephemeral || forwardedUntouched) &&
+    (await confidentialPolicyCouldRefuse(policy, call, isTrusted));
+  // In a scope that records nowhere, nothing reads the result unless a
+  // policy could act on it.
+  if (ephemeral && !couldRefuse) return;
+  // Recorded under `off` when the call goes out unscanned: the summary's mode
+  // is the strictest any SCANNED call ran under, and a skipped local call was
+  // not scanned, so it must not raise it.
+  const recordedMode = forwardedUntouched ? 'off' : policy.mode;
+  // External classifiers see a call forwarded untouched only when it is going
+  // to a remote provider anyway and a policy could refuse it there: without
+  // them, a fork whose only classifier is external would have its strict
+  // policy enforced by nothing (t-1037 review). A local call never goes to one.
+  const inHouseOnly = forwardedUntouched && !(couldRefuse && !call.isLocal);
+  const classifying: ClassifyOptions = { scope, orgId, abandoned, inHouseOnly };
+  let classification = await classifyCall(call, recordedMode, classifying);
+  // A policy that could refuse a call with text in it, and no classifier able
+  // to look at it: fail closed, as for a classifier that failed.
+  if (couldRefuse && inHouseOnly && !anyInHouse && sensitivityParts(call).length > 0) {
+    classification = {
+      ...classification,
+      failedAdapters: [...classification.failedAdapters, SENSITIVITY_NO_CLASSIFIER],
+    };
+    recordPrivacySensitivity(scope, {
+      mode: recordedMode,
+      categories: [],
+      failedAdapters: [SENSITIVITY_NO_CLASSIFIER],
+    });
+  }
+  const verdict = await confidentialVerdict(policy, classification, call, isTrusted);
+  if (verdict.kind === 'send') recordConfidentialDecision(scope, verdict.decisions);
+  if (verdict.kind !== 'refuse') return;
+  // A call its caller gave up on is a cancel, not a refusal.
+  if (abandoned?.aborted) throw new CallAbandonedError();
+  recordConfidentialDecision(scope, verdict.decisions);
+  // Refused only because a classifier failed: nothing was found, so nothing
+  // is placed, and the reader is not told their message held something.
+  const found = verdict.groups.some((g) => classification.groups.has(g));
+  const reason = found ? verdict.reason : 'confidential_unchecked';
+  const location = found ? await locateConfidential(call, verdict.groups, classifying) : undefined;
+  if (abandoned?.aborted) throw new CallAbandonedError();
+  throw refuse(reason, call, opts.scope, recordedMode, classification.failedAdapters, location);
+}
+
+/**
  * Which messages of a refused chat call held content of the refused groups
  * (§130): positions only, never what was found, so the chat handler can leave
  * an earlier message out of what later turns send (§127 t-1017's placement).
@@ -567,6 +640,7 @@ async function locateConfidential(
     // A few messages at a time, not the whole history at once: an external
     // classifier would otherwise get one request per message in a burst.
     const worker = async (): Promise<void> => {
+      // One run that throws ends the pass: the others stop taking messages.
       for (let next = pending.shift(); next; next = pending.shift()) {
         const [index, parts] = next;
         const { categories } = await runSensitivityClassifiers(
@@ -582,7 +656,14 @@ async function locateConfidential(
         results.push({ index, groups: categories.map((c) => c.group) });
       }
     };
-    await Promise.all(Array.from({ length: LOCATE_CONCURRENCY }, worker));
+    await Promise.all(
+      Array.from({ length: LOCATE_CONCURRENCY }, () =>
+        worker().catch((err: unknown) => {
+          pending.length = 0;
+          throw err;
+        })
+      )
+    );
     // A message a classifier failed on is not placed, but the ones found are:
     // left out, they stop refusing later turns, and a failed one is tried
     // again on the next refusal. Placing nothing would keep them all.
@@ -798,67 +879,25 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       throw refuse('embeddings_local_only', call, scope, mode);
     }
 
-    // A call the layer forwards untouched is not sent to an external
-    // classifier either: that would be the one place its text went beyond
-    // the provider the operator chose (a local one, or any under `off`).
-    // That holds under a strict confidential-content policy too: the policy
-    // narrows where confidential content may go, and must not widen it to a
-    // classifier's vendor. In-process and self-hosted classifiers decide.
+    // A call the layer forwards untouched (mode `off`, or a local provider it
+    // skips) is not sent to an external classifier either: that would be the
+    // one place its text went beyond the provider the operator chose. One
+    // exception, below: a remote call a confidential-content policy could
+    // refuse.
     const forwardedUntouched =
       policy.mode === 'off' || (call.isLocal && !policy.protectLocalProviders);
-    // A call in a scope that records nowhere is classified only when a
-    // confidential-content policy could refuse it: nothing else reads the
-    // result, and an external classifier would be sent its text for nothing.
-    const isTrusted = trustedOnce(call);
-    const couldRefuse = await confidentialPolicyCouldRefuse(policy, call, isTrusted);
-    if (!scoped.ephemeral || couldRefuse) {
-      // Recorded under `off` when the call goes out unscanned: the summary's
-      // mode is the strictest any SCANNED call ran under, and a skipped local
-      // call was not scanned, so it must not raise it.
-      const recordedMode = forwardedUntouched ? 'off' : policy.mode;
-      // External classifiers run on a call forwarded untouched only when a
-      // policy could refuse it and its text is going to a remote provider
-      // anyway: without them, a fork whose only classifier is external would
-      // have its strict policy enforced by nothing (§130 t-1037, review). To
-      // a local provider they still never run.
-      const inHouseOnly = forwardedUntouched && !(couldRefuse && !call.isLocal);
-      const classifying: ClassifyOptions = { scope, orgId, abandoned, inHouseOnly };
-      let classification = await classifyCall(call, recordedMode, classifying);
-      // A policy that could refuse, and no classifier able to look: fail
-      // closed, as for a classifier that failed.
-      if (
-        couldRefuse &&
-        !adapters.classifiers.some((c) => !inHouseOnly || c.egress !== 'external')
-      ) {
-        classification = {
-          ...classification,
-          failedAdapters: [...classification.failedAdapters, SENSITIVITY_NO_CLASSIFIER],
-        };
-        recordPrivacySensitivity(scope, {
-          mode: recordedMode,
-          categories: [],
-          failedAdapters: [SENSITIVITY_NO_CLASSIFIER],
-        });
-      }
-      // The backstop (§130): after classifying, before the returns for `off`
-      // and a skipped local provider, so it holds in every mode.
-      const verdict = await confidentialVerdict(policy, classification, call, isTrusted);
-      if (verdict.kind === 'refuse') {
-        // A call its caller gave up on is a cancel, not a refusal.
-        if (abandoned?.aborted) throw new CallAbandonedError();
-        recordConfidentialDecision(scope, verdict.decisions);
-        const found = await locateConfidential(call, verdict.groups, classifying);
-        if (abandoned?.aborted) throw new CallAbandonedError();
-        throw refuse(
-          verdict.reason,
-          call,
-          scope,
-          recordedMode,
-          classification.failedAdapters,
-          found
-        );
-      }
-      if (verdict.kind === 'send') recordConfidentialDecision(scope, verdict.decisions);
+    // What the operator sent itself (knowledge being ingested) is not
+    // classified: the policies are about what users write (spec § What is
+    // classified).
+    if (!scope.operatorContent) {
+      await applyConfidentialPolicy(call, policy, {
+        scope,
+        orgId,
+        abandoned,
+        ephemeral: scoped.ephemeral,
+        forwardedUntouched,
+        anyInHouse: adapters.classifiers.some((c) => c.egress !== 'external'),
+      });
     }
 
     if (policy.mode === 'off') return unchanged;

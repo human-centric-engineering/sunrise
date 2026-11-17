@@ -147,6 +147,17 @@ export const CONFIDENTIAL_POLICY_LABELS: Record<ConfidentialPolicy, string> = {
 };
 
 /**
+ * What each group covers, as the settings page and the agent form say it
+ * (§130). One wording for both, kept beside the policy labels.
+ */
+export const CONFIDENTIAL_GROUP_DESCRIPTIONS: Record<SensitivityGroup, string> = {
+  personal:
+    "Someone's health, ethnicity, religion, politics, trade-union membership, sexuality or criminal record, an HR or legal matter about them, or their debts.",
+  commercial:
+    "The organisation's own secrets: unannounced or embargoed plans, a deal, restructuring or redundancies, a business in trouble, a legal dispute.",
+};
+
+/**
  * The confidential-content policies an agent can require: every one but
  * `allow`. An agent only ever tightens the install's policy, so `allow` would
  * say nothing; "no setting" is `null`, which inherits.

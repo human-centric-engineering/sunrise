@@ -34,6 +34,7 @@ const REFUSAL_TEXT: Record<PrivacyRefusalReason, string> = {
   confidential_blocked: 'confidential content (block policy)',
   confidential_not_permitted:
     "confidential content its group's policy does not send to this provider",
+  confidential_unchecked: 'a confidential-content classifier failed under a strict policy',
   app_init_failed: "the app's privacy adapters failed to load",
   core_install_failed: 'a built-in privacy adapter failed to load',
   settings_unreadable: 'the stored privacy mode is unreadable',
