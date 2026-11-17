@@ -80,6 +80,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
     createdBy: 'cmjbv4i3x00003wsloputgwul',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),

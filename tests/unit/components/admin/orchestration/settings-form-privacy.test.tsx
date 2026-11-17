@@ -77,10 +77,10 @@ describe('the LLM privacy card', () => {
     expect(within(card()).getByText(/it is not anonymisation/i)).toBeInTheDocument();
   });
 
-  it('gives each of its four fields a help popover', () => {
+  it('gives each of its six fields a help popover', () => {
     render(<SettingsForm initialSettings={settings()} />);
     const help = within(card()).getAllByRole('button', { name: 'More information' });
-    expect(help).toHaveLength(4);
+    expect(help).toHaveLength(6);
     // One beside each field: the mode, the types, local providers, embeddings.
     expect(within(card()).getByText('Privacy mode').contains(help[0])).toBe(true);
     expect(within(card()).getByText('What to look for').contains(help[1])).toBe(true);
@@ -90,6 +90,9 @@ describe('the LLM privacy card', () => {
         .contains(help[2])
     ).toBe(true);
     expect(within(card()).getByText('Embeddings').contains(help[3])).toBe(true);
+    // And one beside each confidential-content group (§130).
+    expect(within(card()).getByText('Personal').contains(help[4])).toBe(true);
+    expect(within(card()).getByText('Commercial').contains(help[5])).toBe(true);
   });
 
   it('offers only the modes this version can apply', async () => {

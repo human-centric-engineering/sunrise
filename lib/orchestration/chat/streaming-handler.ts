@@ -3279,16 +3279,20 @@ export class StreamingChatHandler {
           }
           if (placed) {
             // Where, never what: the kinds of source and how many rows.
-            log.warn('Chat turn refused for personal details or confidential content', {
-              conversationId,
-              kind: refusalKind,
-              code: placed.code,
-              turn: placed.turn,
-              earlierRows: placed.earlierRowIds.length,
-              summary: placed.summary,
-              memories: placed.memories.length,
-              setup: placed.setup,
-            });
+            log.warn(
+              refusalKind === 'confidential'
+                ? 'Chat turn refused for confidential content'
+                : 'Chat turn refused for personal details',
+              {
+                conversationId,
+                code: placed.code,
+                turn: placed.turn,
+                earlierRows: placed.earlierRowIds.length,
+                summary: placed.summary,
+                memories: placed.memories.length,
+                setup: placed.setup,
+              }
+            );
           }
           const code = placed?.code ?? err.code;
           await persistErrorMarker(code);

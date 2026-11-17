@@ -122,6 +122,9 @@ describe('classifying in mode off', () => {
       embeddingCalls: 0,
       embeddingCounts: {},
       sensitivity: { personal: ['health'] },
+      // The install's policy for the group (here the upgrade default, allow)
+      // sent it (t-1037).
+      confidential: { personal: 'allowed' },
     });
   });
 

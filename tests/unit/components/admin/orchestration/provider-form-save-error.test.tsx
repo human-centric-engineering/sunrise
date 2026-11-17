@@ -44,6 +44,7 @@ const PROVIDER = {
   baseUrl: null,
   isActive: true,
   isLocal: false,
+  trustedForConfidential: false,
   timeoutMs: null,
   maxRetries: null,
   jurisdiction: null,

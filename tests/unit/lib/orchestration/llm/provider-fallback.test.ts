@@ -55,6 +55,7 @@ function makeConfig(slug: string) {
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
     createdBy: 'user-1',
     createdAt: new Date(),
     updatedAt: new Date(),

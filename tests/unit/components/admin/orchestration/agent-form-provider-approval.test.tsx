@@ -51,6 +51,7 @@ function provider(slug: string, name: string, approvedForOrg?: boolean | null): 
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
     approvedForOrg,
   };
 }

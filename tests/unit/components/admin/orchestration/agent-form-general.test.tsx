@@ -68,6 +68,7 @@ const MOCK_PROVIDERS = [
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
   },
 ];
 
@@ -230,6 +231,8 @@ describe('AgentForm — General tab', () => {
         outputGuardMode: null,
         citationGuardMode: null,
         privacyMode: null,
+        privacyConfidentialPersonal: null,
+        privacyConfidentialCommercial: null,
         maxHistoryTokens: null,
         maxHistoryMessages: null,
         retentionDays: null,

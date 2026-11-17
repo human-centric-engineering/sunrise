@@ -540,6 +540,8 @@ describe('Admin Orchestration — /settings', () => {
         privacyIgnoredEntityTypes: { value: ['DATE'] },
         privacyProtectLocalProviders: { value: true },
         privacyEmbeddingsPolicy: { value: 'local_only' },
+        privacyConfidentialPersonal: { value: 'local_only' },
+        privacyConfidentialCommercial: { value: 'approved_only' },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.
@@ -573,6 +575,10 @@ describe('Admin Orchestration — /settings', () => {
         privacyIgnoredEntityTypes: ['DATE'],
         privacyProtectLocalProviders: true,
         privacyEmbeddingsPolicy: 'local_only',
+        // Left out, a first save would take the new-install column default
+        // (warn) for a policy the admin chose (§130).
+        privacyConfidentialPersonal: 'allow',
+        privacyConfidentialCommercial: 'block',
       };
 
       const res = await PATCH(makePatch(privacy));

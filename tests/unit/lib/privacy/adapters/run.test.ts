@@ -397,6 +397,8 @@ const POLICY: PrivacyPolicy = {
   ignoredEntityTypes: ['DATE'],
   protectLocalProviders: false,
   onDetectorFailure: 'fallback',
+  confidentialPersonal: 'allow',
+  confidentialCommercial: 'allow',
 };
 const INPUT = { providerSlug: 'anthropic', isLocalProvider: false, agentId: 'hr-bot' };
 
