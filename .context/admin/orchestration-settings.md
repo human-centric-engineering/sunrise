@@ -29,17 +29,21 @@ Agents can override both guard modes in their own configuration. "None" maps to 
 
 #### LLM privacy
 
-| Field                        | Type       | Description                                                                                                    |
-| ---------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------- |
-| Privacy mode                 | Select     | `off` or `detect` (count only). Default `off` on an upgraded install, `detect` on a new one                    |
-| What to look for             | Checkboxes | One per core entity type; ticked types are looked for. Saved as `privacyIgnoredEntityTypes`, the unticked ones |
-| Apply to local providers too | Checkbox   | Default off: a provider marked local is skipped                                                                |
+| Field                                      | Type       | Description                                                                                                                                                                                                                                                               |
+| ------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Privacy mode                               | Select     | `off` or `detect` (count only). Default `off` on an upgraded install, `detect` on a new one                                                                                                                                                                               |
+| What to look for                           | Checkboxes | One per core entity type; ticked types are looked for. Saved as `privacyIgnoredEntityTypes`, the unticked ones                                                                                                                                                            |
+| Apply to local providers too               | Checkbox   | Default off: a provider marked local is skipped                                                                                                                                                                                                                           |
+| Confidential content: Personal, Commercial | Selects    | Where a message holding that group's confidential content may go (§130): allow, warn, trusted or local providers only, local providers only, block. Default `allow` for both on an upgraded install; `warn` Personal on a new one. Each agent can only make them stricter |
 
 The card says the layer lowers exposure and is not anonymisation. A stored mode
 the page cannot show (one a later version wrote, or an unreadable one) is
 named in a warning and sent back only if the admin chooses another, so saving
 anything else leaves it alone. A fork detector's own type that the row ignores
-is kept on save. The config backup carries all three; restoring a backup from before them leaves the current values alone, and a mode this version cannot apply is skipped with a warning. See
+is kept on save. The confidential-content selects sit under their own
+heading, which says what a phrase list misses; "trusted" means a provider
+ticked "Trusted with confidential content" on its provider page. The config
+backup carries all three; restoring a backup from before them leaves the current values alone, and a mode this version cannot apply is skipped with a warning. See
 [LLM Privacy Layer](../privacy/llm-privacy-layer.md).
 
 #### Limits
