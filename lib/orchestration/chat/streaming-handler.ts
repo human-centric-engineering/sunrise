@@ -59,6 +59,11 @@ import {
 } from '@/lib/orchestration/llm/provider-manager';
 import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  keepFlaggedGroups,
+  readFlaggedGroups,
+  routeConfidentialTurn,
+} from '@/lib/orchestration/llm/confidential-route';
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
 import {
@@ -473,6 +478,20 @@ export const CONFIDENTIAL_NOTE_CODES = {
   commercial: 'confidential_commercial',
 } as const satisfies Record<SensitivityGroup, string>;
 
+/** The `warning` event code for the note that a conversation moved (§130 t-1038). */
+export const CONFIDENTIAL_MOVED_CODE = 'confidential_moved';
+
+/**
+ * What it says, by where it moved. Never what was found. Shown once per
+ * conversation: later turns stay on the model it moved to.
+ */
+export const CONFIDENTIAL_MOVED_NOTES: Record<'local' | 'trusted', string> = {
+  local:
+    'This conversation includes confidential information, so it is now answered by an AI model your organisation runs itself.',
+  trusted:
+    'This conversation includes confidential information, so it is now answered by an AI provider your organisation trusts with it.',
+};
+
 /** What the note says. Never what was found: a group, and that it went to the provider. */
 export const CONFIDENTIAL_NOTES: Record<SensitivityGroup, string> = {
   personal:
@@ -551,7 +570,7 @@ export class StreamingChatHandler {
     );
     // The conversation the turn's `warn` note is kept on, once `runInner` has
     // loaded it, as its owner's.
-    const noted: NoteTarget = { conversationId: null };
+    const noted: NoteTarget = { conversationId: null, movedTo: null };
     const log = turnLogger(request);
     yield* withPaidCallHold(
       hold,
@@ -635,9 +654,11 @@ export class StreamingChatHandler {
       // Resolve provider + model once. Empty agent.provider/agent.model fall
       // back to the active provider with a key set + the system default-model
       // map; explicit values pass through unchanged.
-      const resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
-      const resolvedModel = resolvedBinding.model;
-      const resolvedFallbackProviders = resolvedBinding.fallbacks;
+      // `let`: a turn holding confidential content may move to the model for
+      // confidential messages once its history is read (§130 t-1038, below).
+      let resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
+      let resolvedModel = resolvedBinding.model;
+      let resolvedFallbackProviders = resolvedBinding.fallbacks;
       setSpanAttributes(chatSpan, {
         [SUNRISE_AGENT_ID]: agent.id,
         [GEN_AI_REQUEST_MODEL]: resolvedModel,
@@ -820,36 +841,16 @@ export class StreamingChatHandler {
         // attachment capability the request needs. Vision and documents
         // are intrinsic chat-model capabilities (no fallback model), so
         // a mismatch is a configuration error the user must resolve.
-        const requiredCapabilities: AttachmentCapability[] = [];
-        if (hasImageAttachments) requiredCapabilities.push('vision');
-        if (hasPdfAttachments) requiredCapabilities.push('documents');
-        try {
-          await assertModelSupportsAttachments(
-            resolvedBinding.providerSlug,
-            resolvedModel,
-            requiredCapabilities
-          );
-        } catch (err) {
-          if (err instanceof ProviderError && err.code === 'CAPABILITY_NOT_SUPPORTED') {
-            if (hasImageAttachments && !hasPdfAttachments) {
-              yield errorEvent(
-                'IMAGE_NOT_SUPPORTED',
-                "This agent's model can't process images. Switch the model to one with vision support."
-              );
-            } else if (hasPdfAttachments && !hasImageAttachments) {
-              yield errorEvent(
-                'PDF_NOT_SUPPORTED',
-                "This agent's model can't process PDFs. Switch the model to one with document support."
-              );
-            } else {
-              yield errorEvent(
-                'IMAGE_NOT_SUPPORTED',
-                "This agent's model can't process all of the attached files. Switch the model or remove unsupported attachments."
-              );
-            }
-            return;
-          }
-          throw err;
+        const unsupported = await attachmentGateError(
+          resolvedBinding.providerSlug,
+          resolvedModel,
+          hasImageAttachments,
+          hasPdfAttachments,
+          "This agent's model"
+        );
+        if (unsupported) {
+          yield unsupported;
+          return;
         }
       }
 
@@ -924,6 +925,53 @@ export class StreamingChatHandler {
             'conversation_length_cap_reached',
             `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
           );
+        }
+      }
+
+      // The model for confidential messages (§130 t-1038). A turn whose
+      // agent's provider a group's policy does not permit for what the
+      // conversation holds is answered on it instead: chosen here, before
+      // anything is built from the binding, so the history budget, the
+      // summariser, the cost log and the trace all use the model that
+      // answers. The stage cannot do it: by then the provider and model are
+      // fixed, and a fallback is sent the primary's model id. Before the
+      // user's message is saved, so a turn the new model cannot serve ends
+      // without leaving it unanswered.
+      const route = await routeConfidentialTurn({
+        binding: resolvedBinding,
+        messages: [
+          ...history.map((m) => ({ role: m.role, content: m.content })),
+          { role: isOpeningTurn ? 'system' : 'user', content: turnText },
+        ],
+        sticky: readFlaggedGroups(conversation.metadata),
+        ...(request.signal ? { signal: request.signal } : {}),
+      });
+      await keepFlaggedGroups(
+        { id: conversation.id, ...conversationOwner(request.userId) },
+        route.found
+      );
+      resolvedBinding = route.binding;
+      resolvedModel = route.binding.model;
+      resolvedFallbackProviders = route.binding.fallbacks;
+      if (route.kind === 'move') {
+        noted.movedTo = route.to;
+        setSpanAttributes(chatSpan, { [GEN_AI_REQUEST_MODEL]: resolvedModel });
+        log.info('Chat turn moved to the model for confidential messages', {
+          agentSlug: request.agentSlug,
+          conversationId: conversation.id,
+          provider: resolvedBinding.providerSlug,
+        });
+        // The attachment gate above asked about the agent's model.
+        const unsupported = await attachmentGateError(
+          resolvedBinding.providerSlug,
+          resolvedModel,
+          hasImageAttachments,
+          hasPdfAttachments,
+          'The model for confidential messages'
+        );
+        if (unsupported) {
+          yield unsupported;
+          return;
         }
       }
 
@@ -1150,6 +1198,9 @@ export class StreamingChatHandler {
           {
             ...(previousSummary ? { previousSummary } : {}),
             ...(resolvedBinding.provenance ? { provenance: resolvedBinding.provenance } : {}),
+            // A moved turn's summary holds what moved it: made on the model
+            // for confidential messages, not the routing default (§130 t-1038).
+            ...(route.kind === 'move' ? { model: resolvedModel } : {}),
             // The roster table in `.context/orchestration/capabilities.md`
             // names this boundary as carrying the caller's tags. It has to
             // actually carry them, or the doc is asserting something false
@@ -3487,7 +3538,7 @@ export class StreamingChatHandler {
         shown = true;
         if (noted.conversationId) {
           try {
-            yield* this.confidentialNotes(scope, noted.conversationId, userId, log);
+            yield* this.confidentialNotes(scope, noted.conversationId, noted.movedTo, userId, log);
           } catch (err) {
             log.warn('Failed to show the confidential-content note', {
               conversationId: noted.conversationId,
@@ -3501,28 +3552,36 @@ export class StreamingChatHandler {
   }
 
   /**
-   * The note a `warn` confidential-content policy shows (§130, owner ruling
-   * 2026-11-17: a note after sending). Once per conversation per group: a
-   * conversation flagged once stays flagged, because each call resends the
-   * message that was flagged, so keying on "this turn's calls held it" would
-   * repeat it on every turn. The groups noted are kept on the conversation
-   * (`metadata.confidentialNoted`), so the note survives the history being
+   * The notes a turn holding confidential content shows (§130). Two kinds:
+   *
+   * - **warn** (owner ruling 2026-11-17: a note after sending), once per
+   *   conversation per group. A conversation flagged once stays flagged,
+   *   because each call resends the message that was flagged, so keying on
+   *   "this turn's calls held it" would repeat it on every turn.
+   * - **moved** (t-1038), once per conversation: the turn was answered on the
+   *   model for confidential messages, and later turns will be too.
+   *
+   * What was shown is kept on the conversation (`metadata.confidentialNoted`,
+   * `metadata.confidentialMoved`), so it survives the history being
    * summarised or pruned. Shown even if that write fails: a repeat is better
    * than a note never seen. Never names what was found.
    */
   private async *confidentialNotes(
     scope: PrivacyScope,
     conversationId: string,
+    movedTo: NoteTarget['movedTo'],
     userId: string,
     log: typeof logger
   ): AsyncGenerator<ChatEvent> {
     const decisions = privacySummary(scope)?.confidential;
-    if (!decisions) return;
-    const warned = SENSITIVITY_GROUPS.filter((g) => decisions[g]?.includes('warned'));
-    if (warned.length === 0) return;
+    const warned = decisions
+      ? SENSITIVITY_GROUPS.filter((g) => decisions[g]?.includes('warned'))
+      : [];
+    if (warned.length === 0 && movedTo === null) return;
     const owned = { id: conversationId, ...conversationOwner(userId) };
     let read: { metadata: Prisma.JsonObject; stored: Prisma.JsonValue | null } | null = null;
     let toNote: SensitivityGroup[] = warned;
+    let showMoved = movedTo !== null;
     try {
       const row = await prisma.aiConversation.findFirst({
         where: owned,
@@ -3532,8 +3591,13 @@ export class StreamingChatHandler {
         const metadata = isJsonObject(row.metadata) ? row.metadata : {};
         const noted = Array.isArray(metadata.confidentialNoted) ? metadata.confidentialNoted : [];
         toNote = warned.filter((g) => !noted.includes(g));
+        showMoved = showMoved && metadata.confidentialMoved !== true;
         read = {
-          metadata: { ...metadata, confidentialNoted: [...noted, ...toNote] },
+          metadata: {
+            ...metadata,
+            ...(toNote.length > 0 ? { confidentialNoted: [...noted, ...toNote] } : {}),
+            ...(showMoved ? { confidentialMoved: true } : {}),
+          },
           stored: row.metadata,
         };
       }
@@ -3543,9 +3607,16 @@ export class StreamingChatHandler {
         error: err instanceof Error ? err.message : String(err),
       });
     }
-    if (toNote.length === 0) return;
+    if (toNote.length === 0 && !showMoved) return;
     // Shown before it is recorded: a reader who left before the note arrived
     // is told again next turn, rather than never.
+    if (showMoved && movedTo !== null) {
+      yield {
+        type: 'warning',
+        code: CONFIDENTIAL_MOVED_CODE,
+        message: CONFIDENTIAL_MOVED_NOTES[movedTo],
+      };
+    }
     for (const group of toNote) {
       yield {
         type: 'warning',
@@ -4046,9 +4117,12 @@ function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
   return signal === undefined && err.message.includes('aborted');
 }
 
-/** Where a turn's `warn` note is kept: its conversation, once loaded. */
+/** What a turn's confidential-content notes need: where to keep them, and whether it moved. */
 interface NoteTarget {
+  /** Its conversation, once loaded. */
   conversationId: string | null;
+  /** Set when the turn moved to the model for confidential messages (§130 t-1038). */
+  movedTo: 'local' | 'trusted' | null;
 }
 
 /** The events a turn ends on; the `warn` note goes before the first of them. */
@@ -4067,6 +4141,47 @@ function turnLogger(request: ChatRequest): typeof logger {
 
 function errorEvent(code: string, message: string): ChatEvent {
   return { type: 'error', code, message };
+}
+
+/**
+ * The error a turn ends with when `model` cannot read its attachments, or
+ * null when it can (or there are none). `whose` names the model to the
+ * reader: the agent's, or the model for confidential messages a turn moved
+ * to (§130 t-1038).
+ */
+async function attachmentGateError(
+  providerSlug: string,
+  model: string,
+  hasImages: boolean,
+  hasPdfs: boolean,
+  whose: string
+): Promise<ChatEvent | null> {
+  const required: AttachmentCapability[] = [];
+  if (hasImages) required.push('vision');
+  if (hasPdfs) required.push('documents');
+  if (required.length === 0) return null;
+  try {
+    await assertModelSupportsAttachments(providerSlug, model, required);
+    return null;
+  } catch (err) {
+    if (!(err instanceof ProviderError) || err.code !== 'CAPABILITY_NOT_SUPPORTED') throw err;
+    if (hasImages && !hasPdfs) {
+      return errorEvent(
+        'IMAGE_NOT_SUPPORTED',
+        `${whose} can't process images. Switch the model to one with vision support.`
+      );
+    }
+    if (hasPdfs && !hasImages) {
+      return errorEvent(
+        'PDF_NOT_SUPPORTED',
+        `${whose} can't process PDFs. Switch the model to one with document support.`
+      );
+    }
+    return errorEvent(
+      'IMAGE_NOT_SUPPORTED',
+      `${whose} can't process all of the attached files. Switch the model or remove unsupported attachments.`
+    );
+  }
 }
 
 /** A budget refusal: the code and words a turn ends with, and which cap stopped it. */

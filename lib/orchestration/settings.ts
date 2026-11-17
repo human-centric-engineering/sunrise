@@ -124,6 +124,8 @@ export function hydrateSettings(row: {
   privacyEmbeddingsPolicy?: string | null;
   privacyConfidentialPersonal?: string | null;
   privacyConfidentialCommercial?: string | null;
+  confidentialModelProvider?: string | null;
+  confidentialModel?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -220,6 +222,11 @@ export function hydrateSettings(row: {
     privacyConfidentialCommercial: parseConfidentialPolicy(
       row.privacyConfidentialCommercial ?? undefined
     ),
+    // Both halves or none: half a binding names no model.
+    confidentialModel:
+      row.confidentialModelProvider && row.confidentialModel
+        ? { providerSlug: row.confidentialModelProvider, model: row.confidentialModel }
+        : null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

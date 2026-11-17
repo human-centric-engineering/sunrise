@@ -62,6 +62,23 @@ vi.mock('@/lib/orchestration/llm/agent-resolver', async (importOriginal) => {
   };
 });
 
+// Routing for confidential content (§130 t-1038) is proved in its own tests;
+// here it keeps the binding unless a test says otherwise. Reading the groups
+// kept on a conversation is the real one.
+vi.mock('@/lib/orchestration/llm/confidential-route', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/llm/confidential-route')>();
+  return {
+    ...actual,
+    routeConfidentialTurn: vi.fn(async ({ binding }: { binding: unknown }) => ({
+      kind: 'stay',
+      binding,
+      found: [],
+    })),
+    keepFlaggedGroups: vi.fn(async () => undefined),
+  };
+});
+
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(() => ({ inputCostUsd: 0.001, outputCostUsd: 0.002, totalCostUsd: 0.003 })),
   logCost: vi.fn(async () => null),
@@ -98,6 +115,10 @@ import {
   NoProviderConfiguredError,
 } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import {
+  keepFlaggedGroups,
+  routeConfidentialTurn,
+} from '@/lib/orchestration/llm/confidential-route';
 import { executeChatTurn } from '@/lib/orchestration/engine/executors/chat-turn';
 import {
   LATEST_AGENT_VERSION_ID_INCLUDE,
@@ -899,5 +920,86 @@ describe('chat_turn — logCost failure', () => {
     // The .catch() runs asynchronously; give the microtask queue a chance to flush
     // so the warn-side-effect happens before the test ends.
     await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+describe('chat_turn — the model for confidential messages (§130 t-1038)', () => {
+  const MOVED = {
+    providerSlug: 'ollama-local',
+    model: 'llama3.1:8b',
+    fallbacks: [],
+    provenance: {
+      task: 'chat' as const,
+      primary: 'explicit' as const,
+      fallbacks: 'explicit' as const,
+    },
+  };
+
+  function conversation(metadata: unknown = { confidentialFlagged: ['personal'] }) {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      metadata,
+      messages: [{ role: 'user', content: 'I was signed off with depression.' }],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+  }
+
+  it('answers on the binding routing moved it to, costed there, and keeps what it found', async () => {
+    conversation();
+    vi.mocked(routeConfidentialTurn).mockResolvedValueOnce({
+      kind: 'move',
+      binding: MOVED,
+      to: 'local',
+      found: ['personal'],
+    });
+    const chat = vi.fn(async (_messages: unknown, _options: unknown) => mockChatResponse);
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'ollama-local',
+    });
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    // Routed on what the call sends, with the groups kept on the conversation.
+    expect(routeConfidentialTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ providerSlug: 'openai', model: 'gpt-4o-mini' }),
+        sticky: ['personal'],
+        messages: [
+          { role: 'system', content: 'You are a helpful agent.' },
+          { role: 'user', content: 'I was signed off with depression.' },
+          { role: 'user', content: 'hello agent' },
+        ],
+      })
+    );
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('ollama-local', [], MOVED.provenance);
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'llama3.1:8b' });
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'ollama-local', model: 'llama3.1:8b' })
+    );
+    expect(keepFlaggedGroups).toHaveBeenCalledWith({ id: 'conv_1' }, ['personal']);
+  });
+
+  it("routes in the agent's privacy scope, so its own policy decides", async () => {
+    conversation(null);
+    let scopedTo: string | undefined;
+    vi.mocked(routeConfidentialTurn).mockImplementationOnce(async ({ binding }) => {
+      scopedTo = currentPrivacyScope()?.agentId;
+      return { kind: 'stay', binding, found: [] };
+    });
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    expect(scopedTo).toBe('agent_1');
+  });
+
+  it("leaves a step's own model to the privacy stage rather than moving it", async () => {
+    conversation();
+
+    await executeChatTurn(makeStep({ modelOverride: 'gpt-4o' }), makeCtx());
+
+    expect(routeConfidentialTurn).not.toHaveBeenCalled();
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', [], undefined);
   });
 });

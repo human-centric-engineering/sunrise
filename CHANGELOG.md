@@ -56,8 +56,24 @@ release process.
   being ingested (`embedBatch`) is not classified. New exports: `isConfidentialRefusal()`
   (`privacy-stage.ts`) and `isTrustedProvider()` (`provider-manager.ts`).
   Chat leaves a refused turn, or the earlier message that held the content,
-  out of later history; the embed widget now shows the warn note. Nothing is
-  rerouted to another model yet.
+  out of later history; the embed widget now shows the warn note.
+- **A confidential conversation is answered on a model the policy permits
+  (§130, t-1038).** New `AiOrchestrationSettings.confidentialModelProvider`
+  and `confidentialModel` (nullable, no default: **an upgrade moves
+  nothing**), read as `OrchestrationSettings.confidentialModel` and set
+  through the settings API as `confidentialModel: { providerSlug, model } |
+  null`, which refuses a model that is not an active chat model on an active
+  local or trusted provider. A chat turn, `agent_call` step or `chat_turn`
+  step whose agent's provider a group's policy does not permit moves to it at
+  its start: request, summariser, cost and trace use it, and it has no
+  fallbacks. The conversation stays on it (`metadata.confidentialFlagged`),
+  and the user is told once with a new `warning` code, `confidential_moved`.
+  With none set the turn is refused, as before. A `chat_turn` step with a
+  `modelOverride` is not moved. New exports: `routeConfidentialTurn()`,
+  `confidentialModelProblem()` (`lib/orchestration/llm/confidential-route.ts`)
+  and `confidentialRouting()` (`privacy-stage.ts`); `summarizeMessages()`
+  takes an optional `model`. New config-health check `confidential_model`.
+  Backups carry the setting.
 
 ### Fixed
 

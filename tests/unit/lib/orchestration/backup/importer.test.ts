@@ -781,6 +781,43 @@ describe('importOrchestrationConfig', () => {
     expect(call.update).toMatchObject(policies);
   });
 
+  it.each([
+    [
+      'writes the backup’s model',
+      { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
+      { confidentialModelProvider: 'ollama-local', confidentialModel: 'llama3.1:8b' },
+    ],
+    [
+      'clears it when the backup has none',
+      null,
+      { confidentialModelProvider: null, confidentialModel: null },
+    ],
+  ])('restores the model for confidential messages: %s (§130 t-1038)', async (_l, model, cols) => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), confidentialModel: model } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.create).toMatchObject(cols);
+    expect(call.update).toMatchObject(cols);
+  });
+
+  it('leaves the model for confidential messages alone when the backup predates it', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    await importOrchestrationConfig(
+      { ...minPayload, data: { ...minPayload.data, settings: makeSettings() } },
+      'user-1',
+      SHARED_SCOPE
+    );
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect('confidentialModel' in call.update).toBe(false);
+    expect('confidentialModelProvider' in call.update).toBe(false);
+  });
+
   it.each(['pseudonymise', 'redact', 'block'])(
     'restores the masking mode %s now that this version can apply it',
     async (mode) => {

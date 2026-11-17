@@ -511,6 +511,19 @@ describe('hydrateSettings', () => {
     expect(result.outputGuardMode).toBeNull();
   });
 
+  it.each([
+    [
+      'both halves as one binding',
+      { confidentialModelProvider: 'ollama-local', confidentialModel: 'llama3.1:8b' },
+      { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
+    ],
+    ['neither as none', { confidentialModelProvider: null, confidentialModel: null }, null],
+    ['half a binding as none', { confidentialModelProvider: null, confidentialModel: 'x' }, null],
+    ['a row from before the columns as none', {}, null],
+  ])('reads the model for confidential messages: %s (§130 t-1038)', (_l, cols, expected) => {
+    expect(hydrateSettings(makeRow(cols as never)).confidentialModel).toEqual(expected);
+  });
+
   describe('embedAllowedOrigins normalisation (read-side safety net)', () => {
     it('normalises trailing-slash entries to canonical origin', () => {
       const row = makeRow({ embedAllowedOrigins: ['https://partner.com/'] });

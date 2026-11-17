@@ -33,7 +33,7 @@ has merged; this table says what exists.
 | Running a local embedding model: checked end to end, documented                        | t-1011 | **Built** |
 | Confidential content: the classifier slot, core's phrase list, recorded on the trace   | t-1036 | **Built** |
 | Confidential content: per-group policy, trusted providers, warn, block, the backstop   | t-1037 | **Built** |
-| Confidential content: answering a flagged conversation on the confidential model       | t-1038 | Not yet   |
+| Confidential content: answering a flagged conversation on the confidential model       | t-1038 | **Built** |
 
 ## Quick Reference
 
@@ -1418,8 +1418,9 @@ An org floor per group is not in this feature.
   the stage records a decision only for a call it sends. Neither does a turn
   the input guard blocks, which ends before any call, nor one that ends
   before its conversation is loaded.
-- **Not built here:** answering a flagged turn on another model (t-1038).
-  Until then a policy that does not permit the agent's provider refuses.
+- **Answering on another model** is t-1038 (below). Without a model for
+  confidential messages, a policy that does not permit the agent's provider
+  refuses, as here.
 
 ### Routing (t-1038)
 
@@ -1438,6 +1439,84 @@ rebound binding. The user sees a note once that the conversation moved. A
 workflow `llm_call` with a `modelOverride`, and a capability that resolves its
 own binding, are left to the backstop: refused, not rerouted, because
 rerouting an operator's recorded choice is worse than refusing it.
+
+### What is built (t-1038)
+
+- **The setting.** `AiOrchestrationSettings.confidentialModelProvider` and
+  `confidentialModel` (both or neither, read as one binding,
+  `confidentialModel`), nullable with no default: an upgrade moves nothing.
+  The settings page lists active chat models on an active provider that is
+  local or ticked trusted, with `<FieldHelp>`, and says when a policy that
+  moves conversations has no model to move them to. The API refuses a model
+  that could not answer such a turn (`confidentialModelProblem`): no provider
+  row, a provider turned off or neither local nor trusted, no model row in the
+  matrix, a model turned off or not a chat model. The form sends it only when
+  it changed, so a model that stopped being usable never stops a save of
+  anything else. Backup carries it, as one binding; a restore writes it
+  whether or not this install can use it, and config health then names it.
+- **Config health** (`confidential_model`, warning): a policy of
+  `approved_only` or `local_only`, global or on any agent, with no model set
+  or one `confidentialModelProblem` refuses. It asks about the policy, not
+  each agent's provider: an agent already on a trusted provider never moves,
+  but the policy says such content may arrive.
+- **The decision is the stage's** (`confidentialRouting` in
+  `privacy-stage.ts`): the same policy resolution, resolvers included, the
+  same classifiers and the same per-group rule (`groupRefuses`), so routing
+  never moves a turn the backstop would let through, nor keeps one it would
+  refuse. Each provider's policy is resolved for that provider, as the stage
+  resolves each call's. It classifies only when a group's policy could refuse
+  the agent's provider or one of its fallbacks, so an install on `allow` and
+  `warn` pays nothing; external classifiers run only when the agent's
+  provider is remote, the stage's rule for a call it forwards untouched.
+  Nothing is recorded here: the stage records each call it classifies.
+  - A group counts as flagged when found, when **kept on the conversation**
+    from an earlier turn, or, under a policy that can refuse, when a
+    classifier failed.
+  - Something flagged under `block` stays: no provider is permitted, so the
+    stage refuses it.
+  - If the agent's provider is permitted, the turn stays, and a fallback a
+    flagged group refuses is taken out.
+  - Otherwise it moves when the model for confidential messages is permitted
+    for every flagged group, or stays for the stage to refuse (logged as a
+    turn that needed the model and had none).
+- **The helper** (`routeConfidentialTurn`, `lib/orchestration/llm/confidential-route.ts`)
+  turns that into a binding, for the chat handler and the `agent_call` and
+  `chat_turn` executors. A moved binding has **no fallbacks**: a fallback is
+  sent the primary's model id, which only that provider is known to serve.
+  It is gated as an explicit binding, the administrator's own choice. A fault
+  while routing keeps the agent's binding, and the stage decides as before.
+- **The chat handler** routes once the history is read and before the user's
+  message is saved: the history and the new message are what is classified.
+  The binding it rebinds is the one everything after reads: the attachment
+  check (asked again of the moved model, ending the turn before the message
+  is saved if it cannot read them), the history budget, the summariser (given
+  the moved model in place of the routing default, with no fallbacks), the
+  request, failover, cost logging and the trace.
+- **Stickiness.** The groups a turn's routing found are kept on the
+  conversation (`AiConversation.metadata.confidentialFlagged`, by
+  compare-and-set), so a conversation stays on the model once the message
+  that moved it has been summarised or pruned away: the stored summary goes
+  out as system text, which core's classifier does not read. Kept as soon as
+  found, whether the turn then moves or is refused, so a model chosen later
+  moves the conversation. It never refuses a turn on its own: with no model,
+  only what the stage finds in the call refuses it.
+- **The moved note**, `warning` `confidential_moved`, once per conversation
+  (`metadata.confidentialMoved`), from the same wrapper as the warn note
+  (t-1039) and before it: "…so it is now answered by an AI model your
+  organisation runs itself", or "…by an AI provider your organisation trusts
+  with it". Never what was found. The embed widget and admin chat show it as
+  they show the warn notes (`confidential_*`).
+- **Workflows.** `agent_call` routes on the step's system prompt and message,
+  in the agent's privacy scope, with nothing kept between steps.
+  `chat_turn` routes on its conversation's history and the message, and keeps
+  what it found on the conversation; a step with a `modelOverride` is left to
+  the stage. Neither shows a note: there is no reader to show it to.
+- **With no usable model** the reader is told as before
+  (`privacy_confidential` and its placements). The operator's log line now
+  names the setting.
+- **Not moved:** embeddings (one install-wide embedding model; the stage
+  refuses them as for `embeddings_local_only`), a capability that resolves its
+  own binding, and an `llm_call` with a `modelOverride`.
 
 ### Measured
 

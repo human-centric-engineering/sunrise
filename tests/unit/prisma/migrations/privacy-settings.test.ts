@@ -126,3 +126,28 @@ describe('the confidential-content policy migration (t-1037)', () => {
     expect(agentSchema).toMatch(/privacyConfidentialCommercial\s+String\?/);
   });
 });
+
+/** The model for confidential messages (§130 t-1038), comments stripped. */
+const confidentialModelSql = read(
+  'prisma/migrations/20261117200000_confidential_model/migration.sql'
+)
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('--'))
+  .join('\n');
+
+describe('the confidential model migration', () => {
+  it('adds both halves nullable with no default, so an upgrade moves no conversation', () => {
+    expect(confidentialModelSql).toMatch(
+      /"ai_orchestration_settings" ADD COLUMN "confidentialModelProvider" TEXT;/
+    );
+    expect(confidentialModelSql).toMatch(
+      /"ai_orchestration_settings" ADD COLUMN "confidentialModel" TEXT;/
+    );
+    expect(confidentialModelSql).not.toMatch(/DEFAULT|NOT NULL|\bUPDATE\b|\bINSERT\b/i);
+  });
+
+  it('matches the schema, so a later migrate diff sees no drift', () => {
+    expect(schema).toMatch(/confidentialModelProvider\s+String\?\n/);
+    expect(schema).toMatch(/confidentialModel\s+String\?\n/);
+  });
+});

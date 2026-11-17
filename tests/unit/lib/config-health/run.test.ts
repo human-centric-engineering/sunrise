@@ -24,7 +24,13 @@ vi.mock('@/lib/orchestration/llm/provider-credentials', async (importOriginal) =
   return { ...actual, classifyProvidersByCredential: vi.fn(actual.classifyProvidersByCredential) };
 });
 vi.mock('@/lib/db/client', () => ({
-  prisma: { aiProviderConfig: { findMany: vi.fn() } },
+  prisma: { aiProviderConfig: { findMany: vi.fn() }, aiAgent: { findFirst: vi.fn() } },
+}));
+// The confidential-model check (§130 t-1038): the settings and whether the
+// model is usable are faked; which policies need one is the check's own rule.
+vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn() }));
+vi.mock('@/lib/orchestration/llm/confidential-route', () => ({
+  confidentialModelProblem: vi.fn(),
 }));
 
 /** An active provider row as the check reads it. */
@@ -62,6 +68,8 @@ import { isEmailEnabled } from '@/lib/email/client';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
+import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import type { EvaluatedConfigCheck } from '@/lib/config-health/types';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -78,6 +86,14 @@ beforeEach(() => {
   appSeam.appConfigHealthChecks = [FORK_CRON_CHECK];
   (isEmailEnabled as Mock).mockReturnValue(true);
   (prisma.aiProviderConfig.findMany as Mock).mockResolvedValue([providerRow()]);
+  // No confidential-content policy that moves conversations, anywhere.
+  vi.mocked(getOrchestrationSettings).mockResolvedValue({
+    privacyConfidentialPersonal: 'warn',
+    privacyConfidentialCommercial: 'allow',
+    confidentialModel: null,
+  } as never);
+  (prisma.aiAgent.findFirst as Mock).mockResolvedValue(null);
+  vi.mocked(confidentialModelProblem).mockResolvedValue(null);
   vi.stubEnv('TEST_PROVIDER_KEY', 'sk-test-not-a-real-key');
   // Healthy defaults; individual tests unset what they exercise.
   vi.stubEnv('CRON_SECRET', 'x'.repeat(40));
@@ -93,13 +109,19 @@ describe('runConfigHealthChecks', () => {
   it('runs only the platform checks when the fork registers none', async () => {
     appSeam.appConfigHealthChecks = [];
     const report = await runConfigHealthChecks();
-    expect(report.checks.map((c) => c.key)).toEqual(['llm_provider', 'email', 'db_pooler']);
+    expect(report.checks.map((c) => c.key)).toEqual([
+      'llm_provider',
+      'confidential_model',
+      'email',
+      'db_pooler',
+    ]);
   });
 
   it('adds the fork’s checks after the platform’s', async () => {
     const report = await runConfigHealthChecks();
     expect(report.checks.map((c) => c.key)).toEqual([
       'llm_provider',
+      'confidential_model',
       'email',
       'db_pooler',
       'CRON_SECRET',
@@ -272,5 +294,66 @@ describe('runConfigHealthChecks', () => {
     expect(report.summary.critical).toBe(1);
     expect(report.summary.warning).toBeGreaterThanOrEqual(1);
     expect(report.summary.ok).toBeGreaterThanOrEqual(1); // llm_provider still satisfied
+  });
+});
+
+describe('the model for confidential messages (§130 t-1038)', () => {
+  const MODEL = { providerSlug: 'ollama-local', model: 'llama3.1:8b' };
+
+  function settings(
+    personal: string,
+    commercial: string,
+    confidentialModel: typeof MODEL | null
+  ): void {
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      privacyConfidentialPersonal: personal,
+      privacyConfidentialCommercial: commercial,
+      confidentialModel,
+    } as never);
+  }
+
+  it('is satisfied when no policy moves conversations, here or on an agent', async () => {
+    settings('block', 'warn', null);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'confidential_model').present).toBe(true);
+    // The agents were asked about the two values that move a conversation.
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { privacyConfidentialPersonal: { in: ['approved_only', 'local_only'] } },
+            { privacyConfidentialCommercial: { in: ['approved_only', 'local_only'] } },
+          ],
+        },
+      })
+    );
+  });
+
+  it.each([
+    ['local_only', 'allow'],
+    ['allow', 'approved_only'],
+  ])('flags a global %s / %s policy with no model set', async (personal, commercial) => {
+    settings(personal, commercial, null);
+    const report = await runConfigHealthChecks();
+    const found = check(report.checks, 'confidential_model');
+    expect(found.present).toBe(false);
+    expect(found.severity).toBe('warning');
+    expect(report.summary.warning).toBe(1);
+  });
+
+  it("flags an agent's strict policy when the model set is no longer usable", async () => {
+    settings('allow', 'allow', MODEL);
+    (prisma.aiAgent.findFirst as Mock).mockResolvedValue({ id: 'agent-1' });
+    vi.mocked(confidentialModelProblem).mockResolvedValue('Its provider is turned off.');
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'confidential_model').present).toBe(false);
+    expect(confidentialModelProblem).toHaveBeenCalledWith(MODEL);
+  });
+
+  it('is satisfied when a strict policy has a usable model', async () => {
+    settings('local_only', 'allow', MODEL);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'confidential_model').present).toBe(true);
+    expect(confidentialModelProblem).toHaveBeenCalledWith(MODEL);
   });
 });

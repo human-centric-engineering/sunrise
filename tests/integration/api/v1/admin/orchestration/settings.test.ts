@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
 import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
+import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -71,6 +72,13 @@ vi.mock('@/lib/db/client', () => {
   prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
   return { prisma };
 });
+
+// Whether a model can be the model for confidential messages (§130 t-1038)
+// reads the provider rows; its own tests prove which it accepts. Usable unless
+// a test says otherwise.
+vi.mock('@/lib/orchestration/llm/confidential-route', () => ({
+  confidentialModelProblem: vi.fn(async () => null),
+}));
 
 vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
   const actual = await importOriginal<object>();
@@ -542,6 +550,10 @@ describe('Admin Orchestration — /settings', () => {
         privacyEmbeddingsPolicy: { value: 'local_only' },
         privacyConfidentialPersonal: { value: 'local_only' },
         privacyConfidentialCommercial: { value: 'approved_only' },
+        confidentialModel: {
+          value: { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
+          writes: 'confidentialModelProvider',
+        },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.
@@ -587,6 +599,62 @@ describe('Admin Orchestration — /settings', () => {
       const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
       expect(args?.create).toMatchObject(privacy);
       expect(args?.update).toMatchObject(privacy);
+    });
+
+    describe('the model for confidential messages (§130 t-1038)', () => {
+      const MODEL = { providerSlug: 'ollama-local', model: 'llama3.1:8b' };
+
+      it('writes both halves, on a first save as well', async () => {
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+          makeSettingsRow() as never
+        );
+
+        const res = await PATCH(makePatch({ confidentialModel: MODEL }));
+
+        expect(res.status).toBe(200);
+        expect(confidentialModelProblem).toHaveBeenCalledWith(MODEL);
+        const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+        const cols = {
+          confidentialModelProvider: 'ollama-local',
+          confidentialModel: 'llama3.1:8b',
+        };
+        expect(args?.update).toMatchObject(cols);
+        expect(args?.create).toMatchObject(cols);
+      });
+
+      it('clears both halves with null, asking nothing about a model', async () => {
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+          makeSettingsRow() as never
+        );
+
+        const res = await PATCH(makePatch({ confidentialModel: null }));
+
+        expect(res.status).toBe(200);
+        expect(confidentialModelProblem).not.toHaveBeenCalled();
+        expect(
+          vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0]?.update
+        ).toMatchObject({ confidentialModelProvider: null, confidentialModel: null });
+      });
+
+      it('refuses a model that could not answer a confidential turn, saying why, and saves nothing', async () => {
+        vi.mocked(confidentialModelProblem).mockResolvedValueOnce('Its provider is turned off.');
+
+        const res = await PATCH(makePatch({ confidentialModel: MODEL }));
+
+        expect(res.status).toBe(400);
+        const body = await parseJson<{ error: { code: string; message: string } }>(res);
+        expect(body.error.code).toBe('VALIDATION_ERROR');
+        expect(body.error.message).toBe(
+          "That model can't be the model for confidential messages. Its provider is turned off."
+        );
+        expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+      });
+
+      it('refuses half a binding at the schema', async () => {
+        const res = await PATCH(makePatch({ confidentialModel: { providerSlug: 'ollama-local' } }));
+        expect(res.status).toBe(400);
+        expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+      });
     });
 
     it('updates voiceInputGloballyEnabled back to true', async () => {

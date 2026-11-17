@@ -1788,8 +1788,20 @@ export interface OrchestrationSettings {
    */
   privacyConfidentialPersonal: ConfidentialPolicy;
   privacyConfidentialCommercial: ConfidentialPolicy;
+  /**
+   * The model for confidential messages (§130 t-1038): a turn whose agent's
+   * provider a group's policy does not permit is answered on it instead.
+   * `null` when not set, and then such a turn is refused.
+   */
+  confidentialModel: ConfidentialModelBinding | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** A provider and one of its models: the model for confidential messages (§130 t-1038). */
+export interface ConfidentialModelBinding {
+  providerSlug: string;
+  model: string;
 }
 
 /**

@@ -30,7 +30,14 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     // `touchAgentLastActive` (called from `createNewConversation`) does
     // a fire-and-forget `aiAgent.update`. Stubbed so the bump is silent.
-    aiAgent: { findFirst: vi.fn(), update: vi.fn().mockResolvedValue({}) },
+    aiAgent: {
+      findFirst: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
+      // The agent's own privacy settings, read by the policy resolver when a
+      // turn is routed for confidential content (§130 t-1038): none set.
+      findUnique: vi.fn(async () => null),
+    },
+    org: { findUnique: vi.fn(async () => null) },
     aiConversation: {
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -87,6 +94,8 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => {
     assertModelSupportsAttachments: vi.fn(),
     // Paid unless a test says otherwise (§110 t-788).
     isLocalProvider: vi.fn(async () => false),
+    // Nothing is ticked trusted unless a test says so (§130).
+    isTrustedProvider: vi.fn(async () => false),
     // Mid-stream failover fetches through this (§120 t-744). By default it
     // delegates to `getProvider` with a closed breaker keyed on the slug, so
     // the failover tests keep asserting on `getProvider`.
@@ -260,7 +269,7 @@ const { getCapabilityDefinitions } = await import('@/lib/orchestration/capabilit
 const { buildContext, invalidateContext } =
   await import('@/lib/orchestration/chat/context-builder');
 const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
-const { streamChat, CONFIDENTIAL_NOTES } =
+const { streamChat, CONFIDENTIAL_NOTES, CONFIDENTIAL_MOVED_NOTES } =
   await import('@/lib/orchestration/chat/streaming-handler');
 const { readAgentConsistently } = await import('@/lib/orchestration/agents/agent-versioning');
 const { CostOperation } = await import('@/types/orchestration');
@@ -6274,8 +6283,9 @@ describe('input guard global settings fallback (block)', () => {
     // Provider must NOT be invoked — request short-circuited
     expect(provider.chatStream).not.toHaveBeenCalled();
 
-    // getOrchestrationSettings fetched to resolve the guard mode
-    expect(getOrchestrationSettings).toHaveBeenCalledTimes(1);
+    // getOrchestrationSettings fetched to resolve the guard mode, and once
+    // before it to route a confidential turn (§130 t-1038)
+    expect(getOrchestrationSettings).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -10520,6 +10530,228 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         // The suite's clearAllMocks keeps implementations; the logger's is a bare vi.fn().
         vi.mocked(logger.warn).mockReset();
       }
+    });
+  });
+
+  // ── Moving a turn to the model for confidential messages (§130 t-1038) ──
+
+  describe('moving a turn to the model for confidential messages (§130 t-1038)', () => {
+    const LOCAL = { providerSlug: 'ollama-local', model: 'llama3.1:8b' };
+    const DEFAULT_SETTINGS = {
+      inputGuardMode: 'log_only',
+      outputGuardMode: 'log_only',
+      citationGuardMode: 'log_only',
+    };
+
+    /**
+     * The install's settings: a Personal policy and the model for
+     * confidential messages. Routing, its policy resolution and core's phrase
+     * classifier are real, so a turn moves because of what it says.
+     */
+    function confidentialSettings(personal: string, model: typeof LOCAL | null = LOCAL): void {
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        ...DEFAULT_SETTINGS,
+        privacyMode: 'detect',
+        privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
+        privacyProtectLocalProviders: false,
+        privacyEmbeddingsPolicy: 'allow',
+        privacyConfidentialPersonal: personal,
+        privacyConfidentialCommercial: 'allow',
+        confidentialModel: model,
+      } as never);
+      vi.mocked(isLocalProvider).mockImplementation(async (slug) => slug === LOCAL.providerSlug);
+    }
+
+    const answer = (text: string) => [
+      { type: 'text', content: text },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+    ];
+
+    /** One double per provider, handed out by slug: which one a call reached is the test. */
+    function providers() {
+      const cloud = mockProvider(Array.from({ length: 5 }, () => answer('From the cloud.')));
+      const local = mockProvider(Array.from({ length: 5 }, () => answer('From the local model.')));
+      vi.mocked(getProviderWithFallbacks).mockImplementation((async (slug: string) => ({
+        provider: slug === LOCAL.providerSlug ? local : cloud,
+        usedSlug: slug,
+      })) as never);
+      return { cloud, local };
+    }
+
+    const notes = (events: Event[]) => events.filter((e) => e.type === 'warning');
+    const metadataOf = (conv: unknown) => (conv as { metadata?: Record<string, unknown> }).metadata;
+
+    afterEach(() => {
+      // `clearAllMocks` keeps implementations: put back the file's defaults.
+      vi.mocked(getOrchestrationSettings).mockImplementation(async () => DEFAULT_SETTINGS as never);
+      vi.mocked(isLocalProvider).mockImplementation(async () => false);
+    });
+
+    it("answers a flagged turn on the local model, and nothing reaches the agent's provider", async () => {
+      confidentialSettings('local_only');
+      const { conv } = conversationStore();
+      const { cloud, local } = providers();
+
+      const events = await turn(`I've been ${DISCLOSURE}, what do I tell HR?`);
+
+      // The precondition: a call was made, so "none to the cloud" is not vacuous.
+      expect(local.chatStream).toHaveBeenCalledTimes(1);
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+      expect(errorOf(events)).toBeUndefined();
+      expect(getProviderWithFallbacks).toHaveBeenCalledWith('ollama-local', [], {
+        task: 'chat',
+        primary: 'explicit',
+        fallbacks: 'explicit',
+      });
+      // The model id sent is the confidential model's, not the agent's.
+      const [, options] = local.chatStream.mock.calls[0] as unknown[];
+      expect(options).toMatchObject({ model: 'llama3.1:8b' });
+      // Costed against the model that answered.
+      expect(logCost).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'llama3.1:8b', provider: 'ollama-local' })
+      );
+      // Told once, before the turn ends; the conversation keeps that it is flagged.
+      expect(notes(events)).toEqual([
+        { type: 'warning', code: 'confidential_moved', message: CONFIDENTIAL_MOVED_NOTES.local },
+      ]);
+      const kinds = events.map((e) => e.type);
+      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('done'));
+      expect(metadataOf(conv)).toEqual({
+        confidentialFlagged: ['personal'],
+        confidentialMoved: true,
+      });
+
+      // The next turn stays on it, and is not told again.
+      const next = await turn('And what about my pay?');
+      expect(local.chatStream).toHaveBeenCalledTimes(2);
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+      expect(notes(next)).toEqual([]);
+    });
+
+    it('stays on the local model once the message that moved it is no longer in the history', async () => {
+      confidentialSettings('local_only');
+      const { conv } = conversationStore();
+      Object.assign(conv, {
+        metadata: { confidentialFlagged: ['personal'], confidentialMoved: true },
+      });
+      const { cloud, local } = providers();
+
+      await turn('What time is the standup tomorrow?');
+
+      expect(local.chatStream).toHaveBeenCalledTimes(1);
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+    });
+
+    it('summarises a moved conversation on the local model, with no fallbacks', async () => {
+      confidentialSettings('local_only');
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ maxHistoryMessages: 4 }) as never
+      );
+      const { add } = conversationStore();
+      add({ role: 'user', content: `I was ${DISCLOSURE} in May.` });
+      for (let i = 0; i < 7; i++) {
+        add({ role: i % 2 ? 'user' : 'assistant', content: `Message ${i}.` });
+      }
+      vi.mocked(summarizeMessages).mockResolvedValue({
+        summary: 'The user was off sick.',
+        fellBack: false,
+        usage: { inputTokens: 10, outputTokens: 5 },
+        costUsd: 0,
+      } as never);
+      const { cloud, local } = providers();
+
+      await turn('Can you remind me what we said?');
+
+      expect(summarizeMessages).toHaveBeenCalled();
+      for (const [, slug, fallbacks, options] of vi.mocked(summarizeMessages).mock.calls) {
+        expect(slug).toBe('ollama-local');
+        expect(fallbacks).toEqual([]);
+        expect(options).toMatchObject({ model: 'llama3.1:8b' });
+      }
+      expect(local.chatStream).toHaveBeenCalled();
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+    });
+
+    it('does not fail a moved turn over to another provider when the local model fails', async () => {
+      confidentialSettings('local_only');
+      conversationStore();
+      const { cloud, local } = providers();
+      local.chatStream.mockImplementation(async function* () {
+        yield* [];
+        throw new ProviderError('connection refused', { code: 'http_503', retriable: true });
+      });
+
+      const events = await turn(`I've been ${DISCLOSURE}.`);
+
+      expect(local.chatStream).toHaveBeenCalled();
+      expect(errorOf(events)).toBeDefined();
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+      expect(getProvider).not.toHaveBeenCalled();
+    });
+
+    it("leaves a turn with nothing confidential on the agent's provider", async () => {
+      confidentialSettings('local_only');
+      const { conv } = conversationStore();
+      const { cloud, local } = providers();
+
+      const events = await turn('What are the parking rules?');
+
+      expect(cloud.chatStream).toHaveBeenCalledTimes(1);
+      expect(local.chatStream).not.toHaveBeenCalled();
+      expect(getProviderWithFallbacks).toHaveBeenCalledWith('anthropic', [], expect.anything());
+      expect(notes(events)).toEqual([]);
+      expect(metadataOf(conv)).toBeNull();
+    });
+
+    it('with no model set, keeps the turn where it is, for the backstop to refuse', async () => {
+      confidentialSettings('local_only', null);
+      const { conv } = conversationStore();
+      confidentialProvider();
+
+      const events = await turn(`I've been ${DISCLOSURE}.`);
+
+      expect(errorOf(events)?.code).toBe('privacy_confidential');
+      expect(getProviderWithFallbacks).toHaveBeenCalledWith('anthropic', [], expect.anything());
+      expect(notes(events)).toEqual([]);
+      // Still kept as flagged: a model chosen later moves the conversation.
+      expect(metadataOf(conv)).toEqual({ confidentialFlagged: ['personal'] });
+    });
+
+    it('ends a moved turn whose model cannot read its attachment, before the message is saved', async () => {
+      confidentialSettings('local_only');
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ enableImageInput: true }) as never
+      );
+      vi.mocked(assertModelSupportsAttachments).mockImplementation(async (slug: string) => {
+        if (slug === LOCAL.providerSlug) {
+          throw new ProviderError('no vision', {
+            code: 'CAPABILITY_NOT_SUPPORTED',
+            retriable: false,
+          });
+        }
+      });
+      const { rows } = conversationStore();
+      const { cloud, local } = providers();
+
+      const events = (await collect(
+        streamChat({
+          ...baseRequest,
+          conversationId: 'conv-1',
+          message: `I've been ${DISCLOSURE}, here is my fit note.`,
+          attachments: [{ name: 'note.png', mediaType: 'image/png', data: 'aGVsbG8=' }],
+        })
+      )) as Event[];
+
+      expect(errorOf(events)).toEqual({
+        type: 'error',
+        code: 'IMAGE_NOT_SUPPORTED',
+        message:
+          "The model for confidential messages can't process images. Switch the model to one with vision support.",
+      });
+      expect(rows).toEqual([]);
+      expect(local.chatStream).not.toHaveBeenCalled();
+      expect(cloud.chatStream).not.toHaveBeenCalled();
+      vi.mocked(assertModelSupportsAttachments).mockReset();
     });
   });
 });

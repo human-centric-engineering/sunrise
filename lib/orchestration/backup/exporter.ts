@@ -219,6 +219,8 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
           privacyEmbeddingsPolicy: true,
           privacyConfidentialPersonal: true,
           privacyConfidentialCommercial: true,
+          confidentialModelProvider: true,
+          confidentialModel: true,
         },
       })
     ),
@@ -335,6 +337,8 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
           privacyEmbeddingsPolicy,
           privacyConfidentialPersonal,
           privacyConfidentialCommercial,
+          confidentialModelProvider,
+          confidentialModel,
           ...rest
         }) => {
           const mode = parsePrivacyMode(privacyMode);
@@ -347,6 +351,11 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
             // exports as `block`, never as something looser (§130).
             privacyConfidentialPersonal: parseConfidentialPolicy(privacyConfidentialPersonal),
             privacyConfidentialCommercial: parseConfidentialPolicy(privacyConfidentialCommercial),
+            // One binding or none, as the settings read it (t-1038).
+            confidentialModel:
+              confidentialModelProvider && confidentialModel
+                ? { providerSlug: confidentialModelProvider, model: confidentialModel }
+                : null,
           };
         })(settings);
 

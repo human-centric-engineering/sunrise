@@ -683,6 +683,45 @@ describe('exportOrchestrationConfig', () => {
     });
   });
 
+  it.each([
+    [
+      'both halves as one binding',
+      { confidentialModelProvider: 'ollama-local', confidentialModel: 'llama3.1:8b' },
+      { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
+    ],
+    ['none as null', { confidentialModelProvider: null, confidentialModel: null }, null],
+    [
+      'half a binding as null',
+      { confidentialModelProvider: 'ollama-local', confidentialModel: null },
+      null,
+    ],
+  ])(
+    'exports the model for confidential messages: %s (§130 t-1038)',
+    async (_l, cols, exported) => {
+      mockFindMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+      mockFindUnique.mockResolvedValue({ ...settingsRow, ...cols });
+
+      const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+      expect(mockFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            confidentialModelProvider: true,
+            confidentialModel: true,
+          }),
+        })
+      );
+      expect(payload.data.settings?.confidentialModel).toEqual(exported);
+      // The two columns are not on the wire.
+      expect(payload.data.settings).not.toHaveProperty('confidentialModelProvider');
+    }
+  );
+
   it('emits knowledgeAccessMode as "full" for any non-restricted value', async () => {
     // Any value that is not 'restricted' coerces to 'full' (the else branch)
     const fullAgentRow = {

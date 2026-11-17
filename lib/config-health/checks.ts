@@ -16,7 +16,9 @@
 
 import { isEmailEnabled } from '@/lib/email/client';
 import { prisma } from '@/lib/db/client';
+import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
 
 /**
@@ -71,6 +73,46 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
         throw new Error(`credential resolver failed for ${unavailable.length} active provider(s)`);
       }
       return false;
+    },
+  },
+  {
+    key: 'confidential_model',
+    label: 'Model for confidential messages',
+    severity: 'warning',
+    description:
+      'A confidential-content policy sends some messages only to local or trusted providers, and ' +
+      'no usable model for confidential messages is set, so such a message is refused on an agent ' +
+      'whose provider is neither, rather than answered.',
+    remediation:
+      'Under Admin → Orchestration → Settings → LLM privacy, choose a model for confidential ' +
+      'messages: a chat model on a local provider, or on one ticked "Trusted with confidential ' +
+      'content". Leave it unset only if refusing those messages is what you want.',
+    docsPath: '.context/privacy/llm-privacy-layer.md',
+    // Satisfied unless a policy that moves conversations is in force, here or
+    // on an agent, and the model it would move them to is missing or unusable
+    // (§130 t-1038). An agent already on a local or trusted provider never
+    // moves, but the policy says confidential content may arrive, so the
+    // check asks about the policy rather than each agent's provider.
+    detect: async (): Promise<boolean> => {
+      const moving = ['approved_only', 'local_only'];
+      const settings = await getOrchestrationSettings();
+      const strict =
+        moving.includes(settings.privacyConfidentialPersonal) ||
+        moving.includes(settings.privacyConfidentialCommercial) ||
+        (await prisma.aiAgent.findFirst({
+          where: {
+            OR: [
+              { privacyConfidentialPersonal: { in: moving } },
+              { privacyConfidentialCommercial: { in: moving } },
+            ],
+          },
+          select: { id: true },
+        })) !== null;
+      if (!strict) return true;
+      return (
+        settings.confidentialModel !== null &&
+        (await confidentialModelProblem(settings.confidentialModel)) === null
+      );
     },
   },
   {

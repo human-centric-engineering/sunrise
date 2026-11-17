@@ -105,6 +105,18 @@ describe('summarizeMessages', () => {
     expect(chatCall[1]).toEqual({ model: 'claude-haiku-4-5', maxTokens: 500 });
   });
 
+  it('summarises with the model it is given, not the routing default (§130 t-1038)', async () => {
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'ollama-local' });
+
+    await summarizeMessages(MESSAGES, 'ollama-local', [], { model: 'llama3.1:8b' });
+
+    expect(mockGetModel).not.toHaveBeenCalled();
+    expect(mockGetProvider).toHaveBeenCalledWith('ollama-local', [], undefined);
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'llama3.1:8b', maxTokens: 500 });
+    expect(mockLogCost).toHaveBeenCalledWith(expect.objectContaining({ model: 'llama3.1:8b' }));
+  });
+
   it('returns the content from the LLM response', async () => {
     const mockProvider = makeMockProvider('The user asked about deployment.');
     mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });

@@ -33,7 +33,11 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  resolveAgentProviderAndModel,
+  type ResolvedAgentBinding,
+} from '@/lib/orchestration/llm/agent-resolver';
+import { routeConfidentialTurn } from '@/lib/orchestration/llm/confidential-route';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -675,7 +679,7 @@ async function runAgentCall(
   // via `resolveAgentProviderAndModel` — workflow `agent_call` steps must too,
   // otherwise the empty slug propagates into `getProviderWithFallbacks` and
   // throws `provider_unavailable` with a `""` slug.
-  let resolvedBinding;
+  let resolvedBinding: ResolvedAgentBinding;
   try {
     resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
   } catch (err) {
@@ -705,6 +709,18 @@ async function runAgentCall(
       err
     );
   }
+  // A message holding confidential content its agent's provider may not be
+  // sent is answered on the model for confidential messages (§130 t-1038).
+  // Already in the agent's privacy scope, so its own policy decides. A step
+  // has no conversation, so nothing is kept for later steps: each decides
+  // from what it sends.
+  resolvedBinding = (
+    await routeConfidentialTurn({
+      binding: resolvedBinding,
+      messages: initialMessages,
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    })
+  ).binding;
   const resolvedModel = resolvedBinding.model;
 
   // Resolve provider with fallbacks

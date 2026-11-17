@@ -10,11 +10,12 @@ admin area (#865).
 
 Sunrise's checks, in `lib/config-health/checks.ts`:
 
-| Key            | Severity | Applies     | Passes when                                                                                                                                                 |
-| -------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `llm_provider` | critical | always      | an **active** provider can be reached: a key through the credential seam, or a local provider (`filterProvidersWithCredential`)                             |
-| `email`        | warning  | always      | `isEmailEnabled()` (Resend is configured)                                                                                                                   |
-| `db_pooler`    | warning  | Vercel only | `DATABASE_URL` looks pooled: Neon `-pooler`, Supabase `.pooler.` or `:6543`, `pgbouncer=true`/`1`, or Prisma Accelerate (`prisma://`, `prisma+postgres://`) |
+| Key                  | Severity | Applies     | Passes when                                                                                                                                                                                                                                                         |
+| -------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_provider`       | critical | always      | an **active** provider can be reached: a key through the credential seam, or a local provider (`filterProvidersWithCredential`)                                                                                                                                     |
+| `confidential_model` | warning  | always      | no confidential-content policy of `approved_only` or `local_only` is in force (global or on any agent), or the model for confidential messages is set and usable (`confidentialModelProblem`): without it such messages are refused rather than moved (§130 t-1038) |
+| `email`              | warning  | always      | `isEmailEnabled()` (Resend is configured)                                                                                                                                                                                                                           |
+| `db_pooler`          | warning  | Vercel only | `DATABASE_URL` looks pooled: Neon `-pooler`, Supabase `.pooler.` or `:6543`, `pgbouncer=true`/`1`, or Prisma Accelerate (`prisma://`, `prisma+postgres://`)                                                                                                         |
 
 Required settings (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
 `NEXT_PUBLIC_APP_URL`) are not checked: the app does not start without them.

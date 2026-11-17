@@ -114,6 +114,31 @@ export interface OrchestrationSettings {
   /** What a call holding confidential content may do, per group (§130). */
   privacyConfidentialPersonal?: string;
   privacyConfidentialCommercial?: string;
+  /** The model for confidential messages (§130 t-1038); `null` when none is set. */
+  confidentialModel?: { providerSlug: string; model: string } | null;
+}
+
+/** A model that can be the model for confidential messages: on a local or trusted provider. */
+export interface ConfidentialModelOption {
+  providerSlug: string;
+  model: string;
+  /** The model's name and its provider's, for the select. */
+  label: string;
+  where: 'local' | 'trusted';
+}
+
+/** The select's value for "no model for confidential messages". */
+const NO_CONFIDENTIAL_MODEL = 'none';
+
+/** One select value per binding. A provider slug never holds `|`; a model id may hold `:`. */
+function confidentialModelKey(binding: { providerSlug: string; model: string } | null | undefined) {
+  return binding ? `${binding.providerSlug}|${binding.model}` : NO_CONFIDENTIAL_MODEL;
+}
+
+function confidentialModelFromKey(key: string): { providerSlug: string; model: string } | null {
+  const at = key.indexOf('|');
+  if (key === NO_CONFIDENTIAL_MODEL || at <= 0) return null;
+  return { providerSlug: key.slice(0, at), model: key.slice(at + 1) };
 }
 
 /** What each value does, said once for both groups' selects. */
@@ -158,8 +183,10 @@ function ConfidentialPolicySelect({
           <p>{help}</p>
           {CONFIDENTIAL_POLICY_HELP}
           <p className="mt-2">
-            A refused message is not sent anywhere, and nothing is rerouted yet. A classifier that
-            fails counts as finding something under the three strictest settings.
+            Under the two &ldquo;only&rdquo; settings, a conversation whose agent&apos;s provider is
+            not permitted moves to the model for confidential messages below, if it is. A refused
+            message is not sent anywhere. A classifier that fails counts as finding something under
+            the three strictest settings.
           </p>
         </FieldHelp>
       </Label>
@@ -199,6 +226,12 @@ export interface SettingsFormProps {
    * reject a private target that the server would happily accept (#553).
    */
   allowPrivateEscalationWebhook?: boolean;
+  /**
+   * The models that can be the model for confidential messages: active chat
+   * models on an active provider that is local or trusted. `null` when they
+   * could not be loaded: the select then shows only what is saved.
+   */
+  confidentialModelOptions?: ConfidentialModelOption[] | null;
 }
 
 // ─── Client-side validation schema ──────────────────────────────────────────
@@ -278,6 +311,7 @@ const settingsFormSchema = z
     privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES),
     privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
     privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
+    confidentialModel: z.string(),
     // Limits
     globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
     // Per-execution / per-turn defaults (improvement #39 runaway-loop
@@ -421,6 +455,7 @@ export function SettingsForm({
   initialSettings,
   allowPrivateEscalationWebhook = false,
   embeddingProviderIsLocal = null,
+  confidentialModelOptions = null,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
@@ -552,6 +587,7 @@ export function SettingsForm({
       privacyConfidentialCommercial: parseConfidentialPolicy(
         initialSettings.privacyConfidentialCommercial
       ),
+      confidentialModel: confidentialModelKey(initialSettings.confidentialModel),
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
       defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
@@ -618,6 +654,21 @@ export function SettingsForm({
     protects(effectivePrivacyMode) &&
     watchedEmbeddingsPolicy === 'local_only' &&
     embeddingProviderIsLocal === false;
+  // A policy that moves a conversation, and no model to move it to (§130
+  // t-1038): such a message is refused instead. Said, not stopped: refusing
+  // may be what the administrator wants.
+  const watchedConfidentialModel = watch('confidentialModel');
+  const movingPolicy = (policy: string) => policy === 'approved_only' || policy === 'local_only';
+  const confidentialRefusedForNoModel =
+    watchedConfidentialModel === NO_CONFIDENTIAL_MODEL &&
+    (movingPolicy(watch('privacyConfidentialPersonal')) ||
+      movingPolicy(watch('privacyConfidentialCommercial')));
+  // The saved model, listed even when it is no longer one of the options, so
+  // the select shows what is saved rather than quietly showing none.
+  const savedConfidentialKey = confidentialModelKey(initialSettings.confidentialModel);
+  const savedConfidentialUnlisted =
+    initialSettings.confidentialModel != null &&
+    !(confidentialModelOptions ?? []).some((o) => confidentialModelKey(o) === savedConfidentialKey);
 
   React.useEffect(() => {
     reset(defaults);
@@ -686,6 +737,11 @@ export function SettingsForm({
             privacyEmbeddingsPolicy: values.privacyEmbeddingsPolicy,
             privacyConfidentialPersonal: values.privacyConfidentialPersonal,
             privacyConfidentialCommercial: values.privacyConfidentialCommercial,
+            // Only when changed: the API refuses a model that is no longer
+            // usable, and that must not stop a save of anything else.
+            ...(values.confidentialModel !== confidentialModelKey(initialSettings.confidentialModel)
+              ? { confidentialModel: confidentialModelFromKey(values.confidentialModel) }
+              : {}),
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
             defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
             defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
@@ -1055,6 +1111,65 @@ export function SettingsForm({
                 </>
               }
             />
+            <div className="space-y-1.5 sm:max-w-md">
+              <Label htmlFor="confidentialModel" className="flex items-center gap-1">
+                Model for confidential messages
+                <FieldHelp title="Model for confidential messages">
+                  <p>
+                    Under &ldquo;Trusted or local providers only&rdquo; or &ldquo;Local providers
+                    only&rdquo;, a conversation holding that content, on an agent whose provider is
+                    not permitted, is answered on this model instead, from that message on. The user
+                    is told once that the conversation moved.
+                  </p>
+                  <p className="mt-2">
+                    Only chat models on a local provider, or on one ticked &ldquo;Trusted with
+                    confidential content&rdquo;, are listed. With none chosen, such a message is
+                    refused.
+                  </p>
+                  <p className="mt-2">
+                    A workflow step given its own model, and a capability that picks its own, are
+                    refused rather than moved: that model was chosen on purpose.
+                  </p>
+                </FieldHelp>
+              </Label>
+              <Controller
+                name="confidentialModel"
+                control={control}
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger id="confidentialModel" data-testid="confidential-model-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CONFIDENTIAL_MODEL}>None: refuse instead</SelectItem>
+                      {(confidentialModelOptions ?? []).map((option) => (
+                        <SelectItem
+                          key={confidentialModelKey(option)}
+                          value={confidentialModelKey(option)}
+                        >
+                          {option.label} ({option.where === 'local' ? 'local' : 'trusted'})
+                        </SelectItem>
+                      ))}
+                      {savedConfidentialUnlisted && initialSettings.confidentialModel && (
+                        <SelectItem value={savedConfidentialKey}>
+                          {initialSettings.confidentialModel.model} (
+                          {initialSettings.confidentialModel.providerSlug}, no longer usable)
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+            {confidentialRefusedForNoModel && (
+              <p
+                className="text-xs text-amber-700 dark:text-amber-400"
+                data-testid="privacy-confidential-no-model"
+              >
+                With no model for confidential messages, a message that an agent&apos;s provider is
+                not permitted to see is refused rather than moved.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

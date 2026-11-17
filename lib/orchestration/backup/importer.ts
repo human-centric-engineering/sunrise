@@ -913,6 +913,14 @@ async function importParsed(
           ...(s.privacyConfidentialCommercial !== undefined
             ? { privacyConfidentialCommercial: s.privacyConfidentialCommercial }
             : {}),
+          // Restored as it was, usable here or not: config health names one
+          // whose provider this install lacks, or does not trust (t-1038).
+          ...(s.confidentialModel !== undefined
+            ? {
+                confidentialModelProvider: s.confidentialModel?.providerSlug ?? null,
+                confidentialModel: s.confidentialModel?.model ?? null,
+              }
+            : {}),
         };
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },

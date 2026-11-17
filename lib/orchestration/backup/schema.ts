@@ -210,6 +210,15 @@ const settingsBackupSchema = z.object({
   // §130. Absent on a backup from before them, and then left alone.
   privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
   privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
+  // The model for confidential messages (§130 t-1038), null when none is set.
+  // Absent on a backup from before it, and then left alone.
+  confidentialModel: z
+    .object({
+      providerSlug: z.string().min(1).max(100),
+      model: z.string().min(1).max(200),
+    })
+    .nullable()
+    .optional(),
 });
 
 /**
