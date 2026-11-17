@@ -10289,5 +10289,237 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         'confidential_personal',
       ]);
     });
+
+    // ── A turn that ends in an error after a warned call was sent (t-1039) ──
+
+    const TOOL_CALL = [
+      { type: 'tool_call', toolCall: { id: 'tc-e', name: 'do_thing', arguments: {} } },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+    ];
+    const ANSWER = [
+      { type: 'text', content: 'Noted.' },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+    ];
+
+    /**
+     * Each call by its number: a script, which is sent and recorded as the
+     * stage records a sent call under `warn`, or an error, which is thrown
+     * before anything is recorded, as a refused or failed call records nothing.
+     */
+    function sentThen(step: (call: number) => Array<Record<string, unknown>> | Error) {
+      let call = 0;
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          const script = step(call++);
+          if (script instanceof Error) throw script;
+          const scope = currentPrivacyScope();
+          if (!scope) throw new Error('the call ran outside the turn scope');
+          recordPrivacySensitivity(scope, {
+            mode: 'detect',
+            categories: [{ category: 'health', group: 'personal' }],
+            failedAdapters: [],
+          });
+          recordConfidentialDecision(scope, { personal: 'warned' });
+          yield* script;
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      return provider;
+    }
+
+    /** The note, then the error: the embed widget stops reading at an error. */
+    function expectNoteBeforeError(events: Event[], conv: unknown, code: string) {
+      expect(notes(events)).toEqual([
+        { type: 'warning', code: 'confidential_personal', message: CONFIDENTIAL_NOTES.personal },
+      ]);
+      expect(errorOf(events)?.code).toBe(code);
+      const note = events.findIndex((e) => e.code === 'confidential_personal');
+      expect(note).toBeLessThan(events.findIndex((e) => e.type === 'error'));
+      expect((conv as { metadata?: unknown }).metadata).toEqual({
+        confidentialNoted: ['personal'],
+      });
+    }
+
+    it('shows it before the error when the output guard blocks the reply', async () => {
+      const { conv } = conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ outputGuardMode: 'block' }) as never
+      );
+      vi.mocked(scanOutput).mockResolvedValue({
+        flagged: true,
+        topicMatches: ['forbidden-topic'],
+        builtInMatches: [],
+      });
+      sentThen(() => ANSWER);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'output_blocked');
+    });
+
+    it('shows it before the error when the citation guard blocks the reply', async () => {
+      const { conv } = conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ citationGuardMode: 'block' }) as never
+      );
+      vi.mocked(scanCitations).mockReturnValue({
+        flagged: true,
+        underCited: true,
+        hallucinatedMarkers: [],
+      });
+      sentThen(() => ANSWER);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'citation_required');
+    });
+
+    it('shows it before the error when the budget runs out between tool calls', async () => {
+      const { conv } = conversationStore();
+      let checks = 0;
+      vi.mocked(checkBudget).mockImplementation(() =>
+        Promise.resolve(
+          ++checks === 1
+            ? { withinBudget: true, spent: 5, limit: 10, remaining: 5 }
+            : { withinBudget: false, spent: 11, limit: 10, remaining: -1 }
+        )
+      );
+      sentThen(() => TOOL_CALL);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'budget_exceeded');
+    });
+
+    it('shows it before the error when the tool loop hits its cap', async () => {
+      const { conv } = conversationStore();
+      sentThen(() => TOOL_CALL);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'tool_loop_cap');
+    });
+
+    it('shows it before the error when a later call fails', async () => {
+      const { conv } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new ProviderError('socket closed', { code: 'http_500', status: 500 })
+      );
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'http_500');
+    });
+
+    it('shows it before the error when a later call is refused for confidential content', async () => {
+      // The first call was sent and warned; a later one is refused under
+      // another group's policy. What went out was still sent.
+      const { conv } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new PrivacyRefusedError('confidential_not_permitted', 'anthropic', undefined)
+      );
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'privacy_confidential');
+    });
+
+    it('shows it before the error when the turn crashes after a call was sent', async () => {
+      const { conv } = conversationStore();
+      sentThen((call) => (call === 0 ? TOOL_CALL : new Error('Unexpected provider crash')));
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'internal_error');
+    });
+
+    it('shows nothing when the only flagged call was refused, since nothing was sent', async () => {
+      const { conv } = conversationStore();
+      const provider = confidentialProvider();
+
+      const refused = await turn(`I was ${DISCLOSURE}.`);
+      expect(errorOf(refused)?.code).toBe('privacy_confidential');
+      expect(notes(refused)).toEqual([]);
+      expect(provider.chatStream).toHaveBeenCalled();
+      expect((conv as { metadata?: unknown }).metadata).toBeNull();
+    });
+
+    it('lets the turn finish its work before the note, for a reader that stops there', async () => {
+      // The visitor presses Stop as the note arrives: the error marker and
+      // leaving the refused turn out of history have already happened.
+      const { rows } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new PrivacyRefusedError('confidential_not_permitted', 'anthropic', undefined)
+      );
+
+      const stream = streamChat({
+        ...baseRequest,
+        conversationId: 'conv-1',
+        message: `I was ${DISCLOSURE}.`,
+      });
+      for await (const event of stream as AsyncGenerator<Event>) {
+        if (event.code === 'confidential_personal') break;
+      }
+
+      expect(marked(rows.find((r) => r.content === `I was ${DISCLOSURE}.`))).toBe(
+        'privacy_confidential'
+      );
+      expect(
+        rows.some(
+          (r) =>
+            r.role === 'assistant' &&
+            (r.metadata as { error?: boolean } | null)?.error === true &&
+            (r.metadata as { errorCode?: string }).errorCode === 'privacy_confidential'
+        )
+      ).toBe(true);
+    });
+
+    it('shows it once in a turn that the per-turn cap ends, even when recording it fails', async () => {
+      // The cap's event and then `done` both end the turn; the failed write
+      // leaves nothing on the conversation to say the note was shown.
+      conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ maxCostPerTurnUsd: 0.02 }) as never
+      );
+      vi.mocked(prisma.aiConversation.updateMany).mockRejectedValue(new Error('reset'));
+      sentThen(() => [
+        { type: 'text', content: 'Noted.' },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 }, finishReason: 'stop' },
+      ]);
+
+      const events = await turn(`I was ${DISCLOSURE}.`);
+      expect(notes(events).map((e) => e.code)).toEqual(['confidential_personal']);
+      const kinds = events.map((e) => e.type);
+      const note = events.findIndex((e) => e.code === 'confidential_personal');
+      expect(note).toBeLessThan(kinds.indexOf('budget_exceeded_per_turn'));
+      expect(kinds.indexOf('budget_exceeded_per_turn')).toBeLessThan(kinds.indexOf('done'));
+    });
+
+    it('drops the note, not the turn, when showing it fails', async () => {
+      // Outside the handler's own catch: a failure here must not end the
+      // stream without the turn's `done`.
+      conversationStore();
+      warningProvider(() => ['personal']);
+      // The read fails, and so does logging that it failed: the error leaves
+      // the note's own handling.
+      vi.mocked(prisma.aiConversation.findFirst)
+        .mockImplementationOnce((async () => makeConversation()) as never)
+        .mockRejectedValueOnce(new Error('connection reset'));
+      vi.mocked(logger.warn).mockImplementation((message: string) => {
+        if (message === 'Failed to read which confidential-content notes were shown') {
+          throw new Error('the note blew up');
+        }
+      });
+
+      try {
+        const events = await turn(`I was ${DISCLOSURE}.`);
+        expect(notes(events)).toEqual([]);
+        expect(events.at(-1)?.type).toBe('done');
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'Failed to show the confidential-content note',
+          expect.objectContaining({ error: 'the note blew up' })
+        );
+      } finally {
+        // The suite's clearAllMocks keeps implementations; the logger's is a bare vi.fn().
+        vi.mocked(logger.warn).mockReset();
+      }
+    });
   });
 });

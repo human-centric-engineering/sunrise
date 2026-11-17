@@ -1384,9 +1384,17 @@ An org floor per group is not in this feature.
   and the place come from the refusing groups whose content was found, not
   from a group flagged only because a classifier failed.
 - **The warn note.** The chat handler emits a `warning` event
-  (`confidential_personal`, `confidential_commercial`) as the turn ends
-  (after the answer, at a pause for approval or another tool that ends the
-  turn, or when the per-turn cost cap stops the tool loop), for each group
+  (`confidential_personal`, `confidential_commercial`) just before the first
+  event that ends the turn (`done`, `error` or `budget_exceeded_per_turn`),
+  however it ends: after the answer, at a pause for approval, when a cost or
+  budget cap stops it, or when it ends in an error after a call was sent (a
+  guard blocking the reply, the tool-loop cap, a later call failing or being
+  refused). One wrapper around the turn does this (t-1039), so an ending
+  added later cannot leave it out, and it comes after whatever an ending does
+  before yielding its event (for a call that failed or was refused, the error
+  marker and leaving the refused turn out of history), so a reader that
+  stops at the note stops the turn only once that is done. Once
+  per turn, for each group
   the turn recorded as warned that the conversation has not been told about,
   and then keeps the groups told in
   `AiConversation.metadata.confidentialNoted`. Shown first, recorded after:
@@ -1404,10 +1412,12 @@ An org floor per group is not in this feature.
   as a generic privacy refusal (`privacy_refused`), never as confidential
   content, which nobody found, and is neither placed nor left out of later
   history: it is tried again on the next call.
-- **A known gap:** a turn that ends in an error after a warned call was sent
-  (the output guard blocking, the tool-loop cap) shows no note. The
-  conversation stays flagged and nothing records the note as shown, so the
-  next turn that ends with an answer shows it.
+- **Before the error, not after it:** the embed widget stops reading the
+  stream at an error event, so a note sent after one is never shown. A turn
+  whose only flagged call was refused shows no note: nothing was sent, and
+  the stage records a decision only for a call it sends. Neither does a turn
+  the input guard blocks, which ends before any call, nor one that ends
+  before its conversation is loaded.
 - **Not built here:** answering a flagged turn on another model (t-1038).
   Until then a policy that does not permit the agent's provider refuses.
 
