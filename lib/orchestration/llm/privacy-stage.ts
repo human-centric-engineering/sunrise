@@ -19,8 +19,11 @@
  *
  * Before any of that, a call made in a scope that records somewhere is
  * classified for confidential content (§130), in every mode and to local
- * providers too, and the categories found are recorded in its scope.
- * Classifying changes nothing sent.
+ * providers too, and the categories found are recorded in its scope. So is a
+ * call in any scope that a confidential-content policy could refuse. Each
+ * group's policy then decides: a call holding content of a group whose policy
+ * is `block`, or does not permit the call's provider, is refused, and a
+ * classifier failure counts as flagged under those policies.
  *
  * It refuses, and never sends, when it cannot say what the policy is: a
  * failed app init or core install (mode `off` included, because what was
@@ -36,7 +39,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
-import { PRIVACY_BLOCKED, PRIVACY_REFUSED, ProviderError } from '@/lib/orchestration/llm/provider';
+import {
+  PRIVACY_BLOCKED,
+  PRIVACY_CONFIDENTIAL,
+  PRIVACY_REFUSED,
+  ProviderError,
+} from '@/lib/orchestration/llm/provider';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import {
   CallRestorer,
@@ -50,6 +58,7 @@ import {
   createPrivacyScope,
   currentPrivacyScope,
   knownValuesOf,
+  recordConfidentialDecision,
   recordPrivacyCall,
   recordPrivacyRefusal,
   recordPrivacySensitivity,
@@ -60,23 +69,29 @@ import {
 import { scopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
 import {
   basePolicyFromSettings,
+  CONFIDENTIAL_POLICY_FIELD,
   isMaskingMode,
   protectsContent,
 } from '@/lib/orchestration/privacy/settings-policy';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
+import { confidentialStrictness } from '@/lib/privacy/adapters/policy';
 import {
   notifyPrivacyObservers,
   resolvePrivacyPolicy,
   runPrivacyDetectors,
   runSensitivityClassifiers,
 } from '@/lib/privacy/adapters/run';
-import type {
-  EntityType,
-  PrivacyEvent,
-  PrivacyPolicy,
-  SensitivityPart,
+import {
+  SENSITIVITY_GROUPS,
+  type ConfidentialPolicy,
+  type EntityType,
+  type PrivacyEvent,
+  type PrivacyPolicy,
+  type SensitivityGroup,
+  type SensitivityPart,
 } from '@/lib/privacy/adapters/types';
+import type { ConfidentialDecision } from '@/types/orchestration';
 import { orgIdForCall } from '@/lib/tenancy/context';
 
 /**
@@ -106,6 +121,8 @@ export type PrivacyRefusalReason =
   | 'detector_failed'
   | 'content_blocked'
   | 'embeddings_local_only'
+  | 'confidential_blocked'
+  | 'confidential_not_permitted'
   | 'stage_error';
 
 const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
@@ -123,6 +140,10 @@ const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
     'The LLM privacy layer refused the call: the privacy mode is block and the call contained personal data. Choose pseudonymise to send it with placeholders instead.',
   embeddings_local_only:
     "The LLM privacy layer refused an embedding call: the embeddings policy is local_only and the active embedding model's provider is not marked local. Use a local embedding model (see .context/orchestration/knowledge.md), or set the embeddings policy to allow.",
+  confidential_blocked:
+    'The LLM privacy layer refused the call: it held confidential content of a group whose policy is block, or a confidential-content classifier failed under that policy. Choose a looser policy for the group in the orchestration settings or on the agent, or leave the agent as it is if the content should never be sent.',
+  confidential_not_permitted:
+    'The LLM privacy layer refused the call: it held confidential content of a group whose policy sends it only to local providers (local_only) or to trusted and local ones (approved_only), or a confidential-content classifier failed under that policy, and the call\'s provider is neither. Put the agent on a local provider, tick the provider "Trusted with confidential content" if your contract with it covers this content, or loosen the group\'s policy.',
   stage_error:
     'The LLM privacy layer refused the call because of an internal error. Nothing was sent. See the server log.',
 };
@@ -150,6 +171,9 @@ function readerMessage(reason: PrivacyRefusalReason): string {
       return 'The request was not sent: it contains personal details that this deployment does not send to an AI provider.';
     case 'embeddings_local_only':
       return "Embedding was refused: this deployment's privacy settings allow embeddings only with a local model (embeddings policy: local only), and the active embedding model is not local.";
+    case 'confidential_blocked':
+    case 'confidential_not_permitted':
+      return 'The request was not sent: it contains confidential content that this deployment does not send to this AI provider.';
     default:
       return "The request was stopped before it was sent, by the deployment's privacy settings.";
   }
@@ -172,14 +196,29 @@ export interface PrivacyFindingLocation {
   messageIndices: readonly number[];
 }
 
+/** The `ProviderError` code a refusal carries: what the reader can do about it. */
+function refusalCode(reason: PrivacyRefusalReason): string {
+  if (reason === 'content_blocked') return PRIVACY_BLOCKED;
+  if (isConfidentialReason(reason)) return PRIVACY_CONFIDENTIAL;
+  return PRIVACY_REFUSED;
+}
+
+function isConfidentialReason(reason: PrivacyRefusalReason): boolean {
+  return reason === 'confidential_blocked' || reason === 'confidential_not_permitted';
+}
+
 export class PrivacyRefusedError extends ProviderError {
   readonly reason: PrivacyRefusalReason;
   readonly providerSlug: string;
-  /** Set on a `content_blocked` refusal of a chat call; absent otherwise. */
+  /**
+   * Set on a `content_blocked` refusal of a chat call, and on a confidential
+   * one when the stage could tell which messages held the content; absent
+   * otherwise.
+   */
   readonly found?: PrivacyFindingLocation;
   constructor(reason: PrivacyRefusalReason, providerSlug: string, found?: PrivacyFindingLocation) {
     super(readerMessage(reason), {
-      code: reason === 'content_blocked' ? PRIVACY_BLOCKED : PRIVACY_REFUSED,
+      code: refusalCode(reason),
       retriable: false,
     });
     this.name = 'PrivacyRefusedError';
@@ -199,10 +238,25 @@ export function isLocalOnlyEmbeddingRefusal(err: unknown): err is PrivacyRefused
   return err instanceof PrivacyRefusedError && err.reason === 'embeddings_local_only';
 }
 
+/**
+ * Whether `err` is a refusal for confidential content (§130): the call held
+ * content of a group whose policy blocks it, or does not permit its provider.
+ * An embedding caller answers it as it answers {@link isLocalOnlyEmbeddingRefusal}.
+ */
+export function isConfidentialRefusal(err: unknown): err is PrivacyRefusedError {
+  return err instanceof PrivacyRefusedError && isConfidentialReason(err.reason);
+}
+
 /** One vendor call, as the Proxy hands it to the stage. */
 export interface PrivacyStageCall {
   providerSlug: string;
   isLocal: boolean;
+  /**
+   * Whether the provider is ticked "Trusted with confidential content"
+   * (§130). Asked only when a policy of `approved_only` needs the answer; a
+   * call without it, or a lookup that fails, is treated as untrusted.
+   */
+  isTrusted?: () => Promise<boolean>;
   coverage: Exclude<PrivacyCoverage, 'none'>;
   /** The method's arguments: `(messages, options)` for chat, `(text)` / `(texts, options)` for embeddings. */
   args: readonly unknown[];
@@ -237,33 +291,36 @@ function chatMessages(call: PrivacyStageCall): readonly LlmMessage[] {
 
 /**
  * What a call sends, part by part with its role, for the sensitivity
- * classifiers (§130): each chat message's text, or each embedding input.
- * A chat call's tool-call arguments are left out: they are the model's,
- * derived from what the user wrote, which is classified already. An embedding
- * call's input is classified whoever wrote it (a model-written search query
- * included), because it is text that goes to the embedding provider.
+ * classifiers (§130): each chat message's text, or each embedding input, with
+ * the index of the message (or input) it came from. A chat call's tool-call
+ * arguments are left out: they are the model's, derived from what the user
+ * wrote, which is classified already. An embedding call's input is classified
+ * whoever wrote it (a model-written search query included), because it is
+ * text that goes to the embedding provider.
  */
-function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
-  const parts: SensitivityPart[] = [];
+function sensitivityParts(call: PrivacyStageCall): { index: number; part: SensitivityPart }[] {
+  const parts: { index: number; part: SensitivityPart }[] = [];
   if (call.coverage === 'full') {
-    for (const m of chatMessages(call)) {
+    chatMessages(call).forEach((m, index) => {
       if (typeof m.content === 'string') {
-        if (m.content.length > 0) parts.push({ role: m.role, text: m.content });
-        continue;
+        if (m.content.length > 0) parts.push({ index, part: { role: m.role, text: m.content } });
+        return;
       }
       for (const part of m.content) {
         if (part.type === 'text' && part.text.length > 0) {
-          parts.push({ role: m.role, text: part.text });
+          parts.push({ index, part: { role: m.role, text: part.text } });
         }
       }
-    }
+    });
     return parts;
   }
   const [first] = call.args;
   const inputs = typeof first === 'string' ? [first] : Array.isArray(first) ? first : [];
-  for (const text of inputs) {
-    if (typeof text === 'string' && text.length > 0) parts.push({ role: 'embedding', text });
-  }
+  inputs.forEach((text, index) => {
+    if (typeof text === 'string' && text.length > 0) {
+      parts.push({ index, part: { role: 'embedding', text } });
+    }
+  });
   return parts;
 }
 
@@ -274,31 +331,46 @@ function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
  */
 const SENSITIVITY_STAGE_FAILURE = 'privacy-stage.sensitivity';
 
+/** What classifying a call found: the groups, and whether anything failed. */
+interface Classification {
+  groups: ReadonlySet<SensitivityGroup>;
+  /** The classifiers that failed, or the stage's own classification step: empty when none did. */
+  failedAdapters: readonly string[];
+}
+
+const NOTHING_CLASSIFIED: Classification = { groups: new Set(), failedAdapters: [] };
+
+/** What the classifiers are told about the call, besides its parts. */
+interface ClassifyOptions {
+  scope: PrivacyScope;
+  orgId: string | undefined;
+  abandoned: AbortSignal | undefined;
+  /** Skip external classifiers: the call is forwarded untouched. */
+  inHouseOnly: boolean;
+}
+
 /**
  * Classify the call for confidential content and record what was found in
- * its scope (§130, t-1036), whether the call is then sent or refused.
+ * its scope (§130), whether the call is then sent or refused, and return it
+ * for the policy to act on.
  *
- * Never refuses: until a policy acts on it, a fault here is recorded as
- * degraded and the call goes on as it would have. Only in a scope that
- * records somewhere: an ephemeral one has nothing to read the result yet.
- * Records nothing when nothing was found and no classifier failed, so a turn
- * gains a privacy summary only when what its calls carried held something
- * confidential. Each call resends the history, so a disclosure from an
- * earlier turn is found again on every later turn that carried it, as the
- * PII counts are.
+ * A fault here never refuses by itself: it is recorded as degraded, and
+ * returned as a failure, which a strict policy then counts as flagged
+ * ({@link confidentialVerdict}). Records nothing when nothing was found and
+ * no classifier failed, so a turn gains a privacy summary only when what its
+ * calls carried held something confidential. Each call resends the history,
+ * so a disclosure from an earlier turn is found again on every later turn
+ * that carried it, as the PII counts are.
  */
 async function classifyCall(
   call: PrivacyStageCall,
-  scope: PrivacyScope,
   mode: PrivacyPolicy['mode'],
-  orgId: string | undefined,
-  abandoned: AbortSignal | undefined,
-  inHouseOnly: boolean
-): Promise<void> {
+  { scope, orgId, abandoned, inHouseOnly }: ClassifyOptions
+): Promise<Classification> {
   let classified: Awaited<ReturnType<typeof runSensitivityClassifiers>> | null;
   try {
-    const parts = sensitivityParts(call);
-    if (parts.length === 0) return;
+    const parts = sensitivityParts(call).map((p) => p.part);
+    if (parts.length === 0) return NOTHING_CLASSIFIED;
     const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
     classified = await runSensitivityClassifiers(
       { parts },
@@ -311,8 +383,6 @@ async function classifyCall(
       }
     );
   } catch (err) {
-    // Observing only: a fault here must not stop a call that would otherwise
-    // go out (mode `off` included). Recorded as degraded, so it is seen.
     logger.error('privacy-stage: sensitivity classification failed', undefined, {
       providerSlug: call.providerSlug,
       errorName: err instanceof Error ? err.name : typeof err,
@@ -327,15 +397,170 @@ async function classifyCall(
       categories: [],
       failedAdapters: [SENSITIVITY_STAGE_FAILURE],
     });
-    return;
+    return { groups: new Set(), failedAdapters: [SENSITIVITY_STAGE_FAILURE] };
   }
   const { categories, failures } = classified;
-  if (categories.length === 0 && failures.length === 0) return;
-  recordPrivacySensitivity(scope, {
-    mode,
-    categories,
-    failedAdapters: failures.map((f) => f.adapterId),
+  if (categories.length === 0 && failures.length === 0) return NOTHING_CLASSIFIED;
+  const failedAdapters = failures.map((f) => f.adapterId);
+  recordPrivacySensitivity(scope, { mode, categories, failedAdapters });
+  return { groups: new Set(categories.map((c) => c.group)), failedAdapters };
+}
+
+/** The policy that governs `group` for this call. */
+function groupPolicy(policy: PrivacyPolicy, group: SensitivityGroup): ConfidentialPolicy {
+  return policy[CONFIDENTIAL_POLICY_FIELD[group]];
+}
+
+/**
+ * A policy that can refuse a call: `block`, or one that sends confidential
+ * content only to some providers. A classifier failure counts as flagged
+ * under these (fail closed); under `allow` and `warn` it is only recorded.
+ */
+function refusesSomewhere(policy: ConfidentialPolicy): boolean {
+  return confidentialStrictness(policy) >= confidentialStrictness('approved_only');
+}
+
+/**
+ * Whether a policy of either group could refuse this call, so it must be
+ * classified even in a scope that records nowhere: `block` anywhere, or a
+ * policy that needs a local (or trusted) provider on a call to one that is
+ * not local.
+ */
+function confidentialPolicyCouldRefuse(policy: PrivacyPolicy, isLocal: boolean): boolean {
+  return SENSITIVITY_GROUPS.some((g) => {
+    const p = groupPolicy(policy, g);
+    return p === 'block' || (!isLocal && refusesSomewhere(p));
   });
+}
+
+/** What the policy says about a classified call. */
+type ConfidentialVerdict =
+  | { kind: 'none' }
+  | { kind: 'send'; decisions: Partial<Record<SensitivityGroup, ConfidentialDecision>> }
+  | {
+      kind: 'refuse';
+      reason: 'confidential_blocked' | 'confidential_not_permitted';
+      /** The flagged groups whose policy refused the call. */
+      groups: readonly SensitivityGroup[];
+      /** The groups found, each `refused`, for the trace. */
+      decisions: Partial<Record<SensitivityGroup, ConfidentialDecision>>;
+    };
+
+/**
+ * Apply each group's policy to what the call was found to hold (§130, spec
+ * § Policy). A group counts as flagged when content of it was found, or,
+ * under a policy that can refuse, when a classifier failed. A call flagged in
+ * both groups is held to each group's policy, so the stricter wins:
+ *
+ * - `block` refuses it, whatever the provider.
+ * - `local_only` refuses it unless the provider is local.
+ * - `approved_only` refuses it unless the provider is local or trusted.
+ * - `warn` and `allow` send it; `warn` is told to the user after.
+ */
+async function confidentialVerdict(
+  policy: PrivacyPolicy,
+  classification: Classification,
+  call: PrivacyStageCall
+): Promise<ConfidentialVerdict> {
+  const flagged = SENSITIVITY_GROUPS.filter(
+    (g) =>
+      classification.groups.has(g) ||
+      (classification.failedAdapters.length > 0 && refusesSomewhere(groupPolicy(policy, g)))
+  );
+  if (flagged.length === 0) return { kind: 'none' };
+  // Asked once, and only if a policy needs it.
+  let trusted: Promise<boolean> | undefined;
+  const isTrusted = (): Promise<boolean> =>
+    (trusted ??= (call.isTrusted?.() ?? Promise.resolve(false)).catch(() => false));
+  const refusing: SensitivityGroup[] = [];
+  let blocked = false;
+  for (const g of flagged) {
+    const p = groupPolicy(policy, g);
+    if (p === 'block') {
+      blocked = true;
+      refusing.push(g);
+    } else if (p === 'local_only' && !call.isLocal) {
+      refusing.push(g);
+    } else if (p === 'approved_only' && !call.isLocal && !(await isTrusted())) {
+      refusing.push(g);
+    }
+  }
+  const found = SENSITIVITY_GROUPS.filter((g) => classification.groups.has(g));
+  if (refusing.length > 0) {
+    return {
+      kind: 'refuse',
+      reason: blocked ? 'confidential_blocked' : 'confidential_not_permitted',
+      groups: refusing,
+      decisions: Object.fromEntries(found.map((g) => [g, 'refused' as const])),
+    };
+  }
+  return {
+    kind: 'send',
+    decisions: Object.fromEntries(
+      found.map((g) => [g, groupPolicy(policy, g) === 'warn' ? 'warned' : 'allowed'] as const)
+    ),
+  };
+}
+
+/**
+ * Which messages of a refused chat call held content of the refused groups
+ * (§130): positions only, never what was found, so the chat handler can leave
+ * an earlier message out of what later turns send (§127 t-1017's placement).
+ *
+ * Classifiers report what a call holds, not where, so each message is
+ * classified again on its own. Only on a refusal, and only the messages
+ * with text. Undefined when nothing could be placed (a classifier failed, or
+ * the content was only found across messages): the handler then leaves out
+ * the turn alone.
+ */
+async function locateConfidential(
+  call: PrivacyStageCall,
+  groups: readonly SensitivityGroup[],
+  { scope, orgId, abandoned, inHouseOnly }: ClassifyOptions
+): Promise<PrivacyFindingLocation | undefined> {
+  if (call.coverage !== 'full') return undefined;
+  const messages = chatMessages(call);
+  const byMessage = new Map<number, SensitivityPart[]>();
+  for (const { index, part } of sensitivityParts(call)) {
+    const list = byMessage.get(index) ?? [];
+    list.push(part);
+    byMessage.set(index, list);
+  }
+  try {
+    const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+    const signal = abandoned ? AbortSignal.any([abandoned, deadline]) : deadline;
+    const results = await Promise.all(
+      [...byMessage].map(async ([index, parts]) => {
+        const { categories, failures } = await runSensitivityClassifiers(
+          { parts },
+          {
+            scopeId: scope.scopeId,
+            ...(orgId !== undefined ? { orgId } : {}),
+            ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+            signal,
+            inHouseOnly,
+          }
+        );
+        return { index, failed: failures.length > 0, groups: categories.map((c) => c.group) };
+      })
+    );
+    // A message a classifier failed on may be the one: placing the others
+    // alone would leave it in the history, and the next turn refused again.
+    if (results.some((r) => r.failed)) return undefined;
+    const indices = results
+      .filter((r) => r.groups.some((g) => groups.includes(g)))
+      .map((r) => r.index)
+      .sort((a, b) => a - b);
+    return indices.length === 0
+      ? undefined
+      : { messageCount: messages.length, messageIndices: indices };
+  } catch (err) {
+    logger.warn('privacy-stage: could not place a confidential-content refusal', {
+      providerSlug: call.providerSlug,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    return undefined;
+  }
 }
 
 /**
@@ -537,14 +762,43 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     // A call the layer forwards untouched is not sent to an external
     // classifier either: that would be the one place its text went beyond
     // the provider the operator chose (a local one, or any under `off`).
+    // That holds under a strict confidential-content policy too: the policy
+    // narrows where confidential content may go, and must not widen it to a
+    // classifier's vendor. In-process and self-hosted classifiers decide.
     const forwardedUntouched =
       policy.mode === 'off' || (call.isLocal && !policy.protectLocalProviders);
-    if (!scoped.ephemeral) {
+    // A call in a scope that records nowhere is classified only when a
+    // confidential-content policy could refuse it: nothing else reads the
+    // result, and an external classifier would be sent its text for nothing.
+    if (!scoped.ephemeral || confidentialPolicyCouldRefuse(policy, call.isLocal)) {
       // Recorded under `off` when the call goes out unscanned: the summary's
       // mode is the strictest any SCANNED call ran under, and a skipped local
       // call was not scanned, so it must not raise it.
       const recordedMode = forwardedUntouched ? 'off' : policy.mode;
-      await classifyCall(call, scope, recordedMode, orgId, abandoned, forwardedUntouched);
+      const classifying: ClassifyOptions = {
+        scope,
+        orgId,
+        abandoned,
+        inHouseOnly: forwardedUntouched,
+      };
+      const classification = await classifyCall(call, recordedMode, classifying);
+      // The backstop (§130): after classifying, before the returns for `off`
+      // and a skipped local provider, so it holds in every mode.
+      const verdict = await confidentialVerdict(policy, classification, call);
+      if (verdict.kind === 'refuse') {
+        recordConfidentialDecision(scope, verdict.decisions);
+        const found = await locateConfidential(call, verdict.groups, classifying);
+        if (abandoned?.aborted) throw new CallAbandonedError();
+        throw refuse(
+          verdict.reason,
+          call,
+          scope,
+          recordedMode,
+          classification.failedAdapters,
+          found
+        );
+      }
+      if (verdict.kind === 'send') recordConfidentialDecision(scope, verdict.decisions);
     }
 
     if (policy.mode === 'off') return unchanged;

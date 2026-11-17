@@ -3,7 +3,8 @@
  * agent's mode (`AiAgent.privacyMode`), and an org's minimum mode and
  * protected terms (`Org.settings.privacy`).
  *
- * The two modes reach a call through core's policy resolver,
+ * The two modes, and the agent's confidential-content policies (§130), reach
+ * a call through core's policy resolver,
  * {@link scopeSettingsResolver}, registered with the others in
  * `lib/privacy/adapters/core-defaults.ts`. Like every resolver, it can only
  * tighten: the call runs under the strictest of the install's mode, the
@@ -28,11 +29,17 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { currentPrivacyScope, type PrivacyScope } from '@/lib/orchestration/privacy/scope';
 import {
+  parseTighteningConfidentialPolicy,
   parseTighteningMode,
+  type ConfidentialTighteningPolicy,
   type PrivacyTighteningMode,
 } from '@/lib/orchestration/privacy/settings-policy';
 import { stricterMode } from '@/lib/privacy/adapters/policy';
-import type { KnownValue, PrivacyPolicyResolver } from '@/lib/privacy/adapters/types';
+import type {
+  KnownValue,
+  PolicyResolution,
+  PrivacyPolicyResolver,
+} from '@/lib/privacy/adapters/types';
 import { readOrgPrivacy } from '@/lib/tenancy/org-settings';
 
 /**
@@ -50,12 +57,17 @@ export interface ScopePrivacySettings {
   orgMinimumMode: PrivacyTighteningMode | null;
   /** The org's protected terms, as tier B's known values. */
   protectedTerms: readonly KnownValue[];
+  /** The agent's own confidential-content policies (§130), or `null` to use the install's. */
+  agentConfidentialPersonal: ConfidentialTighteningPolicy | null;
+  agentConfidentialCommercial: ConfidentialTighteningPolicy | null;
 }
 
 const NOTHING_CHOSEN: ScopePrivacySettings = {
   agentMode: null,
   orgMinimumMode: null,
   protectedTerms: [],
+  agentConfidentialPersonal: null,
+  agentConfidentialCommercial: null,
 };
 
 /** Who a call is for. */
@@ -79,7 +91,14 @@ async function load({ orgId, agentId }: ScopeSettingsKey): Promise<ScopePrivacyS
   const [agent, org] = await Promise.all([
     agentId === undefined
       ? null
-      : prisma.aiAgent.findUnique({ where: { id: agentId }, select: { privacyMode: true } }),
+      : prisma.aiAgent.findUnique({
+          where: { id: agentId },
+          select: {
+            privacyMode: true,
+            privacyConfidentialPersonal: true,
+            privacyConfidentialCommercial: true,
+          },
+        }),
     orgId === undefined
       ? null
       : prisma.org.findUnique({ where: { id: orgId }, select: { settings: true } }),
@@ -96,7 +115,27 @@ async function load({ orgId, agentId }: ScopeSettingsKey): Promise<ScopePrivacyS
     throw new ScopePrivacySettingsUnreadableError('stored agent privacy mode is not a mode');
   }
 
-  if (!org) return { agentMode, orgMinimumMode: null, protectedTerms: [] };
+  let agentConfidentialPersonal: ConfidentialTighteningPolicy | null;
+  let agentConfidentialCommercial: ConfidentialTighteningPolicy | null;
+  try {
+    agentConfidentialPersonal = parseTighteningConfidentialPolicy(
+      agent?.privacyConfidentialPersonal
+    );
+    agentConfidentialCommercial = parseTighteningConfidentialPolicy(
+      agent?.privacyConfidentialCommercial
+    );
+  } catch {
+    logger.warn(
+      'privacy: an agent’s stored confidential-content policy is not a policy; its calls are refused until one is chosen on the agent form',
+      { agentId }
+    );
+    throw new ScopePrivacySettingsUnreadableError(
+      'stored agent confidential-content policy is not a policy'
+    );
+  }
+  const agentPolicies = { agentConfidentialPersonal, agentConfidentialCommercial };
+
+  if (!org) return { agentMode, orgMinimumMode: null, protectedTerms: [], ...agentPolicies };
   const read = readOrgPrivacy(org.settings);
   if (!read.ok) {
     logger.warn(
@@ -107,6 +146,7 @@ async function load({ orgId, agentId }: ScopeSettingsKey): Promise<ScopePrivacyS
   }
   return {
     agentMode,
+    ...agentPolicies,
     orgMinimumMode: read.value.minimumMode,
     protectedTerms: read.value.protectedTerms.map((term) => ({
       type: term.type,
@@ -151,7 +191,9 @@ export function strictestChosenMode(
 
 /**
  * Core's policy resolver: raises the mode to the agent's, then to the org's
- * minimum. Only ever raises it; the registry keeps the stricter value anyway.
+ * minimum, and each confidential-content policy to the agent's (§130; no org
+ * floor for those). Only ever raises them; the registry keeps the stricter
+ * value anyway.
  */
 export function scopeSettingsResolver(): PrivacyPolicyResolver {
   return {
@@ -162,7 +204,16 @@ export function scopeSettingsResolver(): PrivacyPolicyResolver {
         ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
       });
       const mode = strictestChosenMode(settings);
-      return mode === null ? undefined : { mode };
+      const patch: NonNullable<PolicyResolution> = {
+        ...(mode !== null ? { mode } : {}),
+        ...(settings.agentConfidentialPersonal !== null
+          ? { confidentialPersonal: settings.agentConfidentialPersonal }
+          : {}),
+        ...(settings.agentConfidentialCommercial !== null
+          ? { confidentialCommercial: settings.agentConfidentialCommercial }
+          : {}),
+      };
+      return Object.keys(patch).length === 0 ? undefined : patch;
     },
   };
 }

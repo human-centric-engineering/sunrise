@@ -122,11 +122,14 @@ import {
 import { PrivacyRefusedError } from '@/lib/orchestration/llm/privacy-stage';
 import {
   placePrivacyRefusal,
+  privacyRefusalKind,
   type BuiltChatRequest,
+  type PrivacyRefusalKind,
   type PlacedPrivacyRefusal,
   type SentMemory,
 } from '@/lib/orchestration/chat/privacy-refusal';
 import { isJsonObject } from '@/lib/privacy/config-recipients';
+import { SENSITIVITY_GROUPS, type SensitivityGroup } from '@/lib/privacy/adapters/types';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
   countOpenAiToolDefinitionTokens,
@@ -461,6 +464,20 @@ interface WriteEvaluationLogParams {
   tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
   metadata?: { citations?: Citation[] };
 }
+
+/** The `warning` event codes for a `warn` confidential-content policy's note (§130). */
+export const CONFIDENTIAL_NOTE_CODES = {
+  personal: 'confidential_personal',
+  commercial: 'confidential_commercial',
+} as const satisfies Record<SensitivityGroup, string>;
+
+/** What the note says. Never what was found: a group, and that it went to the provider. */
+export const CONFIDENTIAL_NOTES: Record<SensitivityGroup, string> = {
+  personal:
+    'This conversation includes sensitive personal information, such as a health or HR matter. It was sent to the AI provider, as this deployment allows. Share only what the assistant needs.',
+  commercial:
+    'This conversation includes confidential business information, such as unannounced plans or a deal. It was sent to the AI provider, as this deployment allows. Share only what the assistant needs.',
+};
 
 /**
  * The turn's privacy counts (§127) as a metadata field, for whichever
@@ -2379,6 +2396,10 @@ export class StreamingChatHandler {
             yield { type: 'citations', citations };
           }
 
+          // A `warn` confidential-content policy (§130): a note after
+          // sending, once per conversation per group (owner ruling).
+          yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
+
           // Per-turn cap — terminal-turn surface.
           //
           // The mid-loop cap (further down) hard-stops the tool loop
@@ -3233,8 +3254,17 @@ export class StreamingChatHandler {
         // transcript. Delete a memory that held them: it is sent in every
         // conversation with this agent. Details in the assistant's setup are
         // not ours to leave out: the reader is told to ask an administrator.
-        if (err.code === PRIVACY_BLOCKED) {
-          const placed = this.placeBlockedTurn(err, builtRequest, refusedCallMessageCount);
+        // A refusal for confidential content (§130) is left out and placed
+        // the same way, from where the stage found the refused group's
+        // content, and told with its own codes.
+        const refusalKind = privacyRefusalKind(err.code);
+        if (refusalKind !== null) {
+          const placed = this.placeBlockedTurn(
+            err,
+            builtRequest,
+            refusedCallMessageCount,
+            refusalKind
+          );
           await this.leaveRowsOutOfHistory(
             [...turnRowIds, ...(placed?.earlierRowIds ?? [])],
             conversationId,
@@ -3249,8 +3279,9 @@ export class StreamingChatHandler {
           }
           if (placed) {
             // Where, never what: the kinds of source and how many rows.
-            log.warn('Chat turn refused for personal details', {
+            log.warn('Chat turn refused for personal details or confidential content', {
               conversationId,
+              kind: refusalKind,
               code: placed.code,
               turn: placed.turn,
               earlierRows: placed.earlierRowIds.length,
@@ -3259,7 +3290,7 @@ export class StreamingChatHandler {
               setup: placed.setup,
             });
           }
-          const code = placed?.code ?? PRIVACY_BLOCKED;
+          const code = placed?.code ?? err.code;
           await persistErrorMarker(code);
           yield errorEvent(code, getUserFacingError(code).message);
           return;
@@ -3415,6 +3446,57 @@ export class StreamingChatHandler {
   }
 
   /**
+   * The note a `warn` confidential-content policy shows (§130, owner ruling
+   * 2026-11-17: a note after sending). Once per conversation per group: a
+   * conversation flagged once stays flagged, because each call resends the
+   * message that was flagged, so keying on "this turn's calls held it" would
+   * repeat it on every turn. The groups noted are kept on the conversation
+   * (`metadata.confidentialNoted`), so the note survives the history being
+   * summarised or pruned. Shown even if that write fails: a repeat is better
+   * than a note never seen. Never names what was found.
+   */
+  private async *confidentialNotes(
+    scope: PrivacyScope,
+    conversationId: string,
+    userId: string,
+    log: typeof logger
+  ): AsyncGenerator<ChatEvent> {
+    const decisions = privacySummary(scope)?.confidential;
+    if (!decisions) return;
+    const warned = SENSITIVITY_GROUPS.filter((g) => decisions[g] === 'warned');
+    if (warned.length === 0) return;
+    let toNote: SensitivityGroup[] = warned;
+    try {
+      const owned = { id: conversationId, ...conversationOwner(userId) };
+      const row = await prisma.aiConversation.findFirst({
+        where: owned,
+        select: { metadata: true },
+      });
+      const metadata = isJsonObject(row?.metadata) ? row.metadata : {};
+      const noted = Array.isArray(metadata.confidentialNoted) ? metadata.confidentialNoted : [];
+      toNote = warned.filter((g) => !noted.includes(g));
+      if (row && toNote.length > 0) {
+        await prisma.aiConversation.updateMany({
+          where: owned,
+          data: { metadata: { ...metadata, confidentialNoted: [...noted, ...toNote] } },
+        });
+      }
+    } catch (err) {
+      log.warn('Failed to record a confidential-content note as shown', {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    for (const group of toNote) {
+      yield {
+        type: 'warning',
+        code: CONFIDENTIAL_NOTE_CODES[group],
+        message: CONFIDENTIAL_NOTES[group],
+      };
+    }
+  }
+
+  /**
    * The rows a later call may resend: without error markers, and without the
    * rows of a turn the privacy layer refused (`isLeftOutOfHistory`). This
    * history is only ever used to rebuild the prompt (`historyRows`, the
@@ -3434,12 +3516,17 @@ export class StreamingChatHandler {
   private placeBlockedTurn(
     err: ProviderError,
     built: BuiltTurnRequest | null,
-    refusedCallMessageCount: number | null
+    refusedCallMessageCount: number | null,
+    kind: PrivacyRefusalKind
   ): PlacedPrivacyRefusal | null {
     if (!built || refusedCallMessageCount === null || !(err instanceof PrivacyRefusedError)) {
       return null;
     }
-    return placePrivacyRefusal(err.found, { ...built, messageCount: refusedCallMessageCount });
+    return placePrivacyRefusal(
+      err.found,
+      { ...built, messageCount: refusedCallMessageCount },
+      kind
+    );
   }
 
   /**

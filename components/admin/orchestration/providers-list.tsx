@@ -123,6 +123,9 @@ const providerRowSchema = z
     // cast below needs the schema to as well. Optional so a response without
     // it (an older instance mid-deploy) still parses.
     jurisdiction: z.string().nullable().optional(),
+    // Read for the Trusted badge (§130). Defaulted, so a response without it
+    // (an older instance mid-deploy) reads as untrusted.
+    trustedForConfidential: z.boolean().optional().default(false),
     createdBy: z.string(),
     createdAt: z.union([z.string(), z.date()]),
     updatedAt: z.union([z.string(), z.date()]),
@@ -664,6 +667,15 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                           title="Runs locally (e.g. Ollama) — no API key needed, zero cost"
                         >
                           Local
+                        </Badge>
+                      )}
+                      {p.trustedForConfidential && !p.isLocal && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                          title="Trusted with confidential content: an agent whose confidential-content policy is “trusted or local providers only” may send it here"
+                        >
+                          Trusted
                         </Badge>
                       )}
                       {!p.isActive && (

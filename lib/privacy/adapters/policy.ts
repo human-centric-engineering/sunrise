@@ -11,9 +11,11 @@
  */
 import { z } from 'zod';
 import {
+  CONFIDENTIAL_POLICIES_BY_STRICTNESS,
   DETECTOR_FAILURE_ACTIONS,
   ENTITY_TYPE_PATTERN,
   PRIVACY_MODES_BY_STRICTNESS,
+  type ConfidentialPolicy,
   type PrivacyMode,
   type PrivacyPolicy,
 } from '@/lib/privacy/adapters/types';
@@ -28,6 +30,19 @@ export function stricterMode(a: PrivacyMode, b: PrivacyMode): PrivacyMode {
   return modeStrictness(b) > modeStrictness(a) ? b : a;
 }
 
+/** How strict a confidential-content policy is: its position in {@link CONFIDENTIAL_POLICIES_BY_STRICTNESS}. */
+export function confidentialStrictness(policy: ConfidentialPolicy): number {
+  return CONFIDENTIAL_POLICIES_BY_STRICTNESS.indexOf(policy);
+}
+
+/** The stricter of two confidential-content policies. */
+export function stricterConfidentialPolicy(
+  a: ConfidentialPolicy,
+  b: ConfidentialPolicy
+): ConfidentialPolicy {
+  return confidentialStrictness(b) > confidentialStrictness(a) ? b : a;
+}
+
 /**
  * A whole policy: what the stage's base must be. Checked at the boundary,
  * because an unknown mode would otherwise rank as looser than `off`.
@@ -38,6 +53,8 @@ export const privacyPolicySchema = z
     ignoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)),
     protectLocalProviders: z.boolean(),
     onDetectorFailure: z.enum(DETECTOR_FAILURE_ACTIONS),
+    confidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
+    confidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
   })
   .strict() satisfies z.ZodType<PrivacyPolicy>;
 
@@ -74,6 +91,8 @@ export type PrivacyPolicyPatch = z.infer<typeof privacyPolicyPatchSchema>;
  *   so a patch can stop ignoring a type but never start.
  * - `protectLocalProviders` — `true` wins.
  * - `onDetectorFailure` — `block` wins.
+ * - `confidentialPersonal`, `confidentialCommercial` — the later in
+ *   {@link CONFIDENTIAL_POLICIES_BY_STRICTNESS}.
  *
  * A field the patch leaves out is unchanged.
  */
@@ -90,5 +109,13 @@ export function tightenPolicy(current: PrivacyPolicy, patch: PrivacyPolicyPatch)
       current.onDetectorFailure === 'block' || patch.onDetectorFailure === 'block'
         ? 'block'
         : 'fallback',
+    confidentialPersonal:
+      patch.confidentialPersonal === undefined
+        ? current.confidentialPersonal
+        : stricterConfidentialPolicy(current.confidentialPersonal, patch.confidentialPersonal),
+    confidentialCommercial:
+      patch.confidentialCommercial === undefined
+        ? current.confidentialCommercial
+        : stricterConfidentialPolicy(current.confidentialCommercial, patch.confidentialCommercial),
   };
 }

@@ -27,6 +27,8 @@ const TUNABLE_FIELD_PHRASES: Record<string, string> = {
   serviceTier: 'service tier',
   retentionDays: 'how long its conversations are kept',
   privacyMode: 'how strictly its calls protect personal details',
+  privacyConfidentialPersonal: 'where confidential personal content may be sent',
+  privacyConfidentialCommercial: 'where confidential commercial content may be sent',
 };
 
 export interface DescribeTunableFieldsOptions {

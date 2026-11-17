@@ -17,7 +17,10 @@ import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolv
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { isWorkflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
 import { isEmbedUserId } from '@/lib/embed/auth';
-import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
+import {
+  isConfidentialRefusal,
+  isLocalOnlyEmbeddingRefusal,
+} from '@/lib/orchestration/llm/privacy-stage';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -173,6 +176,15 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
         return this.error(
           'Knowledge search is unavailable: this deployment requires a local embedding model for search, and none is active.',
           'embeddings_local_only'
+        );
+      }
+      // The query holds confidential content this agent's policy does not
+      // send to the embedding provider (§130). Told to the model, which can
+      // ask without it, rather than a failure it would retry as it was.
+      if (isConfidentialRefusal(err)) {
+        return this.error(
+          'Knowledge search was not run: the search query contains confidential content that this deployment does not send to its embedding provider. Search again without it.',
+          'confidential_content'
         );
       }
       throw err;

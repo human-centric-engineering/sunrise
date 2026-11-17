@@ -15,6 +15,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import {
+  isConfidentialRefusal,
   isLocalOnlyEmbeddingRefusal,
   PrivacyRefusedError,
 } from '@/lib/orchestration/llm/privacy-stage';
@@ -83,6 +84,14 @@ export function queueMessageEmbedding(
     // reply is not indexed for search. Expected, so not a warning.
     if (isLocalOnlyEmbeddingRefusal(err)) {
       logger.info('Message embedding skipped: the privacy embeddings policy is local only', {
+        messageId,
+      });
+      return;
+    }
+    // The reply holds confidential content its agent's policy does not send
+    // to the embedding provider (§130): not indexed, as above.
+    if (isConfidentialRefusal(err)) {
+      logger.info('Message embedding skipped: confidential content the policy does not send', {
         messageId,
       });
       return;

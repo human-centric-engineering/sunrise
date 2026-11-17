@@ -10,7 +10,10 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
+import {
+  isConfidentialRefusal,
+  isLocalOnlyEmbeddingRefusal,
+} from '@/lib/orchestration/llm/privacy-stage';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -50,6 +53,11 @@ export const POST = withAdminAuth(
       // active (§127): say so, with the setting to change, not a bare 500.
       if (isLocalOnlyEmbeddingRefusal(err)) {
         return errorResponse(err.message, { code: 'EMBEDDINGS_LOCAL_ONLY', status: 409 });
+      }
+      // The query holds confidential content a policy does not send to the
+      // embedding provider (§130): say so, rather than a bare 500.
+      if (isConfidentialRefusal(err)) {
+        return errorResponse(err.message, { code: 'CONFIDENTIAL_CONTENT', status: 409 });
       }
       throw err;
     }

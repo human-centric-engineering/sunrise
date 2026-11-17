@@ -425,6 +425,12 @@ async function importParsed(
               // value; this one is a protection, and an omission must not
               // loosen it (the settings' privacy mode is kept the same way).
               ...(agent.privacyMode !== undefined ? { privacyMode: agent.privacyMode } : {}),
+              ...(agent.privacyConfidentialPersonal !== undefined
+                ? { privacyConfidentialPersonal: agent.privacyConfidentialPersonal }
+                : {}),
+              ...(agent.privacyConfidentialCommercial !== undefined
+                ? { privacyConfidentialCommercial: agent.privacyConfidentialCommercial }
+                : {}),
               maxHistoryTokens: agent.maxHistoryTokens,
               maxHistoryMessages: agent.maxHistoryMessages,
               retentionDays: agent.retentionDays,
@@ -900,6 +906,12 @@ async function importParsed(
             : {}),
           ...(s.privacyEmbeddingsPolicy !== undefined
             ? { privacyEmbeddingsPolicy: s.privacyEmbeddingsPolicy }
+            : {}),
+          ...(s.privacyConfidentialPersonal !== undefined
+            ? { privacyConfidentialPersonal: s.privacyConfidentialPersonal }
+            : {}),
+          ...(s.privacyConfidentialCommercial !== undefined
+            ? { privacyConfidentialCommercial: s.privacyConfidentialCommercial }
             : {}),
         };
         await tx.aiOrchestrationSettings.upsert({

@@ -112,6 +112,7 @@ export const POST = withAdminAuth(
           baseUrl: body.baseUrl ?? null,
           apiKeyEnvVar: body.apiKeyEnvVar ?? null,
           isLocal: body.isLocal,
+          trustedForConfidential: body.trustedForConfidential,
           isActive: body.isActive,
           jurisdiction: body.jurisdiction ?? null,
           metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,

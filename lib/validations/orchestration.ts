@@ -36,8 +36,13 @@ import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 import { validateScopes, listValidApiKeyScopes } from '@/lib/auth/api-key-scopes';
 import { jurisdictionSchema, orgIdSchema } from '@/lib/validations/tenancy';
-import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
 import {
+  CONFIDENTIAL_POLICIES_BY_STRICTNESS,
+  ENTITY_TYPE_PATTERN,
+  PRIVACY_MODES_BY_STRICTNESS,
+} from '@/lib/privacy/adapters/types';
+import {
+  CONFIDENTIAL_TIGHTENING_POLICIES,
   EMBEDDINGS_POLICIES,
   PRIVACY_MODES_AVAILABLE,
   PRIVACY_TIGHTENING_MODES,
@@ -232,6 +237,8 @@ export const createAgentObjectSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
+  privacyConfidentialPersonal: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
+  privacyConfidentialCommercial: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -434,6 +441,8 @@ export const updateAgentObjectSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
+  privacyConfidentialPersonal: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
+  privacyConfidentialCommercial: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -1358,6 +1367,8 @@ export const bundledAgentSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
+  privacyConfidentialPersonal: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
+  privacyConfidentialCommercial: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
@@ -1878,6 +1889,8 @@ export const providerConfigSchema = z
       .optional(),
 
     isLocal: z.boolean().default(false),
+    // "Trusted with confidential content" (§130): what `approved_only` sends to.
+    trustedForConfidential: z.boolean().default(false),
 
     isActive: z.boolean().default(true),
 
@@ -1936,6 +1949,7 @@ export const updateProviderConfigSchema = z
       .optional(),
 
     isLocal: z.boolean().optional(),
+    trustedForConfidential: z.boolean().optional(),
 
     isActive: z.boolean().optional(),
 
@@ -3128,6 +3142,9 @@ export const updateOrchestrationSettingsSchema = z
       .optional(),
     privacyProtectLocalProviders: z.boolean().optional(),
     privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES).optional(),
+    // What a call holding confidential content may do, per group (§130).
+    privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
+    privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
     // Write path: the refined variant, so an unsafe target is rejected at the
     // API boundary rather than only when the stored value is next used (#553).
     escalationConfig: escalationConfigWriteSchema.nullable().optional(),
@@ -3217,7 +3234,9 @@ export const updateOrchestrationSettingsSchema = z
       v.privacyMode !== undefined ||
       v.privacyIgnoredEntityTypes !== undefined ||
       v.privacyProtectLocalProviders !== undefined ||
-      v.privacyEmbeddingsPolicy !== undefined,
+      v.privacyEmbeddingsPolicy !== undefined ||
+      v.privacyConfidentialPersonal !== undefined ||
+      v.privacyConfidentialCommercial !== undefined,
     {
       message: 'At least one field must be provided',
     }
@@ -3480,6 +3499,8 @@ export const privacySummarySchema = z.object({
   // must not fail the parse, which would hide the whole privacy line. The
   // trace shows the groups in SENSITIVITY_GROUPS.
   sensitivity: z.record(z.string(), z.array(z.string())).optional(),
+  // Lenient for the same reason: an unknown group or decision must not hide the line.
+  confidential: z.record(z.string(), z.string()).optional(),
 });
 
 export const executionTraceEntrySchema = z

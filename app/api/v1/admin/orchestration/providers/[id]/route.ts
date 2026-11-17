@@ -67,6 +67,9 @@ export const PATCH = withAdminAuth<{ id: string }>(
     if (body.baseUrl !== undefined) data.baseUrl = body.baseUrl;
     if (body.apiKeyEnvVar !== undefined) data.apiKeyEnvVar = body.apiKeyEnvVar;
     if (body.isLocal !== undefined) data.isLocal = body.isLocal;
+    if (body.trustedForConfidential !== undefined) {
+      data.trustedForConfidential = body.trustedForConfidential;
+    }
     if (body.isActive !== undefined) data.isActive = body.isActive;
     if (body.jurisdiction !== undefined) data.jurisdiction = body.jurisdiction;
     if (body.metadata !== undefined) data.metadata = body.metadata;

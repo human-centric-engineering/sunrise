@@ -27,16 +27,21 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@/lib/logging';
-import type {
-  EntityType,
-  KnownValue,
-  PrivacyMode,
-  SensitivityCategory,
-  SensitivityGroup,
-  TokenSession,
+import {
+  SENSITIVITY_GROUPS,
+  type EntityType,
+  type KnownValue,
+  type PrivacyMode,
+  type SensitivityCategory,
+  type SensitivityGroup,
+  type TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
-import type { PrivacySummary } from '@/types/orchestration';
+import {
+  CONFIDENTIAL_DECISIONS,
+  type ConfidentialDecision,
+  type PrivacySummary,
+} from '@/types/orchestration';
 import type { ScopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
 
 /** What the stage found across the calls made in one scope. Counts only, never values. */
@@ -67,6 +72,11 @@ export interface PrivacyTally {
    * with the group of each (§130). Categories only: never text, never where.
    */
   sensitivity: Map<SensitivityCategory, SensitivityGroup>;
+  /**
+   * What the confidential-content policy did with the calls holding each
+   * group's content (§130): the strictest decision across them.
+   */
+  confidential: Map<SensitivityGroup, ConfidentialDecision>;
 }
 
 export interface PrivacyScopeInit {
@@ -143,6 +153,7 @@ function emptyTally(): PrivacyTally {
     refusals: new Set(),
     unresolved: 0,
     sensitivity: new Map(),
+    confidential: new Map(),
   };
 }
 
@@ -354,6 +365,31 @@ export function recordPrivacySensitivity(
   }
 }
 
+/**
+ * Record what the confidential-content policy did with a call (§130), per
+ * group found, in `scope` and every scope it sits inside. A scope keeps the
+ * strictest decision any of its calls got: a turn whose first call was sent
+ * and whose second was refused reads `refused`.
+ */
+export function recordConfidentialDecision(
+  scope: PrivacyScope,
+  decisions: Partial<Record<SensitivityGroup, ConfidentialDecision>>
+): void {
+  for (let s: PrivacyScope | undefined = scope; s; s = s.parent) {
+    for (const group of SENSITIVITY_GROUPS) {
+      const decision = decisions[group];
+      if (decision === undefined) continue;
+      const current = s.tally.confidential.get(group);
+      if (
+        current === undefined ||
+        CONFIDENTIAL_DECISIONS.indexOf(decision) > CONFIDENTIAL_DECISIONS.indexOf(current)
+      ) {
+        s.tally.confidential.set(group, decision);
+      }
+    }
+  }
+}
+
 /** Record placeholders a reply wrote that no session issued, left visible. */
 export function recordPrivacyUnresolved(scope: PrivacyScope, unresolved: number): void {
   if (unresolved <= 0) return;
@@ -390,5 +426,6 @@ export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined 
     ...(t.refusals.size > 0 ? { refused: [...t.refusals].sort() } : {}),
     ...(t.unresolved > 0 ? { unresolved: t.unresolved } : {}),
     ...(sensitivity ? { sensitivity } : {}),
+    ...(t.confidential.size > 0 ? { confidential: Object.fromEntries(t.confidential) } : {}),
   };
 }

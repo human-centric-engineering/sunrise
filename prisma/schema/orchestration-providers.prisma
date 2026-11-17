@@ -66,25 +66,30 @@ model AiCostLog {
 
 // Configured LLM providers
 model AiProviderConfig {
-  id           String   @id @default(cuid())
-  name         String   @unique
-  slug         String   @unique
-  providerType String // "anthropic", "openai-compatible"
-  baseUrl      String? // API base URL (required for openai-compatible)
-  apiKeyEnvVar String? // env var name e.g. "ANTHROPIC_API_KEY"
-  isLocal      Boolean  @default(false)
-  isActive     Boolean  @default(true)
-  metadata     Json?
-  timeoutMs    Int? // per-provider request timeout; null = use default (30s cloud, 10s local)
-  maxRetries   Int? // per-provider retry count; null = use default (3)
+  id                     String   @id @default(cuid())
+  name                   String   @unique
+  slug                   String   @unique
+  providerType           String // "anthropic", "openai-compatible"
+  baseUrl                String? // API base URL (required for openai-compatible)
+  apiKeyEnvVar           String? // env var name e.g. "ANTHROPIC_API_KEY"
+  isLocal                Boolean  @default(false)
+  isActive               Boolean  @default(true)
+  metadata               Json?
+  timeoutMs              Int? // per-provider request timeout; null = use default (30s cloud, 10s local)
+  maxRetries             Int? // per-provider retry count; null = use default (3)
   // Where the vendor processes data, as an operator-chosen code ("EU", "US").
   // Read by the provider policy (§120 t-742): an org restricted to some
   // jurisdictions is never sent a provider outside them, and null — not
   // recorded — matches no restriction.
-  jurisdiction String?
-  createdBy    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  jurisdiction           String?
+  // "Trusted with confidential content" (§130): a provider the install holds
+  // a contract with, say. A confidential-content policy of `approved_only`
+  // sends a flagged call only to a provider with this ticked, or a local one
+  // (local always counts). Off for every provider until an operator ticks it.
+  trustedForConfidential Boolean  @default(false)
+  createdBy              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   // Relations
   creator User? @relation("AiProviderConfigCreator", fields: [createdBy], references: [id], onDelete: SetNull)
@@ -286,6 +291,15 @@ model AiOrchestrationSettings {
   // stricter, an embedding call to a provider that is not `isLocal` is
   // refused: embedding inputs are counted, never masked (spec § Embeddings).
   privacyEmbeddingsPolicy       String    @default("allow")
+  // What a call holding confidential content may do, per group (§130): one
+  // of allow | warn | approved_only | local_only | block
+  // (lib/privacy/adapters/types.ts). The column defaults are for a row
+  // created from now on (a new install): warn for Personal, allow for
+  // Commercial. The migration that added them filled rows that already
+  // existed with `allow`, so an upgrade only records (owner ruling,
+  // 2026-11-17).
+  privacyConfidentialPersonal   String    @default("warn")
+  privacyConfidentialCommercial String    @default("allow")
   createdAt                     DateTime  @default(now())
   updatedAt                     DateTime  @updatedAt
 

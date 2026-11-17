@@ -16,6 +16,7 @@ import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_PRIVACY_IGNORED_ENTITY_TYPES,
   parseIgnoredEntityTypes,
+  parseConfidentialPolicy,
   parseEmbeddingsPolicy,
   parsePrivacyMode,
 } from '@/lib/orchestration/privacy/settings-policy';
@@ -121,6 +122,8 @@ export function hydrateSettings(row: {
   privacyIgnoredEntityTypes?: Prisma.JsonValue | null;
   privacyProtectLocalProviders?: boolean | null;
   privacyEmbeddingsPolicy?: string | null;
+  privacyConfidentialPersonal?: string | null;
+  privacyConfidentialCommercial?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -209,6 +212,14 @@ export function hydrateSettings(row: {
         : parseIgnoredEntityTypes(row.privacyIgnoredEntityTypes),
     privacyProtectLocalProviders: row.privacyProtectLocalProviders === true,
     privacyEmbeddingsPolicy: parseEmbeddingsPolicy(row.privacyEmbeddingsPolicy ?? undefined),
+    // As the embeddings policy: absent reads as the upgrade default (`allow`),
+    // a stored value that is not a policy as the strictest (`block`).
+    privacyConfidentialPersonal: parseConfidentialPolicy(
+      row.privacyConfidentialPersonal ?? undefined
+    ),
+    privacyConfidentialCommercial: parseConfidentialPolicy(
+      row.privacyConfidentialCommercial ?? undefined
+    ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -28,10 +28,14 @@
  *   deleted (t-1018; owner ruling 2026-11-12: carry on and forget) and asking
  *   again works.
  *
- * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*, *(t-1018)*
+ * A refusal for confidential content (§130, t-1037) is placed the same way,
+ * from where the stage found content of the refused group, and told with its
+ * own codes ({@link PRIVACY_CONFIDENTIAL} and the three below).
+ *
+ * @see .context/privacy/llm-privacy-layer.md — *What is built (t-1017)*, *(t-1018)*, *Confidential content*
  */
 import type { MessageSource } from '@/lib/orchestration/chat/message-builder';
-import { PRIVACY_BLOCKED } from '@/lib/orchestration/llm/provider';
+import { PRIVACY_BLOCKED, PRIVACY_CONFIDENTIAL } from '@/lib/orchestration/llm/provider';
 import type { PrivacyFindingLocation } from '@/lib/orchestration/llm/privacy-stage';
 
 /** Refused for personal details in an earlier message or the stored summary. */
@@ -43,11 +47,56 @@ export const PRIVACY_BLOCKED_SETUP = 'privacy_blocked_setup';
 /** Refused for personal details in something the agent remembered about the user (t-1018). */
 export const PRIVACY_BLOCKED_MEMORY = 'privacy_blocked_memory';
 
+/**
+ * The same four places for a refusal for confidential content (§130): the
+ * turn ({@link PRIVACY_CONFIDENTIAL}), an earlier message, the setup, or a
+ * memory. What is left out is the same; the reader is told about
+ * confidential content rather than personal details.
+ */
+export const PRIVACY_CONFIDENTIAL_EARLIER = 'privacy_confidential_earlier';
+export const PRIVACY_CONFIDENTIAL_SETUP = 'privacy_confidential_setup';
+export const PRIVACY_CONFIDENTIAL_MEMORY = 'privacy_confidential_memory';
+
 export type PrivacyBlockedChatCode =
   | typeof PRIVACY_BLOCKED
   | typeof PRIVACY_BLOCKED_EARLIER
   | typeof PRIVACY_BLOCKED_SETUP
-  | typeof PRIVACY_BLOCKED_MEMORY;
+  | typeof PRIVACY_BLOCKED_MEMORY
+  | typeof PRIVACY_CONFIDENTIAL
+  | typeof PRIVACY_CONFIDENTIAL_EARLIER
+  | typeof PRIVACY_CONFIDENTIAL_SETUP
+  | typeof PRIVACY_CONFIDENTIAL_MEMORY;
+
+/**
+ * What a refusal was for: personal details under the `block` mode (§127), or
+ * confidential content under a group's policy (§130).
+ */
+export type PrivacyRefusalKind = 'personal_details' | 'confidential';
+
+const CODES: Record<
+  PrivacyRefusalKind,
+  Record<'turn' | 'setup' | 'earlier' | 'memory', PrivacyBlockedChatCode>
+> = {
+  personal_details: {
+    turn: PRIVACY_BLOCKED,
+    setup: PRIVACY_BLOCKED_SETUP,
+    earlier: PRIVACY_BLOCKED_EARLIER,
+    memory: PRIVACY_BLOCKED_MEMORY,
+  },
+  confidential: {
+    turn: PRIVACY_CONFIDENTIAL,
+    setup: PRIVACY_CONFIDENTIAL_SETUP,
+    earlier: PRIVACY_CONFIDENTIAL_EARLIER,
+    memory: PRIVACY_CONFIDENTIAL_MEMORY,
+  },
+};
+
+/** The kind of a chat refusal's `ProviderError` code, or `null` when it is not one to place. */
+export function privacyRefusalKind(code: string): PrivacyRefusalKind | null {
+  if (code === PRIVACY_BLOCKED) return 'personal_details';
+  if (code === PRIVACY_CONFIDENTIAL) return 'confidential';
+  return null;
+}
 
 /**
  * A part of the assistant's setup that held personal details. Logged; never a
@@ -130,8 +179,10 @@ function exchangeOf(rows: BuiltChatRequest['historyRows'], index: number): numbe
  */
 export function placePrivacyRefusal(
   found: PrivacyFindingLocation | undefined,
-  sent: SentChatCall
+  sent: SentChatCall,
+  kind: PrivacyRefusalKind = 'personal_details'
 ): PlacedPrivacyRefusal | null {
+  const codes = CODES[kind];
   if (!found || found.messageCount !== sent.messageCount) return null;
   const earlierRows = new Set<number>();
   const memories = new Set<number>();
@@ -185,12 +236,12 @@ export function placePrivacyRefusal(
   // - Then a memory, which is deleted. Last because that cannot be undone
   //   and reaches every conversation the user has with the agent.
   const none = { earlierRowIds: [], summary: false, memories: [], setup: [] };
-  if (turn) return { ...none, code: PRIVACY_BLOCKED, turn };
-  if (setup.size > 0) return { ...none, code: PRIVACY_BLOCKED_SETUP, setup: [...setup], turn };
+  if (turn) return { ...none, code: codes.turn, turn };
+  if (setup.size > 0) return { ...none, code: codes.setup, setup: [...setup], turn };
   if (summary || earlierRows.size > 0) {
     const earlierRowIds = [...earlierRows].sort((a, b) => a - b).map((i) => sent.historyRows[i].id);
-    return { ...none, code: PRIVACY_BLOCKED_EARLIER, earlierRowIds, summary, turn };
+    return { ...none, code: codes.earlier, earlierRowIds, summary, turn };
   }
   const placed = [...memories].sort((a, b) => a - b).map((i) => sent.memories[i]);
-  return { ...none, code: PRIVACY_BLOCKED_MEMORY, memories: placed, turn };
+  return { ...none, code: codes.memory, memories: placed, turn };
 }

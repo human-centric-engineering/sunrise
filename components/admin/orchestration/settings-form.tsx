@@ -11,7 +11,7 @@
  */
 
 import * as React from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, Controller, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Check, Loader2, Save, Plus, X } from 'lucide-react';
@@ -26,10 +26,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { costLogsOutliveExecutions } from '@/lib/validations/orchestration';
-import { CORE_ENTITY_TYPES, type CoreEntityType } from '@/lib/privacy/adapters/types';
 import {
+  CONFIDENTIAL_POLICIES_BY_STRICTNESS,
+  CORE_ENTITY_TYPES,
+  type CoreEntityType,
+} from '@/lib/privacy/adapters/types';
+import {
+  CONFIDENTIAL_POLICY_LABELS,
   EMBEDDINGS_POLICIES,
   type EmbeddingsPolicy,
+  parseConfidentialPolicy,
   parseEmbeddingsPolicy,
   parsePrivacyMode,
   PRIVACY_MODE_LABELS,
@@ -104,6 +110,78 @@ export interface OrchestrationSettings {
   privacyIgnoredEntityTypes?: string[];
   privacyProtectLocalProviders?: boolean;
   privacyEmbeddingsPolicy?: string;
+  /** What a call holding confidential content may do, per group (§130). */
+  privacyConfidentialPersonal?: string;
+  privacyConfidentialCommercial?: string;
+}
+
+/** What each value does, said once for both groups' selects. */
+const CONFIDENTIAL_POLICY_HELP = (
+  <ul className="mt-2 list-disc space-y-1 pl-4">
+    <li>
+      <strong>Allow</strong> sends it and records it on the trace.
+    </li>
+    <li>
+      <strong>Warn</strong> sends it, then tells the user once per conversation.
+    </li>
+    <li>
+      <strong>Trusted or local providers only</strong> sends it only to a provider ticked
+      &ldquo;Trusted with confidential content&rdquo;, or a local one, and refuses it anywhere else.
+    </li>
+    <li>
+      <strong>Local providers only</strong> sends it only to a local provider.
+    </li>
+    <li>
+      <strong>Block</strong> never sends it. The user is told, and the conversation carries on
+      without that message.
+    </li>
+  </ul>
+);
+
+function ConfidentialPolicySelect({
+  control,
+  name,
+  label,
+  help,
+}: {
+  control: Control<SettingsFormData>;
+  name: 'privacyConfidentialPersonal' | 'privacyConfidentialCommercial';
+  label: string;
+  help: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5 sm:max-w-xs">
+      <Label htmlFor={name} className="flex items-center gap-1">
+        {label}
+        <FieldHelp title={`Confidential content: ${label.toLowerCase()}`}>
+          <p>{help}</p>
+          {CONFIDENTIAL_POLICY_HELP}
+          <p className="mt-2">
+            A refused message is not sent anywhere, and nothing is rerouted yet. A classifier that
+            fails counts as finding something under the three strictest settings.
+          </p>
+        </FieldHelp>
+      </Label>
+      <Controller
+        name={name}
+        control={control}
+        render={({ field }) => (
+          <Select value={field.value} onValueChange={field.onChange}>
+            <SelectTrigger id={name}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CONFIDENTIAL_POLICIES_BY_STRICTNESS.map((policy) => (
+                <SelectItem key={policy} value={policy}>
+                  {CONFIDENTIAL_POLICY_LABELS[policy]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      />
+    </div>
+  );
 }
 
 export interface SettingsFormProps {
@@ -197,6 +275,8 @@ const settingsFormSchema = z
     privacyProtectedTypes: z.array(z.string()),
     privacyProtectLocalProviders: z.boolean(),
     privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES),
+    privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
+    privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
     // Limits
     globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
     // Per-execution / per-turn defaults (improvement #39 runaway-loop
@@ -465,6 +545,12 @@ export function SettingsForm({
       ),
       privacyProtectLocalProviders: initialSettings.privacyProtectLocalProviders === true,
       privacyEmbeddingsPolicy: parseEmbeddingsPolicy(initialSettings.privacyEmbeddingsPolicy),
+      privacyConfidentialPersonal: parseConfidentialPolicy(
+        initialSettings.privacyConfidentialPersonal
+      ),
+      privacyConfidentialCommercial: parseConfidentialPolicy(
+        initialSettings.privacyConfidentialCommercial
+      ),
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
       defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
@@ -597,6 +683,8 @@ export function SettingsForm({
             ),
             privacyProtectLocalProviders: values.privacyProtectLocalProviders,
             privacyEmbeddingsPolicy: values.privacyEmbeddingsPolicy,
+            privacyConfidentialPersonal: values.privacyConfidentialPersonal,
+            privacyConfidentialCommercial: values.privacyConfidentialCommercial,
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
             defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
             defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
@@ -929,6 +1017,48 @@ export function SettingsForm({
               are not indexed. Choose a local embedding model to use them.
             </p>
           )}
+
+          <div className="space-y-3 border-t pt-4" data-testid="privacy-confidential-section">
+            <div>
+              <h3 className="text-sm font-medium">Confidential content</h3>
+              <p className="text-muted-foreground text-xs">
+                Masking hides who a message is about, not what it says. These decide which providers
+                may see a message that holds confidential content, whatever the mode above. An agent
+                can only make them stricter. Confidential content is spotted by a phrase list: it
+                catches what is said outright (&ldquo;I&apos;ve been signed off with
+                depression&rdquo;) and misses what is only implied. An agent whose whole job is
+                health, HR or a client&apos;s unannounced plans belongs on a local or trusted
+                provider from the start.
+              </p>
+            </div>
+            <ConfidentialPolicySelect
+              control={control}
+              name="privacyConfidentialPersonal"
+              label="Personal"
+              help={
+                <>
+                  Someone&apos;s health, ethnicity, religion, politics, trade-union membership,
+                  sexuality or criminal record, an HR or legal matter about them, or their debts.
+                  The person it is about did not choose to share it with an AI provider, and the law
+                  puts duties on whoever does.
+                </>
+              }
+            />
+            <ConfidentialPolicySelect
+              control={control}
+              name="privacyConfidentialCommercial"
+              label="Commercial"
+              help={
+                <>
+                  Your organisation&apos;s own secrets: unannounced or embargoed plans, a deal,
+                  restructuring or redundancies, a business in trouble, a legal dispute. A provider
+                  you hold a contract with can be ticked &ldquo;Trusted with confidential
+                  content&rdquo; on its provider page, for &ldquo;trusted or local providers
+                  only&rdquo;.
+                </>
+              }
+            />
+          </div>
         </CardContent>
       </Card>
 
