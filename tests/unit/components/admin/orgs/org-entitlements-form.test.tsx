@@ -2,7 +2,8 @@
 
 /**
  * OrgEntitlementsForm (§135 t-1033) — a platform admin sets the switches an
- * org has through `PUT /api/v1/admin/orgs/[id]/entitlements`.
+ * org has through `PATCH` (the switches it shows) and `DELETE` (back to the
+ * defaults) on `/api/v1/admin/orgs/[id]/entitlements`.
  *
  * @see components/admin/orgs/org-entitlements-form.tsx
  */
@@ -132,7 +133,7 @@ describe('OrgEntitlementsForm', () => {
   it('says an org with nothing set is at its defaults, and offers no clear', () => {
     renderForm(atDefaults());
 
-    expect(screen.getByText(/Nothing has been set on this organisation/)).toBeInTheDocument();
+    expect(screen.getByText(/None of these switches has been set/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeChecked();
     expect(screen.queryByRole('button', { name: 'Clear to defaults' })).not.toBeInTheDocument();
     // Every switch is at its default, which the note already says once.
@@ -173,13 +174,14 @@ describe('OrgEntitlementsForm', () => {
     );
 
     expect(apiClient.delete).toHaveBeenCalledWith(PATH);
-    expect(
-      await screen.findByText(/Nothing has been set on this organisation/)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/None of these switches has been set/)).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    // Said as what it was, not as a save of the ticks.
+    expect(screen.getByText('Cleared to defaults', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 
-  it('drops an earlier failed save once a clear lands, so it does not sit beside Saved', async () => {
+  it('drops an earlier failed save once a clear lands, so it does not sit beside the result', async () => {
     const { APIClientError } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Try again later'));
     vi.mocked(apiClient.delete).mockResolvedValue(atDefaults());
@@ -196,7 +198,9 @@ describe('OrgEntitlementsForm', () => {
       )!
     );
 
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Cleared to defaults', { selector: 'span' })
+    ).toBeInTheDocument();
     expect(screen.queryByText('Try again later')).not.toBeInTheDocument();
   });
 

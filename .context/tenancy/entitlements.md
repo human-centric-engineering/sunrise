@@ -152,10 +152,15 @@ when a slice was unreadable, and saving replaces it.
 **The write.** `setOrgSwitches(orgId, { on, off })` sets the named switches
 and leaves every other stored value as it is; `setOrgSwitches(orgId, null)`
 puts every registered switch back to its default, keeping values stored for
-keys nothing registers. It runs through `writeOrgEntitlements`, a
-serializable read-modify-write of the one key whose updater is handed what is
-stored inside the transaction, so nothing that landed in between is lost. A
-clash throws Prisma's `P2034` (`isSettingsWriteConflict`); the route answers 409. An empty slice is removed.
+keys nothing registers. Over a slice that could not be read, a registered
+switch the change does not name is set off rather than left to fall to its
+default, so a partial write cannot open what the unreadable slice may have
+set off. `null` throws when the app's registration failed, since there is
+then no telling which switches to put back. It runs through
+`writeOrgEntitlements`, a serializable read-modify-write of the one key whose
+updater is handed what is stored inside the transaction, so nothing that
+landed in between is lost. A clash throws Prisma's `P2034`
+(`isSettingsWriteConflict`); the route answers 409. An empty slice is removed.
 
 ## The admin surface
 
@@ -182,9 +187,13 @@ registered switch back to its default. An unregistered key, or one in both
 lists, is a 400. With nothing registered there is nothing to set, and a write
 is a 409. Values stored for keys nothing registers are kept by both, on or
 off: the caller could neither see nor set them, and a process running older
-code during a deploy must not drop a switch newer code registered. Two saves
-of the same org at the same moment are not detected: the later one wins on
-each switch both name, as on the other org settings forms.
+code during a deploy must not drop a switch newer code registered. A write
+from a caller who may not make it is refused before its body is read. A
+write that changes nothing writes no audit row. Two saves of the same org at
+the same moment are not detected: the later one wins on each switch both
+name, as on the other org settings forms. A clear handled by a process
+running older code during a deploy puts back only the switches that build
+registers.
 
 Every method is platform-only (no `tier`): at `multi`, an org's own OWNER or
 ADMIN is refused. The writes are also install-org only, as the caps are

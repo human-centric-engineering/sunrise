@@ -315,6 +315,36 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
     );
   });
 
+  it('records nothing for a save that changes nothing', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports'], off: ['leads'] } },
+    });
+
+    const res = await patch({ on: ['reports'], off: ['leads'] });
+
+    expect(res.status).toBe(200);
+    expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed, so nothing to audit
+  });
+
+  it('keeps an unreadable slice’s keys in the audit row, so a carried key is not read as granted', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['old_pkg', 'reports'] } },
+    });
+
+    await patch({ on: [], off: ['reports', 'leads'] });
+
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: {
+          entitlements: {
+            from: { unreadable: true, on: ['old_pkg', 'reports'], off: [] },
+            to: { on: ['old_pkg'], off: ['leads', 'reports'] },
+          },
+        },
+      })
+    );
+  });
+
   it('counts repeated keys once against the limit', async () => {
     const res = await patch({ on: Array.from({ length: 150 }, () => 'reports'), off: [] });
 
@@ -458,6 +488,15 @@ describe('the switches at multi are changed only from the install org, as the ca
       'tenancy: refused an org switches write outside the install org',
       expect.objectContaining({ orgId: OTHER, activeOrgId: OTHER })
     );
+  });
+
+  it('refuses a customer org before reading the body, so a bad one is not what it is told to fix', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+
+    const res = await patch({ on: ['Bad-Key'] });
+
+    expect(res.status).toBe(403);
+    expect((await json(res)).error?.details?.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
   });
 
   it('refuses clearing them from a customer org too', async () => {

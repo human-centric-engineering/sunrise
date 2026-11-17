@@ -402,6 +402,39 @@ describe('setOrgSwitches', () => {
     expect(storedSlice()).toEqual({ on: ['old_pkg'], off: ['leads', 'reports'] });
   });
 
+  it('sets off, over an unreadable slice, a registered switch it does not name, rather than open its default', async () => {
+    // `off` is not a list: the org has nothing, and the slice may have set `leads` off.
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['old_pkg', 'leads'], off: 'leads' } },
+    });
+
+    await setOrgSwitches(ORG, { on: ['reports'], off: [] });
+
+    // `leads` (on by default) is set off, not left to its default; the
+    // unregistered `old_pkg` is kept; `leads` salvaged from `on` is not.
+    expect(storedSlice()).toEqual({ on: ['old_pkg', 'reports'], off: ['leads'] });
+  });
+
+  it('puts an unreadable slice back to the defaults for null, as asked', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['old_pkg', 'leads'], off: 'x' } },
+    });
+
+    await setOrgSwitches(ORG, null);
+
+    expect(storedSlice()).toEqual({ on: ['old_pkg'], off: [] });
+  });
+
+  it('refuses to put switches back to their defaults when the registration failed, writing nothing', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    await expect(setOrgSwitches(ORG, null)).rejects.toThrow(/failed to register/);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
   it('is null, writing nothing, for an org that does not exist', async () => {
     mockPrisma.org.findUnique.mockResolvedValue(null);
 

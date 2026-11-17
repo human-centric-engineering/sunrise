@@ -217,12 +217,18 @@ export async function orgHasSwitch(
  * newer build during a deploy. A plan that decides every switch names every
  * switch.
  *
+ * **Over a slice that could not be read**, which gave the org nothing, a
+ * registered switch the change does not name is set off rather than left to
+ * fall to its default: the slice may have set it off, and nobody chose to grant
+ * it. Values it held for keys nothing registers are kept, as always.
+ *
  * Keys are not checked against the registry here: a caller taking them from a
  * request refuses unregistered ones first, as the route does. A key in both
  * lists, or one that is not a key, throws a `ZodError` and nothing is written.
- * **It decides nothing about who may**: ask `mayChangeOrgCommercialSettings()`
- * (`lib/tenancy/shared-settings.ts`) after a platform-admin check. A clash with
- * a concurrent settings write
+ * `null` throws when the app's registration failed, since there is then no
+ * telling which switches to put back. **It decides nothing about who may**:
+ * ask `mayChangeOrgCommercialSettings()` (`lib/tenancy/shared-settings.ts`)
+ * after a platform-admin check. A clash with a concurrent settings write
  * throws `P2034` (`isSettingsWriteConflict`).
  *
  * @returns what was stored before and what is stored now, or `null` when the
@@ -233,18 +239,26 @@ export async function setOrgSwitches(
   change: { on: readonly string[]; off: readonly string[] } | null,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{ previous: OrgEntitlementsRead; stored: OrgEntitlementsRead } | null> {
-  const named = new Set(
-    change === null
-      ? registeredEntitlementSwitches().map((s) => s.key)
-      : [...change.on, ...change.off]
-  );
+  const registered = new Set(registeredEntitlementSwitches().map((s) => s.key));
+  if (change === null && entitlementSwitchesFailed()) {
+    throw new Error(
+      "The app's entitlement switches failed to register, so there is no telling which to put back to their defaults"
+    );
+  }
+  const named = change === null ? registered : new Set([...change.on, ...change.off]);
   return writeOrgEntitlements(
     orgId,
     (previous) => {
-      const untouched = (keys: readonly string[]) => keys.filter((key) => !named.has(key));
+      // From an unreadable slice, a registered switch is only what this change makes it.
+      const kept = (keys: readonly string[]) =>
+        keys.filter((key) => !named.has(key) && !(previous.unreadable && registered.has(key)));
+      const closed =
+        previous.unreadable && change !== null
+          ? [...registered].filter((key) => !named.has(key))
+          : [];
       return {
-        on: [...untouched(previous.on), ...(change?.on ?? [])],
-        off: [...untouched(previous.off), ...(change?.off ?? [])],
+        on: [...kept(previous.on), ...(change?.on ?? [])],
+        off: [...kept(previous.off), ...(change?.off ?? []), ...closed],
       };
     },
     db

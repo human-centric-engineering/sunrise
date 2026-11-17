@@ -572,8 +572,9 @@ A `PATCH` takes `{ on: string[], off: string[] }`, both required: the
 registered switches to set on and off. A switch named in neither is left as
 it is, so a caller cannot turn off one it did not know about. A `DELETE` puts
 every registered switch back to its default. Values stored for keys no app
-registers are kept by both. Each writes an `org.entitlements.update` audit
-row with what it replaced. At `multi` the writes, like a caps write, come
+registers are kept by both. Each write that changes something writes an
+`org.entitlements.update` audit row with what it replaced. At `multi` the
+writes, like a caps write, come
 only from the install org or an unbound admin API key: a platform admin
 switched into a customer's org may read the switches but not change them.
 

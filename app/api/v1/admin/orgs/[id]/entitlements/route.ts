@@ -94,9 +94,45 @@ function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) 
   };
 }
 
-/** What the audit log keeps: the keys set on and off, or that they could not be read. */
+/**
+ * What the audit log keeps: the keys set on and off, and whether the slice
+ * could be read. An unreadable one keeps what parsed in it, so a key a save
+ * carried over is not mistaken for one this admin granted.
+ */
 function auditable(read: OrgEntitlementsRead) {
-  return read.unreadable ? { unreadable: true } : { on: [...read.on], off: [...read.off] };
+  const keys = { on: [...read.on], off: [...read.off] };
+  return read.unreadable ? { unreadable: true, ...keys } : keys;
+}
+
+/** Whether a write left the slice as it was, so there is nothing to audit. */
+function unchanged(previous: OrgEntitlementsRead, stored: OrgEntitlementsRead): boolean {
+  // Both lists are kept sorted, so equal sets are equal arrays.
+  return (
+    !previous.unreadable &&
+    previous.on.join() === stored.on.join() &&
+    previous.off.join() === stored.off.join()
+  );
+}
+
+/**
+ * At `multi`, writes come from the install org or an unbound admin API key.
+ * Asked before the body is read, so a caller who may not write is told where
+ * to go rather than how to fix a request it cannot make.
+ */
+function refuseOutsideInstallOrg(
+  log: Awaited<ReturnType<typeof getRouteLogger>>,
+  session: AuthenticatedSession,
+  id: string
+): void {
+  if (mayChangeOrgCommercialSettings(session.principal.credential)) return;
+  log.warn('tenancy: refused an org switches write outside the install org', {
+    orgId: id,
+    actorUserId: session.user.id,
+    activeOrgId: getTenantContext()?.orgId ?? null,
+  });
+  throw new APIError(SWITCHES_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
+    reason: SHARED_SETTINGS_REFUSAL_CODE,
+  });
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
@@ -111,30 +147,17 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
 }, PLATFORM_ONLY);
 
 /**
- * Both writes: refuse what this caller may not do, then set `change` (the
+ * Both writes, once the caller is known to be allowed: set `change` (the
  * named switches), or with `null` put every registered switch back to its
  * default, and audit it.
  */
 async function writeSwitches(
   request: NextRequest,
+  log: Awaited<ReturnType<typeof getRouteLogger>>,
   session: AuthenticatedSession,
   id: string,
   change: { on: string[]; off: string[] } | null
 ): Promise<Response> {
-  const log = await getRouteLogger(request);
-
-  // Before anything that says which switches exist.
-  if (!mayChangeOrgCommercialSettings(session.principal.credential)) {
-    log.warn('tenancy: refused an org switches write outside the install org', {
-      orgId: id,
-      actorUserId: session.user.id,
-      activeOrgId: getTenantContext()?.orgId ?? null,
-    });
-    throw new APIError(SWITCHES_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
-      reason: SHARED_SETTINGS_REFUSAL_CODE,
-    });
-  }
-
   const registered = new Set(registeredEntitlementSwitches().map((s) => s.key));
   if (registered.size === 0) {
     return errorResponse(
@@ -171,6 +194,10 @@ async function writeSwitches(
     );
   }
   if (!written) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
+  // A save that changed nothing is not a change to record.
+  if (unchanged(written.previous, written.stored)) {
+    return successResponse(describe(id, written.stored, true));
+  }
 
   logAdminAction({
     userId: session.user.id,
@@ -198,12 +225,16 @@ async function writeSwitches(
 }
 
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
+  refuseOutsideInstallOrg(log, session, id);
   const body = await validateRequestBody(request, orgEntitlementsInputSchema);
-  return writeSwitches(request, session, id, body);
+  return writeSwitches(request, log, session, id, body);
 }, PLATFORM_ONLY);
 
 export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
-  return writeSwitches(request, session, id, null);
+  refuseOutsideInstallOrg(log, session, id);
+  return writeSwitches(request, log, session, id, null);
 }, PLATFORM_ONLY);

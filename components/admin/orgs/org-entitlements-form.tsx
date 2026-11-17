@@ -80,7 +80,8 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
   const [view, setView] = useState(initial);
   const [ticked, setTicked] = useState(() => onKeys(initial));
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // What the last write that landed did, said beside the buttons.
+  const [done, setDone] = useState<'Saved' | 'Cleared to defaults' | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
   // No field shows its own message, so every one the server sends joins the
   // summary by Save.
@@ -101,7 +102,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
   });
 
   const toggle = (key: string, on: boolean) => {
-    setSaved(false);
+    setDone(null);
     setTicked((current) => {
       const next = new Set(current);
       if (on) next.add(key);
@@ -113,11 +114,12 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
   /** Whether the write landed; a failure is shown by `failure`. */
   const write = async (
     send: () => Promise<OrgEntitlementsView>,
-    failure: typeof saveFailure
+    failure: typeof saveFailure,
+    said: NonNullable<typeof done>
   ): Promise<boolean> => {
     failure.clear();
     setSaving(true);
-    setSaved(false);
+    setDone(null);
     try {
       const updated = await send();
       setView(updated);
@@ -125,7 +127,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       // Whichever write failed before, the switches are now as shown.
       saveFailure.clear();
       clearFailure.clear();
-      setSaved(true);
+      setDone(said);
       return true;
     } catch (err) {
       failure.report(err);
@@ -145,13 +147,15 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
             off: view.switches.filter((s) => !ticked.has(s.key)).map((s) => s.key),
           },
         }),
-      saveFailure
+      saveFailure,
+      'Saved'
     );
 
   const clearToDefaults = async () => {
     const cleared = await write(
       () => apiClient.delete<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId)),
-      clearFailure
+      clearFailure,
+      'Cleared to defaults'
     );
     if (cleared) setConfirmingClear(false);
   };
@@ -178,8 +182,8 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       )}
       {view.nothingSet && (
         <p className="text-muted-foreground text-sm">
-          Nothing has been set on this organisation, so each switch is at its default, as ticked
-          below. Saving sets these switches on the organisation itself.
+          None of these switches has been set on this organisation, so each is at its default, as
+          ticked below. Saving sets them on the organisation itself.
         </p>
       )}
       {!view.mayChange && (
@@ -256,7 +260,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
                 Clear to defaults
               </Button>
             )}
-            {saved && <span className="text-sm text-green-600">Saved</span>}
+            {done && <span className="text-sm text-green-600">{done}</span>}
           </div>
           <SaveError failure={saveFailure.failure} />
         </div>
