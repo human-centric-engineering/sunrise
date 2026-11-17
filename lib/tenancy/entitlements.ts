@@ -217,49 +217,55 @@ export async function orgHasSwitch(
  * newer build during a deploy. A plan that decides every switch names every
  * switch.
  *
- * **Over a slice that could not be read**, which gave the org nothing, a
- * registered switch the change does not name is set off rather than left to
- * fall to its default: the slice may have set it off, and nobody chose to grant
- * it. Values it held for keys nothing registers are kept, as always.
+ * **Over a slice that could not be read**, which gave the org nothing, nothing
+ * comes back on that this change does not set on: every key the slice held is
+ * kept, but off, and so is every registered switch the change does not name,
+ * rather than falling to its default. The slice may have set it off, and nobody
+ * chose to grant it. (`null` still puts the registered switches back to their
+ * defaults, since that is what it asks for.)
  *
- * Keys are not checked against the registry here: a caller taking them from a
- * request refuses unregistered ones first, as the route does. A key in both
- * lists, or one that is not a key, throws a `ZodError` and nothing is written.
- * `null` throws when the app's registration failed, since there is then no
- * telling which switches to put back. **It decides nothing about who may**:
- * ask `mayChangeOrgCommercialSettings()` (`lib/tenancy/shared-settings.ts`)
- * after a platform-admin check. A clash with a concurrent settings write
- * throws `P2034` (`isSettingsWriteConflict`).
+ * A change naming nothing writes nothing, over any slice. Keys are not checked
+ * against the registry here: a caller taking them from a request refuses
+ * unregistered ones first, as the route does. A key in both lists, or one that
+ * is not a key, throws a `ZodError` and nothing is written. While the app's
+ * registration has failed it throws and writes nothing, since there is then no
+ * telling which switches exist. **It decides nothing about who may**: ask
+ * `mayChangeOrgCommercialSettings()` (`lib/tenancy/shared-settings.ts`) after
+ * a platform-admin check. A clash with a concurrent settings write throws
+ * `P2034` (`isSettingsWriteConflict`).
  *
- * @returns what was stored before and what is stored now, or `null` when the
- *   org does not exist.
+ * @returns what was stored before, what is stored now and whether this
+ *   changed it, or `null` when the org does not exist.
  */
 export async function setOrgSwitches(
   orgId: string,
   change: { on: readonly string[]; off: readonly string[] } | null,
   db: Pick<PrismaClient, '$transaction'> = prisma
-): Promise<{ previous: OrgEntitlementsRead; stored: OrgEntitlementsRead } | null> {
+): Promise<{
+  previous: OrgEntitlementsRead;
+  stored: OrgEntitlementsRead;
+  changed: boolean;
+} | null> {
   const registered = new Set(registeredEntitlementSwitches().map((s) => s.key));
-  if (change === null && entitlementSwitchesFailed()) {
+  if (entitlementSwitchesFailed()) {
     throw new Error(
-      "The app's entitlement switches failed to register, so there is no telling which to put back to their defaults"
+      "The app's entitlement switches failed to register, so no switch can be set until they do. The server log says why."
     );
   }
   const named = change === null ? registered : new Set([...change.on, ...change.off]);
+  const setOn = change?.on ?? [];
+  const setOff = change?.off ?? [];
   return writeOrgEntitlements(
     orgId,
     (previous) => {
-      // From an unreadable slice, a registered switch is only what this change makes it.
-      const kept = (keys: readonly string[]) =>
-        keys.filter((key) => !named.has(key) && !(previous.unreadable && registered.has(key)));
-      const closed =
-        previous.unreadable && change !== null
-          ? [...registered].filter((key) => !named.has(key))
-          : [];
-      return {
-        on: [...kept(previous.on), ...(change?.on ?? [])],
-        off: [...kept(previous.off), ...(change?.off ?? []), ...closed],
-      };
+      if (named.size === 0) return undefined;
+      if (previous.unreadable) {
+        const held = [...previous.on, ...previous.off].filter((key) => !named.has(key));
+        const closed = change === null ? [] : [...registered].filter((key) => !named.has(key));
+        return { on: [...setOn], off: [...held, ...setOff, ...closed] };
+      }
+      const kept = (keys: readonly string[]) => keys.filter((key) => !named.has(key));
+      return { on: [...kept(previous.on), ...setOn], off: [...kept(previous.off), ...setOff] };
     },
     db
   );

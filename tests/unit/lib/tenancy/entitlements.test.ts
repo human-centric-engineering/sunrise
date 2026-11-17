@@ -392,17 +392,19 @@ describe('setOrgSwitches', () => {
     expect(storedSlice()).toEqual({ on: ['retired'], off: ['older'] });
   });
 
-  it('keeps what parses in an unreadable slice, so the save does not drop it unseen', async () => {
+  it('keeps the keys an unreadable slice held, but off, so the save neither drops nor grants them', async () => {
+    // `off` is missing: the org has nothing. `old_pkg` is a key this build
+    // does not register (a newer build's, or a retired one).
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { entitlements: { on: ['old_pkg', 'reports'] } },
     });
 
     await setOrgSwitches(ORG, { on: [], off: ['reports', 'leads'] });
 
-    expect(storedSlice()).toEqual({ on: ['old_pkg'], off: ['leads', 'reports'] });
+    expect(storedSlice()).toEqual({ on: [], off: ['leads', 'old_pkg', 'reports'] });
   });
 
-  it('sets off, over an unreadable slice, a registered switch it does not name, rather than open its default', async () => {
+  it('turns nothing on over an unreadable slice but what the change sets on', async () => {
     // `off` is not a list: the org has nothing, and the slice may have set `leads` off.
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { entitlements: { on: ['old_pkg', 'leads'], off: 'leads' } },
@@ -410,28 +412,42 @@ describe('setOrgSwitches', () => {
 
     await setOrgSwitches(ORG, { on: ['reports'], off: [] });
 
-    // `leads` (on by default) is set off, not left to its default; the
-    // unregistered `old_pkg` is kept; `leads` salvaged from `on` is not.
-    expect(storedSlice()).toEqual({ on: ['old_pkg', 'reports'], off: ['leads'] });
+    // `leads` (on by default, and held in `on`) is set off, not left to its
+    // default or kept on; the unregistered `old_pkg` is kept, off.
+    expect(storedSlice()).toEqual({ on: ['reports'], off: ['leads', 'old_pkg'] });
   });
 
-  it('puts an unreadable slice back to the defaults for null, as asked', async () => {
+  it('puts an unreadable slice back to the defaults for null, as asked, keeping its other keys off', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { entitlements: { on: ['old_pkg', 'leads'], off: 'x' } },
     });
 
     await setOrgSwitches(ORG, null);
 
-    expect(storedSlice()).toEqual({ on: ['old_pkg'], off: [] });
+    expect(storedSlice()).toEqual({ on: [], off: ['old_pkg'] });
   });
 
-  it('refuses to put switches back to their defaults when the registration failed, writing nothing', async () => {
+  it('writes nothing for a change that names nothing, even over an unreadable slice', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports'], off: 5 } },
+    });
+
+    const written = await setOrgSwitches(ORG, { on: [], off: [] });
+
+    expect(written?.changed).toBe(false);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing named, nothing written
+  });
+
+  it('refuses any write while the registration has failed, writing nothing', async () => {
     __resetEntitlementRegistryForTests();
     vi.mocked(initAppEntitlements).mockImplementation(() => {
       throw new Error('boom');
     });
 
     await expect(setOrgSwitches(ORG, null)).rejects.toThrow(/failed to register/);
+    await expect(setOrgSwitches(ORG, { on: ['leads'], off: [] })).rejects.toThrow(
+      /failed to register/
+    );
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 

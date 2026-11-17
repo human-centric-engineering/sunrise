@@ -16,6 +16,7 @@ import {
   OrgEntitlementsForm,
   type OrgEntitlementsView,
 } from '@/components/admin/orgs/org-entitlements-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { apiClient } from '@/lib/api/client';
 
 vi.mock('@/lib/api/client', () => ({
@@ -221,10 +222,21 @@ describe('OrgEntitlementsForm', () => {
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
   });
 
-  it('shows the switches but offers no change where they cannot be changed', () => {
-    renderForm(view({ mayChange: false }));
+  it('shows the switches but offers no change where they cannot be changed, with the shared notice', () => {
+    // As the admin layout provides it, from a customer org that can switch.
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <OrgEntitlementsForm orgId={ORG} entitlements={view({ mayChange: false })} />
+      </SharedSettingsAccessProvider>
+    );
 
-    expect(screen.getByText(/only be changed from the install organisation/)).toBeInTheDocument();
+    const notice = screen.getByTestId('shared-settings-read-only');
+    expect(notice).toHaveTextContent(/switches can only be changed from the install organisation/);
+    // Its own reason, not the shared-settings one.
+    expect(notice).not.toHaveTextContent(/shared by every organisation/);
+    expect(
+      screen.getByRole('button', { name: 'Switch to the install organisation' })
+    ).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save switches' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear to defaults' })).not.toBeInTheDocument();
@@ -241,7 +253,7 @@ describe('OrgEntitlementsForm', () => {
 
     renderForm(view({ ...unreadable, mayChange: false }));
     expect(screen.getByText(/could not be read/)).toHaveTextContent(
-      /Switch to the install organisation to set them/
+      /They can be set again from the install organisation/
     );
   });
 

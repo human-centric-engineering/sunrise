@@ -638,17 +638,23 @@ export async function loadOrgEntitlements(
 
 /**
  * Replace an org's whole entitlements slice, preserving every other key in
- * `settings`. The low-level write: code that sets switches calls
- * `setOrgSwitches()` (`lib/tenancy/entitlements.ts`), which keeps every value
- * it does not name, rather than this.
+ * `settings`. Internal to the platform, and not part of the versioned surface:
+ * code that sets switches calls `setOrgSwitches()` (`lib/tenancy/entitlements.ts`),
+ * which keeps every value it does not name, rather than this.
  *
  * `next` is handed what is stored and returns the keys to store set on and
- * set off, or `null` to set none, so every switch is at its default (two empty
- * lists mean the same, and both remove the slice). It runs inside the write's
- * transaction, so a caller that keeps part of what is stored cannot lose a
- * write that landed in between. The result is validated with
- * `orgEntitlementsSchema`, so a malformed key, or one in both lists, throws a
- * `ZodError` and nothing is written.
+ * set off; `null` to set none, so every switch is at its default (two empty
+ * lists mean the same, and both remove the slice); or `undefined` to leave the
+ * slice as it is. It runs inside the write's transaction, so a caller that
+ * keeps part of what is stored cannot lose a write that landed in between. The
+ * result is validated with `orgEntitlementsSchema`, so a malformed key, or one
+ * in both lists, throws a `ZodError` and nothing is written.
+ *
+ * **A write that would store what is already stored writes nothing** and says
+ * `changed: false`, so a save that changed nothing neither touches the row nor
+ * risks a serialization clash. The comparison is with the stored JSON, not the
+ * cleaned read, so a slice the read had to tidy (a duplicate, a stray
+ * property, one it could not read) is written.
  *
  * **It decides nothing about who may**, as {@link writeOrgQuotas} does not:
  * the admin route's writes are platform-only and, at `multi`, install-org
@@ -658,14 +664,20 @@ export async function loadOrgEntitlements(
  * Through {@link updateSettingsSlice}: a clash with a concurrent settings
  * write throws `P2034` ({@link isSettingsWriteConflict}).
  *
- * @returns what was stored before and what is stored now, or `null` when the
- *   org does not exist.
+ * @returns what was stored before, what is stored now and whether the write
+ *   changed it, or `null` when the org does not exist.
  */
 export async function writeOrgEntitlements(
   orgId: string,
-  next: (previous: OrgEntitlementsRead) => { on: readonly string[]; off: readonly string[] } | null,
+  next: (
+    previous: OrgEntitlementsRead
+  ) => { on: readonly string[]; off: readonly string[] } | null | undefined,
   db: Pick<PrismaClient, '$transaction'> = prisma
-): Promise<{ previous: OrgEntitlementsRead; stored: OrgEntitlementsRead } | null> {
+): Promise<{
+  previous: OrgEntitlementsRead;
+  stored: OrgEntitlementsRead;
+  changed: boolean;
+} | null> {
   let previous: OrgEntitlementsRead = NOTHING_SET;
   let stored: OrgEntitlementsRead = NOTHING_SET;
   const replaced = await updateSettingsSlice(
@@ -674,17 +686,37 @@ export async function writeOrgEntitlements(
     (settings) => {
       previous = readOrgEntitlements(settings, { orgId });
       const keys = next(previous);
-      if (keys === null || (keys.on.length === 0 && keys.off.length === 0)) {
-        stored = NOTHING_SET;
-        return null;
+      if (keys === undefined) {
+        stored = previous;
+        return LEAVE_AS_IS;
       }
-      const value = orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
-      stored = { on: value.on, off: value.off, unreadable: false };
+      const value =
+        keys === null || (keys.on.length === 0 && keys.off.length === 0)
+          ? null
+          : orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
+      stored = value === null ? NOTHING_SET : { on: value.on, off: value.off, unreadable: false };
+      const current = isJsonObject(settings) ? settings[ORG_ENTITLEMENTS_KEY] : undefined;
+      if (!previous.unreadable && isStoredSlice(current, value)) return LEAVE_AS_IS;
       return value;
     },
     db
   );
-  return replaced === null ? null : { previous, stored };
+  return replaced === null ? null : { previous, stored, changed: replaced.written };
+}
+
+/** Whether the stored JSON is exactly `value`, a validated slice, or absent for `null`. */
+function isStoredSlice(current: unknown, value: { on: string[]; off: string[] } | null): boolean {
+  if (value === null) return current === null || current === undefined;
+  const sameList = (stored: unknown, list: string[]) =>
+    Array.isArray(stored) &&
+    stored.length === list.length &&
+    stored.every((key, i) => key === list[i]);
+  return (
+    isJsonObject(current) &&
+    Object.keys(current).length === 2 &&
+    sameList(current.on, value.on) &&
+    sameList(current.off, value.off)
+  );
 }
 
 /**
@@ -707,26 +739,31 @@ async function writeSettingsSlice(
   key: string,
   value: unknown,
   db: Pick<PrismaClient, '$transaction'>
-): Promise<{ settings: unknown } | null> {
+): Promise<{ settings: unknown; written: boolean } | null> {
   return updateSettingsSlice(orgId, key, () => value, db);
 }
+
+/** What an {@link updateSettingsSlice} update returns to write nothing. */
+const LEAVE_AS_IS = Symbol('leave the slice as it is');
 
 /**
  * {@link writeSettingsSlice} with the value worked out from the column as the
  * transaction read it, for a writer that keeps part of what is stored. `update`
- * must not do I/O: it runs inside the transaction.
+ * must not do I/O: it runs inside the transaction. It returns
+ * {@link LEAVE_AS_IS} to write nothing, which `written` reports.
  */
 async function updateSettingsSlice(
   orgId: string,
   key: string,
   update: (settings: unknown) => unknown,
   db: Pick<PrismaClient, '$transaction'>
-): Promise<{ settings: unknown } | null> {
+): Promise<{ settings: unknown; written: boolean } | null> {
   return db.$transaction(
     async (tx) => {
       const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
       if (!row) return null;
       const value = update(row.settings);
+      if (value === LEAVE_AS_IS) return { settings: row.settings, written: false };
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
       if (value === null) delete base[key];
       else base[key] = value;
@@ -737,7 +774,7 @@ async function updateSettingsSlice(
             Object.keys(base).length === 0 ? Prisma.DbNull : (base as Prisma.InputJsonObject),
         },
       });
-      return { settings: row.settings };
+      return { settings: row.settings, written: true };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );

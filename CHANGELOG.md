@@ -76,17 +76,20 @@ release process.
   surface of its own. The app reads them with `orgHasSwitch()`,
   `loadOrgSwitches()` or `resolveOrgSwitches()` (`lib/tenancy/entitlements.ts`).
   They are stored as an `entitlements` slice in `Org.settings`,
-  `{ on: [...], off: [...] }` (`readOrgEntitlements()` /
-  `writeOrgEntitlements()` in `lib/tenancy/org-settings.ts`). A switch nobody
-  set on an org gets its `whenNothingSet`, which is a different answer from a
-  switch set off, so a switch registered later reaches an org saved before it
-  at its default; an unreadable slice fails closed. Nothing refuses a request
-  on a switch yet.
+  `{ on: [...], off: [...] }` (read with `readOrgEntitlements()` in
+  `lib/tenancy/org-settings.ts`). A switch nobody set on an org gets its
+  `whenNothingSet`, which is a different answer from a switch set off, so a
+  switch registered later reaches an org saved before it at its default; an
+  unreadable slice fails closed. Nothing refuses a request on a switch yet.
   The design's principle 8 now gives the platform the commercial mechanism
   (entitlements, meters, signup into an org of one's own) and leaves plans,
-  prices and what an app counts with forks. **A fork that keeps "what an org
-  bought" in a key of its own can move it here**, and a fork filling the seam
-  pins one new row in `tests/unit/lib/app/defaults.test.ts`.
+  prices and what an app counts with forks. **`entitlements` is now a
+  platform-owned key of `Org.settings`:** a fork already storing its own
+  `settings.entitlements` must move it to another name before taking this
+  release, or its value reads as unreadable and the first save overwrites it.
+  **A fork that keeps "what an org bought" in a key of its own can move it
+  here**, and a fork filling the seam pins one new row in
+  `tests/unit/lib/app/defaults.test.ts`.
 
 ### Fixed
 

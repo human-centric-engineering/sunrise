@@ -315,7 +315,7 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
     );
   });
 
-  it('records nothing for a save that changes nothing', async () => {
+  it('writes and records nothing for a save that changes nothing', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { entitlements: { on: ['reports'], off: ['leads'] } },
     });
@@ -323,6 +323,7 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
     const res = await patch({ on: ['reports'], off: ['leads'] });
 
     expect(res.status).toBe(200);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed, so nothing written
     expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed, so nothing to audit
   });
 
@@ -338,7 +339,7 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
         changes: {
           entitlements: {
             from: { unreadable: true, on: ['old_pkg', 'reports'], off: [] },
-            to: { on: ['old_pkg'], off: ['leads', 'reports'] },
+            to: { on: [], off: ['leads', 'old_pkg', 'reports'] },
           },
         },
       })

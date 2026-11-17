@@ -21,8 +21,9 @@
  * it to itself. So, as with the caps, at `multi` a platform admin switched into
  * a customer's org may read the switches but not change them: the write comes
  * from the install org or an unbound admin API key
- * (`mayChangeOrgCommercialSettings`). Every write is in the admin audit log
- * (`org.entitlements.update`) with what it replaced.
+ * (`mayChangeOrgCommercialSettings`). Every write that changes something is in
+ * the admin audit log (`org.entitlements.update`) with what it replaced; one
+ * that changes nothing writes nothing.
  */
 
 import type { NextRequest } from 'next/server';
@@ -102,16 +103,6 @@ function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) 
 function auditable(read: OrgEntitlementsRead) {
   const keys = { on: [...read.on], off: [...read.off] };
   return read.unreadable ? { unreadable: true, ...keys } : keys;
-}
-
-/** Whether a write left the slice as it was, so there is nothing to audit. */
-function unchanged(previous: OrgEntitlementsRead, stored: OrgEntitlementsRead): boolean {
-  // Both lists are kept sorted, so equal sets are equal arrays.
-  return (
-    !previous.unreadable &&
-    previous.on.join() === stored.on.join() &&
-    previous.off.join() === stored.off.join()
-  );
 }
 
 /**
@@ -194,8 +185,8 @@ async function writeSwitches(
     );
   }
   if (!written) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
-  // A save that changed nothing is not a change to record.
-  if (unchanged(written.previous, written.stored)) {
+  // A save that changed nothing wrote nothing, and is not a change to record.
+  if (!written.changed) {
     return successResponse(describe(id, written.stored, true));
   }
 

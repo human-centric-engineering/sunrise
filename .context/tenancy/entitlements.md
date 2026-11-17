@@ -43,9 +43,10 @@ the same feature.
   switch it is not given as it is, so a writer of its own (billing) that
   names only `on` leaves a default-on switch the plan leaves out on. Name
   every switch the plan decides, on or off.
-- **Writing the slice yourself.** `writeOrgEntitlements()` replaces the whole
-  slice: a writer that builds it from what it knows drops values stored for
-  keys it did not know about (a newer build's switch, a retired one). Call
+- **Writing the slice yourself.** `writeOrgEntitlements()` is internal and
+  replaces the whole slice: a writer that builds it from what it knows drops
+  values stored for keys it did not know about (a newer build's switch, a
+  retired one), and skips the unreadable-slice rule below. Call
   `setOrgSwitches()`, which keeps them.
 - **Keeping your own copy.** A `packages` key of your own beside this one is
   two answers to one question, and billing will only ever write this one.
@@ -152,14 +153,16 @@ when a slice was unreadable, and saving replaces it.
 **The write.** `setOrgSwitches(orgId, { on, off })` sets the named switches
 and leaves every other stored value as it is; `setOrgSwitches(orgId, null)`
 puts every registered switch back to its default, keeping values stored for
-keys nothing registers. Over a slice that could not be read, a registered
-switch the change does not name is set off rather than left to fall to its
-default, so a partial write cannot open what the unreadable slice may have
-set off. `null` throws when the app's registration failed, since there is
-then no telling which switches to put back. It runs through
+keys nothing registers. Over a slice that could not be read, nothing comes
+back on that the change does not set on: every key the slice held is kept but
+off, and so is every registered switch the change does not name, so a partial
+write cannot open what the unreadable slice may have set off. A change naming
+nothing writes nothing. While the app's registration has failed it throws,
+since there is then no telling which switches exist. It runs through
 `writeOrgEntitlements`, a serializable read-modify-write of the one key whose
 updater is handed what is stored inside the transaction, so nothing that
-landed in between is lost. A clash throws Prisma's `P2034`
+landed in between is lost. A write that would store exactly what is stored
+writes nothing and reports `changed: false`. A clash throws Prisma's `P2034`
 (`isSettingsWriteConflict`); the route answers 409. An empty slice is removed.
 
 ## The admin surface
@@ -175,8 +178,10 @@ look like an install that has none. The section ticks what the org has, marks th
 when nothing has been set and which switch is still at its default, and
 offers **Clear to defaults**, behind a confirmation, once something has. The
 switches are locked while a save runs. Where the caller cannot change them
-(`mayChange: false`), it shows them without the form's buttons and says to
-switch to the install organisation.
+(`mayChange: false`), it shows them without the form's buttons, under the
+shared read-only notice (`SharedSettingsReadOnlyNotice` with its own
+`reason`), which offers the switch to the install organisation or says why
+there is none.
 
 `PATCH /api/v1/admin/orgs/[id]/entitlements` takes `{ on: string[], off:
 string[] }`, both required: the registered switches to set on and off. A

@@ -37,6 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -71,6 +72,10 @@ export interface OrgEntitlementsFormProps {
   orgId: string;
   entitlements: OrgEntitlementsView;
 }
+
+/** Why the switches are read-only from a customer's org, for the shared notice. */
+const SWITCHES_READ_ONLY =
+  'An organisation’s switches can only be changed from the install organisation, so that no organisation can grant itself one.';
 
 function onKeys(view: OrgEntitlementsView): Set<string> {
   return new Set(view.switches.filter((s) => s.on).map((s) => s.key));
@@ -177,7 +182,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
           until they are saved again.{' '}
           {view.mayChange
             ? 'Tick what it should have and save.'
-            : 'Switch to the install organisation to set them.'}
+            : 'They can be set again from the install organisation.'}
         </div>
       )}
       {view.nothingSet && (
@@ -186,11 +191,8 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
           ticked below. Saving sets them on the organisation itself.
         </p>
       )}
-      {!view.mayChange && (
-        <p className="text-muted-foreground text-sm">
-          These can only be changed from the install organisation. Switch to it to make a change.
-        </p>
-      )}
+      {/* The shared notice: it offers the switch, or says why there is none. */}
+      {!view.mayChange && <SharedSettingsReadOnlyNotice reason={SWITCHES_READ_ONLY} />}
 
       {/* Locked while a save runs, so a tick made meanwhile is not lost when it lands. */}
       <fieldset className="grid gap-2" disabled={saving || !view.mayChange}>

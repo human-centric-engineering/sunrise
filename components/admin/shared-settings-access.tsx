@@ -101,8 +101,18 @@ export function SharedSettingsSaveHint({ className }: { className?: string }) {
 /**
  * The read-only hint for a shared-settings page. Renders nothing where the
  * settings can be changed.
+ *
+ * `reason` replaces the opening sentence for something held to the same
+ * install-org rule that is not shared, such as an org's entitlement switches
+ * (§135 t-1033); what follows it (how to switch, or why you cannot) is the same.
  */
-export function SharedSettingsReadOnlyNotice({ className }: { className?: string }) {
+export function SharedSettingsReadOnlyNotice({
+  className,
+  reason = 'These settings are shared by every organisation, so they can only be changed from the install organisation.',
+}: {
+  className?: string;
+  reason?: string;
+}) {
   const { readOnly, canSwitch, installOrgMember } = useContext(SharedSettingsAccessContext);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,8 +151,7 @@ export function SharedSettingsReadOnlyNotice({ className }: { className?: string
       <div className="min-w-0 flex-1 space-y-1">
         <p className="font-medium">Read-only in this organisation</p>
         <p className="text-muted-foreground">
-          These settings are shared by every organisation, so they can only be changed from the
-          install organisation.
+          {reason}
           {canSwitch
             ? ''
             : !installOrgMember

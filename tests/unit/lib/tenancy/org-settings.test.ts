@@ -837,6 +837,7 @@ describe('the entitlement switches (§135 t-1033)', () => {
     expect(written).toEqual({
       previous: { on: ['retired'], off: [], unreadable: false },
       stored: { on: ['leads', 'reports'], off: ['beta'], unreadable: false },
+      changed: true,
     });
     expect(tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
@@ -866,6 +867,7 @@ describe('the entitlement switches (§135 t-1033)', () => {
     expect(await writeOrgEntitlements(ORG_A, () => null, kept.db)).toEqual({
       previous: { on: ['leads'], off: [], unreadable: false },
       stored: NONE,
+      changed: true,
     });
     expect(kept.tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
@@ -892,6 +894,48 @@ describe('the entitlement switches (§135 t-1033)', () => {
       writeOrgEntitlements(ORG_A, () => ({ on: ['leads'], off: ['leads'] }), both.db)
     ).rejects.toThrow();
     expect(both.tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing, and says so, when it would store exactly what is stored', async () => {
+    const same = txOver({ entitlements: { on: ['leads'], off: ['reports'] } });
+    const written = await writeOrgEntitlements(
+      ORG_A,
+      () => ({ on: ['leads'], off: ['reports'] }),
+      same.db
+    );
+    expect(written?.changed).toBe(false);
+    expect(same.tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to write
+
+    const absent = txOver({ branding: { logo: 'x' } });
+    expect((await writeOrgEntitlements(ORG_A, () => null, absent.db))?.changed).toBe(false);
+    expect(absent.tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to remove
+
+    const left = txOver({ entitlements: { on: ['leads'], off: [] } });
+    expect(await writeOrgEntitlements(ORG_A, () => undefined, left.db)).toEqual({
+      previous: { on: ['leads'], off: [], unreadable: false },
+      stored: { on: ['leads'], off: [], unreadable: false },
+      changed: false,
+    });
+    expect(left.tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — asked to leave it
+  });
+
+  it('writes a slice the read had to tidy, though the tidied value is the same', async () => {
+    // A duplicate, a key both on and off, and a stray property: read as on [], off [leads].
+    const untidy = txOver({
+      entitlements: { on: ['leads'], off: ['leads', 'leads'], note: 'x' },
+    });
+
+    const written = await writeOrgEntitlements(
+      ORG_A,
+      () => ({ on: [], off: ['leads'] }),
+      untidy.db
+    );
+
+    expect(written?.changed).toBe(true);
+    expect(untidy.tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { entitlements: { on: [], off: ['leads'] } } },
+    });
   });
 
   it('is null, writing nothing, for an org that does not exist', async () => {
