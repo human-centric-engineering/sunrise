@@ -702,6 +702,11 @@ export function ChatInterface({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  // The confidential-content note a `warn` policy sends after the answer
+  // (§130): kept after the turn ends, unlike `warning`, which `done` clears,
+  // and one per group, so a turn that flags both shows both. Cleared when the
+  // next message is sent.
+  const [notices, setNotices] = useState<string[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   // Mid-conversation "Suggested prompts" disclosure. Default closed so
   // it doesn't compete with the assistant text below; opens on click
@@ -891,6 +896,7 @@ export function ChatInterface({
 
       setError(null);
       setWarning(null);
+      setNotices([]);
       setStatus(null);
       setInput('');
       setAttachments([]);
@@ -1094,6 +1100,14 @@ export function ChatInterface({
                     }
                   }
                 }
+              } else if (
+                parsed.type === 'warning' &&
+                typeof parsed.data.message === 'string' &&
+                typeof parsed.data.code === 'string' &&
+                parsed.data.code.startsWith('confidential_')
+              ) {
+                const note = parsed.data.message;
+                setNotices((prev) => [...prev, note]);
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
                 setWarning(parsed.data.message);
               } else if (parsed.type === 'citations' && Array.isArray(parsed.data.citations)) {
@@ -1295,6 +1309,7 @@ export function ChatInterface({
     setError(null);
     setStatus(null);
     setWarning(null);
+    setNotices([]);
     typing.reset();
     onConversationCleared?.();
   }, [conversationId, deleteConversationEndpoint, typing, onConversationCleared]);
@@ -1633,6 +1648,18 @@ export function ChatInterface({
           <span>{warning}</span>
         </div>
       )}
+
+      {notices.map((note) => (
+        <div
+          key={note}
+          role="note"
+          data-testid="confidential-notice"
+          className="flex items-center gap-2 px-3 py-1 text-sm text-amber-700 dark:text-amber-300"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{note}</span>
+        </div>
+      ))}
 
       {/* Error */}
       {error && (

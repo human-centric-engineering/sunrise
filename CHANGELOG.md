@@ -30,8 +30,8 @@ release process.
   stage runs the classifiers on every call in a chat turn or workflow
   execution, **in every privacy mode, `off` included**, and records the
   categories (never text) as `PrivacySummary.sensitivity`, shown on the
-  conversation and execution traces. Nothing is refused or rerouted yet: the
-  per-agent policy that acts on it follows. **A fork that mocks
+  conversation and execution traces. Recording alone changes nothing sent;
+  the policy that acts on it is the next entry. **A fork that mocks
   `corePrivacyAdapters()` in its tests needs a `classifiers: []` field**, and
   a classifier registered in `initAppPrivacyAdapters()` that throws there
   makes the layer refuse every call, as any adapter does.
@@ -46,9 +46,9 @@ release process.
   and nothing it sends changes**; a new install starts at `warn` for
   Personal. `PrivacyPolicy` gains `confidentialPersonal` and
   `confidentialCommercial`, which `tightenPolicy()` and
-  `privacyPolicyPatchSchema` carry, so **a fork's policy resolver that
-  returns `{ ...current }` or builds a whole `PrivacyPolicy` must include
-  them**. The privacy stage refuses a flagged call its group's policy does
+  `privacyPolicyPatchSchema` carry, so **fork code that builds a whole
+  `PrivacyPolicy` (a test fixture, say) must include them**; a resolver
+  that returns a partial patch is unaffected. The privacy stage refuses a flagged call its group's policy does
   not permit, in every mode, with the new `PrivacyRefusalReason`s
   `confidential_blocked` and `confidential_not_permitted` and the code
   `privacy_confidential`; a classifier failure counts as flagged under the

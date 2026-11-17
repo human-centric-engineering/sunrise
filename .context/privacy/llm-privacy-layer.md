@@ -1366,9 +1366,11 @@ An org floor per group is not in this feature.
   told about, and keeps the groups told in
   `AiConversation.metadata.confidentialNoted`. Once per conversation per
   group: keying on "this turn held it" would repeat it every turn, since the
-  history is resent. It is shown even if that write fails. Admin chat shows
-  every `warning`; the embed widget shows only `confidential_*` ones (an
-  agent's budget warning is for operators, not a site's visitors). The note
+  history is resent. It is shown even if that write fails. Admin chat keeps
+  a `confidential_*` note under the answer until the next message is sent,
+  apart from its other warnings, which the end of the turn clears; the embed
+  widget shows only `confidential_*` warnings (an agent's budget warning is
+  for operators, not a site's visitors). The note
   never names what was found.
 - **Not built here:** answering a flagged turn on another model (t-1038).
   Until then a policy that does not permit the agent's provider refuses.
