@@ -3,10 +3,11 @@
  *
  * The registry an app fills from `lib/app/entitlements.ts`, and what an org's
  * stored switches mean against it. Pins: the seam ships empty and changes no
- * answer; a throwing init rolls back every switch it registered; an org with
- * nothing set answers each switch's `whenNothingSet`, which is not the same
- * as an org set to none; a stored key nobody registers reads as off; a typo
- * fails closed.
+ * answer; a throwing init rolls back every switch it registered; a switch
+ * nobody set on an org answers its `whenNothingSet`, which is not the same as
+ * a switch set off, and a switch registered after an org was saved reaches it
+ * at its default; a stored key nobody registers reads as off; a typo fails
+ * closed.
  *
  * @see lib/tenancy/entitlements.ts
  */
@@ -29,12 +30,19 @@ import {
   loadOrgSwitches,
   orgHasSwitch,
   registerEntitlementSwitch,
-  registeredEntitlementSwitch,
   registeredEntitlementSwitches,
   resolveOrgSwitches,
+  type EntitlementSwitch,
 } from '@/lib/tenancy/entitlements';
 
 const ORG = 'cmorg000000000000000acme1';
+
+/** What is stored: the keys set on and off. Nothing set by default. */
+const stored = (on: string[] = [], off: string[] = [], unreadable = false) => ({
+  on,
+  off,
+  unreadable,
+});
 
 /** Register the two switches most tests use: one new area, one every org has today. */
 function registerBoth() {
@@ -62,10 +70,7 @@ beforeEach(() => {
 describe('the registry', () => {
   it('ships empty, so an org of any shape has no switch on', () => {
     expect(registeredEntitlementSwitches()).toEqual([]);
-    for (const read of [
-      { set: false } as const,
-      { set: true, switches: ['reports'], unreadable: false } as const,
-    ]) {
+    for (const read of [stored(), stored(['reports']), stored([], ['reports'])]) {
       expect(resolveOrgSwitches(read).on).toEqual([]);
     }
   });
@@ -87,8 +92,6 @@ describe('the registry', () => {
         whenNothingSet: true,
       },
     ]);
-    expect(registeredEntitlementSwitch('leads')?.label).toBe('Lead generation');
-    expect(registeredEntitlementSwitch('nope')).toBeUndefined();
   });
 
   it('runs the fork init once, however many reads there are', () => {
@@ -96,7 +99,7 @@ describe('the registry', () => {
 
     registeredEntitlementSwitches();
     registeredEntitlementSwitches();
-    registeredEntitlementSwitch('reports');
+    resolveOrgSwitches(stored());
 
     expect(initAppEntitlements).toHaveBeenCalledOnce();
   });
@@ -140,12 +143,30 @@ describe('the registry', () => {
     expect(logger.error).toHaveBeenCalledOnce();
   });
 
-  it('refuses a switch with no label', () => {
+  it('refuses a switch with no label, or a label left out, with a message rather than a TypeError', () => {
+    for (const label of ['   ', undefined]) {
+      __resetEntitlementRegistryForTests();
+      vi.mocked(logger.error).mockClear();
+      vi.mocked(initAppEntitlements).mockImplementation(() => {
+        registerEntitlementSwitch({ key: 'reports', label, description: '' } as never);
+      });
+
+      expect(registeredEntitlementSwitches()).toEqual([]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('entitlements: initAppEntitlements threw'),
+        expect.objectContaining({ error: expect.stringContaining('needs a label') })
+      );
+    }
+  });
+
+  it('reads a description left out as none, rather than failing the whole init', () => {
     vi.mocked(initAppEntitlements).mockImplementation(() => {
-      registerEntitlementSwitch({ key: 'reports', label: '   ', description: '' });
+      registerEntitlementSwitch({ key: 'reports', label: 'Reports' } as EntitlementSwitch);
     });
 
-    expect(registeredEntitlementSwitches()).toEqual([]);
+    expect(registeredEntitlementSwitches()).toEqual([
+      { key: 'reports', label: 'Reports', description: '', whenNothingSet: false },
+    ]);
   });
 });
 
@@ -153,45 +174,65 @@ describe('resolveOrgSwitches', () => {
   beforeEach(registerBoth);
 
   it('gives an org with nothing set each switch at its default', () => {
-    expect(resolveOrgSwitches({ set: false })).toEqual({
+    expect(resolveOrgSwitches(stored())).toEqual({
       nothingSet: true,
       unreadable: false,
       on: ['leads'],
+      atDefault: ['reports', 'leads'],
       unregistered: [],
     });
   });
 
   it('gives an org set to none no switch at all, which is not the same as nothing set', () => {
-    const none = resolveOrgSwitches({ set: true, switches: [], unreadable: false });
-    const nothing = resolveOrgSwitches({ set: false });
+    const none = resolveOrgSwitches(stored([], ['leads', 'reports']));
+    const nothing = resolveOrgSwitches(stored());
 
-    expect(none).toEqual({ nothingSet: false, unreadable: false, on: [], unregistered: [] });
-    // The whole point of the two states: an app's default-on switch is lost
-    // only by an org somebody actually set.
+    expect(none).toEqual({
+      nothingSet: false,
+      unreadable: false,
+      on: [],
+      atDefault: [],
+      unregistered: [],
+    });
+    // The whole point: a default-on switch is lost only where somebody set it off.
     expect(nothing.on).toContain('leads');
     expect(none.on).not.toContain('leads');
   });
 
   it('gives a set org exactly what was set, in registration order', () => {
-    expect(
-      resolveOrgSwitches({ set: true, switches: ['leads', 'reports'], unreadable: false }).on
-    ).toEqual(['reports', 'leads']);
-    expect(resolveOrgSwitches({ set: true, switches: ['reports'], unreadable: false }).on).toEqual([
-      'reports',
-    ]);
+    expect(resolveOrgSwitches(stored(['leads', 'reports'])).on).toEqual(['reports', 'leads']);
+    expect(resolveOrgSwitches(stored(['reports'], ['leads'])).on).toEqual(['reports']);
+  });
+
+  it('gives a switch registered after the org was saved its default, not off', () => {
+    // Saved when only `reports` was registered: reports on, nothing else known.
+    const savedEarlier = stored(['reports']);
+
+    const resolved = resolveOrgSwitches(savedEarlier);
+
+    // `leads` arrived later with whenNothingSet: true, so this org has it,
+    // like every org that exists today.
+    expect(resolved.on).toEqual(['reports', 'leads']);
+    expect(resolved.atDefault).toEqual(['leads']);
+    expect(resolved.nothingSet).toBe(false);
   });
 
   it('reads a stored key nobody registers as off, and names it', () => {
-    expect(
-      resolveOrgSwitches({ set: true, switches: ['reports', 'retired'], unreadable: false })
-    ).toEqual({ nothingSet: false, unreadable: false, on: ['reports'], unregistered: ['retired'] });
+    expect(resolveOrgSwitches(stored(['reports', 'retired'], ['leads']))).toEqual({
+      nothingSet: false,
+      unreadable: false,
+      on: ['reports'],
+      atDefault: [],
+      unregistered: ['retired'],
+    });
   });
 
-  it('passes an unreadable slice through as set, with nothing on', () => {
-    expect(resolveOrgSwitches({ set: true, switches: [], unreadable: true })).toEqual({
+  it('gives an unreadable slice nothing, not even the defaults', () => {
+    expect(resolveOrgSwitches(stored([], [], true))).toEqual({
       nothingSet: false,
       unreadable: true,
       on: [],
+      atDefault: [],
       unregistered: [],
     });
   });
@@ -202,7 +243,7 @@ describe('loading an org', () => {
 
   it("reads the org's row and resolves it", async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
-      settings: { entitlements: { switches: ['reports'] }, appOwn: { x: 1 } },
+      settings: { entitlements: { on: ['reports'], off: ['leads'] }, appOwn: { x: 1 } },
     });
 
     await expect(loadOrgSwitches(ORG)).resolves.toMatchObject({
@@ -231,7 +272,7 @@ describe('loading an org', () => {
 
   it('fails closed on a key nobody registers, even one stored on the org', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
-      settings: { entitlements: { switches: ['repots'] } },
+      settings: { entitlements: { on: ['repots'], off: [] } },
     });
 
     await expect(orgHasSwitch(ORG, 'repots')).resolves.toBe(false);

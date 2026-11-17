@@ -574,13 +574,13 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/entitlements.ts',
-    risk: 'a stray switch would appear on every org page, and one on by default (whenNothingSet) would be granted to every org nobody had set anything on, on every install',
+    risk: 'a stray switch would appear on every org page, and one on by default (whenNothingSet) would be granted to every org nobody had set it on, on every install',
     assert: () => {
       __resetEntitlementRegistryForTests();
       // The read triggers the lazy init, so this exercises the REAL seam.
       expect(registeredEntitlementSwitches()).toEqual([]);
       // …so nothing an org stores, or does not, gives it a switch.
-      expect(resolveOrgSwitches({ set: false }).on).toEqual([]);
+      expect(resolveOrgSwitches({ on: [], off: [], unreadable: false }).on).toEqual([]);
     },
   },
   {

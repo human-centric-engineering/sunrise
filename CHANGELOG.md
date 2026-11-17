@@ -71,11 +71,13 @@ release process.
   `lib/tenancy/shared-settings.ts`, for a fork that writes either from a
   surface of its own. The app reads them with `orgHasSwitch()`,
   `loadOrgSwitches()` or `resolveOrgSwitches()` (`lib/tenancy/entitlements.ts`).
-  They are stored as an `entitlements` slice in `Org.settings`
-  (`readOrgEntitlements()` / `writeOrgEntitlements()` in
-  `lib/tenancy/org-settings.ts`). An org nothing was set on gets each switch's
-  `whenNothingSet`, which is a different answer from an org set to none, and
-  an unreadable slice fails closed. Nothing refuses a request on a switch yet.
+  They are stored as an `entitlements` slice in `Org.settings`,
+  `{ on: [...], off: [...] }` (`readOrgEntitlements()` /
+  `writeOrgEntitlements()` in `lib/tenancy/org-settings.ts`). A switch nobody
+  set on an org gets its `whenNothingSet`, which is a different answer from a
+  switch set off, so a switch registered later reaches an org saved before it
+  at its default; an unreadable slice fails closed. Nothing refuses a request
+  on a switch yet.
   The design's principle 8 now gives the platform the commercial mechanism
   (entitlements, meters, signup into an org of one's own) and leaves plans,
   prices and what an app counts with forks. **A fork that keeps "what an org

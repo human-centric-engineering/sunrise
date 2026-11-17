@@ -80,9 +80,15 @@ export function canChangeSharedSettings(): boolean {
  * The route guard admits a platform admin switched into a customer's org,
  * which is right for a rename. Here it would let whoever administers that org
  * raise its own cap or grant itself a switch.
+ *
+ * It says where the write comes from, not who may make it: ask it after the
+ * platform-admin check (`withAdminAuth`). An API key passes only when the call
+ * entered no org, which is the unbound key; a key bound to an org runs inside
+ * that org, so a customer org's key is refused here under any guard.
  */
 export function mayChangeOrgCommercialSettings(
   credential: AuthorizationPrincipal['credential']
 ): boolean {
-  return credential === 'api-key' || canChangeSharedSettings();
+  if (canChangeSharedSettings()) return true;
+  return credential === 'api-key' && getTenantContext() === null;
 }

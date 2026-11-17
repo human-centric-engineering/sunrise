@@ -270,7 +270,10 @@ export const entitlementKeySchema = z
     'A switch key is lower-case letters, digits and underscores, starting with a letter, at most 48 characters'
   );
 
-/** The most switches one org may hold. A sanity limit on a bad write, not a product limit. */
+/**
+ * The most switches one org may hold set on, and the most set off. A sanity
+ * limit on a bad write, not a product limit.
+ */
 export const MAX_ORG_ENTITLEMENT_SWITCHES = 100;
 
 const entitlementSwitchList = z
@@ -280,20 +283,28 @@ const entitlementSwitchList = z
 
 /**
  * One org's switches as STORED in `Org.settings.entitlements` (§135 t-1033):
- * the keys that are on. Absent slice means nothing was ever set, which is a
- * different answer from `{ switches: [] }` (set, and none on): each switch an
- * app registers says what an org with nothing set gets (`whenNothingSet`).
- * Kept sorted and without duplicates, so two writes of the same set store the
- * same value.
+ * the keys set on and the keys set off. A key in neither has not been set on
+ * this org, so it gets that switch's `whenNothingSet`, which is a different
+ * answer from a key set off. Recording both is what lets a switch an app
+ * registers later reach an org that was saved before it existed. Each list is
+ * kept sorted and without duplicates, so two writes of the same set store the
+ * same value, and no key is in both.
  */
-export const orgEntitlementsSchema = z.object({ switches: entitlementSwitchList }).strict();
+export const orgEntitlementsSchema = z
+  .object({ on: entitlementSwitchList, off: entitlementSwitchList })
+  .strict()
+  .refine((value) => !value.on.some((key) => value.off.includes(key)), {
+    message: 'A switch cannot be both on and off',
+    path: ['off'],
+  });
 
 export type OrgEntitlements = z.infer<typeof orgEntitlementsSchema>;
 
 /**
  * `PUT /api/v1/admin/orgs/[id]/entitlements` body: the registered switches
- * that are on, or `null` to clear the org back to nothing set. The key is
- * required, so a replace cannot clear an org by leaving it out.
+ * that are on (every other registered switch is set off), or `null` to put
+ * every registered switch back to its default. The key is required, so a
+ * replace cannot clear an org by leaving it out.
  */
 export const orgEntitlementsInputSchema = z
   .object({ switches: entitlementSwitchList.nullable() })

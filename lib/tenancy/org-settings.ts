@@ -11,7 +11,7 @@
  * {@link readOrgProviderPolicy}), and a `quotas` slice holding the org's own
  * caps (see {@link readOrgQuotas}), and a `privacy` slice holding its LLM
  * privacy minimum and protected terms (see {@link readOrgPrivacy}), and an
- * `entitlements` slice holding the switches it has (see
+ * `entitlements` slice holding the switches set on it and off it (see
  * {@link readOrgEntitlements}). Everything else in that JSON belongs to
  * whoever put it there — a fork's own org-level config — and every write path
  * below preserves it rather than replacing the object.
@@ -531,30 +531,36 @@ export async function writeOrgPrivacy(
 export const ORG_ENTITLEMENTS_KEY = 'entitlements';
 
 /**
- * An org's switches as stored: never set, or set to the keys that are on.
+ * An org's switches as stored: the keys set on and the keys set off.
  *
- * The two states are different answers, and keeping them apart is the point
- * of the type: an org nobody has set anything on gets each switch's
- * `whenNothingSet` (`lib/tenancy/entitlements.ts`), so an app can leave every
- * org that exists today as it is. `switches` may hold a key no app registers
- * any more; it reads as off. `unreadable` says the stored slice could not be
- * read at all, so the org was given no switch.
+ * A key in neither has not been set on this org and gets its switch's
+ * `whenNothingSet` (`lib/tenancy/entitlements.ts`), which is a different
+ * answer from a key set off. Keeping the three apart per switch is the point
+ * of the type: it is how an app leaves every org that exists today as it is,
+ * including one saved before the switch was registered. Either list may hold
+ * a key no app registers any more; it reads as off. `unreadable` says the
+ * stored slice could not be read at all, so the org was given no switch, its
+ * defaults included.
  */
-export type OrgEntitlementsRead =
-  { set: false } | { set: true; switches: readonly string[]; unreadable: boolean };
+export interface OrgEntitlementsRead {
+  on: readonly string[];
+  off: readonly string[];
+  unreadable: boolean;
+}
 
-const NOTHING_SET: OrgEntitlementsRead = { set: false };
-const UNREADABLE_ENTITLEMENTS: OrgEntitlementsRead = { set: true, switches: [], unreadable: true };
+const NOTHING_SET: OrgEntitlementsRead = { on: [], off: [], unreadable: false };
+const UNREADABLE_ENTITLEMENTS: OrgEntitlementsRead = { on: [], off: [], unreadable: true };
 
 /**
  * Read an org's switches out of its `settings` (§135 t-1033).
  *
  * **Fails closed, like the provider policy.** A switch opens part of an app
- * an org may not have bought, so a slice that cannot be read at all is read as
- * set with nothing on, never as nothing set: that would hand the org every
- * switch whose `whenNothingSet` is on. A key that is not a key is dropped on
- * its own with a warning, which can only narrow what the org has; the readable
- * keys were written by a writer that validated them.
+ * an org may not have bought, so a slice that cannot be read at all gives the
+ * org no switch, never the defaults: a default is only for a switch nobody
+ * set, and an unreadable slice may have set it off. A key that is not a key is
+ * dropped on its own with a warning, and a key stored both on and off reads as
+ * off; either can only narrow what the org has. The readable keys were written
+ * by a writer that validated them.
  */
 export function readOrgEntitlements(
   settings: unknown,
@@ -568,25 +574,39 @@ export function readOrgEntitlements(
   }
   const slice = settings[ORG_ENTITLEMENTS_KEY];
   if (slice === null || slice === undefined) return NOTHING_SET;
-  if (!isJsonObject(slice) || !Array.isArray(slice.switches)) {
+  if (!isJsonObject(slice) || !Array.isArray(slice.on) || !Array.isArray(slice.off)) {
     log.warn('Org entitlements slice is unreadable; the org has no switch on', context);
     return UNREADABLE_ENTITLEMENTS;
   }
 
-  const switches = new Set<string>();
   let dropped = 0;
-  for (const stored of slice.switches) {
-    const parsed = entitlementKeySchema.safeParse(stored);
-    if (parsed.success) switches.add(parsed.data);
-    else dropped += 1;
-  }
+  const keysOf = (list: unknown[]): Set<string> => {
+    const keys = new Set<string>();
+    for (const stored of list) {
+      const parsed = entitlementKeySchema.safeParse(stored);
+      if (parsed.success) keys.add(parsed.data);
+      else dropped += 1;
+    }
+    return keys;
+  };
+  const on = keysOf(slice.on);
+  const off = keysOf(slice.off);
+  const both = [...on].filter((key) => off.has(key));
+  for (const key of both) on.delete(key);
+
   if (dropped > 0) {
     log.warn('Dropped malformed entitlement switches; the org does not have them', {
       ...context,
       dropped,
     });
   }
-  return { set: true, switches: [...switches].sort(), unreadable: false };
+  if (both.length > 0) {
+    log.warn('Entitlement switches stored both on and off; the org does not have them', {
+      ...context,
+      switches: both,
+    });
+  }
+  return { on: [...on].sort(), off: [...off].sort(), unreadable: false };
 }
 
 /** One org's switches as stored, or `null` when there is no such org. */
@@ -603,16 +623,18 @@ export async function loadOrgEntitlements(
 /**
  * Replace an org's switches, preserving every other key in `settings`.
  *
- * `next` is handed what is stored and returns the keys to store, or `null`
- * to clear the org back to nothing set. It runs inside the write's
+ * `next` is handed what is stored and returns the keys to store set on and
+ * set off, or `null` to set none, so every switch is at its default (two empty
+ * lists mean the same, and both remove the slice). It runs inside the write's
  * transaction, so a caller that keeps part of what is stored (the route keeps
  * keys no app registers) cannot lose a write that landed in between. The
- * result is validated with `orgEntitlementsSchema`, so a malformed key throws
- * a `ZodError` and nothing is written.
+ * result is validated with `orgEntitlementsSchema`, so a malformed key, or one
+ * in both lists, throws a `ZodError` and nothing is written.
  *
  * **It decides nothing about who may**, as {@link writeOrgQuotas} does not:
- * `PUT /api/v1/admin/orgs/[id]/entitlements` is platform-only. A fork's own
- * writer (billing, later) owns the same check.
+ * `PUT /api/v1/admin/orgs/[id]/entitlements` is platform-only and, at
+ * `multi`, install-org only. A fork's own writer (billing, later) owns the
+ * same two checks (`mayChangeOrgCommercialSettings`).
  *
  * Through {@link updateSettingsSlice}: a clash with a concurrent settings
  * write throws `P2034` ({@link isSettingsWriteConflict}).
@@ -622,7 +644,7 @@ export async function loadOrgEntitlements(
  */
 export async function writeOrgEntitlements(
   orgId: string,
-  next: (previous: OrgEntitlementsRead) => readonly string[] | null,
+  next: (previous: OrgEntitlementsRead) => { on: readonly string[]; off: readonly string[] } | null,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{ previous: OrgEntitlementsRead; stored: OrgEntitlementsRead } | null> {
   let previous: OrgEntitlementsRead = NOTHING_SET;
@@ -633,12 +655,12 @@ export async function writeOrgEntitlements(
     (settings) => {
       previous = readOrgEntitlements(settings, { orgId });
       const keys = next(previous);
-      if (keys === null) {
+      if (keys === null || (keys.on.length === 0 && keys.off.length === 0)) {
         stored = NOTHING_SET;
         return null;
       }
-      const value = orgEntitlementsSchema.parse({ switches: [...keys] });
-      stored = { set: true, switches: value.switches, unreadable: false };
+      const value = orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
+      stored = { on: value.on, off: value.off, unreadable: false };
       return value;
     },
     db

@@ -21,10 +21,11 @@ the same feature.
 | ------------------------------ | ---------------------------------------------------------------------------------------------- |
 | Register your switches         | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`           |
 | Does this org have a switch?   | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                      |
-| Every switch an org has        | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, unregistered }`                      |
+| Every switch an org has        | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, atDefault, unregistered }`           |
 | Resolve a row you already hold | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                        |
-| What is stored                 | `Org.settings.entitlements` = `{ switches: string[] }`, `lib/tenancy/org-settings.ts`          |
-| Write it from your own code    | `writeOrgEntitlements(orgId, (previous) => keys \| null)`                                      |
+| What is stored                 | `Org.settings.entitlements` = `{ on: string[], off: string[] }`, `lib/tenancy/org-settings.ts` |
+| Write it from your own code    | `writeOrgEntitlements(orgId, (previous) => ({ on, off }) \| null)`                             |
+| Who may write it               | `mayChangeOrgCommercialSettings()`, `lib/tenancy/shared-settings.ts`, after an admin check     |
 | Read / set over HTTP           | `GET` / `PUT /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org) |
 | Set it by hand                 | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered        |
 | The audit row                  | `org.entitlements.replace`, with what it replaced                                              |
@@ -32,11 +33,15 @@ the same feature.
 
 ### Anti-patterns
 
-- **Collapsing "nothing set" into "set to none".** They are different
-  answers. An org nobody has set anything on gets each switch's
-  `whenNothingSet`; an org set to `{ switches: [] }` gets nothing. Code that
-  treats an absent slice as an empty list takes every default-on switch away
-  from every existing org.
+- **Collapsing "not set" into "set off".** They are different answers, per
+  switch. A switch nobody has set on an org gets its `whenNothingSet`; one in
+  `off` gets nothing. Code that treats a key missing from `on` as off takes
+  every default-on switch away from every org that never set it, including
+  orgs saved before the switch was registered.
+- **Writing only the switches that are on.** A writer of its own (billing)
+  that stores `on` alone leaves the rest at their defaults, so a default-on
+  switch the plan leaves out stays on. Write every switch the plan decides,
+  on or off.
 - **Keeping your own copy.** A `packages` key of your own beside this one is
   two answers to one question, and billing will only ever write this one.
 - **Letting an org set its own.** A switch is what an org bought. The write
@@ -48,6 +53,9 @@ the same feature.
 - **Renaming a key orgs already hold.** The key is what is stored. Register a
   new key and leave the old one unregistered: it reads as off, and a save from
   the admin keeps it.
+- **Reusing a retired key for something new.** Orgs still hold the old one,
+  kept by every save, so registering it again hands the new area to every org
+  that had the old one. Retire a key for good and pick a new one.
 - **Giving a value to a switch.** A switch is on or off. A plan is a set of
   switches, so the check for a switch never changes when the plans do.
 
@@ -74,7 +82,8 @@ export function initAppEntitlements(): void {
 
 The registry runs this once, lazily, before its first read, through the shared
 init gate (`lib/fork-init.ts`). Registration is synchronous. A key that is not
-a key, or an empty label, throws; any throw rolls back every switch the init
+a key, or a missing or empty label, throws (a missing description reads as
+none); any throw rolls back every switch the init
 registered and logs why, so every org reads as having none of yours. That is
 deliberate: half an app's switches would give some orgs part of what they
 bought, which is harder to notice than none.
@@ -84,7 +93,9 @@ bought, which is harder to notice than none.
 Leave it off (the default) for an area that is **new**: it opens only where
 someone switches it on, so it fails closed. Turn it on for an area **every org
 already uses**, so no org that exists today loses it when you start checking
-the switch. An org that has been set ignores it.
+the switch. That holds for an org whose other switches were saved before this
+one existed: a save sets only the switches registered at the time. Once
+someone sets this switch on an org, its default no longer applies there.
 
 ## Reading switches
 
@@ -92,37 +103,49 @@ the switch. An org that has been set ignores it.
 key no app registers, so a typo fails closed. `loadOrgSwitches(orgId)` returns
 the whole answer:
 
-- `nothingSet`: nothing was ever set, so `on` is the default-on switches.
+- `nothingSet`: no registered switch has been set on the org, so `on` is the
+  default-on switches.
 - `unreadable`: the stored slice could not be read; see below.
 - `on`: the registered switches the org has, in registration order.
-- `unregistered`: stored keys no app registers. Off, and kept by a save.
+- `atDefault`: the registered switches nobody has set on the org, which
+  follow their `whenNothingSet`.
+- `unregistered`: keys stored on that no app registers. Off, and kept by a
+  save (as is any such key stored off).
 
 A page reading many orgs at once should not call `loadOrgSwitches` per row.
 Select `settings` in the one list query and resolve each row with
 `resolveOrgSwitches(readOrgEntitlements(row.settings))`.
 
 Nothing is cached: each read is one indexed `findUnique` on `Org`, a system
-model, so it needs no tenant scope.
+model, so it needs no tenant scope. Code checking several switches for one org
+in a request reads `loadOrgSwitches` once rather than calling `orgHasSwitch`
+per key.
 
 ## What is stored, and how it fails
 
-The slice is `Org.settings.entitlements = { switches: [...] }`, beside
-`quotas` (§110), `providers` (§120) and `privacy` (§127). It is kept sorted
-and without duplicates. Every other key in `settings`, a fork's included, is
-preserved by every write.
+The slice is `Org.settings.entitlements = { on: [...], off: [...] }`, beside
+`quotas` (§110), `providers` (§120) and `privacy` (§127). A key in neither
+list has not been set on the org. Each list is kept sorted and without
+duplicates, and no key is in both. Every other key in `settings`, a fork's
+included, is preserved by every write.
+
+Both lists, rather than the keys that are on: with only `on`, a switch
+registered after an org was saved would read as off there, so turning on a
+check for an area every org uses would take it from every org anyone had
+saved.
 
 **The read fails closed**, like the provider policy. A slice that cannot be
-read at all is read as set with nothing on, never as nothing set, because that
-would hand the org every default-on switch. A single entry that is not a key
-is dropped with a warning and the rest are kept: that can only narrow what the
-org has. The admin page says when a slice was unreadable, and saving replaces
-it.
+read at all gives the org no switch, its defaults included, because the slice
+may have set them off. A single entry that is not a key is dropped with a
+warning and the rest are kept, and a key in both lists reads as off: either
+can only narrow what the org has. The admin page says when a slice was
+unreadable, and saving replaces it.
 
 **The write** (`writeOrgEntitlements`) is a serializable read-modify-write of
 the one key. Its updater is handed what is stored, inside the transaction, so a
 caller that keeps part of it cannot lose a write that landed in between. A clash
 throws Prisma's `P2034` (`isSettingsWriteConflict`); the route answers 409.
-`null` clears the org back to nothing set.
+`null`, or two empty lists, removes the slice.
 
 ## The admin surface
 
@@ -131,16 +154,23 @@ throws Prisma's `P2034` (`isSettingsWriteConflict`); the route answers 409.
 vanilla Sunrise shows nothing new. The page learns that from the API rather
 than reading the registry itself (API-first). A load that fails says so in the
 section's place, since the page cannot tell whether there were switches to
-show. The section ticks what the org has, marks the
-default-on switches, says when nothing has been set, and offers **Clear to
-defaults** once something has.
+show. The section ticks what the org has, marks the default-on switches, says
+when nothing has been set and which switch is still at its default, and
+offers **Clear to defaults**, behind a confirmation, once something has. The
+switches are locked while a save runs. Where the caller cannot change them
+(`mayChange: false`), it shows them without the form's buttons and says to
+switch to the install organisation.
 
 `PUT /api/v1/admin/orgs/[id]/entitlements` takes `{ switches: string[] |
-null }`, the registered switches that are on. The key is required, so a
-replace cannot clear an org by leaving it out. An unregistered key is a 400
-naming it. With nothing registered there is nothing to set, and the PUT is a 409. Stored keys nothing registers are kept: the caller could neither see nor
-set them, and a process running older code during a deploy must not drop a
-switch newer code registered.
+null }`: the registered switches that are on, and every other registered
+switch is set off. `null` sets none, so every registered switch is back at
+its default. The key is required, so a replace cannot clear an org by leaving
+it out. An unregistered key is a 400 naming it. With nothing registered there
+is nothing to set, and the PUT is a 409. Values stored for keys nothing
+registers are kept, on or off: the caller could neither see nor set them, and
+a process running older code during a deploy must not drop a switch newer
+code registered. Two saves of the same org at the same moment are not
+detected: the later one wins, as on the other org settings forms.
 
 Both routes are platform-only (no `tier`): at `multi`, an org's own OWNER or
 ADMIN is refused. The write is also install-org only, as the caps are

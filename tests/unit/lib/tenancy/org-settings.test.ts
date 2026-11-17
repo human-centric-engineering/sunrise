@@ -723,39 +723,42 @@ describe('the entitlement switches (§135 t-1033)', () => {
     return { tx, db: { $transaction } as never, $transaction };
   }
 
-  it('reads every way of never having been set as nothing set', () => {
+  const NONE = { on: [], off: [], unreadable: false };
+
+  it('reads every way of never having been set as nothing set on or off', () => {
     expect(ORG_ENTITLEMENTS_KEY).toBe('entitlements');
-    expect(readOrgEntitlements(null)).toEqual({ set: false });
-    expect(readOrgEntitlements(undefined)).toEqual({ set: false });
-    expect(readOrgEntitlements({ quotas: { monthlyBudgetUsd: 5 } })).toEqual({ set: false });
-    expect(readOrgEntitlements({ entitlements: null })).toEqual({ set: false });
+    expect(readOrgEntitlements(null)).toEqual(NONE);
+    expect(readOrgEntitlements(undefined)).toEqual(NONE);
+    expect(readOrgEntitlements({ quotas: { monthlyBudgetUsd: 5 } })).toEqual(NONE);
+    expect(readOrgEntitlements({ entitlements: null })).toEqual(NONE);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
-  it('reads a set org as set, sorted, even with nothing on', () => {
-    expect(readOrgEntitlements({ entitlements: { switches: ['leads', 'reports'] } })).toEqual({
-      set: true,
-      switches: ['leads', 'reports'],
-      unreadable: false,
-    });
-    expect(readOrgEntitlements({ entitlements: { switches: [] } })).toEqual({
-      set: true,
-      switches: [],
+  it('reads the keys set on and set off apart, each sorted', () => {
+    expect(
+      readOrgEntitlements({ entitlements: { on: ['reports', 'leads'], off: ['beta'] } })
+    ).toEqual({ on: ['leads', 'reports'], off: ['beta'], unreadable: false });
+    // Set to none: every switch set off, which is not the same as not set.
+    expect(readOrgEntitlements({ entitlements: { on: [], off: ['leads', 'reports'] } })).toEqual({
+      on: [],
+      off: ['leads', 'reports'],
       unreadable: false,
     });
   });
 
-  it('fails closed on a slice it cannot read: set, nothing on, never "nothing set"', () => {
+  it('fails closed on a slice it cannot read: nothing on and flagged, so no default applies', () => {
     for (const settings of [
       { entitlements: ['reports'] },
-      { entitlements: { switches: 'reports' } },
+      { entitlements: { on: 'reports', off: [] } },
+      { entitlements: { on: ['reports'] } },
+      { entitlements: { switches: ['reports'] } },
       { entitlements: 'reports' },
       'not an object',
     ]) {
       mockLogger.warn.mockClear();
       expect(readOrgEntitlements(settings, { orgId: ORG_A })).toEqual({
-        set: true,
-        switches: [],
+        on: [],
+        off: [],
         unreadable: true,
       });
       expect(mockLogger.warn).toHaveBeenCalledOnce();
@@ -765,21 +768,36 @@ describe('the entitlement switches (§135 t-1033)', () => {
   it('drops a stored key that is not a key, keeping the rest, and warns', () => {
     expect(
       readOrgEntitlements(
-        { entitlements: { switches: ['reports', 'Bad Key', 7, 'reports'] } },
+        { entitlements: { on: ['reports', 'Bad Key', 7, 'reports'], off: [null] } },
         { orgId: ORG_A }
       )
-    ).toEqual({ set: true, switches: ['reports'], unreadable: false });
+    ).toEqual({ on: ['reports'], off: [], unreadable: false });
     expect(mockLogger.warn).toHaveBeenCalledWith(
       'Dropped malformed entitlement switches; the org does not have them',
-      { orgId: ORG_A, dropped: 2 }
+      { orgId: ORG_A, dropped: 3 }
+    );
+  });
+
+  it('reads a key stored both on and off as off, and warns', () => {
+    expect(
+      readOrgEntitlements(
+        { entitlements: { on: ['leads', 'reports'], off: ['leads'] } },
+        { orgId: ORG_A }
+      )
+    ).toEqual({ on: ['reports'], off: ['leads'], unreadable: false });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Entitlement switches stored both on and off; the org does not have them',
+      { orgId: ORG_A, switches: ['leads'] }
     );
   });
 
   it('loads one org, and null for an org that does not exist', async () => {
-    mockFindUnique.mockResolvedValueOnce({ settings: { entitlements: { switches: ['leads'] } } });
+    mockFindUnique.mockResolvedValueOnce({
+      settings: { entitlements: { on: ['leads'], off: [] } },
+    });
     expect(await loadOrgEntitlements(ORG_A)).toEqual({
-      set: true,
-      switches: ['leads'],
+      on: ['leads'],
+      off: [],
       unreadable: false,
     });
 
@@ -790,72 +808,79 @@ describe('the entitlement switches (§135 t-1033)', () => {
   it('writes in a serializable transaction, handing the updater what is stored, keeping every other key', async () => {
     const { tx, db, $transaction } = txOver({
       quotas: { monthlyBudgetUsd: 10 },
-      entitlements: { switches: ['retired'] },
+      entitlements: { on: ['retired'], off: [] },
     });
-    const next = vi.fn(() => ['reports', 'leads', 'reports']);
+    const next = vi.fn(() => ({ on: ['reports', 'leads', 'reports'], off: ['beta'] }));
 
     const written = await writeOrgEntitlements(ORG_A, next, db);
 
     expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    expect(next).toHaveBeenCalledWith({ set: true, switches: ['retired'], unreadable: false });
+    expect(next).toHaveBeenCalledWith({ on: ['retired'], off: [], unreadable: false });
     expect(written).toEqual({
-      previous: { set: true, switches: ['retired'], unreadable: false },
-      stored: { set: true, switches: ['leads', 'reports'], unreadable: false },
+      previous: { on: ['retired'], off: [], unreadable: false },
+      stored: { on: ['leads', 'reports'], off: ['beta'], unreadable: false },
     });
     expect(tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
       data: {
         settings: {
           quotas: { monthlyBudgetUsd: 10 },
-          entitlements: { switches: ['leads', 'reports'] },
+          entitlements: { on: ['leads', 'reports'], off: ['beta'] },
         },
       },
     });
   });
 
-  it('stores an empty set as set, so the org is not read as nothing set afterwards', async () => {
+  it('stores every switch set off, so the org does not read as having its defaults afterwards', async () => {
     const { tx, db } = txOver(null);
 
-    const written = await writeOrgEntitlements(ORG_A, () => [], db);
+    const written = await writeOrgEntitlements(ORG_A, () => ({ on: [], off: ['leads'] }), db);
 
-    expect(written?.stored).toEqual({ set: true, switches: [], unreadable: false });
+    expect(written?.stored).toEqual({ on: [], off: ['leads'], unreadable: false });
     expect(tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
-      data: { settings: { entitlements: { switches: [] } } },
+      data: { settings: { entitlements: { on: [], off: ['leads'] } } },
     });
   });
 
-  it('clears back to nothing set for null, and NULLs a column left empty', async () => {
-    const kept = txOver({ branding: { logo: 'x' }, entitlements: { switches: ['leads'] } });
+  it('removes the slice for null or two empty lists, and NULLs a column left empty', async () => {
+    const kept = txOver({ branding: { logo: 'x' }, entitlements: { on: ['leads'], off: [] } });
     expect(await writeOrgEntitlements(ORG_A, () => null, kept.db)).toEqual({
-      previous: { set: true, switches: ['leads'], unreadable: false },
-      stored: { set: false },
+      previous: { on: ['leads'], off: [], unreadable: false },
+      stored: NONE,
     });
     expect(kept.tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
       data: { settings: { branding: { logo: 'x' } } },
     });
 
-    const emptied = txOver({ entitlements: { switches: ['leads'] } });
-    await writeOrgEntitlements(ORG_A, () => null, emptied.db);
+    const emptied = txOver({ entitlements: { on: ['leads'], off: [] } });
+    await writeOrgEntitlements(ORG_A, () => ({ on: [], off: [] }), emptied.db);
     expect(emptied.tx.org.update).toHaveBeenCalledWith({
       where: { id: ORG_A },
       data: { settings: Prisma.DbNull },
     });
   });
 
-  it('writes nothing when the updater names a key that is not a key', async () => {
-    const { tx, db } = txOver(null);
+  it('writes nothing when the updater names a key that is not a key, or one both on and off', async () => {
+    const malformed = txOver(null);
+    await expect(
+      writeOrgEntitlements(ORG_A, () => ({ on: ['Not A Key'], off: [] }), malformed.db)
+    ).rejects.toThrow();
+    expect(malformed.tx.org.update).not.toHaveBeenCalled();
 
-    await expect(writeOrgEntitlements(ORG_A, () => ['Not A Key'], db)).rejects.toThrow();
-    expect(tx.org.update).not.toHaveBeenCalled();
+    const both = txOver(null);
+    await expect(
+      writeOrgEntitlements(ORG_A, () => ({ on: ['leads'], off: ['leads'] }), both.db)
+    ).rejects.toThrow();
+    expect(both.tx.org.update).not.toHaveBeenCalled();
   });
 
   it('is null, writing nothing, for an org that does not exist', async () => {
     const { tx, db } = txOver(undefined);
-    const next = vi.fn(() => ['leads']);
+    const next = vi.fn(() => ({ on: ['leads'], off: [] }));
 
     expect(await writeOrgEntitlements(ORG_A, next, db)).toBeNull();
     expect(next).not.toHaveBeenCalled();

@@ -39,6 +39,7 @@ function view(overrides: Partial<OrgEntitlementsView> = {}): OrgEntitlementsView
     orgId: ORG,
     nothingSet: false,
     unreadable: false,
+    mayChange: true,
     switches: [
       {
         key: 'reports',
@@ -46,6 +47,7 @@ function view(overrides: Partial<OrgEntitlementsView> = {}): OrgEntitlementsView
         description: 'Build reports.',
         whenNothingSet: false,
         on: true,
+        atDefault: false,
       },
       {
         key: 'leads',
@@ -53,12 +55,20 @@ function view(overrides: Partial<OrgEntitlementsView> = {}): OrgEntitlementsView
         description: 'Funnels and leads.',
         whenNothingSet: true,
         on: false,
+        atDefault: false,
       },
     ],
     unregistered: [],
     ...overrides,
   };
 }
+
+/** Every switch at its default, as the route reports an org nothing was set on. */
+const atDefaults = () =>
+  view({
+    nothingSet: true,
+    switches: view().switches.map((s) => ({ ...s, on: s.whenNothingSet, atDefault: true })),
+  });
 
 function renderForm(initial: OrgEntitlementsView = view()) {
   const user = userEvent.setup();
@@ -98,34 +108,96 @@ describe('OrgEntitlementsForm', () => {
     expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeChecked();
   });
 
-  it('says an org with nothing set is at its defaults, and offers no clear', () => {
-    renderForm(
-      view({
-        nothingSet: true,
-        switches: view().switches.map((s) => ({ ...s, on: s.whenNothingSet })),
-      })
-    );
-
-    expect(screen.getByText(/Nothing has been set on this organisation/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeChecked();
-    expect(screen.queryByRole('button', { name: 'Clear to defaults' })).not.toBeInTheDocument();
-  });
-
-  it('clears a set org back to its defaults', async () => {
-    vi.mocked(apiClient.put).mockResolvedValue(
-      view({
-        nothingSet: true,
-        switches: view().switches.map((s) => ({ ...s, on: s.whenNothingSet })),
+  it('locks the switches while a save runs, so a tick made meanwhile cannot be lost', async () => {
+    let land: (value: OrgEntitlementsView) => void = () => {};
+    vi.mocked(apiClient.put).mockReturnValue(
+      new Promise<OrgEntitlementsView>((resolve) => {
+        land = resolve;
       })
     );
     const user = renderForm();
 
+    await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+    expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeDisabled();
+    land(view());
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeEnabled();
+  });
+
+  it('says an org with nothing set is at its defaults, and offers no clear', () => {
+    renderForm(atDefaults());
+
+    expect(screen.getByText(/Nothing has been set on this organisation/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Clear to defaults' })).not.toBeInTheDocument();
+    // Every switch is at its default, which the note already says once.
+    expect(screen.queryByText(/Not set on this organisation yet/)).not.toBeInTheDocument();
+  });
+
+  it('says which switch of a saved org is still at its default', () => {
+    renderForm(
+      view({
+        switches: view().switches.map((s) =>
+          s.key === 'leads' ? { ...s, on: true, atDefault: true } : s
+        ),
+      })
+    );
+
+    expect(screen.getAllByText(/Not set on this organisation yet/)).toHaveLength(1);
+  });
+
+  it('clears a set org back to its defaults only once the dialog is confirmed', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue(atDefaults());
+    const user = renderForm();
+
     await user.click(screen.getByRole('button', { name: 'Clear to defaults' }));
+
+    expect(apiClient.put).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/goes back to its default/);
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(apiClient.put).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Clear to defaults' }));
+    const confirm = await screen.findByRole('alertdialog');
+    await user.click(
+      Array.from(confirm.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Clear to defaults'
+      )!
+    );
 
     expect(apiClient.put).toHaveBeenCalledWith(PATH, { body: { switches: null } });
     expect(
       await screen.findByText(/Nothing has been set on this organisation/)
     ).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('shows a failed clear in the dialog, which stays open', async () => {
+    const { APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.put).mockRejectedValue(new APIClientError('Something went wrong'));
+    const user = renderForm();
+
+    await user.click(screen.getByRole('button', { name: 'Clear to defaults' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(
+      Array.from(dialog.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Clear to defaults'
+      )!
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+
+  it('shows the switches but offers no change where they cannot be changed', () => {
+    renderForm(view({ mayChange: false }));
+
+    expect(screen.getByText(/only be changed from the install organisation/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save switches' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear to defaults' })).not.toBeInTheDocument();
   });
 

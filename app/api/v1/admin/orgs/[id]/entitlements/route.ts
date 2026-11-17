@@ -2,19 +2,21 @@
  * One org's entitlement switches (§135 t-1033)
  *
  * GET /api/v1/admin/orgs/[id]/entitlements — every switch the app registers,
- *     whether this org has it, and whether anything was ever set on the org.
+ *     whether this org has it, whether it was set on the org or is at its
+ *     default, and whether this caller may change them.
  * PUT /api/v1/admin/orgs/[id]/entitlements — replace them:
- *     `{ switches: string[] | null }`, the registered switches that are on.
- *     `null` clears the org back to nothing set, so it gets each switch's
- *     `whenNothingSet` again. The key is required, so a replace cannot clear
- *     an org by leaving it out.
+ *     `{ switches: string[] | null }`, the registered switches that are on;
+ *     every other registered switch is set off. `null` sets none, so every
+ *     registered switch is back at its `whenNothingSet`. The key is required,
+ *     so a replace cannot clear an org by leaving it out.
  *
- * A key the app does not register is a 400. Keys already stored on the org
- * that no app registers any more are kept by a replace: the caller can only
- * see and set what is registered, so a save must not drop what it could not
- * see (a process running older code, or a switch an app has stopped
- * registering). With nothing registered there is nothing to set, and a PUT is
- * a 409.
+ * A key the app does not register is a 400. Values already stored on the org
+ * for keys no app registers any more are kept by a replace, on or off: the
+ * caller can only see and set what is registered, so a save must not drop
+ * what it could not see (a process running older code, or a switch an app has
+ * stopped registering). A switch registered after the save is not set by it,
+ * so it reaches the org at its default. With nothing registered there is
+ * nothing to set, and a PUT is a 409.
  *
  * Platform-only: a switch is what an org has bought, and an org must not grant
  * it to itself. So, as with the caps, at `multi` a platform admin switched into
@@ -25,7 +27,6 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { prisma } from '@/lib/db/client';
 import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
@@ -41,7 +42,7 @@ import {
 } from '@/lib/tenancy/shared-settings';
 import {
   isSettingsWriteConflict,
-  readOrgEntitlements,
+  loadOrgEntitlements,
   writeOrgEntitlements,
   type OrgEntitlementsRead,
 } from '@/lib/tenancy/org-settings';
@@ -60,38 +61,45 @@ const PLATFORM_ONLY = {
 const SWITCHES_REFUSAL =
   "An organisation's switches can only be changed from the install organisation. Switch to the install organisation to make this change.";
 
-/** The switches as the API reports them, against what is registered now. */
-function describe(orgId: string, read: OrgEntitlementsRead) {
+/**
+ * The switches as the API reports them, against what is registered now.
+ * `mayChange` lets the page offer the form only where a save can land.
+ */
+function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) {
   const resolved = resolveOrgSwitches(read);
   const on = new Set(resolved.on);
+  const atDefault = new Set(resolved.atDefault);
   return {
     orgId,
     nothingSet: resolved.nothingSet,
     unreadable: resolved.unreadable,
+    mayChange,
     switches: registeredEntitlementSwitches().map((s) => ({
       key: s.key,
       label: s.label,
       description: s.description,
       whenNothingSet: s.whenNothingSet,
       on: on.has(s.key),
+      atDefault: atDefault.has(s.key),
     })),
     unregistered: resolved.unregistered,
   };
 }
 
-/** What the audit log keeps: the stored keys, or that nothing was set. */
+/** What the audit log keeps: the keys set on and off, or that they could not be read. */
 function auditable(read: OrgEntitlementsRead) {
-  if (!read.set) return { nothingSet: true };
-  return read.unreadable ? { unreadable: true } : { switches: [...read.switches] };
+  return read.unreadable ? { unreadable: true } : { on: [...read.on], off: [...read.off] };
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
 
-  const org = await prisma.org.findUnique({ where: { id }, select: { settings: true } });
-  if (!org) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
+  const read = await loadOrgEntitlements(id);
+  if (!read) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
 
-  return successResponse(describe(id, readOrgEntitlements(org.settings, { orgId: id })));
+  return successResponse(
+    describe(id, read, mayChangeOrgCommercialSettings(session.principal.credential))
+  );
 }, PLATFORM_ONLY);
 
 export const PUT = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -133,10 +141,16 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
   let written: Awaited<ReturnType<typeof writeOrgEntitlements>>;
   try {
     written = await writeOrgEntitlements(id, (previous) => {
-      if (body.switches === null) return null;
-      // Keep what the caller could not see: stored keys nothing registers.
-      const kept = previous.set ? previous.switches.filter((key) => !registered.has(key)) : [];
-      return [...body.switches, ...kept];
+      // Keep what the caller could not see: values stored for keys nothing registers.
+      const unseen = (keys: readonly string[]) => keys.filter((key) => !registered.has(key));
+      const keptOn = unseen(previous.on);
+      const keptOff = unseen(previous.off);
+      if (body.switches === null) return { on: keptOn, off: keptOff };
+      const ticked = new Set(body.switches);
+      return {
+        on: [...ticked, ...keptOn],
+        off: [...[...registered].filter((key) => !ticked.has(key)), ...keptOff],
+      };
     });
   } catch (error) {
     if (!isSettingsWriteConflict(error)) throw error;
@@ -164,10 +178,11 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
 
   log.info('Org entitlement switches replaced by admin', {
     orgId: id,
-    nothingSet: !written.stored.set,
-    switches: written.stored.set ? written.stored.switches : null,
+    on: written.stored.on,
+    off: written.stored.off,
     actorUserId: session.user.id,
   });
 
-  return successResponse(describe(id, written.stored));
+  // Refused above otherwise, so this caller may change them.
+  return successResponse(describe(id, written.stored, true));
 }, PLATFORM_ONLY);

@@ -76,8 +76,20 @@ describe("mayChangeOrgCommercialSettings: an org's caps and switches (§135 t-10
       ).toBe(true);
     });
 
-    it('allows an admin API key, which enters no org and acts as the install org', () => {
+    it('allows an unbound admin API key, which enters no org and acts as the install org', () => {
       expect(mayChangeOrgCommercialSettings('api-key')).toBe(true);
+    });
+
+    it('refuses a key bound to a customer org, which runs inside it, so the org cannot raise its own', async () => {
+      expect(await runAsOrg(CUSTOMER, async () => mayChangeOrgCommercialSettings('api-key'))).toBe(
+        false
+      );
+    });
+
+    it('allows a key bound to the install org', async () => {
+      expect(
+        await runAsOrg(INSTALL_ORG_ID, async () => mayChangeOrgCommercialSettings('api-key'))
+      ).toBe(true);
     });
   });
 

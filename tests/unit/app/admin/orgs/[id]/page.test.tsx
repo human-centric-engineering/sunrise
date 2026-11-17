@@ -74,6 +74,7 @@ const NO_SWITCHES = {
   orgId: ID,
   nothingSet: true,
   unreadable: false,
+  mayChange: true,
   switches: [],
   unregistered: [],
 };
@@ -418,7 +419,8 @@ describe('OrgPage', () => {
       orgId: ID,
       nothingSet: false,
       unreadable: false,
-      switches: [{ ...SWITCH, on: true }],
+      mayChange: true,
+      switches: [{ ...SWITCH, on: true, atDefault: false }],
       unregistered: [],
     };
 

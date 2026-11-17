@@ -4,27 +4,42 @@
  * OrgEntitlementsForm — the switches an org has (§135 t-1033)
  *
  * The admin UI for `GET`/`PUT /api/v1/admin/orgs/[id]/entitlements`. A
- * platform admin ticks the switches the org has; a save sets exactly those.
- * The page renders this only when the app registers at least one switch, so
- * vanilla Sunrise shows nothing new.
+ * platform admin ticks the switches the org has; a save sets exactly those
+ * on and every other registered switch off. The page renders this only when
+ * the app registers at least one switch, so vanilla Sunrise shows nothing new.
  *
- * Three states it says rather than hides:
- *  - **Nothing set**: the org gets each switch's default, and the boxes show
- *    those defaults. Saving turns them into a set of the org's own.
+ * What it says rather than hides:
+ *  - **Nothing set**: every switch is at its default, and the boxes show those
+ *    defaults. Saving sets them on the organisation itself.
+ *  - **At its default**: one switch nobody has set here (one registered since
+ *    the last save), which follows its default until it is saved.
  *  - **Unreadable**: the stored switches could not be read, so the org has
  *    none until it is saved again.
  *  - **Stored but not registered**: keys no app registers any more. They are
  *    off, and a save keeps them.
+ *  - **Cannot change here**: at `multi`, from a customer's org, the switches
+ *    are shown but can only be changed from the install organisation.
  */
 
 import { useState } from 'react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /** `GET /api/v1/admin/orgs/[id]/entitlements`, as the route reports it. */
@@ -32,12 +47,16 @@ export interface OrgEntitlementsView {
   orgId: string;
   nothingSet: boolean;
   unreadable: boolean;
+  /** Whether this caller may change them from where they are. */
+  mayChange: boolean;
   switches: {
     key: string;
     label: string;
     description: string;
     whenNothingSet: boolean;
     on: boolean;
+    /** Nobody has set it on this org, so it follows `whenNothingSet`. */
+    atDefault: boolean;
   }[];
   unregistered: string[];
 }
@@ -56,11 +75,23 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
   const [ticked, setTicked] = useState(() => onKeys(initial));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   // No field shows its own message, so every one the server sends joins the
   // summary by Save.
   const saveFailure = useSaveFailure({
     fallback: 'Could not save the switches',
     fields: NO_SERVER_FIELDS,
+  });
+  // Clearing is confirmed in its dialog, so its failure shows there.
+  const clearFailure = useSaveFailure({
+    fallback: 'Could not clear the switches',
+    fields: NO_SERVER_FIELDS,
+  });
+  const clearDialog = useCommittedDialog({
+    open: confirmingClear,
+    pending: saving,
+    onClose: () => setConfirmingClear(false),
+    clear: clearFailure.clear,
   });
 
   const toggle = (key: string, on: boolean) => {
@@ -73,8 +104,9 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
     });
   };
 
-  const put = async (switches: string[] | null) => {
-    saveFailure.clear();
+  /** Whether the save landed; a failure is shown by `failure`. */
+  const put = async (switches: string[] | null, failure: typeof saveFailure): Promise<boolean> => {
+    failure.clear();
     setSaving(true);
     setSaved(false);
     try {
@@ -84,11 +116,17 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       setView(updated);
       setTicked(onKeys(updated));
       setSaved(true);
+      return true;
     } catch (err) {
-      saveFailure.report(err);
+      failure.report(err);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const clearToDefaults = async () => {
+    if (await put(null, clearFailure)) setConfirmingClear(false);
   };
 
   return (
@@ -105,8 +143,14 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
           below. Saving sets these switches on the organisation itself.
         </p>
       )}
+      {!view.mayChange && (
+        <p className="text-muted-foreground text-sm">
+          These can only be changed from the install organisation. Switch to it to make a change.
+        </p>
+      )}
 
-      <fieldset className="grid gap-2">
+      {/* Locked while a save runs, so a tick made meanwhile is not lost when it lands. */}
+      <fieldset className="grid gap-2" disabled={saving || !view.mayChange}>
         <legend className="mb-2 text-sm font-medium">
           What this organisation has{' '}
           <FieldHelp title="Entitlement switches">
@@ -115,8 +159,9 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
               one gives it to the organisation; its own admins cannot change these.
             </p>
             <p className="mt-2">
-              An organisation nobody has set anything on gets each switch&apos;s default, marked{' '}
-              <em>on by default</em>. Clearing returns it to those defaults.
+              A switch nobody has set on this organisation is at its default, marked{' '}
+              <em>on by default</em> when that is on. Clearing puts every switch back to its
+              default.
             </p>
           </FieldHelp>
         </legend>
@@ -142,6 +187,11 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
                 {s.description && (
                   <span className="text-muted-foreground block text-xs">{s.description}</span>
                 )}
+                {!view.nothingSet && s.atDefault && (
+                  <span className="text-muted-foreground block text-xs italic">
+                    Not set on this organisation yet, so it is at its default.
+                  </span>
+                )}
               </span>
             </label>
           ))}
@@ -156,20 +206,45 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
         )}
       </fieldset>
 
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => void put([...ticked])} disabled={saving}>
-            {saving ? 'Saving…' : 'Save switches'}
-          </Button>
-          {!view.nothingSet && (
-            <Button variant="outline" onClick={() => void put(null)} disabled={saving}>
-              Clear to defaults
+      {view.mayChange && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => void put([...ticked], saveFailure)} disabled={saving}>
+              {saving ? 'Saving…' : 'Save switches'}
             </Button>
-          )}
-          {saved && <span className="text-sm text-green-600">Saved</span>}
+            {!view.nothingSet && (
+              <Button variant="outline" onClick={() => setConfirmingClear(true)} disabled={saving}>
+                Clear to defaults
+              </Button>
+            )}
+            {saved && <span className="text-sm text-green-600">Saved</span>}
+          </div>
+          <SaveError failure={saveFailure.failure} />
         </div>
-        <SaveError failure={saveFailure.failure} />
-      </div>
+      )}
+
+      <AlertDialog open={confirmingClear} onOpenChange={clearDialog.onOpenChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear this organisation&apos;s switches</AlertDialogTitle>
+            <AlertDialogDescription>
+              Every switch goes back to its default now: the organisation loses each one that is off
+              by default and gains each one that is on by default. You can set them again at any
+              time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <SaveError failure={clearFailure.failure} />
+          <AlertDialogFooter>
+            <AlertDialogCancel {...clearDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              {...clearDialog.actionProps()}
+              onClick={(e) => clearDialog.confirm(e, clearToDefaults)}
+            >
+              Clear to defaults
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

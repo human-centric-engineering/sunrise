@@ -148,6 +148,7 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
       orgId: OTHER,
       nothingSet: true,
       unreadable: false,
+      mayChange: true,
       switches: [
         {
           key: 'reports',
@@ -155,6 +156,7 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
           description: 'Build reports.',
           whenNothingSet: false,
           on: false,
+          atDefault: true,
         },
         {
           key: 'leads',
@@ -162,6 +164,7 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
           description: 'Funnels and leads.',
           whenNothingSet: true,
           on: true,
+          atDefault: true,
         },
       ],
       unregistered: [],
@@ -170,17 +173,32 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
 
   it('reports a set org as set, naming stored keys nothing registers', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
-      settings: { entitlements: { switches: ['reports', 'retired'] } },
+      settings: { entitlements: { on: ['reports', 'retired'], off: ['leads'] } },
     });
 
     const data = (await json(await get())).data!;
 
     expect(data.nothingSet).toBe(false);
     expect(data.switches).toEqual([
-      expect.objectContaining({ key: 'reports', on: true }),
-      expect.objectContaining({ key: 'leads', on: false }),
+      expect.objectContaining({ key: 'reports', on: true, atDefault: false }),
+      expect.objectContaining({ key: 'leads', on: false, atDefault: false }),
     ]);
     expect(data.unregistered).toEqual(['retired']);
+  });
+
+  it('reports a switch registered since the org was saved at its default', async () => {
+    // Saved before `leads` was registered: only `reports` was set.
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports'], off: [] } },
+    });
+
+    const data = (await json(await get())).data!;
+
+    expect(data.nothingSet).toBe(false);
+    expect(data.switches).toEqual([
+      expect.objectContaining({ key: 'reports', on: true, atDefault: false }),
+      expect.objectContaining({ key: 'leads', on: true, atDefault: true }),
+    ]);
   });
 
   it('says a slice it cannot read is unreadable, with nothing on', async () => {
@@ -209,15 +227,19 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
 });
 
 describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
-  it('stores the switches that are on, keeping every other settings key, and audits it', async () => {
+  it('sets the ticked switches on and every other registered one off, keeping other settings keys, and audits it', async () => {
     const res = await put({ switches: ['reports'] });
 
     expect(res.status).toBe(200);
     expect(storedSettings()).toEqual({
       providers: { approved: ['id-anthropic'] },
-      entitlements: { switches: ['reports'] },
+      entitlements: { on: ['reports'], off: ['leads'] },
     });
-    expect((await json(res)).data).toMatchObject({ nothingSet: false, unregistered: [] });
+    expect((await json(res)).data).toMatchObject({
+      nothingSet: false,
+      mayChange: true,
+      unregistered: [],
+    });
     expect(mockLogAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'org.entitlements.replace',
@@ -225,61 +247,87 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
         entityId: OTHER,
         actingOrgId: OTHER,
         changes: {
-          entitlements: { from: { nothingSet: true }, to: { switches: ['reports'] } },
-        },
-      })
-    );
-  });
-
-  it('stores an empty set as set, so a default-on switch is off for this org', async () => {
-    const res = await put({ switches: [] });
-
-    expect(storedSettings()).toEqual({
-      providers: { approved: ['id-anthropic'] },
-      entitlements: { switches: [] },
-    });
-    const data = (await json(res)).data!;
-    expect(data.nothingSet).toBe(false);
-    expect(data.switches).toEqual([
-      expect.objectContaining({ key: 'reports', on: false }),
-      expect.objectContaining({ key: 'leads', on: false }),
-    ]);
-  });
-
-  it('keeps stored keys nothing registers, which the caller could not see', async () => {
-    mockPrisma.org.findUnique.mockResolvedValue({
-      settings: { entitlements: { switches: ['leads', 'retired'] } },
-    });
-
-    await put({ switches: ['reports'] });
-
-    expect(storedSettings()).toEqual({ entitlements: { switches: ['reports', 'retired'] } });
-    expect(mockLogAdminAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        changes: {
           entitlements: {
-            from: { switches: ['leads', 'retired'] },
-            to: { switches: ['reports', 'retired'] },
+            from: { on: [], off: [] },
+            to: { on: ['reports'], off: ['leads'] },
           },
         },
       })
     );
   });
 
-  it('clears the org back to nothing set for null', async () => {
+  it('stores none ticked as every switch off, so a default-on switch is off for this org', async () => {
+    const res = await put({ switches: [] });
+
+    expect(storedSettings()).toEqual({
+      providers: { approved: ['id-anthropic'] },
+      entitlements: { on: [], off: ['leads', 'reports'] },
+    });
+    const data = (await json(res)).data!;
+    expect(data.nothingSet).toBe(false);
+    expect(data.switches).toEqual([
+      expect.objectContaining({ key: 'reports', on: false, atDefault: false }),
+      expect.objectContaining({ key: 'leads', on: false, atDefault: false }),
+    ]);
+  });
+
+  it('keeps values stored for keys nothing registers, on and off, which the caller could not see', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
-      settings: { entitlements: { switches: [] }, providers: { approved: [] } },
+      settings: { entitlements: { on: ['leads', 'retired'], off: ['older'] } },
+    });
+
+    await put({ switches: ['reports'] });
+
+    expect(storedSettings()).toEqual({
+      entitlements: { on: ['reports', 'retired'], off: ['leads', 'older'] },
+    });
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: {
+          entitlements: {
+            from: { on: ['leads', 'retired'], off: ['older'] },
+            to: { on: ['reports', 'retired'], off: ['leads', 'older'] },
+          },
+        },
+      })
+    );
+  });
+
+  it('puts every registered switch back to its default for null, keeping what it could not see', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: {
+        entitlements: { on: ['retired'], off: ['leads', 'reports'] },
+        providers: { approved: [] },
+      },
     });
 
     const res = await put({ switches: null });
 
-    expect(storedSettings()).toEqual({ providers: { approved: [] } });
+    expect(storedSettings()).toEqual({
+      providers: { approved: [] },
+      entitlements: { on: ['retired'], off: [] },
+    });
     expect((await json(res)).data).toMatchObject({ nothingSet: true });
     expect(mockLogAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        changes: { entitlements: { from: { switches: [] }, to: { nothingSet: true } } },
+        changes: {
+          entitlements: {
+            from: { on: ['retired'], off: ['leads', 'reports'] },
+            to: { on: ['retired'], off: [] },
+          },
+        },
       })
     );
+  });
+
+  it('removes the slice when null leaves nothing stored', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: [], off: ['leads'] }, providers: { approved: [] } },
+    });
+
+    await put({ switches: null });
+
+    expect(storedSettings()).toEqual({ providers: { approved: [] } });
   });
 
   it('refuses a key no app registers, naming it, and writes nothing', async () => {
@@ -370,13 +418,15 @@ describe('the switches at multi are changed only from the install org, as the ca
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
-  it('still lets a platform admin in a customer org read them', async () => {
+  it('still lets a platform admin in a customer org read them, saying they cannot be changed from there', async () => {
     mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
 
     const res = await get();
 
     expect(res.status).toBe(200);
-    expect((await json(res)).data).toEqual(expect.objectContaining({ orgId: OTHER }));
+    expect((await json(res)).data).toEqual(
+      expect.objectContaining({ orgId: OTHER, mayChange: false })
+    );
   });
 
   it('lets an unbound admin API key set them, as the install org', async () => {
@@ -394,8 +444,22 @@ describe('the switches at multi are changed only from the install org, as the ca
     expect(res.status).toBe(200);
     expect(storedSettings()).toEqual({
       providers: { approved: ['id-anthropic'] },
-      entitlements: { switches: ['reports'] },
+      entitlements: { on: ['reports'], off: ['leads'] },
     });
+  });
+
+  it('refuses a key bound to a customer org, which runs inside it', async () => {
+    mockGetSession.mockResolvedValue(null);
+    mockResolveApiKey.mockResolvedValue({
+      session: session('ADMIN', null),
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      orgId: OTHER,
+      ownerAccountType: 'HUMAN',
+    });
+
+    expect((await put({ switches: ['reports'] })).status).toBe(403);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
   it('lets a platform admin in a customer org set them at single, where there is only one org', async () => {

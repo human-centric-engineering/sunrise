@@ -568,18 +568,23 @@ PUT /api/v1/admin/orgs/[id]/entitlements
 
 The switches the app registers and whether this org has each (§135 t-1033).
 A `PUT` takes `{ switches: string[] | null }`: the registered switches that are
-on, or `null` to clear the org back to nothing set, so it gets each switch's
-default again. The key is required, so a replace cannot clear an org by
-leaving it out. Stored keys no app registers are kept. It writes an
+on, with every other registered switch set off, or `null` to set none, so
+every registered switch is back at its default. It is stored as
+`{ on, off }`, so a switch registered later is not set by it and reaches the
+org at its default. The key is required, so a replace cannot clear an org by
+leaving it out. Values stored for keys no app registers are kept. It writes an
 `org.entitlements.replace` audit row with what it replaced. At `multi` the
 `PUT`, like a caps write, comes only from the install org or an unbound admin
 API key: a platform admin switched into a customer's org may read the switches
 but not change them.
 
-Both return `{ orgId, nothingSet, unreadable, switches, unregistered }`, where
-each switch is `{ key, label, description, whenNothingSet, on }` and `on` is
-what the org has now. `unreadable` is true when the stored slice does not
-parse, in which case the org has none on until it is saved again. See
+Both return `{ orgId, nothingSet, unreadable, mayChange, switches,
+unregistered }`, where each switch is `{ key, label, description,
+whenNothingSet, on, atDefault }`, `on` is what the org has now and
+`atDefault` says nobody has set it on this org. `nothingSet` says that is
+true of every switch. `unreadable` is true when the stored slice does not
+parse, in which case the org has none on until it is saved again.
+`mayChange` says whether this caller may `PUT` from where it is. See
 [Entitlements](../tenancy/entitlements.md).
 
 **Error Responses**: `400 VALIDATION_ERROR` (a missing key, a malformed key, or
