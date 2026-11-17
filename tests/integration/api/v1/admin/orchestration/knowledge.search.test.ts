@@ -299,6 +299,22 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
       expect(body.error.message).toContain('embeddings policy: local only');
     });
 
+    it('answers 409 when the query holds confidential content a policy does not send (§130)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('confidential_not_permitted', 'openai')
+      );
+
+      const response = await POST(makePostRequest({ query: 'acme' }));
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
+        response
+      );
+      expect(body.error.code).toBe('CONFIDENTIAL_CONTENT');
+      expect(body.error.message).toContain('confidential content');
+    });
+
     it('lets any other refusal through as an error, not as the local-only answer', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(searchKnowledge).mockRejectedValue(

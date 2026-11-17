@@ -259,7 +259,8 @@ const { getCapabilityDefinitions } = await import('@/lib/orchestration/capabilit
 const { buildContext, invalidateContext } =
   await import('@/lib/orchestration/chat/context-builder');
 const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
-const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
+const { streamChat, CONFIDENTIAL_NOTES } =
+  await import('@/lib/orchestration/chat/streaming-handler');
 const { readAgentConsistently } = await import('@/lib/orchestration/agents/agent-versioning');
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
@@ -273,7 +274,9 @@ const {
   createPrivacyScope,
   currentPrivacyScope,
   privacySummary,
+  recordConfidentialDecision,
   recordPrivacyCall,
+  recordPrivacySensitivity,
   runInPrivacyScope,
 } = await import('@/lib/orchestration/privacy/scope');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
@@ -10034,5 +10037,190 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
 
     expect(errorOf(await turn('Can I park here?'))?.code).toBe('privacy_blocked');
     expect(marked(earlier)).toBeUndefined();
+  });
+
+  // ── Confidential content (§130 t-1037) ────────────────────────────────────
+
+  const DISCLOSURE = 'signed off with depression';
+
+  /**
+   * Stands in for the privacy stage refusing confidential content under a
+   * group's policy (`local_only` on a cloud provider): refuses any call with
+   * the disclosure in it, saying which messages held it, as the stage does.
+   * `place: false` refuses without a place, as when a classifier failed.
+   */
+  function confidentialProvider({ place = true }: { place?: boolean } = {}) {
+    const provider = {
+      ...mockProvider([]),
+      chatStream: vi.fn(async function* (
+        messages: unknown[]
+      ): AsyncGenerator<Record<string, unknown>> {
+        const holding = messages.flatMap((m, i) =>
+          JSON.stringify(m).includes(DISCLOSURE) ? [i] : []
+        );
+        if (holding.length > 0 || !place) {
+          throw new PrivacyRefusedError(
+            'confidential_not_permitted',
+            'anthropic',
+            place ? { messageCount: messages.length, messageIndices: holding } : undefined
+          );
+        }
+        yield { type: 'text', content: 'Here are the parking rules.' };
+        yield { type: 'done', usage: { inputTokens: 5, outputTokens: 4 }, finishReason: 'stop' };
+      }),
+    };
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    } as never);
+    return provider;
+  }
+
+  it('refuses a turn for confidential content in its own words, and leaves the turn out', async () => {
+    const { rows } = conversationStore();
+    const provider = confidentialProvider();
+
+    const refused = await turn(`I've been ${DISCLOSURE}, what do I tell HR?`);
+    expect(errorOf(refused)).toEqual({
+      type: 'error',
+      code: 'privacy_confidential',
+      message: getUserFacingError('privacy_confidential').message,
+    });
+    expect(getUserFacingError('privacy_confidential').title).toBe('Confidential Content Not Sent');
+    expect(marked(rows.find((r) => r.content.includes(DISCLOSURE)))).toBe('privacy_blocked');
+
+    // The conversation carries on without it.
+    expect(errorOf(await turn('What are the parking rules?'))).toBeUndefined();
+    expect(lastSent(provider)).not.toContain(DISCLOSURE);
+  });
+
+  it('places a disclosure written before the policy was strict, says so, and forgets it', async () => {
+    // Sent while the policy was `allow`; refused now.
+    const { add } = conversationStore();
+    const earlier = add({ role: 'user', content: `FYI I was ${DISCLOSURE} last month.` });
+    const reply = add({ role: 'assistant', content: 'Sorry to hear that.' });
+    const provider = confidentialProvider();
+
+    const refused = await turn('What are the parking rules?');
+    expect(errorOf(refused)).toEqual({
+      type: 'error',
+      code: 'privacy_confidential_earlier',
+      message: getUserFacingError('privacy_confidential_earlier').message,
+    });
+    expect(marked(earlier)).toBe('privacy_blocked');
+    expect(marked(reply)).toBe('privacy_blocked');
+
+    expect(errorOf(await turn('What are the parking rules?'))).toBeUndefined();
+    expect(lastSent(provider)).not.toContain(DISCLOSURE);
+  });
+
+  it('leaves out only the turn when the refusal has no place (a classifier failed)', async () => {
+    const { add, rows } = conversationStore();
+    const earlier = add({ role: 'user', content: 'Where can I park?' });
+    confidentialProvider({ place: false });
+
+    expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_confidential');
+    expect(marked(earlier)).toBeUndefined();
+    expect(marked(rows.find((r) => r.content === 'And at weekends?'))).toBe('privacy_blocked');
+  });
+
+  describe('the note a warn policy shows (§130 t-1037)', () => {
+    /**
+     * Answers every call, and records in the turn's privacy scope what the
+     * stage would have for a call under `warn`: the groups found, warned.
+     */
+    function warningProvider(groups: () => Array<'personal' | 'commercial'>) {
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          const scope = currentPrivacyScope();
+          if (!scope) throw new Error('the call ran outside the turn scope');
+          const found = groups();
+          recordPrivacySensitivity(scope, {
+            mode: 'detect',
+            categories: found.map((group) => ({
+              category: group === 'personal' ? 'health' : 'not_public',
+              group,
+            })),
+            failedAdapters: [],
+          });
+          recordConfidentialDecision(
+            scope,
+            Object.fromEntries(found.map((g) => [g, 'warned' as const]))
+          );
+          yield { type: 'text', content: 'Noted.' };
+          yield { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' };
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      return provider;
+    }
+
+    const notes = (events: Event[]) => events.filter((e) => e.type === 'warning');
+
+    it('shows it after the answer, once per conversation per group', async () => {
+      const { conv } = conversationStore();
+      let groups: Array<'personal' | 'commercial'> = ['personal'];
+      warningProvider(() => groups);
+
+      const first = await turn(`I was ${DISCLOSURE}.`);
+      expect(notes(first)).toEqual([
+        { type: 'warning', code: 'confidential_personal', message: CONFIDENTIAL_NOTES.personal },
+      ]);
+      // After the answer, before the turn ends.
+      const kinds = first.map((e) => e.type);
+      expect(kinds.lastIndexOf('content')).toBeLessThan(kinds.indexOf('warning'));
+      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('done'));
+      expect((conv as { metadata?: unknown }).metadata).toEqual({
+        confidentialNoted: ['personal'],
+      });
+
+      // Every later call resends the disclosure; the note is not repeated.
+      expect(notes(await turn('Anything else?'))).toEqual([]);
+
+      // A group not noted before is.
+      groups = ['personal', 'commercial'];
+      expect(notes(await turn('The S27 is unannounced.')).map((e) => e.code)).toEqual([
+        'confidential_commercial',
+      ]);
+    });
+
+    it('never names what was found', async () => {
+      conversationStore();
+      warningProvider(() => ['personal', 'commercial']);
+      for (const note of notes(await turn(`I was ${DISCLOSURE}.`))) {
+        expect(note.message).not.toMatch(/depression|health_|not_public/);
+      }
+    });
+
+    it('shows nothing when the turn was allowed, not warned', async () => {
+      conversationStore();
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          const scope = currentPrivacyScope();
+          if (scope) recordConfidentialDecision(scope, { personal: 'allowed' });
+          yield { type: 'text', content: 'Noted.' };
+          yield { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' };
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      expect(notes(await turn(`I was ${DISCLOSURE}.`))).toEqual([]);
+    });
+
+    it('still shows it when recording that it was shown fails, rather than never', async () => {
+      conversationStore();
+      warningProvider(() => ['personal']);
+      vi.mocked(prisma.aiConversation.updateMany).mockRejectedValueOnce(new Error('reset'));
+      expect(notes(await turn(`I was ${DISCLOSURE}.`)).map((e) => e.code)).toEqual([
+        'confidential_personal',
+      ]);
+    });
   });
 });
