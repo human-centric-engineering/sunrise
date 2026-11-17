@@ -1188,10 +1188,12 @@ export interface PrivacySummary {
   sensitivity?: Partial<Record<SensitivityGroup, string[]>>;
   /**
    * What the confidential-content policy did with the calls that held each
-   * group's content (§130): the strictest across them. Absent for a group
-   * nothing was found of.
+   * group's content (§130): every decision any of them got, in
+   * {@link CONFIDENTIAL_DECISIONS} order, so a turn whose chat call was sent
+   * and whose knowledge-search embedding was refused reads both. Absent for a
+   * group nothing was found of.
    */
-  confidential?: Partial<Record<SensitivityGroup, ConfidentialDecision>>;
+  confidential?: Partial<Record<SensitivityGroup, ConfidentialDecision[]>>;
 }
 
 /**

@@ -161,7 +161,7 @@ describe('local_only', () => {
     expect(privacySummary(scope)).toMatchObject({
       refused: ['confidential_not_permitted'],
       sensitivity: { personal: ['health'] },
-      confidential: { personal: 'refused' },
+      confidential: { personal: ['refused'] },
     });
   });
 
@@ -172,7 +172,7 @@ describe('local_only', () => {
     const result = await run(call, scope);
 
     expect(result.args).toBe(call.args);
-    expect(privacySummary(scope)?.confidential).toEqual({ personal: 'allowed' });
+    expect(privacySummary(scope)?.confidential).toEqual({ personal: ['allowed'] });
   });
 
   it('does not count a trusted provider as local', async () => {
@@ -195,7 +195,7 @@ describe('approved_only', () => {
     policies('allow', 'approved_only');
     const scope = newScope();
     await run(chatCall(chat(LAUNCH), 'trusted'), scope);
-    expect(privacySummary(scope)?.confidential).toEqual({ commercial: 'allowed' });
+    expect(privacySummary(scope)?.confidential).toEqual({ commercial: ['allowed'] });
   });
 
   it('sends it to a local provider without asking whether it is trusted', async () => {
@@ -257,13 +257,13 @@ describe('warn and allow', () => {
     const call = chatCall(chat(HEALTH));
     const result = await run(call, scope);
     expect(result.args).toBe(call.args);
-    expect(privacySummary(scope)?.confidential).toEqual({ personal: 'warned' });
+    expect(privacySummary(scope)?.confidential).toEqual({ personal: ['warned'] });
   });
 
   it('sends under allow and records the group allowed', async () => {
     const scope = newScope();
     await run(chatCall(chat(LAUNCH)), scope);
-    expect(privacySummary(scope)?.confidential).toEqual({ commercial: 'allowed' });
+    expect(privacySummary(scope)?.confidential).toEqual({ commercial: ['allowed'] });
   });
 });
 
@@ -275,8 +275,8 @@ describe('two groups', () => {
     expect(err.reason).toBe('confidential_blocked');
     // Nothing was sent, so neither group's content went anywhere.
     expect(privacySummary(scope)?.confidential).toEqual({
-      personal: 'refused',
-      commercial: 'refused',
+      personal: ['refused'],
+      commercial: ['refused'],
     });
   });
 
@@ -284,7 +284,7 @@ describe('two groups', () => {
     policies('local_only', 'allow');
     const scope = newScope();
     await run(chatCall(chat(LAUNCH)), scope);
-    expect(privacySummary(scope)?.confidential).toEqual({ commercial: 'allowed' });
+    expect(privacySummary(scope)?.confidential).toEqual({ commercial: ['allowed'] });
   });
 });
 
@@ -403,7 +403,7 @@ describe('where a refused chat call held the content', () => {
     expect(err.found).toEqual({ messageCount: 3, messageIndices: [1] });
   });
 
-  it('places nothing when a classifier fails on a message: the turn alone is left out', async () => {
+  it('places the messages it found even when a classifier fails on the others', async () => {
     let calls = 0;
     seam.init.mockImplementation(() => {
       registerSensitivityClassifier({
@@ -415,24 +415,85 @@ describe('where a refused chat call held the content', () => {
       });
     });
     policies('local_only', 'allow');
-    const err = await refusal(run(chatCall(chat(HEALTH))));
-    expect(err.found).toBeUndefined();
+    // Core's classifier still finds the disclosure in message 1: left out,
+    // it stops refusing later turns. Placing nothing would keep it for ever.
+    const err = await refusal(run(chatCall(chat(HEALTH, PLAIN))));
+    expect(err.found).toEqual({ messageCount: 3, messageIndices: [1] });
+  });
+
+  it('classifies a few messages at a time, not the whole history at once', async () => {
+    let inFlight = 0;
+    let most = 0;
+    seam.init.mockImplementation(() => {
+      registerSensitivityClassifier({
+        id: 'acme.counting',
+        egress: 'in_process',
+        categories: { acme_secret: 'commercial' },
+        classify: async () => {
+          most = Math.max(most, ++inFlight);
+          await new Promise((r) => setTimeout(r, 1));
+          inFlight--;
+          return [];
+        },
+      });
+    });
+    policies('block', 'allow');
+    const err = await refusal(run(chatCall(chat(...Array.from({ length: 12 }, () => HEALTH)))));
+    expect(err.found?.messageIndices).toHaveLength(12);
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(4);
   });
 });
 
 describe('external classifiers', () => {
-  it('are not sent a call the mode forwards untouched, even under a strict policy', async () => {
-    const { classifier, classify } = failingClassifier('external');
+  function spy(egress: SensitivityClassifier['egress'], replace = false) {
+    const classify = vi.fn(async () => []);
     seam.init.mockImplementation(() => {
-      registerSensitivityClassifier(classifier);
+      registerSensitivityClassifier(
+        { id: 'acme.dlp', egress, categories: { acme_secret: 'commercial' }, classify },
+        replace ? { replace: 'core.sensitivity-phrases' } : {}
+      );
     });
-    policies('block', 'block', 'off');
-    // Core's in-process classifier still decides.
+    return classify;
+  }
+
+  it('run on a remote call a strict policy could refuse, even when the mode forwards it untouched', async () => {
+    const classify = spy('external');
+    policies('block', 'allow', 'off');
     await expect(run(chatCall(chat(HEALTH)))).rejects.toMatchObject({
       reason: 'confidential_blocked',
     });
-    await expect(run(chatCall(chat(PLAIN)))).resolves.toBeDefined();
+    // The text is going to a remote provider anyway; without the external
+    // classifier a strict policy could be enforced by nothing.
+    expect(classify).toHaveBeenCalled();
+  });
+
+  it('are never sent a call to a local provider', async () => {
+    const classify = spy('external');
+    policies('block', 'block', 'off');
+    // Core's in-process classifier still decides.
+    await expect(run(chatCall(chat(HEALTH), 'local'))).rejects.toMatchObject({
+      reason: 'confidential_blocked',
+    });
+    await expect(run(chatCall(chat(PLAIN), 'local'))).resolves.toBeDefined();
     expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('are not sent a call the mode forwards untouched when no policy could refuse it', async () => {
+    const classify = spy('external');
+    policies('warn', 'allow', 'off');
+    await run(chatCall(chat(HEALTH)));
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('leave a strict policy failing closed when none can look: refused, not sent unchecked', async () => {
+    // A fork whose only classifier is external, on a local call under block.
+    spy('external', true);
+    policies('block', 'allow', 'off');
+    const scope = newScope();
+    const err = await refusal(run(chatCall(chat(PLAIN), 'local'), scope));
+    expect(err.reason).toBe('confidential_blocked');
+    expect(privacySummary(scope)?.failedAdapters).toEqual(['privacy-stage.no-classifier']);
   });
 });
 
@@ -484,5 +545,40 @@ describe('an install-wide policy this version cannot read', () => {
     await expect(run(chatCall(chat(HEALTH), 'local'))).rejects.toMatchObject({
       reason: 'confidential_blocked',
     });
+  });
+});
+
+describe('review round 1 (t-1037)', () => {
+  it('asks a trusted provider once, and does not classify an unscoped call it would never refuse', async () => {
+    const classify = vi.fn(async () => []);
+    seam.init.mockImplementation(() => {
+      registerSensitivityClassifier({
+        id: 'acme.spy',
+        egress: 'in_process',
+        categories: { acme_secret: 'commercial' },
+        classify,
+      });
+    });
+    policies('allow', 'approved_only');
+    const call = chatCall(chat(LAUNCH), 'trusted');
+    await run(call, null);
+    expect(classify).not.toHaveBeenCalled();
+    expect(call.isTrusted).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a call cancelled while its policy was decided as a cancel: no refusal and no decision recorded', async () => {
+    const controller = new AbortController();
+    policies('allow', 'approved_only');
+    const scope = newScope();
+    const call = chatCall(chat(LAUNCH));
+    call.args = [chat(LAUNCH), { model: 'm', signal: controller.signal }];
+    // The caller gives up while the stage asks whether the provider is trusted.
+    call.isTrusted = vi.fn(async () => {
+      controller.abort();
+      return false;
+    });
+    await expect(run(call, scope)).rejects.toMatchObject({ code: 'aborted' });
+    expect(privacySummary(scope)?.confidential).toBeUndefined();
+    expect(privacySummary(scope)?.refused).toBeUndefined();
   });
 });

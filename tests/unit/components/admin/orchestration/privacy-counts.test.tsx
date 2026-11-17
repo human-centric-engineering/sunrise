@@ -190,15 +190,15 @@ describe('PrivacyCounts confidential content', () => {
           ...offOnly,
           refused: ['confidential_not_permitted'],
           sensitivity: { personal: ['health'], commercial: ['not_public'] },
-          confidential: { personal: 'refused', commercial: 'warned' },
+          confidential: { personal: ['allowed', 'refused'], commercial: ['warned'] },
         }}
       />
     );
     expect(screen.getByTestId('privacy-confidential')).toHaveTextContent(
-      'confidential, personal: health (refused) · commercial: not public (warned)'
+      'confidential, personal: health (allowed, refused) · commercial: not public (warned)'
     );
     expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
-      'refused: confidential content, and the provider is not trusted or local'
+      "refused: confidential content its group's policy does not send to this provider"
     );
   });
 
@@ -209,7 +209,7 @@ describe('PrivacyCounts confidential content', () => {
           ...offOnly,
           refused: ['confidential_blocked'],
           sensitivity: { personal: ['health'] },
-          confidential: { personal: 'rerouted' as never },
+          confidential: { personal: ['rerouted'] as never },
         }}
       />
     );

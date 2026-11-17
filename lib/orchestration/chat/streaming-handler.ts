@@ -20,7 +20,8 @@
  *   is surfaced as a final `{ type: 'error' }` event.
  */
 
-import type { AiAgent, AiAgentProfile, AiConversation, AiMessage, Prisma } from '@/types/prisma';
+import { Prisma } from '@prisma/client';
+import type { AiAgent, AiAgentProfile, AiConversation, AiMessage } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
@@ -2564,6 +2565,9 @@ export class StreamingChatHandler {
             limitUsd: turnCap,
             iteration,
           });
+          // What was sent before the cap stopped the loop gets its `warn`
+          // note too (§130).
+          yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
           yield {
             type: 'budget_exceeded_per_turn',
             code: 'budget_exceeded_per_turn',
@@ -2842,6 +2846,8 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
+            // The turn ends here, paused or done: the `warn` note too (§130).
+            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield buildDoneEvent(
               resolvedModel,
               usage,
@@ -3146,6 +3152,8 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
+            // The turn ends here, paused or done: the `warn` note too (§130).
+            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield buildDoneEvent(
               resolvedModel,
               usage,
@@ -3467,36 +3475,57 @@ export class StreamingChatHandler {
   ): AsyncGenerator<ChatEvent> {
     const decisions = privacySummary(scope)?.confidential;
     if (!decisions) return;
-    const warned = SENSITIVITY_GROUPS.filter((g) => decisions[g] === 'warned');
+    const warned = SENSITIVITY_GROUPS.filter((g) => decisions[g]?.includes('warned'));
     if (warned.length === 0) return;
+    const owned = { id: conversationId, ...conversationOwner(userId) };
+    let read: { metadata: Prisma.JsonObject; stored: Prisma.JsonValue | null } | null = null;
     let toNote: SensitivityGroup[] = warned;
     try {
-      const owned = { id: conversationId, ...conversationOwner(userId) };
       const row = await prisma.aiConversation.findFirst({
         where: owned,
         select: { metadata: true },
       });
-      const metadata = isJsonObject(row?.metadata) ? row.metadata : {};
-      const noted = Array.isArray(metadata.confidentialNoted) ? metadata.confidentialNoted : [];
-      toNote = warned.filter((g) => !noted.includes(g));
-      if (row && toNote.length > 0) {
-        await prisma.aiConversation.updateMany({
-          where: owned,
-          data: { metadata: { ...metadata, confidentialNoted: [...noted, ...toNote] } },
-        });
+      if (row) {
+        const metadata = isJsonObject(row.metadata) ? row.metadata : {};
+        const noted = Array.isArray(metadata.confidentialNoted) ? metadata.confidentialNoted : [];
+        toNote = warned.filter((g) => !noted.includes(g));
+        read = {
+          metadata: { ...metadata, confidentialNoted: [...noted, ...toNote] },
+          stored: row.metadata,
+        };
       }
     } catch (err) {
-      log.warn('Failed to record a confidential-content note as shown', {
+      log.warn('Failed to read which confidential-content notes were shown', {
         conversationId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    if (toNote.length === 0) return;
+    // Shown before it is recorded: a reader who left before the note arrived
+    // is told again next turn, rather than never.
     for (const group of toNote) {
       yield {
         type: 'warning',
         code: CONFIDENTIAL_NOTE_CODES[group],
         message: CONFIDENTIAL_NOTES[group],
       };
+    }
+    if (!read) return;
+    try {
+      // Only over the metadata it read: a write made since is kept, and this
+      // one is dropped, so at worst the note is shown again.
+      await prisma.aiConversation.updateMany({
+        where: {
+          ...owned,
+          metadata: read.stored === null ? { equals: Prisma.DbNull } : { equals: read.stored },
+        },
+        data: { metadata: read.metadata },
+      });
+    } catch (err) {
+      log.warn('Failed to record a confidential-content note as shown', {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

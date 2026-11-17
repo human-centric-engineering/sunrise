@@ -295,7 +295,7 @@ describe('one store per process (#1138)', () => {
 });
 
 describe('confidential-content decisions (§130 t-1037)', () => {
-  it('keeps the strictest decision per group, here and in every scope it sits in', () => {
+  it('keeps every decision per group, in order, here and in every scope it sits in', () => {
     const turn = createPrivacyScope({ scopeId: 'turn' });
     const step = childPrivacyScope(turn, 'step');
     recordPrivacySensitivity(step, {
@@ -311,9 +311,11 @@ describe('confidential-content decisions (§130 t-1037)', () => {
     recordConfidentialDecision(step, { personal: 'warned' });
 
     for (const scope of [step, turn]) {
+      // A sent call and a refused one in one turn read both: the content was
+      // sent, whatever else was refused.
       expect(privacySummary(scope)?.confidential).toEqual({
-        personal: 'warned',
-        commercial: 'refused',
+        personal: ['allowed', 'warned'],
+        commercial: ['allowed', 'refused'],
       });
     }
   });

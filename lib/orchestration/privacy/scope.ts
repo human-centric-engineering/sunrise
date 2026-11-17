@@ -74,9 +74,9 @@ export interface PrivacyTally {
   sensitivity: Map<SensitivityCategory, SensitivityGroup>;
   /**
    * What the confidential-content policy did with the calls holding each
-   * group's content (§130): the strictest decision across them.
+   * group's content (§130): every decision any of them got.
    */
-  confidential: Map<SensitivityGroup, ConfidentialDecision>;
+  confidential: Map<SensitivityGroup, Set<ConfidentialDecision>>;
 }
 
 export interface PrivacyScopeInit {
@@ -367,9 +367,10 @@ export function recordPrivacySensitivity(
 
 /**
  * Record what the confidential-content policy did with a call (§130), per
- * group found, in `scope` and every scope it sits inside. A scope keeps the
- * strictest decision any of its calls got: a turn whose first call was sent
- * and whose second was refused reads `refused`.
+ * group found, in `scope` and every scope it sits inside. A scope keeps every
+ * decision its calls got: a turn whose chat call was sent and whose
+ * embedding was refused reads both, rather than claim the content was never
+ * sent.
  */
 export function recordConfidentialDecision(
   scope: PrivacyScope,
@@ -379,13 +380,9 @@ export function recordConfidentialDecision(
     for (const group of SENSITIVITY_GROUPS) {
       const decision = decisions[group];
       if (decision === undefined) continue;
-      const current = s.tally.confidential.get(group);
-      if (
-        current === undefined ||
-        CONFIDENTIAL_DECISIONS.indexOf(decision) > CONFIDENTIAL_DECISIONS.indexOf(current)
-      ) {
-        s.tally.confidential.set(group, decision);
-      }
+      const decided = s.tally.confidential.get(group) ?? new Set<ConfidentialDecision>();
+      decided.add(decision);
+      s.tally.confidential.set(group, decided);
     }
   }
 }
@@ -426,6 +423,15 @@ export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined 
     ...(t.refusals.size > 0 ? { refused: [...t.refusals].sort() } : {}),
     ...(t.unresolved > 0 ? { unresolved: t.unresolved } : {}),
     ...(sensitivity ? { sensitivity } : {}),
-    ...(t.confidential.size > 0 ? { confidential: Object.fromEntries(t.confidential) } : {}),
+    ...(t.confidential.size > 0
+      ? {
+          confidential: Object.fromEntries(
+            [...t.confidential].map(([group, decided]) => [
+              group,
+              CONFIDENTIAL_DECISIONS.filter((d) => decided.has(d)),
+            ])
+          ),
+        }
+      : {}),
   };
 }

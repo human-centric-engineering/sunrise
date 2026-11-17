@@ -1216,10 +1216,14 @@ in one of the two groups.
   rolls a registered classifier back and the layer refuses every call
   (_Loading_).
 - `egress` and `jurisdiction` as for detectors. An external classifier is sent
-  the parts it is given and nothing more, and **not at all on a call the layer
+  the parts it is given and nothing more, and **not on a call the layer
   forwards untouched** (mode `off`, or a local provider it skips): there it
   would be the one place the text went beyond the provider the operator
   chose. In-process and self-hosted classifiers still run on those calls.
+  One exception (t-1037): a call to a remote provider that a group's policy
+  could refuse is sent to external classifiers too, or a policy whose only
+  classifier is external would be enforced by nothing. A call to a local
+  provider never is.
 
 ### What is classified
 
@@ -1255,9 +1259,9 @@ those returns forward.
 
 A call in an ephemeral scope (no turn or execution: ingestion, a background
 job), or one that records nowhere (an agent's reply embedding), is classified
-only when a group's policy could refuse it: `block`, or `approved_only` or
-`local_only` on a provider that is not local. Otherwise nothing would read
-the result.
+only when a group's policy could refuse it at this provider: `block`,
+`local_only` on a provider that is not local, or `approved_only` on one that
+is neither local nor trusted. Otherwise nothing would read the result.
 
 ### What is recorded
 
@@ -1278,10 +1282,12 @@ beside the counts (`components/admin/orchestration/privacy-counts.tsx`).
 
 What the policy did with them is recorded too (t-1037),
 `PrivacySummary.confidential: { personal?, commercial? }`, each `allowed`,
-`warned` or `refused`: the strictest decision any call in the scope got for
-that group. A call refused for a group records every group it held as
-refused, since none of it was sent. The trace shows the decision beside each
-group ("personal: health (warned)"). It is recorded only for a group whose
+`warned` or `refused`: every decision any call in the scope got for that
+group, in that order. A turn whose chat call was sent and whose knowledge
+search embedding was refused reads `allowed, refused`, not a refusal alone,
+which would say the content never left. A call refused for a group records
+every group it held as refused, since none of it was sent. The trace shows
+the decisions beside each group ("personal: health (allowed, refused)"). It is recorded only for a group whose
 content was found, so a refusal caused by a classifier failure shows in
 `refused` and `degraded`, not here.
 
@@ -1346,27 +1352,39 @@ An org floor per group is not in this feature.
   `approved_only` policy needs it, through `isTrustedProvider(slug)` on the
   provider manager (the cached row, else the database); a provider registered
   in code, with no row, or a read that fails, counts as untrusted.
-- **External classifiers on untouched calls.** A strict group policy does not
-  send a call forwarded untouched (mode `off`, or a skipped local provider) to
-  an external classifier: the policy narrows where confidential content may
-  go and must not widen it to a classifier's vendor. In-process and
-  self-hosted classifiers decide, core's among them.
+- **External classifiers on untouched calls.** A call forwarded untouched
+  (mode `off`, or a skipped local provider) goes to external classifiers only
+  when it is going to a remote provider and a group's policy could refuse it
+  there. The text leaves the install either way, and without them a fork
+  whose only classifier is external would have its strict policy enforced by
+  nothing (code review). A local call never goes to one. A policy that could
+  refuse a call no registered classifier can look at fails closed: the call
+  is refused, with `privacy-stage.no-classifier` listed as the failed
+  adapter.
 - **Placement.** Classifiers say what a call holds, not where, so on a
   refused chat call the stage classifies each message again, alone, and
   reports the ones holding a refused group's content as
-  `PrivacyRefusedError.found`. Nothing is placed when a classifier fails on a
-  message (it may be the one), and the chat handler then leaves out the turn
+  `PrivacyRefusedError.found`, four messages at a time so an external
+  classifier is not sent the whole history in a burst. A message a classifier
+  fails on is not placed, but the ones found are: left out, they stop
+  refusing later turns, and the failed one is tried again on the next
+  refusal. When nothing is placed, the chat handler leaves out the turn
   alone. The handler places it with `placePrivacyRefusal(…, 'confidential')`
   and tells the reader with its own codes: `privacy_confidential`, and
   `privacy_confidential_earlier`, `_setup`, `_memory`. The rows left out
   carry the same `excludedFromHistory` marker as a `block` refusal.
 - **The warn note.** The chat handler emits a `warning` event
-  (`confidential_personal`, `confidential_commercial`) after the answer, for
-  each group the turn recorded as warned that the conversation has not been
-  told about, and keeps the groups told in
-  `AiConversation.metadata.confidentialNoted`. Once per conversation per
+  (`confidential_personal`, `confidential_commercial`) as the turn ends
+  (after the answer, at a pause for approval or another tool that ends the
+  turn, or when the per-turn cost cap stops the tool loop), for each group
+  the turn recorded as warned that the conversation has not been told about,
+  and then keeps the groups told in
+  `AiConversation.metadata.confidentialNoted`. Shown first, recorded after:
+  a reader who left before it arrived is told next turn rather than never.
+  The write is a compare-and-set on the metadata it read, so a write made in
+  between is kept and the note may at worst be shown again. Once per conversation per
   group: keying on "this turn held it" would repeat it every turn, since the
-  history is resent. It is shown even if that write fails. Admin chat keeps
+  history is resent. Admin chat keeps
   a `confidential_*` note under the answer until the next message is sent,
   apart from its other warnings, which the end of the turn clears; the embed
   widget shows only `confidential_*` warnings (an agent's budget warning is

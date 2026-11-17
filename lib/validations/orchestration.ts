@@ -3500,7 +3500,7 @@ export const privacySummarySchema = z.object({
   // trace shows the groups in SENSITIVITY_GROUPS.
   sensitivity: z.record(z.string(), z.array(z.string())).optional(),
   // Lenient for the same reason: an unknown group or decision must not hide the line.
-  confidential: z.record(z.string(), z.string()).optional(),
+  confidential: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 export const executionTraceEntrySchema = z

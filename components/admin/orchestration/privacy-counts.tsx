@@ -32,7 +32,8 @@ const REFUSAL_TEXT: Record<PrivacyRefusalReason, string> = {
   detector_failed: 'a detector failed or ran out of time',
   embeddings_local_only: 'embedding refused: local embedding models only',
   confidential_blocked: 'confidential content (block policy)',
-  confidential_not_permitted: 'confidential content, and the provider is not trusted or local',
+  confidential_not_permitted:
+    "confidential content its group's policy does not send to this provider",
   app_init_failed: "the app's privacy adapters failed to load",
   core_install_failed: 'a built-in privacy adapter failed to load',
   settings_unreadable: 'the stored privacy mode is unreadable',
@@ -75,9 +76,11 @@ function sensitivityText(
   confidential: PrivacySummary['confidential']
 ): string | null {
   const groups = SENSITIVITY_GROUPS.filter((g) => (sensitivity[g]?.length ?? 0) > 0).map((g) => {
-    const decision = confidential?.[g];
+    const decisions = confidential?.[g] ?? [];
     const categories = (sensitivity[g] ?? []).map(categoryText).join(', ');
-    return decision ? `${g}: ${categories} (${decision})` : `${g}: ${categories}`;
+    return decisions.length > 0
+      ? `${g}: ${categories} (${decisions.join(', ')})`
+      : `${g}: ${categories}`;
   });
   return groups.length === 0 ? null : groups.join(' · ');
 }
@@ -155,9 +158,9 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         business in trouble, a legal dispute). It is spotted by a phrase list, so it catches what is
         said outright and misses what is only implied. Like the counts, it covers everything a
         turn&apos;s calls carried, so a disclosure from an earlier turn shows again on each later
-        turn that resent it. Beside each group is what its confidential-content policy did: allowed
-        (sent), warned (sent, and the user told once) or refused (not sent). The text itself is
-        never stored.
+        turn that resent it. Beside each group is what its confidential-content policy did with the
+        calls that held it, each that applied: allowed (sent), warned (sent, and the user told once)
+        or refused (not sent). The text itself is never stored.
       </FieldHelp>
     </div>
   );

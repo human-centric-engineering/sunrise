@@ -10214,6 +10214,62 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(notes(await turn(`I was ${DISCLOSURE}.`))).toEqual([]);
     });
 
+    it('shows it when the turn ends on a tool that skips the follow-up (an approval pause)', async () => {
+      conversationStore();
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          const scope = currentPrivacyScope();
+          if (scope) {
+            // As the stage records a warned call: its categories, then the decision.
+            recordPrivacySensitivity(scope, {
+              mode: 'detect',
+              categories: [{ category: 'health', group: 'personal' }],
+              failedAdapters: [],
+            });
+            recordConfidentialDecision(scope, { personal: 'warned' });
+          }
+          yield { type: 'tool_call', toolCall: { id: 'tc-w', name: 'do_thing', arguments: {} } };
+          yield {
+            type: 'done',
+            usage: { inputTokens: 5, outputTokens: 1 },
+            finishReason: 'tool_use',
+          };
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+        success: true,
+        data: {},
+        skipFollowup: true,
+      });
+
+      const events = await turn(`I was ${DISCLOSURE}.`);
+      expect(notes(events).map((e) => e.code)).toEqual(['confidential_personal']);
+      const kinds = events.map((e) => e.type);
+      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('done'));
+    });
+
+    it('records the note only over the metadata it read, so a write made since is kept', async () => {
+      const { conv } = conversationStore();
+      (conv as { metadata?: unknown }).metadata = { channelState: 'kept' };
+      warningProvider(() => ['personal']);
+
+      await turn(`I was ${DISCLOSURE}.`);
+
+      expect(vi.mocked(prisma.aiConversation.updateMany)).toHaveBeenCalledWith({
+        where: {
+          id: 'conv-1',
+          userId: 'u1',
+          metadata: { equals: { channelState: 'kept' } },
+        },
+        data: { metadata: { channelState: 'kept', confidentialNoted: ['personal'] } },
+      });
+    });
+
     it('still shows it when recording that it was shown fails, rather than never', async () => {
       conversationStore();
       warningProvider(() => ['personal']);
