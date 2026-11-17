@@ -552,6 +552,7 @@ export class StreamingChatHandler {
     // The conversation the turn's `warn` note is kept on, once `runInner` has
     // loaded it, as its owner's.
     const noted: NoteTarget = { conversationId: null };
+    const log = turnLogger(request);
     yield* withPaidCallHold(
       hold,
       withPrivacyScope(
@@ -565,10 +566,11 @@ export class StreamingChatHandler {
           },
           (chatSpan) =>
             this.withConfidentialNotes(
-              this.runInner(chatSpan, request, hold, privacyScope, noted),
+              this.runInner(chatSpan, request, hold, privacyScope, noted, log),
               privacyScope,
-              request,
-              noted
+              request.userId,
+              noted,
+              log
             ),
           { manualStatus: true }
         )
@@ -590,9 +592,9 @@ export class StreamingChatHandler {
     request: ChatRequest,
     hold: PaidCallHold,
     privacyScope: PrivacyScope,
-    noted: NoteTarget
+    noted: NoteTarget,
+    log: typeof logger
   ): AsyncGenerator<ChatEvent, void, unknown> {
-    const log = turnLogger(request);
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
     // The latest AiAgentVersion at turn start, stamped on the turn's user and
@@ -3461,30 +3463,37 @@ export class StreamingChatHandler {
    * ends the turn: `done`, an `error`, or `budget_exceeded_per_turn`. In one
    * place rather than at each ending, so an ending added later cannot leave
    * the note out (t-1039). Placed there, the note comes after the answer, and
-   * after the work an ending does before saying so: the error marker, leaving
-   * a refused turn out of history. A reader that stops at the note, or at the
-   * error after it, stops the turn only once that work is done. The embed
-   * widget stops reading at an error, so the note goes before it, not after.
-   * Once per turn: a turn the per-turn cap ends sends that event and `done`.
-   * A turn ended before its conversation was loaded sent nothing, so has none.
+   * after whatever an ending does before yielding its event: in the catch,
+   * the error marker and leaving a refused turn out of history. A reader that
+   * stops at the note, or at the error after it, stops the turn only once
+   * that work is done. The embed widget stops reading at an error, so the
+   * note goes before it, not after. Once per turn: a turn the per-turn cap
+   * ends sends that event and `done`. A turn ended before its conversation
+   * was loaded sent nothing, so has none.
+   *
+   * Outside `runInner`'s catch, so a failure here is caught here: the note is
+   * dropped and the turn's own ending still goes out.
    */
   private async *withConfidentialNotes(
     events: AsyncGenerator<ChatEvent, void, unknown>,
     scope: PrivacyScope,
-    request: ChatRequest,
-    noted: NoteTarget
+    userId: string,
+    noted: NoteTarget,
+    log: typeof logger
   ): AsyncGenerator<ChatEvent, void, unknown> {
     let shown = false;
     for await (const event of events) {
       if (!shown && TURN_ENDING_EVENTS.has(event.type)) {
         shown = true;
         if (noted.conversationId) {
-          yield* this.confidentialNotes(
-            scope,
-            noted.conversationId,
-            request.userId,
-            turnLogger(request)
-          );
+          try {
+            yield* this.confidentialNotes(scope, noted.conversationId, userId, log);
+          } catch (err) {
+            log.warn('Failed to show the confidential-content note', {
+              conversationId: noted.conversationId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
       }
       yield event;

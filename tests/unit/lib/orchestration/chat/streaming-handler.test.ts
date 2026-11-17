@@ -10487,8 +10487,39 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       const events = await turn(`I was ${DISCLOSURE}.`);
       expect(notes(events).map((e) => e.code)).toEqual(['confidential_personal']);
       const kinds = events.map((e) => e.type);
-      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('budget_exceeded_per_turn'));
+      const note = events.findIndex((e) => e.code === 'confidential_personal');
+      expect(note).toBeLessThan(kinds.indexOf('budget_exceeded_per_turn'));
       expect(kinds.indexOf('budget_exceeded_per_turn')).toBeLessThan(kinds.indexOf('done'));
+    });
+
+    it('drops the note, not the turn, when showing it fails', async () => {
+      // Outside the handler's own catch: a failure here must not end the
+      // stream without the turn's `done`.
+      conversationStore();
+      warningProvider(() => ['personal']);
+      // The read fails, and so does logging that it failed: the error leaves
+      // the note's own handling.
+      vi.mocked(prisma.aiConversation.findFirst)
+        .mockImplementationOnce((async () => makeConversation()) as never)
+        .mockRejectedValueOnce(new Error('connection reset'));
+      vi.mocked(logger.warn).mockImplementation((message: string) => {
+        if (message === 'Failed to read which confidential-content notes were shown') {
+          throw new Error('the note blew up');
+        }
+      });
+
+      try {
+        const events = await turn(`I was ${DISCLOSURE}.`);
+        expect(notes(events)).toEqual([]);
+        expect(events.at(-1)?.type).toBe('done');
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'Failed to show the confidential-content note',
+          expect.objectContaining({ error: 'the note blew up' })
+        );
+      } finally {
+        // The suite's clearAllMocks keeps implementations; the logger's is a bare vi.fn().
+        vi.mocked(logger.warn).mockReset();
+      }
     });
   });
 });

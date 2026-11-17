@@ -1390,9 +1390,10 @@ An org floor per group is not in this feature.
   budget cap stops it, or when it ends in an error after a call was sent (a
   guard blocking the reply, the tool-loop cap, a later call failing or being
   refused). One wrapper around the turn does this (t-1039), so an ending
-  added later cannot leave it out, and it comes after the work an ending does
-  first (the error marker, leaving a refused turn out of history), so a
-  reader that stops at the note stops the turn only once that is done. Once
+  added later cannot leave it out, and it comes after whatever an ending does
+  before yielding its event (for a call that failed or was refused, the error
+  marker and leaving the refused turn out of history), so a reader that
+  stops at the note stops the turn only once that is done. Once
   per turn, for each group
   the turn recorded as warned that the conversation has not been told about,
   and then keeps the groups told in
