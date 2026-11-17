@@ -762,6 +762,8 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'replacedCore',
       'policyResolvers',
       'observers',
+      'classifiers',
+      'replacedCoreClassifiers',
       'tokenStrategySlot',
       'coreInstalled',
       'coreFailure',
@@ -770,7 +772,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'appInit',
     ],
     posture: 'no-tenant-data',
-    why: "Privacy adapters registered from code, core's and the fork's, plus the install latch, whether the init is on the stack, and the core and init failure messages. Per-call state (a token session's placeholder map, the privacy scope) is created per call and never held here; a persistent token strategy keeps its map in its own tables.",
+    why: "Privacy adapters registered from code, core's and the fork's (sensitivity classifiers included), plus the install latch, whether the init is on the stack, and the core and init failure messages. Per-call state (a token session's placeholder map, the privacy scope) is created per call and never held here; a persistent token strategy keeps its map in its own tables.",
+  },
+  {
+    file: 'lib/privacy/sensitivity/classifier.ts',
+    holders: ['compiled'],
+    posture: 'no-tenant-data',
+    why: "Core's phrase list compiled once, at first use, from code. The phrase patterns are not global, and each exclusion pattern is only used through replace(), which starts and ends at lastIndex 0, so no match state is shared between calls or tenants. What a call is classified as is returned, never kept here.",
   },
   {
     file: 'lib/privacy/pii/lexicon.ts',
