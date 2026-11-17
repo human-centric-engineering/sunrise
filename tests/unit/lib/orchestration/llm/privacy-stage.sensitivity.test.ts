@@ -442,3 +442,22 @@ describe('an embedding refused under local_only', () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe('the mode a classification records', () => {
+  it('is off for a call the masking skips, so it never claims a stricter mode than any scanned call ran under', async () => {
+    mode('redact');
+    const parent = newScope();
+    // A scanned call under detect, then an unscanned local call under redact.
+    mode('detect');
+    await runInPrivacyScope(parent, () =>
+      applyPrivacyStage(chatCall([chat(`Email priya.sharma@example.com please`), { model: 'm' }]))
+    );
+    mode('redact');
+    await runInPrivacyScope(agentPrivacyScope('agent-2', parent), () =>
+      applyPrivacyStage(chatCall([chat(HEALTH), { model: 'm' }], true))
+    );
+    const summary = privacySummary(parent);
+    expect(summary?.mode).toBe('detect');
+    expect(summary?.sensitivity).toEqual({ personal: ['health'] });
+  });
+});

@@ -180,3 +180,25 @@ describe('cost', () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 });
+
+describe('review round 2', () => {
+  it('reads plurals of the nouns a phrase ends on', () => {
+    expect(classifyText('Our union reps are pushing back')).toEqual(['trade_union']);
+    expect(classifyText('The union members voted to reject the offer')).toEqual(['trade_union']);
+    expect(classifyText('She filed two harassment claims')).toEqual(['hr_matter']);
+    expect(classifyText('I have tribunal hearings next week')).toEqual(['legal_matter']);
+    expect(classifyText('The custody battles have been exhausting')).toEqual(['legal_matter']);
+  });
+
+  it('does not blank a restructure of a team as if it were a document', () => {
+    expect(classifyText('We are restructuring the data team next month')).toEqual([
+      'restructuring',
+    ]);
+    expect(classifyText('Restructure the data so each row is one order')).toEqual([]);
+  });
+
+  it('does not read "public-facing" as not public', () => {
+    expect(classifyText('This endpoint is not public-facing')).toEqual([]);
+    expect(classifyText('The launch is not public yet')).toEqual(['not_public']);
+  });
+});

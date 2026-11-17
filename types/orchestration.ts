@@ -7,7 +7,7 @@
  */
 
 import type { EmbeddingsPolicy } from '@/lib/orchestration/privacy/settings-policy';
-import type { PrivacyMode } from '@/lib/privacy/adapters/types';
+import type { PrivacyMode, SensitivityGroup } from '@/lib/privacy/adapters/types';
 import type {
   User,
   AiAgent,
@@ -1181,7 +1181,7 @@ export interface PrivacySummary {
    * Confidential content found in what the calls sent, by group: category
    * names only, each list sorted (§130). Absent when none was found.
    */
-  sensitivity?: { personal?: string[]; commercial?: string[] };
+  sensitivity?: Partial<Record<SensitivityGroup, string[]>>;
 }
 
 /**

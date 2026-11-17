@@ -170,8 +170,8 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
   trade_union: {
     phrases: [
       'trade union',
-      'union (?:member|membership|rep|representative|official|meetings?|activities|activity|dues|steward)',
-      '(?:unite|unison|gmb|rcn|neu|nut|usdaw|bma|pcs|cwu|rmt|ucu|nasuwt|bectu) (?:member|rep|union)',
+      'union (?:members?|membership|reps?|representatives?|officials?|meetings?|activities|activity|dues|stewards?)',
+      '(?:unite|unison|gmb|rcn|neu|nut|usdaw|bma|pcs|cwu|rmt|ucu|nasuwt|bectu) (?:members?|reps?|union)',
       'joined the union',
       'member of (?:the |a )?union',
       '(?:going|went|go|gone) on strike',
@@ -239,7 +239,7 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
       'redundancy (?:letter|notice)',
       'performance improvement plan',
       '(?:on|onto) a pip',
-      '(?:harassment|bullying|discrimination) (?:claim|complaint|complaints|allegations?|case)',
+      '(?:harassment|bullying|discrimination) (?:claims?|complaints?|allegations?|cases?)',
       '(?:bullied|harassed) (?:by|at work)',
       'sexual harassment',
       'whistleblow(?:er|ing|ers)?',
@@ -257,14 +257,14 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
   legal_matter: {
     phrases: [
       'employment tribunal',
-      'tribunal (?:claim|hearing)',
+      'tribunal (?:claims?|hearings?)',
       'divorce',
       'divorcing',
       'child custody',
-      'custody (?:battle|of|hearing|dispute)',
+      'custody (?:battles?|of|hearings?|disputes?)',
       'child arrangements order',
       'family court',
-      'personal injury (?:claim|case|lawyer|solicitor)',
+      'personal injury (?:claims?|cases?|lawyers?|solicitors?)',
       'suing (?:my|his|her|their) (?:employer|landlord|ex|boss|neighbou?r|former employer)',
       'taking (?:him|her|them|my employer|my landlord|my ex|my boss) to (?:court|a tribunal)',
       '(?:my|his|her|their) solicitor',
@@ -316,6 +316,7 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
       'code ?name',
       '(?:ahead of|before|until) (?:the |our |we )?(?:official |public )?(?:announcement|announce|go public|launch announcement)',
     ],
+    exclude: ['public ?facing', 'public ?(?:sector|domain|holiday|api|repo|repository|key|beta)'],
   },
   deal: {
     phrases: [
@@ -362,8 +363,8 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
     ],
     exclude: [
       'redundancies (?:in|from|across) (?:the|this|my|our|your) (?:code|data|text|document|table|tables|schema|config|list)',
-      'restructur(?:e|ing) (?:this|that|it|them)(?! (?:team|teams|department|business|company|organisation|organization|division|function|unit|group))',
-      'restructur(?:e|ing) (?:the|this|my|our|your|a|that) (?:code|data|document|report|slides|deck|essay|table|query|function|functions|sentence|paragraph|paragraphs|email|prompt|question|file|folder|repo|repository|schema|database|component|page|section|article|post|cv|resume|text|list|json|class|module|project structure)',
+      'restructur(?:e|ing) (?:this|that|it|them)(?! (?:team|teams|department|departments|business|company|organisation|organization|division|function|unit|group|office|staff|workforce))',
+      'restructur(?:e|ing) (?:the|this|my|our|your|a|that) (?:code|data|document|report|slides|deck|essay|table|query|function|functions|sentence|paragraph|paragraphs|email|prompt|question|file|folder|repo|repository|schema|database|component|page|section|article|post|cv|resume|text|list|json|class|module|project structure)(?! (?:team|teams|department|departments|business|company|organisation|organization|division|function|unit|group|office|staff|workforce))',
     ],
   },
   business_distress: {

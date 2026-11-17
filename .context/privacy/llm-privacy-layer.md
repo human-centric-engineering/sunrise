@@ -1242,7 +1242,12 @@ classifies it when a policy that could refuse it applies.
 The categories found, by group, on the scope's tally, and from there in the
 turn's message metadata and each workflow step's trace entry
 (`PrivacySummary.sensitivity: { personal?: string[]; commercial?: string[] }`,
-sorted). **Never text, and never which message**. A classifier that fails is
+sorted). **Never text, and never which message**. A call's categories are
+recorded whether the call is then sent or refused. Like the counts, they cover
+everything the call carried, so a disclosure from an earlier turn shows again
+on every later turn that resent it. A call the layer forwards untouched (mode
+`off`, or a local provider it skips) records under mode `off`, so the
+summary's mode stays the strictest any scanned call ran under. A classifier that fails is
 listed in `failedAdapters` and marks the summary `degraded`, as a detector
 does. Classification adds to a scope's summary only when it found something or a
 classifier failed, so an install in mode `off` gains a privacy line on a turn

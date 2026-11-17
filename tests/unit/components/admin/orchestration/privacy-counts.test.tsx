@@ -244,6 +244,24 @@ describe('the conversation trace', () => {
     expect(screen.getByTestId('privacy-confidential')).toHaveTextContent('personal: health');
   });
 
+  it('still shows the line when a stored summary names a group this build does not know', () => {
+    render(
+      <ConversationTraceViewer
+        messages={[
+          message({
+            privacy: {
+              ...SUMMARY,
+              sensitivity: { personal: ['health'], someday_group: ['x'] },
+            },
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('3 PERSON');
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent('personal: health');
+    expect(screen.getByTestId('privacy-confidential')).not.toHaveTextContent('someday');
+  });
+
   it('shows nothing for a message without counts, or with malformed ones', () => {
     render(
       <ConversationTraceViewer

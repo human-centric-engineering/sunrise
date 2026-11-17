@@ -238,8 +238,10 @@ function chatMessages(call: PrivacyStageCall): readonly LlmMessage[] {
 /**
  * What a call sends, part by part with its role, for the sensitivity
  * classifiers (§130): each chat message's text, or each embedding input.
- * Tool-call arguments are left out: they are the model's, derived from what
- * the user wrote, which is classified already.
+ * A chat call's tool-call arguments are left out: they are the model's,
+ * derived from what the user wrote, which is classified already. An embedding
+ * call's input is classified whoever wrote it (a model-written search query
+ * included), because it is text that goes to the embedding provider.
  */
 function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
   const parts: SensitivityPart[] = [];
@@ -274,11 +276,16 @@ const SENSITIVITY_STAGE_FAILURE = 'privacy-stage.sensitivity';
 
 /**
  * Classify the call for confidential content and record what was found in
- * its scope (§130, t-1036). Never refuses: until a policy acts on it, a fault
- * here is recorded as degraded and the call goes on as it would have. Only in a scope that records somewhere: an
- * ephemeral one has nothing to read the result yet. Records nothing when
- * nothing was found and no classifier failed, so a turn gains a privacy
- * summary only when it held something confidential.
+ * its scope (§130, t-1036), whether the call is then sent or refused.
+ *
+ * Never refuses: until a policy acts on it, a fault here is recorded as
+ * degraded and the call goes on as it would have. Only in a scope that
+ * records somewhere: an ephemeral one has nothing to read the result yet.
+ * Records nothing when nothing was found and no classifier failed, so a turn
+ * gains a privacy summary only when what its calls carried held something
+ * confidential. Each call resends the history, so a disclosure from an
+ * earlier turn is found again on every later turn that carried it, as the
+ * PII counts are.
  */
 async function classifyCall(
   call: PrivacyStageCall,
@@ -533,7 +540,11 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     const forwardedUntouched =
       policy.mode === 'off' || (call.isLocal && !policy.protectLocalProviders);
     if (!scoped.ephemeral) {
-      await classifyCall(call, scope, policy.mode, orgId, abandoned, forwardedUntouched);
+      // Recorded under `off` when the call goes out unscanned: the summary's
+      // mode is the strictest any SCANNED call ran under, and a skipped local
+      // call was not scanned, so it must not raise it.
+      const recordedMode = forwardedUntouched ? 'off' : policy.mode;
+      await classifyCall(call, scope, recordedMode, orgId, abandoned, forwardedUntouched);
     }
 
     if (policy.mode === 'off') return unchanged;

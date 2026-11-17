@@ -12,6 +12,7 @@ import { ShieldCheck } from 'lucide-react';
 
 import { FieldHelp } from '@/components/ui/field-help';
 import type { PrivacyRefusalReason } from '@/lib/orchestration/llm/privacy-stage';
+import { SENSITIVITY_GROUPS, type CoreSensitivityCategory } from '@/lib/privacy/adapters/types';
 import type { PrivacySummary } from '@/types/orchestration';
 
 function countsText(counts: Record<string, number>): string {
@@ -43,27 +44,29 @@ function refusalText(reason: string): string {
     : reason;
 }
 
-/** How a category reads to an admin. Core's are spelled out; an app's is its name, spaced. */
-const CATEGORY_TEXT: Record<string, string> = {
-  hr_matter: 'HR matter',
-  legal_matter: 'legal matter',
-  personal_finance: 'personal finances',
-  trade_union: 'trade union',
-  not_public: 'not public',
-  business_distress: 'business distress',
-};
+/**
+ * How a category reads to an admin, where its name spaced out is not enough.
+ * Keyed by core's category names, so a renamed one fails the type-check; any
+ * other category (an app's) reads as its name, spaced.
+ */
+const CATEGORY_TEXT = new Map<string, string>(
+  Object.entries({
+    hr_matter: 'HR matter',
+    legal_matter: 'legal matter',
+    personal_finance: 'personal finances',
+    not_public: 'not public',
+  } satisfies Partial<Record<CoreSensitivityCategory, string>>)
+);
 
 function categoryText(category: string): string {
-  return Object.prototype.hasOwnProperty.call(CATEGORY_TEXT, category)
-    ? CATEGORY_TEXT[category]
-    : category.replaceAll('_', ' ');
+  return CATEGORY_TEXT.get(category) ?? category.replaceAll('_', ' ');
 }
 
 /** The confidential content found, by group: "personal: health, HR matter · commercial: not public". */
 function sensitivityText(sensitivity: NonNullable<PrivacySummary['sensitivity']>): string | null {
-  const groups = (['personal', 'commercial'] as const)
-    .filter((g) => (sensitivity[g]?.length ?? 0) > 0)
-    .map((g) => `${g}: ${(sensitivity[g] ?? []).map(categoryText).join(', ')}`);
+  const groups = SENSITIVITY_GROUPS.filter((g) => (sensitivity[g]?.length ?? 0) > 0).map(
+    (g) => `${g}: ${(sensitivity[g] ?? []).map(categoryText).join(', ')}`
+  );
   return groups.length === 0 ? null : groups.join(' · ');
 }
 
@@ -132,11 +135,13 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         confidential-content classifier failed or ran out of time on a call, which went ahead
         without it. Refused means a call was stopped before it was sent, and why. A placeholder left
         unrestored is one the model wrote that no call had issued, shown as written. Confidential
-        lists the kinds of confidential content spotted in what users sent, in every privacy mode:
-        personal (health, an HR or legal matter, and the other special categories) and commercial
-        (unannounced plans, deals, restructuring, a business in trouble, a legal dispute). It is
-        spotted by a phrase list, so it catches what is said outright and misses what is only
-        implied; the text itself is never stored.
+        lists the kinds of confidential content spotted in what users wrote, in every privacy mode,
+        whether the call was then sent or refused: personal (health, an HR or legal matter, and the
+        other special categories) and commercial (unannounced plans, deals, restructuring, a
+        business in trouble, a legal dispute). It is spotted by a phrase list, so it catches what is
+        said outright and misses what is only implied. Like the counts, it covers everything a
+        turn&apos;s calls carried, so a disclosure from an earlier turn shows again on each later
+        turn that resent it. The text itself is never stored.
       </FieldHelp>
     </div>
   );

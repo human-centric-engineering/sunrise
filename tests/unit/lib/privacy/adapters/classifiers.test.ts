@@ -36,6 +36,7 @@ import { runSensitivityClassifiers } from '@/lib/privacy/adapters/run';
 import type {
   SensitivityClassifier,
   SensitivityFinding,
+  SensitivityGroup,
   SensitivityInput,
 } from '@/lib/privacy/adapters/types';
 
@@ -198,6 +199,18 @@ describe('registering a classifier', () => {
           replace: 'core.phrases',
         }
       )
+    ).not.toThrow();
+  });
+
+  it("reads another classifier's groups by its own keys only: `constructor` is a category like any other", () => {
+    core.adapters.mockReturnValue(coreWithClassifier());
+    getPrivacyAdapters();
+    // Built from entries: TypeScript types a literal `constructor` key as Object's.
+    const withConstructor: Record<string, SensitivityGroup> = Object.fromEntries([
+      ['constructor', 'commercial'],
+    ] as const);
+    expect(() =>
+      registerSensitivityClassifier(classifier('acme.x', { categories: withConstructor }))
     ).not.toThrow();
   });
 

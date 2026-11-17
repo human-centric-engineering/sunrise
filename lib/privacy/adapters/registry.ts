@@ -556,7 +556,10 @@ function addClassifier(
   for (const other of classifiers.values()) {
     if (other.id === options.replace) continue;
     for (const [category, group] of Object.entries(categories)) {
-      const theirs = other.categories[category];
+      // Own keys only: a category named `constructor` must not find Object's.
+      const theirs = Object.hasOwn(other.categories, category)
+        ? other.categories[category]
+        : undefined;
       if (theirs !== undefined && theirs !== group) {
         throw new Error(
           `${kind} ${id}: category ${category} is in ${group}, but ${other.id} declares it in ${theirs}`
