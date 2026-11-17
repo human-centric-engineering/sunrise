@@ -23,22 +23,23 @@ the per-admin export sub-cap noted below.
 
 ## Who may call what
 
-| Route                                       | Guard           | Admitted                                                                                                                                               |
-| ------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/v1/orgs`                          | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
-| `POST /api/v1/orgs/switch`                  | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
-| `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
-| `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
-| `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
-| `GET /api/v1/orgs/[id]/audit-log`           | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
-| `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
-| `POST /api/v1/invitations/accept`           | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
-| `POST /api/v1/invitations/decline`          | none            | Whoever holds the invitation token. Per-IP accept-invite sub-cap.                                                                                      |
-| `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
-| `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| Route                                          | Guard           | Admitted                                                                                                                                               |
+| ---------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/orgs`                             | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
+| `POST /api/v1/orgs/switch`                     | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
+| `GET /api/v1/orgs/[id]`                        | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
+| `GET/POST /api/v1/orgs/[id]/members`           | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
+| `PATCH/DELETE …/members/[userId]`              | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `GET /api/v1/orgs/[id]/audit-log`              | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
+| `POST /api/v1/orgs/[id]/invitations`           | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
+| `POST /api/v1/invitations/accept`              | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
+| `POST /api/v1/invitations/decline`             | none            | Whoever holds the invitation token. Per-IP accept-invite sub-cap.                                                                                      |
+| `GET/POST /api/v1/admin/orgs`                  | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`     | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET /api/v1/admin/orgs/[id]/export`           | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
+| `GET/PUT /api/v1/admin/orgs/[id]/providers`    | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PUT /api/v1/admin/orgs/[id]/privacy`      | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PUT /api/v1/admin/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -557,6 +558,32 @@ under, and both apply from the next chat turn or workflow step. See
 floor, a term too short or of another type, an unknown key) ·
 `404 ORG_NOT_FOUND` · `409 CONFLICT` (another write to the org's settings
 landed at the same time; nothing was written, so retry).
+
+### An org's entitlement switches
+
+```
+GET /api/v1/admin/orgs/[id]/entitlements
+PUT /api/v1/admin/orgs/[id]/entitlements
+```
+
+The switches the app registers and whether this org has each (§135 t-1033).
+A `PUT` takes `{ switches: string[] | null }`: the registered switches that are
+on, or `null` to clear the org back to nothing set, so it gets each switch's
+default again. The key is required, so a replace cannot clear an org by
+leaving it out. Stored keys no app registers are kept. It writes an
+`org.entitlements.replace` audit row with what it replaced.
+
+Both return `{ orgId, nothingSet, unreadable, switches, unregistered }`, where
+each switch is `{ key, label, description, whenNothingSet, on }` and `on` is
+what the org has now. `unreadable` is true when the stored slice does not
+parse, in which case the org has none on until it is saved again. See
+[Entitlements](../tenancy/entitlements.md).
+
+**Error Responses**: `400 VALIDATION_ERROR` (a missing key, a malformed key, or
+one no app registers, named in `details.unknownSwitches`) ·
+`404 ORG_NOT_FOUND` · `409 CONFLICT` (no app registers a switch, so there is
+nothing to set; or another write to the org's settings landed at the same
+time, nothing was written, so retry).
 
 ### Erase an org
 

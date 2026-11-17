@@ -58,6 +58,25 @@ release process.
   Chat leaves a refused turn, or the earlier message that held the content,
   out of later history; the embed widget now shows the warn note. Nothing is
   rerouted to another model yet.
+- **Entitlement switches: what an org has (§135 t-1033).** A new fork seam,
+  `lib/app/entitlements.ts` (`initAppEntitlements()`, ships empty), where an
+  app registers the switches an org can have with
+  `registerEntitlementSwitch({ key, label, description, whenNothingSet })`.
+  Platform staff set them per org on `/admin/orgs/[id]` (a new section, shown
+  only when an app registers a switch) or through the new platform-only
+  `GET`/`PUT /api/v1/admin/orgs/[id]/entitlements`, audited as
+  `org.entitlements.replace`. The app reads them with `orgHasSwitch()`,
+  `loadOrgSwitches()` or `resolveOrgSwitches()` (`lib/tenancy/entitlements.ts`).
+  They are stored as an `entitlements` slice in `Org.settings`
+  (`readOrgEntitlements()` / `writeOrgEntitlements()` in
+  `lib/tenancy/org-settings.ts`). An org nothing was set on gets each switch's
+  `whenNothingSet`, which is a different answer from an org set to none, and
+  an unreadable slice fails closed. Nothing refuses a request on a switch yet.
+  The design's principle 8 now gives the platform the commercial mechanism
+  (entitlements, meters, signup into an org of one's own) and leaves plans,
+  prices and what an app counts with forks. **A fork that keeps "what an org
+  bought" in a key of its own can move it here**, and a fork filling the seam
+  pins one new row in `tests/unit/lib/app/defaults.test.ts`.
 
 ### Fixed
 

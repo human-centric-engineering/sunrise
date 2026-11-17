@@ -685,8 +685,12 @@ merge-impact section promises forks.
 
 ## What a fork may add — and what it may not
 
-- **A product layer beneath the org** — plans, billing, branding, teams — is
+- **A product layer beneath the org** — plans, prices, branding, teams — is
   yours (principle 8). Put it in your own schema file with a FK to `Org`.
+  What an org has bought is not: register it as a switch in
+  `lib/app/entitlements.ts` and read it with `orgHasSwitch()`
+  ([`entitlements.md`](./entitlements.md)), so billing later only changes who
+  sets it.
 - **Your own tenant-owned models** join the org by carrying an `orgId` column
   (principle 4), in the exact shape every core model uses:
 
