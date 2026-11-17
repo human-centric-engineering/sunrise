@@ -889,9 +889,10 @@ export interface ConfidentialRouting {
  *
  * Classifies only when a group's policy could refuse the agent's provider or
  * one of its fallbacks: otherwise there is nothing to route, and an install
- * on `allow` and `warn` pays nothing. External classifiers run only when the
- * agent's provider is remote, as the stage's rule for a call it forwards
- * untouched. Nothing is recorded here: the stage records each call it
+ * on `allow` and `warn` pays nothing. External classifiers run as the stage
+ * would run them on the turn's first call: always under a masking mode, and
+ * for a call it forwards untouched only when the agent's provider is remote
+ * and its policy could refuse it. Nothing is recorded here: the stage records each call it
  * classifies, and this pass is not a call. A group counts as flagged when
  * content of it was found, when it is in `sticky` (found on an earlier turn
  * of the conversation, which may since have been summarised away), or, under
@@ -940,7 +941,9 @@ export async function confidentialRouting(input: {
   const fallbackPolicies = await Promise.all(fallbacks.map(policyAt));
   // Nothing to route unless some policy could refuse a provider the turn
   // could reach.
-  let couldRefuse = (await refusedAt(primaryPolicy, SENSITIVITY_GROUPS, primary)).length > 0;
+  const primaryCouldRefuse =
+    (await refusedAt(primaryPolicy, SENSITIVITY_GROUPS, primary)).length > 0;
+  let couldRefuse = primaryCouldRefuse;
   for (let i = 0; !couldRefuse && i < fallbacks.length; i++) {
     const p = fallbackPolicies[i];
     couldRefuse = p === null || (await refusedAt(p, SENSITIVITY_GROUPS, fallbacks[i])).length > 0;
@@ -961,7 +964,13 @@ export async function confidentialRouting(input: {
           ...(orgId !== undefined ? { orgId } : {}),
           ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
           signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
-          inHouseOnly: primary.isLocal,
+          // The stage's rule for the call the turn starts with: a call it
+          // forwards untouched goes to external classifiers only when it is
+          // remote and its own policy could refuse it.
+          inHouseOnly:
+            (primaryPolicy.mode === 'off' ||
+              (primary.isLocal && !primaryPolicy.protectLocalProviders)) &&
+            !(primaryCouldRefuse && !primary.isLocal),
         }
       );
       found = SENSITIVITY_GROUPS.filter((g) => categories.some((c) => c.group === g));

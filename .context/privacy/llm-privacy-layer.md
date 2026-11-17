@@ -1466,8 +1466,10 @@ rerouting an operator's recorded choice is worse than refusing it.
   refuse. Each provider's policy is resolved for that provider, as the stage
   resolves each call's. It classifies only when a group's policy could refuse
   the agent's provider or one of its fallbacks, so an install on `allow` and
-  `warn` pays nothing; external classifiers run only when the agent's
-  provider is remote, the stage's rule for a call it forwards untouched.
+  `warn` pays nothing; external classifiers run as the stage would run them
+  on the turn's first call to the agent's provider (for a call it forwards
+  untouched, only when that provider is remote and its policy could refuse
+  it).
   Nothing is recorded here: the stage records each call it classifies.
   - A group counts as flagged when found, when **kept on the conversation**
     from an earlier turn, or, under a policy that can refuse, when a

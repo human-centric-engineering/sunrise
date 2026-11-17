@@ -254,6 +254,26 @@ describe('routeConfidentialTurn', () => {
     expect(classify).not.toHaveBeenCalled();
   });
 
+  it('sends an external classifier the turn only when the stage would: its own provider could be refused', async () => {
+    const classify = vi.fn(async () => []);
+    registerSensitivityClassifier({
+      id: 'acme.external',
+      egress: 'external',
+      categories: { acme_secret: 'commercial' },
+      classify,
+    });
+    // Mode off: a call to a permitted provider is forwarded untouched, so the
+    // stage would not send its text out. Only a fallback could be refused.
+    setUp('approved_only', 'allow');
+    settings.read.mockResolvedValue({ ...(await settings.read()), privacyMode: 'off' });
+    await route([PLAIN], binding('trusted', ['cloud-b']));
+    expect(classify).not.toHaveBeenCalled();
+
+    // The agent's own provider could be refused: the stage would send it out.
+    await route([PLAIN], binding('cloud'));
+    expect(classify).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a turn with nothing confidential where it is', async () => {
     setUp('local_only', 'local_only');
     const result = await route([PLAIN]);
