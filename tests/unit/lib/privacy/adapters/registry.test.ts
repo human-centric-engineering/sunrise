@@ -72,7 +72,13 @@ function strategy(id: string): PrivacyTokenStrategy {
 }
 
 function emptyCore() {
-  return { detectors: [], tokenStrategy: null, policyResolvers: [], observers: [] };
+  return {
+    detectors: [],
+    tokenStrategy: null,
+    policyResolvers: [],
+    observers: [],
+    classifiers: [],
+  };
 }
 
 beforeEach(() => {

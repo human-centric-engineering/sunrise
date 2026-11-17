@@ -2,8 +2,9 @@
 
 /**
  * What the LLM privacy layer counted in a chat turn or a workflow step
- * (§127): per-type counts and how many calls were scanned. Counts only —
- * the layer never stores a value it found.
+ * (§127): per-type counts and how many calls were scanned, and the
+ * confidential content it spotted, by group (§130). Counts and category names
+ * only — the layer never stores a value it found, nor the text it classified.
  *
  * @see .context/privacy/llm-privacy-layer.md
  */
@@ -42,7 +43,35 @@ function refusalText(reason: string): string {
     : reason;
 }
 
-/** One line: the chat calls' counts, then the embedding calls', each only when there were any. */
+/** How a category reads to an admin. Core's are spelled out; an app's is its name, spaced. */
+const CATEGORY_TEXT: Record<string, string> = {
+  hr_matter: 'HR matter',
+  legal_matter: 'legal matter',
+  personal_finance: 'personal finances',
+  trade_union: 'trade union',
+  not_public: 'not public',
+  business_distress: 'business distress',
+};
+
+function categoryText(category: string): string {
+  return Object.prototype.hasOwnProperty.call(CATEGORY_TEXT, category)
+    ? CATEGORY_TEXT[category]
+    : category.replaceAll('_', ' ');
+}
+
+/** The confidential content found, by group: "personal: health, HR matter · commercial: not public". */
+function sensitivityText(sensitivity: NonNullable<PrivacySummary['sensitivity']>): string | null {
+  const groups = (['personal', 'commercial'] as const)
+    .filter((g) => (sensitivity[g]?.length ?? 0) > 0)
+    .map((g) => `${g}: ${(sensitivity[g] ?? []).map(categoryText).join(', ')}`);
+  return groups.length === 0 ? null : groups.join(' · ');
+}
+
+/**
+ * One line: the chat calls' counts, then the embedding calls', each only when
+ * there were any. A summary that holds only confidential content (mode `off`,
+ * or a local provider the masking skips) says nothing about calls.
+ */
 function summaryText(summary: PrivacySummary): string {
   const parts: string[] = [];
   if (summary.calls > 0) {
@@ -53,11 +82,15 @@ function summaryText(summary: PrivacySummary): string {
       `embeddings: ${countsText(summary.embeddingCounts)} found across ${callsText(summary.embeddingCalls)}`
     );
   }
-  if (parts.length === 0) parts.push('no call sent');
+  if (parts.length === 0) {
+    if (summary.sensitivity) return `Privacy (${summary.mode})`;
+    parts.push('no call sent');
+  }
   return `Privacy (${summary.mode}): ${parts.join(' · ')}`;
 }
 
 export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
+  const confidential = summary.sensitivity ? sensitivityText(summary.sensitivity) : null;
   return (
     <div
       className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
@@ -65,6 +98,11 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
     >
       <ShieldCheck className="h-3 w-3" aria-hidden="true" />
       <span>{summaryText(summary)}</span>
+      {confidential && (
+        <span className="text-amber-700 dark:text-amber-400" data-testid="privacy-confidential">
+          · confidential, {confidential}
+        </span>
+      )}
       {summary.degraded && (
         <span className="text-amber-700 dark:text-amber-400">
           · degraded{summary.failedAdapters ? ` (${summary.failedAdapters.join(', ')})` : ''}
@@ -90,7 +128,11 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         go as they are. The values themselves are never stored. Degraded means a detector failed or
         ran out of time on a call, which went ahead without it. Refused means a call was stopped
         before it was sent, and why. A placeholder left unrestored is one the model wrote that no
-        call had issued, shown as written.
+        call had issued, shown as written. Confidential lists the kinds of confidential content
+        spotted in what users sent, in every privacy mode: personal (health, an HR or legal matter,
+        and the other special categories) and commercial (unannounced plans, deals, restructuring, a
+        business in trouble, a legal dispute). It is spotted by a phrase list, so it catches what is
+        said outright and misses what is only implied; the text itself is never stored.
       </FieldHelp>
     </div>
   );
