@@ -83,7 +83,10 @@ function summaryText(summary: PrivacySummary): string {
     );
   }
   if (parts.length === 0) {
-    if (summary.sensitivity) return `Privacy (${summary.mode})`;
+    // Nothing was scanned for personal data. Only a refusal means nothing was
+    // sent: a call classified for confidential content, or whose classifier
+    // failed, went out (mode `off`, or a local provider the masking skips).
+    if ((summary.refused?.length ?? 0) === 0) return `Privacy (${summary.mode})`;
     parts.push('no call sent');
   }
   return `Privacy (${summary.mode}): ${parts.join(' · ')}`;
@@ -125,14 +128,15 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         counted on every call that carried it, and again on a retry with another provider. The mode
         shown is the strictest any of those calls ran under: in detect a value went out as it was,
         in pseudonymise and redact a chat call carried a placeholder instead, and embeddings always
-        go as they are. The values themselves are never stored. Degraded means a detector failed or
-        ran out of time on a call, which went ahead without it. Refused means a call was stopped
-        before it was sent, and why. A placeholder left unrestored is one the model wrote that no
-        call had issued, shown as written. Confidential lists the kinds of confidential content
-        spotted in what users sent, in every privacy mode: personal (health, an HR or legal matter,
-        and the other special categories) and commercial (unannounced plans, deals, restructuring, a
-        business in trouble, a legal dispute). It is spotted by a phrase list, so it catches what is
-        said outright and misses what is only implied; the text itself is never stored.
+        go as they are. The values themselves are never stored. Degraded means a detector or a
+        confidential-content classifier failed or ran out of time on a call, which went ahead
+        without it. Refused means a call was stopped before it was sent, and why. A placeholder left
+        unrestored is one the model wrote that no call had issued, shown as written. Confidential
+        lists the kinds of confidential content spotted in what users sent, in every privacy mode:
+        personal (health, an HR or legal matter, and the other special categories) and commercial
+        (unannounced plans, deals, restructuring, a business in trouble, a legal dispute). It is
+        spotted by a phrase list, so it catches what is said outright and misses what is only
+        implied; the text itself is never stored.
       </FieldHelp>
     </div>
   );

@@ -115,6 +115,18 @@ describe('matching', () => {
     expect(classifyText("I'm bi and nervous about the party")).toEqual(['sexuality']);
   });
 
+  it('reads an identity only with a person as its subject', () => {
+    expect(classifyText('The background is black, can you change it to grey?')).toEqual([]);
+    expect(classifyText('Our payroll is bi weekly, draft a reminder')).toEqual([]);
+    expect(classifyText("She's Black Caribbean and was passed over")).toEqual(['ethnicity']);
+    expect(classifyText('they were asian and new to the team')).toEqual(['ethnicity']);
+  });
+
+  it('does not read the second half of a hyphenated word as the phrase', () => {
+    expect(classifyText('We run a multi-disciplinary team')).toEqual([]);
+    expect(classifyText('A disciplinary hearing is booked')).toEqual(['hr_matter']);
+  });
+
   it('does not read a hyphenated prefix as an identity', () => {
     expect(classifyText('The report is bi-weekly')).toEqual([]);
     expect(classifyText('The route is trans-Pennine')).toEqual([]);

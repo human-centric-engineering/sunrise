@@ -423,6 +423,24 @@ export const DEVELOPMENT_CASES: SensitivityCorpusCase[] = [
     categories: [],
   },
   {
+    id: 'dev-neg-31',
+    text: 'The background is black, can you change it to grey?',
+    categories: [],
+  },
+  { id: 'dev-neg-32', text: 'We run a multi-disciplinary team of designers.', categories: [] },
+  { id: 'dev-neg-33', text: 'Our payroll is bi weekly, draft a reminder email.', categories: [] },
+  {
+    id: 'dev-neg-34',
+    text: 'Write a blurb for the Museum of Industrial Heritage.',
+    categories: [],
+  },
+  {
+    id: 'dev-neg-35',
+    text: 'Our team is doing a community service day next Friday.',
+    categories: [],
+  },
+  { id: 'dev-neg-36', text: 'Can you restructure this into bullet points?', categories: [] },
+  {
     id: 'dev-neg-30',
     text: 'Our open day is on Saturday; write a friendly reminder for the parents.',
     categories: [],

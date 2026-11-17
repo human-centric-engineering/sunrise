@@ -94,14 +94,14 @@ beforeEach(() => {
 });
 
 describe('registering a classifier', () => {
-  it('installs core first, then the app, running in_process, then self_hosted, then external', () => {
+  it('installs core first, then the app, in registration order', () => {
     core.adapters.mockReturnValue(coreWithClassifier());
     seam.init.mockImplementation(() => {
       registerSensitivityClassifier(classifier('acme.remote', { egress: 'external' }));
       registerSensitivityClassifier(classifier('acme.local'));
     });
     const { classifiers, coreFailure, appInitFailure } = getPrivacyAdapters();
-    expect(classifiers.map((c) => c.id)).toEqual(['core.phrases', 'acme.local', 'acme.remote']);
+    expect(classifiers.map((c) => c.id)).toEqual(['core.phrases', 'acme.remote', 'acme.local']);
     expect(classifiers[0].core).toBe(true);
     expect(classifiers[1].core).toBe(false);
     expect(coreFailure).toBeNull();
@@ -127,7 +127,7 @@ describe('registering a classifier', () => {
     );
   });
 
-  it('replaces a core classifier only when named, in its place, and says so once the init succeeds', () => {
+  it('replaces a core classifier only when named, and says so once the init succeeds', () => {
     core.adapters.mockReturnValue({
       ...coreWithClassifier(),
       classifiers: [
@@ -139,8 +139,8 @@ describe('registering a classifier', () => {
       registerSensitivityClassifier(classifier('acme.phrases'), { replace: 'core.phrases' })
     );
     const { classifiers, replacedCoreClassifiers } = getPrivacyAdapters();
-    expect(classifiers.map((c) => c.id)).toEqual(['acme.phrases', 'core.second']);
-    expect(classifiers[0].replacesCore).toBe('core.phrases');
+    expect(classifiers.map((c) => c.id)).toEqual(['core.second', 'acme.phrases']);
+    expect(classifiers[1].replacesCore).toBe('core.phrases');
     expect(replacedCoreClassifiers).toEqual(['core.phrases']);
     expect(logger.warn).toHaveBeenCalledWith(
       'privacy-adapters: a core sensitivity classifier was replaced',

@@ -266,8 +266,16 @@ function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
 }
 
 /**
+ * Listed as the failed adapter when classifying a call failed outside any one
+ * classifier (a fault in the stage's own classification step), so the trace
+ * shows it degraded rather than nothing.
+ */
+const SENSITIVITY_STAGE_FAILURE = 'privacy-stage.sensitivity';
+
+/**
  * Classify the call for confidential content and record what was found in
- * its scope (§130, t-1036). Only in a scope that records somewhere: an
+ * its scope (§130, t-1036). Never refuses: until a policy acts on it, a fault
+ * here is recorded as degraded and the call goes on as it would have. Only in a scope that records somewhere: an
  * ephemeral one has nothing to read the result yet. Records nothing when
  * nothing was found and no classifier failed, so a turn gains a privacy
  * summary only when it held something confidential.
@@ -280,20 +288,41 @@ async function classifyCall(
   abandoned: AbortSignal | undefined,
   inHouseOnly: boolean
 ): Promise<void> {
-  const parts = sensitivityParts(call);
-  if (parts.length === 0) return;
-  const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
-  const { categories, failures } = await runSensitivityClassifiers(
-    { parts },
-    {
-      scopeId: scope.scopeId,
-      ...(orgId !== undefined ? { orgId } : {}),
-      ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
-      signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
-      inHouseOnly,
-    }
-  );
+  let classified: Awaited<ReturnType<typeof runSensitivityClassifiers>> | null;
+  try {
+    const parts = sensitivityParts(call);
+    if (parts.length === 0) return;
+    const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+    classified = await runSensitivityClassifiers(
+      { parts },
+      {
+        scopeId: scope.scopeId,
+        ...(orgId !== undefined ? { orgId } : {}),
+        ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+        signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
+        inHouseOnly,
+      }
+    );
+  } catch (err) {
+    // Observing only: a fault here must not stop a call that would otherwise
+    // go out (mode `off` included). Recorded as degraded, so it is seen.
+    logger.error('privacy-stage: sensitivity classification failed', undefined, {
+      providerSlug: call.providerSlug,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    classified = null;
+  }
+  // The caller's own cancel stays a cancel, whatever happened above.
   if (abandoned?.aborted) throw new CallAbandonedError();
+  if (classified === null) {
+    recordPrivacySensitivity(scope, {
+      mode,
+      categories: [],
+      failedAdapters: [SENSITIVITY_STAGE_FAILURE],
+    });
+    return;
+  }
+  const { categories, failures } = classified;
   if (categories.length === 0 && failures.length === 0) return;
   recordPrivacySensitivity(scope, {
     mode,
@@ -483,6 +512,21 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     // Before the returns for `off` and a skipped local provider: classifying
     // changes nothing sent, and an install records what its agents meet in
     // every mode (owner ruling, 2026-11-17).
+    // An embedding input is never masked: a masked name cannot be searched
+    // for. Under a masking mode an install that requires local embeddings
+    // refuses one to a provider that is not local instead (spec § Embeddings).
+    // Before classifying, so a refused embedding's text reaches no external
+    // classifier; it implies a masking mode and a provider that is not local,
+    // so neither return below would have come first.
+    if (
+      call.coverage === 'count' &&
+      !call.isLocal &&
+      protectsContent(policy.mode) &&
+      settings.privacyEmbeddingsPolicy === 'local_only'
+    ) {
+      throw refuse('embeddings_local_only', call, scope, mode);
+    }
+
     // A call the layer forwards untouched is not sent to an external
     // classifier either: that would be the one place its text went beyond
     // the provider the operator chose (a local one, or any under `off`).
@@ -504,18 +548,6 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       });
       return unchanged;
     }
-    // An embedding input is never masked: a masked name cannot be searched
-    // for. Under a masking mode an install that requires local embeddings
-    // refuses one to a provider that is not local instead (spec § Embeddings).
-    if (
-      call.coverage === 'count' &&
-      !call.isLocal &&
-      protectsContent(policy.mode) &&
-      settings.privacyEmbeddingsPolicy === 'local_only'
-    ) {
-      throw refuse('embeddings_local_only', call, scope, mode);
-    }
-
     // Nothing would read the result: an unscoped call (knowledge ingestion,
     // a background job) records nowhere, no observer is listening, and only a
     // `block` policy would act on a detector failing. A call the scan cannot

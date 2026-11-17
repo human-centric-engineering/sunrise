@@ -29,8 +29,12 @@ export const SENSITIVITY_PHRASES_CLASSIFIER_ID = 'core.sensitivity-phrases';
 /** The parts core's classifier reads. */
 const CLASSIFIED_ROLES: ReadonlySet<SensitivityPartRole> = new Set(['user', 'embedding']);
 
-/** Not a letter, digit or underscore on either side: a whole word. */
-const BEFORE = '(?<![\\p{L}\\p{N}_])';
+/**
+ * Not a letter, digit or underscore on either side: a whole word. Nor the
+ * second half of a hyphenated word ("multi-disciplinary", "cross-border"):
+ * a phrase that means something alone often means something else as a suffix.
+ */
+const BEFORE = '(?<![\\p{L}\\p{N}_])(?<![\\p{L}\\p{N}]-)';
 const AFTER = '(?![\\p{L}\\p{N}_])';
 
 /**

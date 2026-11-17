@@ -1311,8 +1311,7 @@ rerouting an operator's recorded choice is worse than refusing it.
 ### Measured
 
 `core.sensitivity-phrases` is gated by a labelled synthetic UK corpus in
-`tests/fixtures/privacy/sensitivity-corpus/`: a development set (85 messages,
-30 that must not flag), and a held-out set (161 messages, 68 that must not
+`tests/fixtures/privacy/sensitivity-corpus/`: a development set (91 messages, 36 that must not flag), and a held-out set (161 messages, 68 that must not
 flag) written by a subagent that never saw the phrase list or the classifier,
 from a table of the category definitions alone. Both carry business text that must not
 flag (HR policy questions, product copy, "customer acquisition", code
@@ -1325,6 +1324,7 @@ per-group and per-category recall and precision, and each set's size, with
 | Development                  | 1.00            | 1.00               | 1.00              | 0.95                 |
 | Held-out, as first measured  | 0.61            | 0.93               | 0.63              | 0.83                 |
 | Held-out, after defect fixes | 0.66            | 0.93               | 0.69              | 0.85                 |
+| Held-out, after review fixes | 0.62            | 0.93               | 0.69              | 0.85                 |
 
 **The held-out figures are the honest estimate: about two in three explicit
 disclosures caught, and about one flag in seven wrong for commercial, one in
@@ -1341,6 +1341,16 @@ inside", "right-sizing", an ICO investigation, a letter before claim, a
 Jehovah's Witness. Its wrong flags are mostly general-knowledge questions
 ("merger versus acquisition, for A-level homework"), which a phrase list cannot
 tell from a disclosure.
+
+**Review then traded two held-out disclosures for common false alarms.** An
+identity now needs a person as its subject ("she is", "I'm"), so "the
+background is black" and "payroll is bi weekly" no longer flag, and a phrase
+never matches the second half of a hyphenated word ("multi-disciplinary").
+"Heritage" needs a person-led subject too ("the Museum of Industrial
+Heritage"), and "community service" needs a sentence around it ("a community
+service day"). The cost, in the last row: "Marcus is non-binary" and "…of
+Nigerian heritage" with no subject before it are now missed. The six review
+examples joined the development set as messages that must not flag.
 
 ### What it does not protect
 

@@ -391,3 +391,54 @@ describe('an external classifier', () => {
     expect(seen).toContain(HEALTH);
   });
 });
+
+describe('a fault in classifying', () => {
+  it('never stops a call that would go out: it is recorded as degraded instead', async () => {
+    mode('off');
+    // A text part with no text: the stage's own classification step throws.
+    const messages = [{ role: 'user', content: [{ type: 'text' }] }] as unknown as LlmMessage[];
+    const args = [messages, { model: 'm' }];
+    const scope = newScope();
+    const result = await runInPrivacyScope(scope, () => applyPrivacyStage(chatCall(args)));
+    expect(result.args).toBe(args);
+    expect(privacySummary(scope)).toMatchObject({
+      mode: 'off',
+      degraded: true,
+      failedAdapters: ['privacy-stage.sensitivity'],
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'privacy-stage: sensitivity classification failed',
+      undefined,
+      expect.objectContaining({ errorName: 'TypeError' })
+    );
+  });
+});
+
+describe('an embedding refused under local_only', () => {
+  it('is refused before it is classified, so its text reaches no external classifier', async () => {
+    settings.read.mockResolvedValue({
+      privacyMode: 'pseudonymise',
+      privacyIgnoredEntityTypes: [],
+      privacyProtectLocalProviders: false,
+      privacyEmbeddingsPolicy: 'local_only',
+    });
+    const seen: string[] = [];
+    seam.init.mockImplementation(() =>
+      registerSensitivityClassifier({
+        id: 'acme.cloud',
+        egress: 'external',
+        categories: { health: 'personal' },
+        classify: (input) => {
+          seen.push(...input.parts.map((p) => p.text));
+          return Promise.resolve([]);
+        },
+      })
+    );
+    await expect(
+      runInPrivacyScope(newScope(), () =>
+        applyPrivacyStage(embeddingCall(['signed off with depression']))
+      )
+    ).rejects.toMatchObject({ reason: 'embeddings_local_only' });
+    expect(seen).toEqual([]);
+  });
+});

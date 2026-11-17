@@ -1,6 +1,6 @@
 {
   "development": {
-    "cases": 85,
+    "cases": 91,
     "groups": {
       "commercial": {
         "labelled": 18,
@@ -101,8 +101,8 @@
       },
       "personal": {
         "labelled": 61,
-        "recall": 0.6557,
-        "precision": 0.9302
+        "recall": 0.623,
+        "precision": 0.9268
       }
     },
     "categories": {
@@ -123,7 +123,7 @@
       },
       "ethnicity": {
         "labelled": 6,
-        "recall": 0.3333,
+        "recall": 0.1667,
         "precision": 1
       },
       "health": {
@@ -173,7 +173,7 @@
       },
       "sexuality": {
         "labelled": 5,
-        "recall": 0.8,
+        "recall": 0.6,
         "precision": 1
       },
       "trade_union": {

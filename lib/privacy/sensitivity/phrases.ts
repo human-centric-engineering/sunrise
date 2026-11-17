@@ -33,11 +33,14 @@ export interface CategoryPhrases {
 const WHO = "(?:my|his|her|their|our|your|a|the|one of (?:my|our) \\w+'?s?)";
 
 /**
- * "is", "am", or a pronoun's contraction ("she's", "I'm"). A contraction is
- * written with its pronoun because the apostrophe follows a letter, and a
- * phrase must start on a word boundary.
+ * A person as the subject of "is": "she is", "I'm", "they were". Led by the
+ * pronoun, because a bare "is" makes "the background is black" or "payroll is
+ * bi weekly" read as a disclosure about someone. A contraction is written with
+ * its pronoun because the apostrophe follows a letter, and a phrase must start
+ * on a word boundary.
  */
-const COPULA = "(?:is|am|are|was|were|being|(?:i|he|she|they|we|you|who)'(?:s|m|re))";
+const PERSON = '(?:i|he|she|they|we|you)';
+const COPULA = `(?:${PERSON} (?:am|is|are|was|were)|${PERSON}'(?:s|m|re))`;
 
 export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, CategoryPhrases>> = {
   health: {
@@ -126,7 +129,8 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
       'racist',
       `${COPULA} (?:black|asian|mixed race)`,
       'mixed race',
-      'of \\w+ (?:descent|heritage)',
+      `${COPULA} of \\w+ (?:descent|heritage)`,
+      'of \\w+ descent',
       'bame',
     ],
   },
@@ -184,7 +188,7 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
   },
   sexuality: {
     phrases: [
-      `(?:${COPULA}|came out as|coming out as|identif(?:y|ies) as) (?:gay|lesbian|bisexual|bi(?!-)|trans(?!-)|transgender|non ?binary|queer|asexual)`,
+      `(?:${COPULA}|came out as|coming out as|identif(?:y|ies) as) (?:gay|lesbian|bisexual|bi(?! ?(?:weekly|monthly|annual|annually|yearly|lingual|directional|partisan))|trans(?!-)|transgender|non ?binary|queer|asexual)`,
       'gay',
       'lesbian',
       'bisexual',
@@ -211,7 +215,9 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
       'prison sentence',
       'served time',
       'on probation',
-      'community service',
+      '(?:sentenced to|given|ordered to do|doing|did) (?:\\w+ hours (?:of )?)?community service',
+      'hours of community service',
+      'community (?:order|sentence)',
       'police caution',
       'cautioned by (?:the )?police',
       'drink driving',
@@ -356,6 +362,7 @@ export const SENSITIVITY_PHRASES: Readonly<Record<CoreSensitivityCategory, Categ
     ],
     exclude: [
       'redundancies (?:in|from|across) (?:the|this|my|our|your) (?:code|data|text|document|table|tables|schema|config|list)',
+      'restructur(?:e|ing) (?:this|that|it|them)(?! (?:team|teams|department|business|company|organisation|organization|division|function|unit|group))',
       'restructur(?:e|ing) (?:the|this|my|our|your|a|that) (?:code|data|document|report|slides|deck|essay|table|query|function|functions|sentence|paragraph|paragraphs|email|prompt|question|file|folder|repo|repository|schema|database|component|page|section|article|post|cv|resume|text|list|json|class|module|project structure)',
     ],
   },

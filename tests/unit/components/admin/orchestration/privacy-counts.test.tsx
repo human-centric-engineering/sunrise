@@ -188,13 +188,15 @@ describe('PrivacyCounts confidential content', () => {
     expect(screen.queryByTestId('privacy-confidential')).toBeNull();
   });
 
-  it('shows a failed classifier as degraded, in mode off too', () => {
+  it('shows a failed classifier as degraded, in mode off too, without claiming nothing was sent', () => {
     render(
       <PrivacyCounts
         summary={{ ...offOnly, degraded: true, failedAdapters: ['acme.classifier'] }}
       />
     );
-    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('degraded (acme.classifier)');
+    const line = screen.getByTestId('privacy-counts');
+    expect(line).toHaveTextContent('degraded (acme.classifier)');
+    expect(line).not.toHaveTextContent('no call sent');
   });
 });
 

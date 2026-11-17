@@ -156,7 +156,7 @@ export interface PrivacyAdapterSnapshot {
   /** In registration order, core first. */
   policyResolvers: readonly PolicyResolverRegistration[];
   observers: readonly ObserverRegistration[];
-  /** In run order, as detectors are; they run in parallel, so order only fixes the result's. */
+  /** In registration order. They run in parallel, and order changes nothing they return. */
   classifiers: readonly ClassifierRegistration[];
   /** Core detectors an app replaced, by id. */
   replacedCoreDetectors: readonly string[];
@@ -576,17 +576,11 @@ function addClassifier(
     replacesCore: options.replace,
   });
 
-  if (options.replace === undefined) {
-    classifiers.set(id, registration);
-    return;
-  }
-  // In the replaced classifier's place, so the result's order is unchanged.
-  const entries = [...classifiers];
-  classifiers.clear();
-  for (const [key, value] of entries) {
-    if (key === options.replace) classifiers.set(id, registration);
-    else classifiers.set(key, value);
-  }
+  // They run in parallel and their result is sorted, so where a replacement
+  // sits changes nothing.
+  classifiers.set(id, registration);
+  if (options.replace === undefined) return;
+  classifiers.delete(options.replace);
   replacedCoreClassifiers.set(options.replace, id);
   if (!initRunning) logReplacedCoreClassifier(options.replace, id);
 }
@@ -676,7 +670,7 @@ export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
     tokenStrategy: tokenStrategySlot.get('active')?.strategy ?? null,
     policyResolvers: [...policyResolvers.values()],
     observers: [...observers.values()],
-    classifiers: byEgress([...classifiers.values()]),
+    classifiers: [...classifiers.values()],
     replacedCoreDetectors: [...replacedCore.keys()],
     replacedCoreClassifiers: [...replacedCoreClassifiers.keys()],
     appInitFailure,
