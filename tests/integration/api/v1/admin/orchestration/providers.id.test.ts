@@ -300,6 +300,26 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       expect(data[2]).not.toHaveProperty('jurisdiction');
     });
 
+    it('sets and clears "Trusted with confidential content", and leaves it when absent (§130)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(makeProvider());
+
+      await PATCH(makeRequest('PATCH', { trustedForConfidential: true }), makeParams(PROVIDER_ID));
+      await PATCH(makeRequest('PATCH', { trustedForConfidential: false }), makeParams(PROVIDER_ID));
+      await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(PROVIDER_ID));
+      const refused = await PATCH(
+        makeRequest('PATCH', { trustedForConfidential: 'yes' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      const data = vi.mocked(prisma.aiProviderConfig.update).mock.calls.map(([args]) => args.data);
+      expect(data[0]).toMatchObject({ trustedForConfidential: true });
+      expect(data[1]).toMatchObject({ trustedForConfidential: false });
+      expect(data[2]).not.toHaveProperty('trustedForConfidential');
+      expect(refused.status).toBe(400);
+    });
+
     it('refuses a jurisdiction that is not a short code', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());

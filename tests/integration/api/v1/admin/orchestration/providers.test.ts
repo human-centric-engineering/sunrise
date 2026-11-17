@@ -370,6 +370,19 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
         .mock.calls.map(([args]) => args.data.jurisdiction);
       expect(stored).toEqual(['EU', null]);
     });
+
+    it('stores "Trusted with confidential content" as sent, and off when the body leaves it out (§130)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.create).mockResolvedValue(makeProvider());
+
+      await POST(makePostRequest({ ...VALID_PROVIDER, trustedForConfidential: true }));
+      await POST(makePostRequest(VALID_PROVIDER));
+
+      const stored = vi
+        .mocked(prisma.aiProviderConfig.create)
+        .mock.calls.map(([args]) => args.data.trustedForConfidential);
+      expect(stored).toEqual([true, false]);
+    });
   });
 
   describe('Validation errors', () => {

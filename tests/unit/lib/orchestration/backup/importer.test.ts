@@ -471,6 +471,32 @@ describe('importOrchestrationConfig', () => {
     expect(data.privacyMode).toBe(value);
   });
 
+  it.each([
+    ['keeps the agent’s own policies when the backup predates them', undefined, false, undefined],
+    ['writes the backup’s policies', 'local_only', true, 'local_only'],
+    ['clears them when the backup says inherit', null, true, null],
+  ])('on overwrite %s (§130 t-1037)', async (_label, inBackup, written, value) => {
+    mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
+    mockTx.aiAgent.update.mockResolvedValue({});
+    const agent =
+      inBackup === undefined
+        ? makeAgent()
+        : {
+            ...makeAgent(),
+            privacyConfidentialPersonal: inBackup,
+            privacyConfidentialCommercial: inBackup,
+          };
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [agent] } };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const data = mockTx.aiAgent.update.mock.calls[0][0].data as Record<string, unknown>;
+    for (const field of ['privacyConfidentialPersonal', 'privacyConfidentialCommercial']) {
+      expect(field in data).toBe(written);
+      expect(data[field]).toBe(value);
+    }
+  });
+
   it("saves an overwritten agent's restored config as a new agent version, after its grants", async () => {
     mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
     mockTx.aiAgent.update.mockResolvedValue({});
@@ -738,6 +764,23 @@ describe('importOrchestrationConfig', () => {
     expect(call.update).toMatchObject(privacy);
   });
 
+  it("restores the install's confidential-content policies (§130 t-1037)", async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const policies = {
+      privacyConfidentialPersonal: 'local_only',
+      privacyConfidentialCommercial: 'approved_only',
+    };
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), ...policies } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const call = mockTx.aiOrchestrationSettings.upsert.mock.calls[0][0];
+    expect(call.create).toMatchObject(policies);
+    expect(call.update).toMatchObject(policies);
+  });
+
   it.each(['pseudonymise', 'redact', 'block'])(
     'restores the masking mode %s now that this version can apply it',
     async (mode) => {
@@ -770,6 +813,8 @@ describe('importOrchestrationConfig', () => {
       'privacyIgnoredEntityTypes',
       'privacyProtectLocalProviders',
       'privacyEmbeddingsPolicy',
+      'privacyConfidentialPersonal',
+      'privacyConfidentialCommercial',
     ]) {
       expect(call.update).not.toHaveProperty(key);
       expect(call.create).not.toHaveProperty(key);

@@ -358,6 +358,31 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       // Left out, so an overwriting import keeps the target agent's own mode.
       expect(body.data.agents[1]).not.toHaveProperty('privacyMode');
     });
+
+    it("exports an agent's confidential-content policies, leaving out one it does not know (§130 t-1037)", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        {
+          ...makeDbAgent(AGENT_ID_1, 'agent-one'),
+          privacyConfidentialPersonal: 'local_only',
+          privacyConfidentialCommercial: null,
+        },
+        {
+          ...makeDbAgent(AGENT_ID_2, 'agent-two'),
+          privacyConfidentialPersonal: 'ask_first',
+          privacyConfidentialCommercial: 'block',
+        },
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1, AGENT_ID_2] }));
+      const body = await parseJson<{ data: { agents: Record<string, unknown>[] } }>(response);
+      expect(body.data.agents[0]).toMatchObject({
+        privacyConfidentialPersonal: 'local_only',
+        privacyConfidentialCommercial: null,
+      });
+      expect(body.data.agents[1]).not.toHaveProperty('privacyConfidentialPersonal');
+      expect(body.data.agents[1].privacyConfidentialCommercial).toBe('block');
+    });
   });
 
   describe('Error cases', () => {

@@ -499,6 +499,19 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
       expect(txAgentUpdate.mock.calls[0][0].data).toMatchObject({ privacyMode: 'redact' });
     });
 
+    it('restores the confidential-content policies, a value this release does not know included (§130 t-1037)', async () => {
+      const { response, txAgentUpdate } = await restoreSnapshot({
+        privacyConfidentialPersonal: 'local_only',
+        privacyConfidentialCommercial: 'ask_first',
+      });
+
+      expect(response.status).toBe(200);
+      expect(txAgentUpdate.mock.calls[0][0].data).toMatchObject({
+        privacyConfidentialPersonal: 'local_only',
+        privacyConfidentialCommercial: 'ask_first',
+      });
+    });
+
     it('still refuses a snapshot whose provider is not a string', async () => {
       const { response, txAgentUpdate } = await restoreSnapshot({ provider: 42 });
 
