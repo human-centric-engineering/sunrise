@@ -11,7 +11,7 @@
  * @see app/api/v1/embed/widget.js/route.ts
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Script } from 'node:vm';
 import { GET } from '@/app/api/v1/embed/widget.js/route';
@@ -593,5 +593,81 @@ describe('Embed widget confidential-content note (§130 t-1037)', () => {
     expect(isVisitorNotice({ code: 'budget_warning', message: '85% used' })).toBe(false);
     expect(isVisitorNotice({ code: 'confidential_personal' })).toBe(false);
     expect(isVisitorNotice(null)).toBe(false);
+  });
+});
+
+describe('Embed widget: a note followed by an error (§130 t-1039)', () => {
+  /**
+   * Runs the served script in the page, as a site embedding it would: the
+   * config fetch fails (defaults), and the chat stream answers with `sse`.
+   * The shadow root is opened so the test can read what the visitor sees.
+   */
+  async function runWidget(sse: string): Promise<ShadowRoot> {
+    const body = await GET(makeGetRequest()).text();
+    const tag = document.createElement('script');
+    tag.setAttribute('data-token', 'tok');
+    document.body.appendChild(tag);
+    Object.defineProperty(document, 'currentScript', { configurable: true, get: () => tag });
+
+    let root: ShadowRoot | null = null;
+    const attach = HTMLElement.prototype.attachShadow;
+    vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      root = attach.call(this, { ...init, mode: 'open' });
+      return root;
+    });
+    const encoded = new TextEncoder().encode(sse);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve(
+          url.endsWith('/chat/stream')
+            ? {
+                ok: true,
+                body: new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(encoded);
+                    controller.close();
+                  },
+                }),
+              }
+            : { ok: false }
+        )
+      )
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval -- the served script, run as a page runs it
+    new Function(body)();
+    await vi.waitFor(() => expect(root?.querySelector('.send-btn')).toBeTruthy());
+    const shadow = root as unknown as ShadowRoot;
+    const input = shadow.querySelector('.input-area textarea') as HTMLTextAreaElement;
+    input.value = 'I was signed off with depression.';
+    (shadow.querySelector('.send-btn') as HTMLButtonElement).click();
+    return shadow;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+    Reflect.deleteProperty(document, 'currentScript');
+  });
+
+  it('keeps the note on screen when the turn then ends in an error', async () => {
+    const note = 'What you wrote looks personal. It was sent to the AI service.';
+    const shadow = await runWidget(
+      'event: start\ndata: {"conversationId":"c1"}\n\n' +
+        `event: warning\ndata: ${JSON.stringify({ code: 'confidential_personal', message: note })}\n\n` +
+        'event: error\ndata: {"code":"output_blocked","message":"Response blocked."}\n\n'
+    );
+
+    await vi.waitFor(() =>
+      expect(shadow.querySelector('.messages')?.textContent).toContain('Something went wrong.')
+    );
+    const notices = [...shadow.querySelectorAll('.notice')];
+    expect(notices.map((n) => n.textContent)).toEqual([note]);
+    expect(notices[0].getAttribute('role')).toBe('note');
   });
 });

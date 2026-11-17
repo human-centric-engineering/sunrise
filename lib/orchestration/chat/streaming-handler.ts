@@ -2123,6 +2123,8 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'output', outputMode);
 
               if (outputMode === 'block') {
+                // The note before the error: a reader stops at the error.
+                yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
                 yield errorEvent(
                   'output_blocked',
                   'Response blocked by content policy. Please rephrase your question.'
@@ -2173,6 +2175,7 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'citation', citationMode);
 
               if (citationMode === 'block') {
+                yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
                 yield errorEvent(
                   'citation_required',
                   citationScan.underCited
@@ -2589,6 +2592,8 @@ export class StreamingChatHandler {
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
           } else {
+            // An earlier iteration's call was sent.
+            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield errorEvent(refusal.code, refusal.message);
             return;
           }
@@ -3188,6 +3193,7 @@ export class StreamingChatHandler {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
+      yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
       yield errorEvent(
         'tool_loop_cap',
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
@@ -3226,6 +3232,14 @@ export class StreamingChatHandler {
           });
         }
       };
+
+      // The warn note (§130) for a call sent before the failure, before the
+      // error event: the embed widget stops reading at an error. No call was
+      // sent before the conversation exists, and with no warned decision this
+      // reads nothing.
+      if (conversationId) {
+        yield* this.confidentialNotes(privacyScope, conversationId, request.userId, log);
+      }
 
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {

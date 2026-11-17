@@ -10289,5 +10289,154 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         'confidential_personal',
       ]);
     });
+
+    // ── A turn that ends in an error after a warned call was sent (t-1039) ──
+
+    const TOOL_CALL = [
+      { type: 'tool_call', toolCall: { id: 'tc-e', name: 'do_thing', arguments: {} } },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+    ];
+    const ANSWER = [
+      { type: 'text', content: 'Noted.' },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+    ];
+
+    /**
+     * Each call by its number: a script, which is sent and recorded as the
+     * stage records a sent call under `warn`, or an error, which is thrown
+     * before anything is recorded, as a refused or failed call records nothing.
+     */
+    function sentThen(step: (call: number) => Array<Record<string, unknown>> | Error) {
+      let call = 0;
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          const script = step(call++);
+          if (script instanceof Error) throw script;
+          const scope = currentPrivacyScope();
+          if (!scope) throw new Error('the call ran outside the turn scope');
+          recordPrivacySensitivity(scope, {
+            mode: 'detect',
+            categories: [{ category: 'health', group: 'personal' }],
+            failedAdapters: [],
+          });
+          recordConfidentialDecision(scope, { personal: 'warned' });
+          yield* script;
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      return provider;
+    }
+
+    /** The note, then the error: the embed widget stops reading at an error. */
+    function expectNoteBeforeError(events: Event[], conv: unknown, code: string) {
+      expect(notes(events)).toEqual([
+        { type: 'warning', code: 'confidential_personal', message: CONFIDENTIAL_NOTES.personal },
+      ]);
+      expect(errorOf(events)?.code).toBe(code);
+      const kinds = events.map((e) => e.type);
+      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('error'));
+      expect((conv as { metadata?: unknown }).metadata).toEqual({
+        confidentialNoted: ['personal'],
+      });
+    }
+
+    it('shows it before the error when the output guard blocks the reply', async () => {
+      const { conv } = conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ outputGuardMode: 'block' }) as never
+      );
+      vi.mocked(scanOutput).mockResolvedValue({
+        flagged: true,
+        topicMatches: ['forbidden-topic'],
+        builtInMatches: [],
+      });
+      sentThen(() => ANSWER);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'output_blocked');
+    });
+
+    it('shows it before the error when the citation guard blocks the reply', async () => {
+      const { conv } = conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ citationGuardMode: 'block' }) as never
+      );
+      vi.mocked(scanCitations).mockReturnValue({
+        flagged: true,
+        underCited: true,
+        hallucinatedMarkers: [],
+      });
+      sentThen(() => ANSWER);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'citation_required');
+    });
+
+    it('shows it before the error when the budget runs out between tool calls', async () => {
+      const { conv } = conversationStore();
+      let checks = 0;
+      vi.mocked(checkBudget).mockImplementation(() =>
+        Promise.resolve(
+          ++checks === 1
+            ? { withinBudget: true, spent: 5, limit: 10, remaining: 5 }
+            : { withinBudget: false, spent: 11, limit: 10, remaining: -1 }
+        )
+      );
+      sentThen(() => TOOL_CALL);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'budget_exceeded');
+    });
+
+    it('shows it before the error when the tool loop hits its cap', async () => {
+      const { conv } = conversationStore();
+      sentThen(() => TOOL_CALL);
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'tool_loop_cap');
+    });
+
+    it('shows it before the error when a later call fails', async () => {
+      const { conv } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new ProviderError('socket closed', { code: 'http_500', status: 500 })
+      );
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'http_500');
+    });
+
+    it('shows it before the error when a later call is refused for confidential content', async () => {
+      // The first call was sent and warned; a later one is refused under
+      // another group's policy. What went out was still sent.
+      const { conv } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new PrivacyRefusedError('confidential_not_permitted', 'anthropic', undefined)
+      );
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'privacy_confidential');
+    });
+
+    it('shows it before the error when the turn crashes after a call was sent', async () => {
+      const { conv } = conversationStore();
+      sentThen((call) => (call === 0 ? TOOL_CALL : new Error('Unexpected provider crash')));
+
+      expectNoteBeforeError(await turn(`I was ${DISCLOSURE}.`), conv, 'internal_error');
+    });
+
+    it('shows nothing when the only flagged call was refused, since nothing was sent', async () => {
+      const { conv } = conversationStore();
+      const provider = confidentialProvider();
+
+      const refused = await turn(`I was ${DISCLOSURE}.`);
+      expect(errorOf(refused)?.code).toBe('privacy_confidential');
+      expect(notes(refused)).toEqual([]);
+      expect(provider.chatStream).toHaveBeenCalled();
+      expect((conv as { metadata?: unknown }).metadata).toBeNull();
+    });
   });
 });
