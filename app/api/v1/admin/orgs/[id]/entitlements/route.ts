@@ -16,20 +16,29 @@
  * registering). With nothing registered there is nothing to set, and a PUT is
  * a 409.
  *
- * Platform-only, as the provider policy and the caps are: a switch is what an
- * org has bought, and an org's own admins must not grant it to themselves.
- * Every replacement is in the admin audit log with what it replaced.
+ * Platform-only: a switch is what an org has bought, and an org must not grant
+ * it to itself. So, as with the caps, at `multi` a platform admin switched into
+ * a customer's org may read the switches but not change them: the write comes
+ * from the install org or an unbound admin API key
+ * (`mayChangeOrgCommercialSettings`). Every replacement is in the admin audit
+ * log with what it replaced.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
+import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { registeredEntitlementSwitches, resolveOrgSwitches } from '@/lib/tenancy/entitlements';
+import { getTenantContext } from '@/lib/tenancy/context';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
+import {
+  mayChangeOrgCommercialSettings,
+  SHARED_SETTINGS_REFUSAL_CODE,
+} from '@/lib/tenancy/shared-settings';
 import {
   isSettingsWriteConflict,
   readOrgEntitlements,
@@ -46,6 +55,10 @@ const PLATFORM_ONLY = {
       'The vendor setting what one org has: the switches are the org’s, not any user’s, and the guard already limits this to platform admins.',
   },
 } as const;
+
+/** The words an admin sees when a customer org's context tries to change them. */
+const SWITCHES_REFUSAL =
+  "An organisation's switches can only be changed from the install organisation. Switch to the install organisation to make this change.";
 
 /** The switches as the API reports them, against what is registered now. */
 function describe(orgId: string, read: OrgEntitlementsRead) {
@@ -85,6 +98,18 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
   const log = await getRouteLogger(request);
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, orgEntitlementsInputSchema);
+
+  // Before anything that says which switches exist.
+  if (!mayChangeOrgCommercialSettings(session.principal.credential)) {
+    log.warn('tenancy: refused an org switches write outside the install org', {
+      orgId: id,
+      actorUserId: session.user.id,
+      activeOrgId: getTenantContext()?.orgId ?? null,
+    });
+    throw new APIError(SWITCHES_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
+      reason: SHARED_SETTINGS_REFUSAL_CODE,
+    });
+  }
 
   const registered = new Set(registeredEntitlementSwitches().map((s) => s.key));
   if (registered.size === 0) {

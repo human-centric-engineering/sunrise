@@ -5,7 +5,8 @@
  * over a mocked Prisma whose `$transaction` runs the callback against the same
  * mock; the app's switches come from a mocked `lib/app/entitlements.ts`. Pins:
  * platform-admin only (an org's own admin is refused, so it cannot grant itself
- * what it has not bought), the key required, an unregistered key refused, a
+ * what it has not bought), and at `multi` written only from the install org or
+ * an unbound admin API key, as the caps are; the key required, an unregistered key refused, a
  * replace keeping every other `settings` key and every stored key nothing
  * registers, `null` clearing back to nothing set, the 409s, and an audit row
  * naming what was replaced.
@@ -13,6 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -20,6 +22,12 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }));
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: mockGetSession } } }));
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
+
+const mockResolveApiKey = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/auth/api-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/api-keys')>()),
+  resolveApiKey: mockResolveApiKey,
+}));
 
 const mockPrisma = vi.hoisted(() => {
   const db = {
@@ -59,7 +67,7 @@ import { createMockAuthSession } from '@/tests/helpers/auth';
 
 const OTHER = 'cmorg000000000000000other';
 
-function session(role: 'USER' | 'ADMIN', activeOrgId: string = INSTALL_ORG_ID) {
+function session(role: 'USER' | 'ADMIN', activeOrgId: string | null = INSTALL_ORG_ID) {
   const base = createMockAuthSession();
   return {
     ...base,
@@ -113,11 +121,13 @@ function storedSettings() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockEnv.TENANCY_MODE = 'multi';
   __resetEntitlementRegistryForTests();
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
   registerSwitches();
   mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(mockPrisma));
   mockPrisma.aiApiKey.findFirst.mockResolvedValue(null);
+  mockResolveApiKey.mockResolvedValue(null);
   mockGetSession.mockResolvedValue(session('ADMIN'));
   mockPrisma.org.findUnique.mockResolvedValue({
     settings: { providers: { approved: ['id-anthropic'] } },
@@ -329,5 +339,72 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
 
     expect(res.status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('the switches at multi are changed only from the install org, as the caps are', () => {
+  it('refuses a platform admin switched into a customer org, before saying which switches exist', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+
+    // From the install org an unregistered key is a 400 naming it. The
+    // refusal comes first, so it says nothing about what is registered.
+    const res = await put({ switches: ['not_registered'] });
+    const body = await json(res);
+
+    expect(res.status).toBe(403);
+    expect(body.error?.code).toBe('FORBIDDEN');
+    expect(body.error?.details?.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+    expect(body.error?.message).toMatch(/install organisation/);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      'tenancy: refused an org switches write outside the install org',
+      expect.objectContaining({ orgId: OTHER, activeOrgId: OTHER })
+    );
+  });
+
+  it('refuses clearing them from a customer org too', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+
+    expect((await put({ switches: null })).status).toBe(403);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('still lets a platform admin in a customer org read them', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+
+    const res = await get();
+
+    expect(res.status).toBe(200);
+    expect((await json(res)).data).toEqual(expect.objectContaining({ orgId: OTHER }));
+  });
+
+  it('lets an unbound admin API key set them, as the install org', async () => {
+    mockGetSession.mockResolvedValue(null);
+    mockResolveApiKey.mockResolvedValue({
+      session: session('ADMIN', null),
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      orgId: null,
+      ownerAccountType: 'HUMAN',
+    });
+
+    const res = await put({ switches: ['reports'] });
+
+    expect(res.status).toBe(200);
+    expect(storedSettings()).toEqual({
+      providers: { approved: ['id-anthropic'] },
+      entitlements: { switches: ['reports'] },
+    });
+  });
+
+  it('lets a platform admin in a customer org set them at single, where there is only one org', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+
+    const res = await put({ switches: ['reports'] });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.org.update).toHaveBeenCalledTimes(1);
   });
 });

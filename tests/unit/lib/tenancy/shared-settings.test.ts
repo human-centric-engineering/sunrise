@@ -15,7 +15,10 @@ vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { canChangeSharedSettings } from '@/lib/tenancy/shared-settings';
+import {
+  canChangeSharedSettings,
+  mayChangeOrgCommercialSettings,
+} from '@/lib/tenancy/shared-settings';
 import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -52,5 +55,35 @@ describe('canChangeSharedSettings', () => {
 
   it('allows any org at single, where the install org is the only one', async () => {
     expect(await runAsOrg(CUSTOMER, async () => canChangeSharedSettings())).toBe(true);
+  });
+});
+
+describe("mayChangeOrgCommercialSettings: an org's caps and switches (§135 t-1033)", () => {
+  describe('at multi', () => {
+    beforeEach(() => {
+      mockEnv.TENANCY_MODE = 'multi';
+    });
+
+    it('refuses a session switched into a customer org, so it cannot raise its own', async () => {
+      expect(await runAsOrg(CUSTOMER, async () => mayChangeOrgCommercialSettings('session'))).toBe(
+        false
+      );
+    });
+
+    it('allows a session in the install org', async () => {
+      expect(
+        await runAsOrg(INSTALL_ORG_ID, async () => mayChangeOrgCommercialSettings('session'))
+      ).toBe(true);
+    });
+
+    it('allows an admin API key, which enters no org and acts as the install org', () => {
+      expect(mayChangeOrgCommercialSettings('api-key')).toBe(true);
+    });
+  });
+
+  it('allows a session in any org at single', async () => {
+    expect(await runAsOrg(CUSTOMER, async () => mayChangeOrgCommercialSettings('session'))).toBe(
+      true
+    );
   });
 });

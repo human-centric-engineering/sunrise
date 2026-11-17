@@ -31,6 +31,7 @@
  *
  * @see lib/tenancy/classification.ts — GLOBAL_CONFIG_MODELS
  */
+import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -66,4 +67,22 @@ export function canChangeSharedSettings(): boolean {
   const context = getTenantContext();
   if (!context) return false;
   return context.orgId === null || context.orgId === INSTALL_ORG_ID;
+}
+
+/**
+ * Whether this caller may change what one org may spend or has bought: its
+ * caps (`settings.quotas`, §110 t-788) and its entitlement switches (§135
+ * t-1033). Not shared settings, since each is one org's own, but the same
+ * rule: anyone at `single`; at `multi`, the install org, or an unbound admin
+ * API key (the route guard refuses a bound one), which enters no org and acts
+ * as the install org.
+ *
+ * The route guard admits a platform admin switched into a customer's org,
+ * which is right for a rename. Here it would let whoever administers that org
+ * raise its own cap or grant itself a switch.
+ */
+export function mayChangeOrgCommercialSettings(
+  credential: AuthorizationPrincipal['credential']
+): boolean {
+  return credential === 'api-key' || canChangeSharedSettings();
 }

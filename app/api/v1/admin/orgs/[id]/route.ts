@@ -29,12 +29,13 @@
  * a rename; for `settings.quotas` it would let whoever administers that org
  * raise its own monthly budget or request cap. So at `multi` a patch naming `quotas` is
  * refused unless the call stack is in the install org — the rule shared
- * settings use (`canChangeSharedSettings`) — or the caller is an unbound admin
- * API key, which acts as the install org. Each caps write is recorded in the
+ * settings use — or the caller is an unbound admin API key, which acts as the
+ * install org (`mayChangeOrgCommercialSettings`, which an org's entitlement
+ * switches share). Each caps write is recorded in the
  * admin audit log (`org.quotas.update`) with the caps it replaced.
  */
 
-import { withAdminAuth, type AuthenticatedSession } from '@/lib/auth/guards';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { errorResponse, successResponse } from '@/lib/api/responses';
@@ -54,7 +55,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { forgetOrgCap } from '@/lib/orchestration/llm/spend-caps';
 import { forgetOrgRequestCap } from '@/lib/security/org-request-cap';
 import {
-  canChangeSharedSettings,
+  mayChangeOrgCommercialSettings,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
 import { getRouteLogger } from '@/lib/api/context';
@@ -62,15 +63,6 @@ import { getRouteLogger } from '@/lib/api/context';
 /** The words an admin sees when a customer org's context tries to set caps. */
 const QUOTAS_REFUSAL =
   "An organisation's caps can only be changed from the install organisation. Switch to the install organisation to make this change.";
-
-/**
- * Whether this caller may write `settings.quotas`: anyone at `single`; at
- * `multi`, the install org, or an unbound admin API key (the guard refuses a
- * bound one), which enters no org and acts as the install org.
- */
-function mayWriteQuotas(session: AuthenticatedSession): boolean {
-  return session.principal.credential === 'api-key' || canChangeSharedSettings();
-}
 
 const PLATFORM_ONLY = {
   // Ownership: no ownership decision — a vendor surface, platform admin only. See RouteOwnership in lib/auth/guards.ts.
@@ -123,7 +115,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, updateOrgSchema);
 
-  if (body.settings?.quotas !== undefined && !mayWriteQuotas(session)) {
+  if (
+    body.settings?.quotas !== undefined &&
+    !mayChangeOrgCommercialSettings(session.principal.credential)
+  ) {
     log.warn('tenancy: refused an org caps write outside the install org', {
       orgId: id,
       actorUserId: session.user.id,

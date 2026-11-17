@@ -65,7 +65,11 @@ release process.
   Platform staff set them per org on `/admin/orgs/[id]` (a new section, shown
   only when an app registers a switch) or through the new platform-only
   `GET`/`PUT /api/v1/admin/orgs/[id]/entitlements`, audited as
-  `org.entitlements.replace`. The app reads them with `orgHasSwitch()`,
+  `org.entitlements.replace`. At `multi` the write, like a caps write, comes
+  only from the install org or an unbound admin API key; that rule is now one
+  function, `mayChangeOrgCommercialSettings()` in
+  `lib/tenancy/shared-settings.ts`, for a fork that writes either from a
+  surface of its own. The app reads them with `orgHasSwitch()`,
   `loadOrgSwitches()` or `resolveOrgSwitches()` (`lib/tenancy/entitlements.ts`).
   They are stored as an `entitlements` slice in `Org.settings`
   (`readOrgEntitlements()` / `writeOrgEntitlements()` in

@@ -17,18 +17,18 @@ the same feature.
 
 ## Quick Reference
 
-| Need                           | Where                                                                                   |
-| ------------------------------ | --------------------------------------------------------------------------------------- |
-| Register your switches         | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`    |
-| Does this org have a switch?   | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                               |
-| Every switch an org has        | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, unregistered }`               |
-| Resolve a row you already hold | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                 |
-| What is stored                 | `Org.settings.entitlements` = `{ switches: string[] }`, `lib/tenancy/org-settings.ts`   |
-| Write it from your own code    | `writeOrgEntitlements(orgId, (previous) => keys \| null)`                               |
-| Read / set over HTTP           | `GET` / `PUT /api/v1/admin/orgs/[id]/entitlements` (platform admins only)               |
-| Set it by hand                 | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered |
-| The audit row                  | `org.entitlements.replace`, with what it replaced                                       |
-| Key format                     | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`   |
+| Need                           | Where                                                                                          |
+| ------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Register your switches         | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`           |
+| Does this org have a switch?   | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                      |
+| Every switch an org has        | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, unregistered }`                      |
+| Resolve a row you already hold | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                        |
+| What is stored                 | `Org.settings.entitlements` = `{ switches: string[] }`, `lib/tenancy/org-settings.ts`          |
+| Write it from your own code    | `writeOrgEntitlements(orgId, (previous) => keys \| null)`                                      |
+| Read / set over HTTP           | `GET` / `PUT /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org) |
+| Set it by hand                 | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered        |
+| The audit row                  | `org.entitlements.replace`, with what it replaced                                              |
+| Key format                     | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`          |
 
 ### Anti-patterns
 
@@ -40,9 +40,11 @@ the same feature.
 - **Keeping your own copy.** A `packages` key of your own beside this one is
   two answers to one question, and billing will only ever write this one.
 - **Letting an org set its own.** A switch is what an org bought. The write
-  route is platform-only, and a fork writing switches from a surface of its
-  own owns the same refusal (`writeOrgEntitlements` decides nothing about who
-  may).
+  route is platform-only and, at `multi`, install-org only. A fork writing
+  switches from a surface of its own owns the same two refusals: a
+  platform-admin guard, and `mayChangeOrgCommercialSettings()` from
+  `lib/tenancy/shared-settings.ts` (`writeOrgEntitlements` decides nothing
+  about who may).
 - **Renaming a key orgs already hold.** The key is what is stored. Register a
   new key and leave the old one unregistered: it reads as off, and a save from
   the admin keeps it.
@@ -140,8 +142,14 @@ naming it. With nothing registered there is nothing to set, and the PUT is a 409
 set them, and a process running older code during a deploy must not drop a
 switch newer code registered.
 
-Both routes are platform-only (no `tier`), as the provider policy and the caps
-are. At `multi`, an org's own OWNER or ADMIN is refused.
+Both routes are platform-only (no `tier`): at `multi`, an org's own OWNER or
+ADMIN is refused. The write is also install-org only, as the caps are
+(`mayChangeOrgCommercialSettings`): the guard admits a platform admin switched
+into a customer's org, and from there a write would let whoever administers
+that org grant it switches. Such an admin can still read them; a save answers
+403 with `details.reason: shared_settings_install_org_only` and a message
+saying to switch to the install organisation. An unbound admin API key acts as
+the install org and may write.
 
 ## Privacy
 
