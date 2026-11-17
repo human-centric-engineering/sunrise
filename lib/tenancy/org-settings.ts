@@ -10,7 +10,9 @@
  * slice naming the providers a platform admin approved the org for (see
  * {@link readOrgProviderPolicy}), and a `quotas` slice holding the org's own
  * caps (see {@link readOrgQuotas}), and a `privacy` slice holding its LLM
- * privacy minimum and protected terms (see {@link readOrgPrivacy}). Everything else in that JSON belongs to
+ * privacy minimum and protected terms (see {@link readOrgPrivacy}), and an
+ * `entitlements` slice holding the switches set on it and off it (see
+ * {@link readOrgEntitlements}). Everything else in that JSON belongs to
  * whoever put it there — a fork's own org-level config — and every write path
  * below preserves it rather than replacing the object.
  *
@@ -48,6 +50,8 @@
  * @see .context/tenancy/identity.md — what `Org.settings` is, and whose the rest of it is
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
@@ -57,6 +61,8 @@ import {
   ORG_QUOTA_KEYS,
   ORG_RETENTION_KEYS,
   MAX_ORG_PROTECTED_TERMS,
+  entitlementKeySchema,
+  orgEntitlementsSchema,
   orgPrivacySettingsSchema,
   orgProtectedTermSchema,
   orgProviderPolicySchema,
@@ -523,6 +529,191 @@ export async function writeOrgPrivacy(
   return { previous: readOrgPrivacy(replaced.settings), stored };
 }
 
+/** The key an org's entitlement switches live under in `Org.settings` (§135 t-1033). */
+export const ORG_ENTITLEMENTS_KEY = 'entitlements';
+
+/**
+ * An org's switches as stored: the keys set on and the keys set off.
+ *
+ * A key in neither has not been set on this org and gets its switch's
+ * `whenNothingSet` (`lib/tenancy/entitlements.ts`), which is a different
+ * answer from a key set off. Keeping the three apart per switch is the point
+ * of the type: it is how an app leaves every org that exists today as it is,
+ * including one saved before the switch was registered. Either list may hold
+ * a key no app registers any more; it reads as off. `unreadable` says the
+ * stored slice could not be read at all, so the org was given no switch, its
+ * defaults included.
+ */
+export interface OrgEntitlementsRead {
+  on: readonly string[];
+  off: readonly string[];
+  unreadable: boolean;
+}
+
+// Frozen: every caller gets these same objects, and one that pushed onto a
+// shared list would hand that key to every org read after it.
+const NOTHING_SET: OrgEntitlementsRead = Object.freeze({
+  on: Object.freeze([]),
+  off: Object.freeze([]),
+  unreadable: false,
+});
+const UNREADABLE_ENTITLEMENTS: OrgEntitlementsRead = Object.freeze({
+  on: Object.freeze([]),
+  off: Object.freeze([]),
+  unreadable: true,
+});
+
+/**
+ * Read an org's switches out of its `settings` (§135 t-1033).
+ *
+ * **Fails closed, like the provider policy.** A switch opens part of an app
+ * an org may not have bought, so a slice that cannot be read gives the org no
+ * switch, never the defaults: a default is only for a switch nobody set, and
+ * an unreadable slice may have set it off. A slice that is an object but whose
+ * `on` or `off` is not a list is unreadable too, but what does parse in it is
+ * still returned, so a save that keeps keys it could not see keeps those. A
+ * key that is not a key is dropped on its own with a warning, and a key stored
+ * both on and off reads as off; either can only narrow what the org has. The
+ * readable keys were written by a writer that validated them.
+ */
+export function readOrgEntitlements(
+  settings: unknown,
+  context: Record<string, unknown> = {},
+  log: Logger = defaultLogger
+): OrgEntitlementsRead {
+  if (settings === null || settings === undefined) return NOTHING_SET;
+  if (!isJsonObject(settings)) {
+    log.warn('Org settings is not an object; the org has no entitlement switch', context);
+    return UNREADABLE_ENTITLEMENTS;
+  }
+  const slice = settings[ORG_ENTITLEMENTS_KEY];
+  if (slice === null || slice === undefined) return NOTHING_SET;
+  if (!isJsonObject(slice)) {
+    log.warn('Org entitlements slice is unreadable; the org has no switch on', context);
+    return UNREADABLE_ENTITLEMENTS;
+  }
+  const unreadable = !Array.isArray(slice.on) || !Array.isArray(slice.off);
+  if (unreadable) {
+    log.warn('Org entitlements slice is unreadable; the org has no switch on', context);
+  }
+
+  let dropped = 0;
+  const keysOf = (list: unknown[]): Set<string> => {
+    const keys = new Set<string>();
+    for (const stored of list) {
+      const parsed = entitlementKeySchema.safeParse(stored);
+      if (parsed.success) keys.add(parsed.data);
+      else dropped += 1;
+    }
+    return keys;
+  };
+  const on = keysOf(Array.isArray(slice.on) ? slice.on : []);
+  const off = keysOf(Array.isArray(slice.off) ? slice.off : []);
+  const both = [...on].filter((key) => off.has(key));
+  for (const key of both) on.delete(key);
+
+  if (dropped > 0) {
+    log.warn('Dropped malformed entitlement switches; the org does not have them', {
+      ...context,
+      dropped,
+    });
+  }
+  if (both.length > 0) {
+    log.warn('Entitlement switches stored both on and off; the org does not have them', {
+      ...context,
+      switches: both,
+    });
+  }
+  return { on: [...on].sort(), off: [...off].sort(), unreadable };
+}
+
+/** One org's switches as stored, or `null` when there is no such org. */
+export async function loadOrgEntitlements(
+  orgId: string,
+  db: Pick<PrismaClient, 'org'> = prisma,
+  log: Logger = defaultLogger
+): Promise<OrgEntitlementsRead | null> {
+  // `Org` is a system model, so this read needs no tenant scope.
+  const org = await db.org.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return org ? readOrgEntitlements(org.settings, { orgId }, log) : null;
+}
+
+/**
+ * Replace an org's whole entitlements slice, preserving every other key in
+ * `settings`. Internal to the platform, and not part of the versioned surface:
+ * code that sets switches calls `setOrgSwitches()` (`lib/tenancy/entitlements.ts`),
+ * which keeps every value it does not name, rather than this.
+ *
+ * `next` is handed what is stored and returns the keys to store set on and
+ * set off; `null` to set none, so every switch is at its default (two empty
+ * lists mean the same, and both remove the slice); or `undefined` to leave the
+ * slice as it is. It runs inside the write's transaction, so a caller that
+ * keeps part of what is stored cannot lose a write that landed in between. The
+ * result is validated with `orgEntitlementsSchema`, so a malformed key, or one
+ * in both lists, throws a `ZodError` and nothing is written.
+ *
+ * **A write that would store what is already stored writes nothing** and says
+ * `changed: false` (see {@link updateSettingsSlice}). The comparison is with
+ * the stored JSON, not the cleaned read, so a slice the read had to tidy (a
+ * duplicate, a stray property, one it could not read) is written.
+ * `previousStored` is that JSON exactly as it was, for an audit row that has
+ * to show what a tidying write dropped.
+ *
+ * **It decides nothing about who may**, as {@link writeOrgQuotas} does not:
+ * the admin route's writes are platform-only and, at `multi`, install-org
+ * only. A fork's own writer (billing, later) owns the same two checks
+ * (`mayChangeOrgCommercialSettings`).
+ *
+ * Through {@link updateSettingsSlice}: a clash with a concurrent settings
+ * write throws `P2034` ({@link isSettingsWriteConflict}).
+ *
+ * @returns what was stored before (read, and `previousStored` as stored), what
+ *   is stored now and whether the write changed it, or `null` when the org
+ *   does not exist.
+ */
+export async function writeOrgEntitlements(
+  orgId: string,
+  next: (
+    previous: OrgEntitlementsRead
+  ) => { on: readonly string[]; off: readonly string[] } | null | undefined,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{
+  previous: OrgEntitlementsRead;
+  previousStored: unknown;
+  stored: OrgEntitlementsRead;
+  changed: boolean;
+} | null> {
+  let previous: OrgEntitlementsRead = NOTHING_SET;
+  let previousStored: unknown = null;
+  let stored: OrgEntitlementsRead = NOTHING_SET;
+  const replaced = await updateSettingsSlice(
+    orgId,
+    ORG_ENTITLEMENTS_KEY,
+    (settings) => {
+      previous = readOrgEntitlements(settings, { orgId });
+      // A column that is not an object is recorded whole: the write replaces it.
+      previousStored = isJsonObject(settings)
+        ? (settings[ORG_ENTITLEMENTS_KEY] ?? null)
+        : settings === null || settings === undefined
+          ? null
+          : { settingsColumn: settings };
+      const keys = next(previous);
+      if (keys === undefined) {
+        stored = previous;
+        return LEAVE_AS_IS;
+      }
+      const value =
+        keys === null || (keys.on.length === 0 && keys.off.length === 0)
+          ? null
+          : orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
+      stored = value === null ? NOTHING_SET : { on: value.on, off: value.off, unreadable: false };
+      return value;
+    },
+    db
+  );
+  return replaced === null ? null : { previous, previousStored, stored, changed: replaced.written };
+}
+
 /**
  * Replace one platform-owned key in an org's `settings`, preserving every
  * other key — a fork's included.
@@ -533,21 +724,57 @@ export async function writeOrgPrivacy(
  * it to a 409 with {@link isSettingsWriteConflict}.
  *
  * A `null` value removes the key, and a column left with no keys is set back
- * to SQL `NULL`, as {@link applyOrgSettingsPatch} does.
+ * to SQL `NULL`, as {@link applyOrgSettingsPatch} does. A value equal to what
+ * the slice already holds is not written at all (see
+ * {@link updateSettingsSlice}), so the row, `Org.updatedAt` included, is left
+ * as it was.
  *
- * @returns the column as it stood before the write, so a caller can say what
- *   it replaced; `null` when the org does not exist, and nothing was written.
+ * @returns the column as it stood before, so a caller can say what it
+ *   replaced, and whether anything was written; `null` when the org does not
+ *   exist, and nothing was written.
  */
 async function writeSettingsSlice(
   orgId: string,
   key: string,
   value: unknown,
   db: Pick<PrismaClient, '$transaction'>
-): Promise<{ settings: unknown } | null> {
+): Promise<{ settings: unknown; written: boolean } | null> {
+  return updateSettingsSlice(orgId, key, () => value, db);
+}
+
+/** What an {@link updateSettingsSlice} update returns to write nothing. */
+const LEAVE_AS_IS = Symbol('leave the slice as it is');
+
+/**
+ * {@link writeSettingsSlice} with the value worked out from the column as the
+ * transaction read it, for a writer that keeps part of what is stored. `update`
+ * must not do I/O: it runs inside the transaction. It returns
+ * {@link LEAVE_AS_IS} to write nothing, which `written` reports.
+ *
+ * A value equal to what the slice already holds (`null` when there is none) is
+ * not written either, for every slice: a save that changed nothing does not
+ * touch the row. It still read the row inside the serializable transaction, so
+ * a concurrent write can still, rarely, make it answer `P2034`. A column that
+ * is not an object is never "equal": the write replaces it, as before.
+ */
+async function updateSettingsSlice(
+  orgId: string,
+  key: string,
+  update: (settings: unknown) => unknown,
+  db: Pick<PrismaClient, '$transaction'>
+): Promise<{ settings: unknown; written: boolean } | null> {
   return db.$transaction(
     async (tx) => {
       const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
       if (!row) return null;
+      const value = update(row.settings);
+      if (value === LEAVE_AS_IS) return { settings: row.settings, written: false };
+      const readable =
+        row.settings === null || row.settings === undefined || isJsonObject(row.settings);
+      const current = isJsonObject(row.settings) ? (row.settings[key] ?? null) : null;
+      if (readable && isDeepStrictEqual(current, value)) {
+        return { settings: row.settings, written: false };
+      }
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
       if (value === null) delete base[key];
       else base[key] = value;
@@ -558,7 +785,7 @@ async function writeSettingsSlice(
             Object.keys(base).length === 0 ? Prisma.DbNull : (base as Prisma.InputJsonObject),
         },
       });
-      return { settings: row.settings };
+      return { settings: row.settings, written: true };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );

@@ -74,6 +74,48 @@ release process.
   and `confidentialRouting()` (`privacy-stage.ts`); `summarizeMessages()`
   takes an optional `model`. New config-health check `confidential_model`.
   Backups carry the setting.
+- **Entitlement switches: what an org has (§135 t-1033).** A new fork seam,
+  `lib/app/entitlements.ts` (`initAppEntitlements()`, ships empty), where an
+  app registers the switches an org can have with
+  `registerEntitlementSwitch({ key, label, description, whenNothingSet })`.
+  Platform staff set them per org on `/admin/orgs/[id]` (a new section, shown
+  only when an app registers a switch) or through the new platform-only
+  `GET`/`PATCH`/`DELETE /api/v1/admin/orgs/[id]/entitlements`, audited as
+  `org.entitlements.update`. A `PATCH` sets only the switches it names, so a
+  caller cannot turn off one it did not know about, and the app's own code
+  sets them the same way with `setOrgSwitches()`. A failed app registration
+  is reported (`entitlementSwitchesFailed()`) rather than looking like none.
+  At `multi` the write, like a caps write, comes
+  only from the install org or an unbound admin API key; that rule is now one
+  function, `mayChangeOrgCommercialSettings()` in
+  `lib/tenancy/shared-settings.ts`, for a fork that writes either from a
+  surface of its own. The app reads them with `orgHasSwitch()`,
+  `loadOrgSwitches()` or `resolveOrgSwitches()` (`lib/tenancy/entitlements.ts`).
+  They are stored as an `entitlements` slice in `Org.settings`,
+  `{ on: [...], off: [...] }` (read with `readOrgEntitlements()` in
+  `lib/tenancy/org-settings.ts`). A switch nobody set on an org gets its
+  `whenNothingSet`, which is a different answer from a switch set off, so a
+  switch registered later reaches an org saved before it at its default; an
+  unreadable slice fails closed. Nothing refuses a request on a switch yet.
+  The design's principle 8 now gives the platform the commercial mechanism
+  (entitlements, meters, signup into an org of one's own) and leaves plans,
+  prices and what an app counts with forks. **`entitlements` is now a
+  platform-owned key of `Org.settings`:** a fork already storing its own
+  `settings.entitlements` must move it to another name before taking this
+  release, or its value reads as unreadable and the first save overwrites it.
+  **A fork that keeps "what an org bought" in a key of its own can move it
+  here**, and a fork filling the seam pins one new row in
+  `tests/unit/lib/app/defaults.test.ts`.
+
+### Changed
+
+- **Writing an `Org.settings` slice with the value it already holds no longer
+  writes the row (§135 t-1033).** `writeOrgQuotas()`, the provider policy and
+  privacy writers, the platform-agents marker and the entitlement switches all
+  go through one writer, which now skips an identical write, so `Org.updatedAt`
+  does not move. A fork that
+  treated every call as a write (to bump `updatedAt`, say) sees fewer writes.
+  A column that is not a JSON object is still replaced, as before.
 
 ### Fixed
 

@@ -58,6 +58,7 @@ const POLICY_PATH = `/api/v1/admin/orgs/${ID}/providers`;
 const PROVIDERS_PATH = '/api/v1/admin/orchestration/providers?page=1&limit=100';
 const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
 const PRIVACY_PATH = `/api/v1/admin/orgs/${ID}/privacy`;
+const ENTITLEMENTS_PATH = `/api/v1/admin/orgs/${ID}/entitlements`;
 
 /** An org that has never saved its privacy settings (§127 t-1010). */
 const PRIVACY = {
@@ -68,15 +69,32 @@ const PRIVACY = {
   protectedTerms: [],
 };
 
+/** An install whose app registers no entitlement switch, as vanilla Sunrise (§135 t-1033). */
+const NO_SWITCHES = {
+  orgId: ID,
+  nothingSet: true,
+  unreadable: false,
+  mayChange: true,
+  registrationFailed: false,
+  switches: [],
+  unregistered: [],
+};
+
+/** What each path answers when a test does not name it. */
+const DEFAULTS: Record<string, unknown> = {
+  [PRIVACY_PATH]: PRIVACY,
+  [ENTITLEMENTS_PATH]: NO_SWITCHES,
+};
+
 /**
  * Answer each path with its body. A path mapped to `null` (or not mapped) is a
  * 404; one mapped to a number is that HTTP status. `metas` gives a path's
- * pagination meta. The privacy settings answer as never saved unless a test
- * names them.
+ * pagination meta. The privacy settings answer as never saved, and the
+ * switches as none registered, unless a test names them.
  */
 function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
   vi.mocked(serverFetch).mockImplementation(async (path: string) => {
-    const data = path === PRIVACY_PATH && !(path in bodies) ? PRIVACY : bodies[path];
+    const data = path in bodies ? bodies[path] : DEFAULTS[path];
     if (data === null || data === undefined) return apiFailure(404, 'NOT_FOUND');
     if (typeof data === 'number') return apiFailure(data);
     if (data instanceof Response) return data.clone();
@@ -388,6 +406,81 @@ describe('OrgPage', () => {
       expect(screen.queryByTestId('org-privacy-terms')).not.toBeInTheDocument();
       // The rest of the page still renders.
       expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
+    });
+  });
+
+  describe('Entitlements (§135 t-1033)', () => {
+    const SWITCH = {
+      key: 'reports',
+      label: 'Reports',
+      description: 'Build and share reports.',
+      whenNothingSet: false,
+    };
+    const ENTITLEMENTS = {
+      orgId: ID,
+      nothingSet: false,
+      unreadable: false,
+      mayChange: true,
+      registrationFailed: false,
+      switches: [{ ...SWITCH, on: true, atDefault: false }],
+      unregistered: [],
+    };
+
+    it('shows nothing new when the API reports no registered switch', async () => {
+      serve({ [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+
+      render(await OrgPage({ params }));
+
+      // Asked the API rather than reading the registry from the page.
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(ENTITLEMENTS_PATH);
+      expect(screen.getByRole('heading', { name: 'Approved providers' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Entitlements' })).not.toBeInTheDocument();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it("offers the org's switches when the app registers some", async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: ENTITLEMENTS,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Entitlements' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeChecked();
+    });
+
+    it("says the app's switches failed to register, rather than show nothing as vanilla Sunrise", async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: { ...NO_SWITCHES, registrationFailed: true },
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Entitlements' })).toBeInTheDocument();
+      expect(screen.getByText(/could not be registered/)).toBeInTheDocument();
+    });
+
+    it('says the switches could not be loaded rather than offer a form to save over them', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: 500,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(
+        screen.getByText('The switches could not be loaded. Reload the page to try again.')
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /Reports/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save switches' })).not.toBeInTheDocument();
     });
   });
 });

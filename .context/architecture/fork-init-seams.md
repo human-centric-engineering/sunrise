@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty-one `initApp*()` functions, in twenty of the `lib/app/*` scaffolds Sunrise
+Twenty-two `initApp*()` functions, in twenty-one of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-three `initApp*` exports are different
+init function at all, and two of the twenty-four `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -58,6 +58,7 @@ Three properties come with it:
 | `capabilities.ts`                  | `initAppCapabilities`                | `lib/orchestration/capabilities/registry.ts`                | roll back, log, **re-raise**   |
 | `context-contributors.ts`          | `initAppContextContributors`         | `lib/orchestration/chat/context-builder.ts`                 | roll back, log, degrade        |
 | `data-export.ts`                   | `initAppSubjectSources`              | `lib/privacy/subject-source-registry.ts`                    | roll back, log, **remembered** |
+| `entitlements.ts`                  | `initAppEntitlements`                | `lib/tenancy/entitlements.ts`                               | roll back, log, degrade        |
 | `erasure.ts`                       | `initAppErasureHooks`                | `lib/privacy/erasure-hooks.ts`                              | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppGraders`                     | `lib/orchestration/evaluations/graders/registry.ts`         | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppEvalCaseHooks`               | `lib/orchestration/evaluations/case-hooks.ts`               | roll back, log, **refuse**     |
