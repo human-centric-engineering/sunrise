@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
 
@@ -469,6 +470,20 @@ describe('DELETE /api/v1/admin/orgs/[id]/entitlements', () => {
             to: { on: ['retired'], off: [] },
           },
         },
+      })
+    );
+  });
+
+  it('clears a settings column that is not an object, rather than report a clear it did not make', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({ settings: 'not-json' });
+
+    const res = await reset();
+
+    expect(res.status).toBe(200);
+    expect(storedSettings()).toBe(Prisma.DbNull);
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: { entitlements: { from: { settingsColumn: 'not-json' }, to: null } },
       })
     );
   });

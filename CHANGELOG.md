@@ -91,6 +91,16 @@ release process.
   here**, and a fork filling the seam pins one new row in
   `tests/unit/lib/app/defaults.test.ts`.
 
+### Changed
+
+- **Writing an `Org.settings` slice with the value it already holds no longer
+  writes the row (§135 t-1033).** `writeOrgQuotas()`, the provider policy and
+  privacy writers, the platform-agents marker and the entitlement switches all
+  go through one writer, which now skips an identical write, so `Org.updatedAt`
+  does not move. A fork that
+  treated every call as a write (to bump `updatedAt`, say) sees fewer writes.
+  A column that is not a JSON object is still replaced, as before.
+
 ### Fixed
 
 - **The agent and capability forms' blocked-save summary now follows the

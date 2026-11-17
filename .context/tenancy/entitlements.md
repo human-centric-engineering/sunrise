@@ -101,8 +101,14 @@ Leave it off (the default) for an area that is **new**: it opens only where
 someone switches it on, so it fails closed. Turn it on for an area **every org
 already uses**, so no org that exists today loses it when you start checking
 the switch. That holds for an org whose other switches were saved before this
-one existed: a save sets only the switches registered at the time. Once
-someone sets this switch on an org, its default no longer applies there.
+one existed: a save sets only the switches it names, and the admin form names
+only those the admin changed. Once someone sets this switch on an org, its
+default no longer applies there.
+
+**Changing a default later** reaches every org that has not set the switch.
+To keep some orgs as they are (pin the paying ones on before a default-on
+switch goes off by default, say), set the switch on each of them first: with
+**Set it here** on the org page, or `setOrgSwitches()` from code.
 
 ## Reading switches
 
@@ -148,7 +154,8 @@ warning and the rest are kept, and a key in both lists reads as off: either
 can only narrow what the org has. A slice whose `on` or `off` is not a list is
 unreadable too, but what parses in the other is still read, so a save keeps
 those keys rather than dropping what nobody was shown. The admin page says
-when a slice was unreadable, and saving replaces it.
+when a slice was unreadable, and a save from it names every switch shown,
+ticked or not, so one save replaces it, with none on if none is ticked.
 
 **The write.** `setOrgSwitches(orgId, { on, off })` sets the named switches
 and leaves every other stored value as it is; `setOrgSwitches(orgId, null)`
@@ -187,9 +194,10 @@ there is none.
 string[] }`, both required: the registered switches to set on and off. A
 switch named in neither is left as it is, so a form loaded before a switch
 was registered, or a script that knows only some of them, cannot turn one off
-by leaving it out. The form names only the switches the admin changed, so a
-switch left at its default stays there and follows the default if the app
-later changes it; Save is off until something has changed. `DELETE` puts every
+by leaving it out. The form names only the switches the admin changed, or set
+as they are with **Set it here**, so a switch left at its default stays there
+and follows the default if the app later changes it; Save is off until there
+is something to save. `DELETE` puts every
 registered switch back to its default. An unregistered key, or one in both
 lists, is a 400. With nothing registered there is nothing to set, and a write
 is a 409. Values stored for keys nothing registers are kept by both, on or

@@ -110,6 +110,58 @@ describe('OrgEntitlementsForm', () => {
     expect(apiClient.patch).toHaveBeenCalledWith(PATH, { body: { on: [], off: ['reports'] } });
   });
 
+  it('sets a switch at its default as it is, when asked, so a later change to the default does not reach it', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue(view());
+    const user = renderForm(
+      view({
+        switches: view().switches.map((s) =>
+          s.key === 'leads' ? { ...s, on: true, atDefault: true } : s
+        ),
+      })
+    );
+    const save = screen.getByRole('button', { name: 'Save switches' });
+    expect(save).toBeDisabled();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Set Lead generation on this organisation as it is now' })
+    );
+    expect(screen.getByText(/Will be set on this organisation as it is now/)).toBeInTheDocument();
+    await user.click(save);
+
+    expect(apiClient.patch).toHaveBeenCalledWith(PATH, { body: { on: ['leads'], off: [] } });
+  });
+
+  it('takes back a "set it here" with Undo', async () => {
+    const user = renderForm(
+      view({
+        switches: view().switches.map((s) =>
+          s.key === 'leads' ? { ...s, on: true, atDefault: true } : s
+        ),
+      })
+    );
+
+    await user.click(screen.getByRole('button', { name: /Set Lead generation/ }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(screen.getByRole('button', { name: 'Save switches' })).toBeDisabled();
+  });
+
+  it('names every switch when saving over an unreadable slice, so none ticked sets the org to none', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue(view());
+    const user = renderForm(
+      view({
+        unreadable: true,
+        switches: view().switches.map((s) => ({ ...s, on: false, atDefault: false })),
+      })
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+    expect(apiClient.patch).toHaveBeenCalledWith(PATH, {
+      body: { on: [], off: ['reports', 'leads'] },
+    });
+  });
+
   it('offers Save only once something has changed', async () => {
     const user = renderForm();
     const save = screen.getByRole('button', { name: 'Save switches' });

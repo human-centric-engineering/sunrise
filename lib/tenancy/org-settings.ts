@@ -691,7 +691,12 @@ export async function writeOrgEntitlements(
     ORG_ENTITLEMENTS_KEY,
     (settings) => {
       previous = readOrgEntitlements(settings, { orgId });
-      previousStored = isJsonObject(settings) ? (settings[ORG_ENTITLEMENTS_KEY] ?? null) : null;
+      // A column that is not an object is recorded whole: the write replaces it.
+      previousStored = isJsonObject(settings)
+        ? (settings[ORG_ENTITLEMENTS_KEY] ?? null)
+        : settings === null || settings === undefined
+          ? null
+          : { settingsColumn: settings };
       const keys = next(previous);
       if (keys === undefined) {
         stored = previous;
@@ -719,10 +724,14 @@ export async function writeOrgEntitlements(
  * it to a 409 with {@link isSettingsWriteConflict}.
  *
  * A `null` value removes the key, and a column left with no keys is set back
- * to SQL `NULL`, as {@link applyOrgSettingsPatch} does.
+ * to SQL `NULL`, as {@link applyOrgSettingsPatch} does. A value equal to what
+ * the slice already holds is not written at all (see
+ * {@link updateSettingsSlice}), so the row, `Org.updatedAt` included, is left
+ * as it was.
  *
- * @returns the column as it stood before the write, so a caller can say what
- *   it replaced; `null` when the org does not exist, and nothing was written.
+ * @returns the column as it stood before, so a caller can say what it
+ *   replaced, and whether anything was written; `null` when the org does not
+ *   exist, and nothing was written.
  */
 async function writeSettingsSlice(
   orgId: string,
@@ -745,7 +754,8 @@ const LEAVE_AS_IS = Symbol('leave the slice as it is');
  * A value equal to what the slice already holds (`null` when there is none) is
  * not written either, for every slice: a save that changed nothing does not
  * touch the row. It still read the row inside the serializable transaction, so
- * a concurrent write can still, rarely, make it answer `P2034`.
+ * a concurrent write can still, rarely, make it answer `P2034`. A column that
+ * is not an object is never "equal": the write replaces it, as before.
  */
 async function updateSettingsSlice(
   orgId: string,
@@ -759,8 +769,12 @@ async function updateSettingsSlice(
       if (!row) return null;
       const value = update(row.settings);
       if (value === LEAVE_AS_IS) return { settings: row.settings, written: false };
+      const readable =
+        row.settings === null || row.settings === undefined || isJsonObject(row.settings);
       const current = isJsonObject(row.settings) ? (row.settings[key] ?? null) : null;
-      if (isDeepStrictEqual(current, value)) return { settings: row.settings, written: false };
+      if (readable && isDeepStrictEqual(current, value)) {
+        return { settings: row.settings, written: false };
+      }
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
       if (value === null) delete base[key];
       else base[key] = value;

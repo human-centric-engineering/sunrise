@@ -932,6 +932,20 @@ describe('the entitlement switches (§135 t-1033)', () => {
     expect(left.tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — asked to leave it
   });
 
+  it('replaces a settings column that is not an object, recording it whole, even to clear', async () => {
+    const garbage = txOver('not-json');
+
+    const written = await writeOrgEntitlements(ORG_A, () => null, garbage.db);
+
+    // Not "equal" to nothing: the column is reset, as it was before the skip.
+    expect(written?.changed).toBe(true);
+    expect(written?.previousStored).toEqual({ settingsColumn: 'not-json' });
+    expect(garbage.tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: Prisma.DbNull },
+    });
+  });
+
   it('writes a slice the read had to tidy, though the tidied value is the same', async () => {
     // A duplicate, a key both on and off, and a stray property: read as on [], off [leads].
     const untidy = txOver({
