@@ -356,10 +356,20 @@ function validateFindings(
  */
 export async function runSensitivityClassifiers(
   input: SensitivityInput,
-  ctx: Omit<ClassifyContext, 'signal'> & { signal?: AbortSignal }
+  ctx: Omit<ClassifyContext, 'signal'> & {
+    signal?: AbortSignal;
+    /**
+     * Leave out `external` classifiers. For a call the layer otherwise
+     * forwards untouched (mode `off`, or a local provider it skips): sending
+     * its text to another processor would be the only place it went beyond
+     * the provider the operator chose.
+     */
+    inHouseOnly?: boolean;
+  }
 ): Promise<ClassificationResult> {
-  const { classifiers } = getPrivacyAdapters();
-  const { signal: outer, ...rest } = ctx;
+  const { classifiers: registered } = getPrivacyAdapters();
+  const { signal: outer, inHouseOnly = false, ...rest } = ctx;
+  const classifiers = inHouseOnly ? registered.filter((r) => r.egress !== 'external') : registered;
   // Frozen once: every classifier sees the same parts, and none can change
   // what another (or the caller) reads.
   const frozen: SensitivityInput = Object.freeze({

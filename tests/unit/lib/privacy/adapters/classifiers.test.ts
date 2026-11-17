@@ -453,3 +453,25 @@ describe('running the classifiers', () => {
     });
   });
 });
+
+describe('running in-house only', () => {
+  it('leaves out external classifiers and runs the rest', async () => {
+    const cloud = vi.fn(() => Promise.resolve([{ category: 'health' }]));
+    seam.init.mockImplementation(() => {
+      registerSensitivityClassifier(
+        classifier('acme.cloud', { egress: 'external', classify: cloud })
+      );
+      registerSensitivityClassifier(reporting('acme.box', { deal: 'commercial' }, ['deal']));
+      registerSensitivityClassifier(
+        classifier('acme.selfhosted', {
+          egress: 'self_hosted',
+          categories: { not_public: 'commercial' },
+          classify: () => Promise.resolve([{ category: 'not_public' }]),
+        })
+      );
+    });
+    const result = await runSensitivityClassifiers(input, { scopeId: 's', inHouseOnly: true });
+    expect(cloud).not.toHaveBeenCalled();
+    expect(result.categories.map((c) => c.category)).toEqual(['deal', 'not_public']);
+  });
+});

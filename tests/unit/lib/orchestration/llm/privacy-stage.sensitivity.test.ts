@@ -349,3 +349,45 @@ describe('a call abandoned while it is classified', () => {
     expect(privacySummary(scope)).toBeUndefined();
   });
 });
+
+describe('an external classifier', () => {
+  function external(seen: string[]): SensitivityClassifier {
+    return {
+      id: 'acme.cloud',
+      egress: 'external',
+      categories: { health: 'personal' },
+      classify: (input) => {
+        seen.push(...input.parts.map((p) => p.text));
+        return Promise.resolve([{ category: 'health' }]);
+      },
+    };
+  }
+
+  it('is not sent a call the layer forwards untouched: mode off, or a skipped local provider', async () => {
+    const seen: string[] = [];
+    seam.init.mockImplementation(() => registerSensitivityClassifier(external(seen)));
+    mode('off');
+    const offScope = newScope();
+    await runInPrivacyScope(offScope, () =>
+      applyPrivacyStage(chatCall([chat(HEALTH), { model: 'm' }]))
+    );
+    mode('detect');
+    const localScope = newScope();
+    await runInPrivacyScope(localScope, () =>
+      applyPrivacyStage(chatCall([chat(HEALTH), { model: 'm' }], true))
+    );
+    expect(seen).toEqual([]);
+    // Core's in-process classifier still ran on both.
+    expect(privacySummary(offScope)?.sensitivity).toEqual({ personal: ['health'] });
+    expect(privacySummary(localScope)?.sensitivity).toEqual({ personal: ['health'] });
+  });
+
+  it('is sent a call the layer scans: a cloud provider under detect', async () => {
+    const seen: string[] = [];
+    seam.init.mockImplementation(() => registerSensitivityClassifier(external(seen)));
+    await runInPrivacyScope(newScope(), () =>
+      applyPrivacyStage(chatCall([chat(HEALTH), { model: 'm' }]))
+    );
+    expect(seen).toContain(HEALTH);
+  });
+});

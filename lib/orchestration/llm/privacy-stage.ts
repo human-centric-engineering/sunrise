@@ -277,7 +277,8 @@ async function classifyCall(
   scope: PrivacyScope,
   mode: PrivacyPolicy['mode'],
   orgId: string | undefined,
-  abandoned: AbortSignal | undefined
+  abandoned: AbortSignal | undefined,
+  inHouseOnly: boolean
 ): Promise<void> {
   const parts = sensitivityParts(call);
   if (parts.length === 0) return;
@@ -289,6 +290,7 @@ async function classifyCall(
       ...(orgId !== undefined ? { orgId } : {}),
       ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
       signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
+      inHouseOnly,
     }
   );
   if (abandoned?.aborted) throw new CallAbandonedError();
@@ -481,7 +483,14 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     // Before the returns for `off` and a skipped local provider: classifying
     // changes nothing sent, and an install records what its agents meet in
     // every mode (owner ruling, 2026-11-17).
-    if (!scoped.ephemeral) await classifyCall(call, scope, policy.mode, orgId, abandoned);
+    // A call the layer forwards untouched is not sent to an external
+    // classifier either: that would be the one place its text went beyond
+    // the provider the operator chose (a local one, or any under `off`).
+    const forwardedUntouched =
+      policy.mode === 'off' || (call.isLocal && !policy.protectLocalProviders);
+    if (!scoped.ephemeral) {
+      await classifyCall(call, scope, policy.mode, orgId, abandoned, forwardedUntouched);
+    }
 
     if (policy.mode === 'off') return unchanged;
     if (call.isLocal && !policy.protectLocalProviders) {

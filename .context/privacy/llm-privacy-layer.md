@@ -1196,7 +1196,10 @@ in one of the two groups.
   rolls a registered classifier back and the layer refuses every call
   (_Loading_).
 - `egress` and `jurisdiction` as for detectors. An external classifier is sent
-  the parts it is given and nothing more.
+  the parts it is given and nothing more, and **not at all on a call the layer
+  forwards untouched** (mode `off`, or a local provider it skips): there it
+  would be the one place the text went beyond the provider the operator
+  chose. In-process and self-hosted classifiers still run on those calls.
 
 ### What is classified
 
