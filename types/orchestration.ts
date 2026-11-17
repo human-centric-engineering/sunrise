@@ -1281,7 +1281,7 @@ export interface MessageMetadata {
    * (`isLeftOutOfHistory`), so the next turn does not carry the details the
    * policy refused, and the conversation can go on.
    */
-  excludedFromHistory?: 'privacy_blocked';
+  excludedFromHistory?: 'privacy_blocked' | 'privacy_confidential';
   /**
    * Set on the assistant message persisted when the streaming chat
    * handler aborts a turn before the LLM signalled completion. The

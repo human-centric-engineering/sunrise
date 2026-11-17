@@ -64,6 +64,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import {
   clearCache,
   getProvider,
@@ -443,5 +444,10 @@ describe('a confidential-content policy through the Proxy (§130 t-1037)', () =>
     await expect(isTrustedProvider('registered-in-code')).resolves.toBe(false);
     vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(new Error('db down'));
     await expect(isTrustedProvider('probe')).resolves.toBe(false);
+    // Said, so a refusal of a ticked provider is not debugged as a missing tick.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'privacy: could not read whether a provider is trusted; treated as untrusted',
+      { provider: 'probe', errorName: 'Error' }
+    );
   });
 });

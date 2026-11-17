@@ -538,6 +538,9 @@ async function confidentialVerdict(
   };
 }
 
+/** What a sent call's confidential content was decided, per group: recorded once it is sent. */
+type SentDecisions = Partial<Record<SensitivityGroup, ConfidentialDecision>>;
+
 /**
  * The backstop (§130): classify the call, then refuse it if a group it holds
  * has a policy that does not permit its provider. Runs after the policy is
@@ -556,7 +559,7 @@ async function applyConfidentialPolicy(
     /** Whether any registered classifier is not external. */
     anyInHouse: boolean;
   }
-): Promise<void> {
+): Promise<SentDecisions | undefined> {
   const { scope, orgId, abandoned, ephemeral, forwardedUntouched, anyInHouse } = opts;
   const isTrusted = trustedOnce(call);
   // Whether a policy could refuse this call matters only to a call that
@@ -568,7 +571,7 @@ async function applyConfidentialPolicy(
     (await confidentialPolicyCouldRefuse(policy, call, isTrusted));
   // In a scope that records nowhere, nothing reads the result unless a
   // policy could act on it.
-  if (ephemeral && !couldRefuse) return;
+  if (ephemeral && !couldRefuse) return undefined;
   // Recorded under `off` when the call goes out unscanned: the summary's mode
   // is the strictest any SCANNED call ran under, and a skipped local call was
   // not scanned, so it must not raise it.
@@ -594,16 +597,27 @@ async function applyConfidentialPolicy(
     });
   }
   const verdict = await confidentialVerdict(policy, classification, call, isTrusted);
-  if (verdict.kind === 'send') recordConfidentialDecision(scope, verdict.decisions);
-  if (verdict.kind !== 'refuse') return;
+  // Recorded by the caller once the call is actually sent: the detectors can
+  // still refuse it after this.
+  if (verdict.kind === 'send') return verdict.decisions;
+  if (verdict.kind !== 'refuse') return undefined;
   // A call its caller gave up on is a cancel, not a refusal.
   if (abandoned?.aborted) throw new CallAbandonedError();
   recordConfidentialDecision(scope, verdict.decisions);
-  // Refused only because a classifier failed: nothing was found, so nothing
-  // is placed, and the reader is not told their message held something.
-  const found = verdict.groups.some((g) => classification.groups.has(g));
-  const reason = found ? verdict.reason : 'confidential_unchecked';
-  const location = found ? await locateConfidential(call, verdict.groups, classifying) : undefined;
+  // The reason and the place come from the refusing groups whose content was
+  // found. Refused only because a classifier failed (none was found): the
+  // reader is not told their message held something, and nothing is placed.
+  const foundRefusing = verdict.groups.filter((g) => classification.groups.has(g));
+  const reason =
+    foundRefusing.length === 0
+      ? 'confidential_unchecked'
+      : foundRefusing.some((g) => groupPolicy(policy, g) === 'block')
+        ? 'confidential_blocked'
+        : 'confidential_not_permitted';
+  const location =
+    foundRefusing.length > 0
+      ? await locateConfidential(call, foundRefusing, classifying)
+      : undefined;
   if (abandoned?.aborted) throw new CallAbandonedError();
   throw refuse(reason, call, opts.scope, recordedMode, classification.failedAdapters, location);
 }
@@ -889,18 +903,26 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     // What the operator sent itself (knowledge being ingested) is not
     // classified: the policies are about what users write (spec § What is
     // classified).
-    if (!scope.operatorContent) {
-      await applyConfidentialPolicy(call, policy, {
-        scope,
-        orgId,
-        abandoned,
-        ephemeral: scoped.ephemeral,
-        forwardedUntouched,
-        anyInHouse: adapters.classifiers.some((c) => c.egress !== 'external'),
-      });
-    }
+    const sentDecisions = scope.operatorContent
+      ? undefined
+      : await applyConfidentialPolicy(call, policy, {
+          scope,
+          orgId,
+          abandoned,
+          ephemeral: scoped.ephemeral,
+          forwardedUntouched,
+          anyInHouse: adapters.classifiers.some((c) => c.egress !== 'external'),
+        });
+    // Recorded only on the paths that send the call (§130 t-1037 review): a
+    // call the detectors then refuse must not read "warned" on the trace, nor
+    // show the user a note for something never sent.
+    const decidedScope = scope;
+    const recordingIt = <T>(value: T): T => {
+      if (sentDecisions) recordConfidentialDecision(decidedScope, sentDecisions);
+      return value;
+    };
 
-    if (policy.mode === 'off') return unchanged;
+    if (policy.mode === 'off') return recordingIt(unchanged);
     if (call.isLocal && !policy.protectLocalProviders) {
       notifyPrivacyObservers({
         ...eventBase(scope, call.providerSlug),
@@ -910,7 +932,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
         failedAdapters: [],
         outcome: 'skipped',
       });
-      return unchanged;
+      return recordingIt(unchanged);
     }
     // Nothing would read the result: an unscoped call (knowledge ingestion,
     // a background job) records nowhere, no observer is listening, and only a
@@ -925,7 +947,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       adapters.observers.length === 0 &&
       policy.onDetectorFailure !== 'block'
     ) {
-      return unchanged;
+      return recordingIt(unchanged);
     }
 
     // Loaded before the deadline starts: a slow user lookup must not spend
@@ -1046,7 +1068,7 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       failedAdapters,
       outcome: 'sent',
     });
-    return result;
+    return recordingIt(result);
   } catch (err) {
     if (err instanceof PrivacyRefusedError) throw err;
     // The caller's own abort: a cancel, neither counted nor refused.

@@ -268,7 +268,13 @@ export async function isTrustedProvider(slugOrName: string): Promise<boolean> {
       (await prisma.aiProviderConfig.findFirst({ where: { slug: slugOrName }, select })) ??
       (await prisma.aiProviderConfig.findFirst({ where: { name: slugOrName }, select }));
     return config?.trustedForConfidential === true;
-  } catch {
+  } catch (err) {
+    // Said, so an `approved_only` refusal of a ticked provider is not
+    // debugged as a missing tick.
+    logger.warn('privacy: could not read whether a provider is trusted; treated as untrusted', {
+      provider: slugOrName,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
     return false;
   }
 }

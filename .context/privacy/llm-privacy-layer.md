@@ -1291,7 +1291,9 @@ What the policy did with them is recorded too (t-1037),
 group, in that order. A turn whose chat call was sent and whose knowledge
 search embedding was refused reads `allowed, refused`, not a refusal alone,
 which would say the content never left. A call refused for a group records
-every group it held as refused, since none of it was sent. The trace shows
+every group it held as refused, since none of it was sent. `allowed` and
+`warned` are recorded only once the call is actually sent, so a call the
+personal-data detectors then refuse (`content_blocked`) reads neither. The trace shows
 the decisions beside each group ("personal: health (allowed, refused)"). It is recorded only for a group whose
 content was found, so a refusal caused by a classifier failure shows in
 `refused` and `degraded`, not here.
@@ -1377,7 +1379,10 @@ An org floor per group is not in this feature.
   alone. The handler places it with `placePrivacyRefusal(…, 'confidential')`
   and tells the reader with its own codes: `privacy_confidential`, and
   `privacy_confidential_earlier`, `_setup`, `_memory`. The rows left out
-  carry the same `excludedFromHistory` marker as a `block` refusal.
+  carry `excludedFromHistory: 'privacy_confidential'` (a `block` refusal's
+  carry `'privacy_blocked'`); later history leaves out either. The reason
+  and the place come from the refusing groups whose content was found, not
+  from a group flagged only because a classifier failed.
 - **The warn note.** The chat handler emits a `warning` event
   (`confidential_personal`, `confidential_commercial`) as the turn ends
   (after the answer, at a pause for approval or another tool that ends the

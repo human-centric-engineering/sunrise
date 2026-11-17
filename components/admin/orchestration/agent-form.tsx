@@ -378,13 +378,14 @@ const CONFIDENTIAL_FIELDS = [
 
 type ConfidentialField = (typeof CONFIDENTIAL_FIELDS)[number];
 
+/** Each field's label from the core field registry, its one source, and its group's wording. */
 const CONFIDENTIAL_FIELD_TEXT: Record<ConfidentialField, { label: string; help: string }> = {
   privacyConfidentialPersonal: {
-    label: 'Confidential content: personal',
+    label: fieldLabels().privacyConfidentialPersonal,
     help: CONFIDENTIAL_GROUP_DESCRIPTIONS.personal,
   },
   privacyConfidentialCommercial: {
-    label: 'Confidential content: commercial',
+    label: fieldLabels().privacyConfidentialCommercial,
     help: CONFIDENTIAL_GROUP_DESCRIPTIONS.commercial,
   },
 };

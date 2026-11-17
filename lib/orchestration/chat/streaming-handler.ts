@@ -64,6 +64,7 @@ import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-acti
 import {
   isRequestFault,
   PRIVACY_BLOCKED,
+  PRIVACY_CONFIDENTIAL,
   ProviderError,
   SPEND_CAP_CODES,
   type LlmProvider,
@@ -3277,7 +3278,8 @@ export class StreamingChatHandler {
             [...turnRowIds, ...(placed?.earlierRowIds ?? [])],
             conversationId,
             request.userId,
-            log
+            log,
+            refusalKind === 'confidential' ? PRIVACY_CONFIDENTIAL : PRIVACY_BLOCKED
           );
           if (placed?.summary && builtRequest) {
             await this.forgetSummary(conversationId, request.userId, builtRequest.summaryPin, log);
@@ -3517,7 +3519,7 @@ export class StreamingChatHandler {
       await prisma.aiConversation.updateMany({
         where: {
           ...owned,
-          metadata: read.stored === null ? { equals: Prisma.DbNull } : { equals: read.stored },
+          metadata: read.stored === null ? { equals: Prisma.AnyNull } : { equals: read.stored },
         },
         data: { metadata: read.metadata },
       });
@@ -3584,7 +3586,10 @@ export class StreamingChatHandler {
     ids: string[],
     conversationId: string | null,
     userId: string,
-    log: typeof logger
+    log: typeof logger,
+    // What the rows are left out for: personal details under `block`, or
+    // confidential content under a group's policy (§130).
+    marker: typeof PRIVACY_BLOCKED | typeof PRIVACY_CONFIDENTIAL = PRIVACY_BLOCKED
   ): Promise<void> {
     if (ids.length === 0 || !conversationId) return;
     try {
@@ -3600,7 +3605,7 @@ export class StreamingChatHandler {
             data: {
               metadata: {
                 ...(isJsonObject(row.metadata) ? row.metadata : {}),
-                excludedFromHistory: PRIVACY_BLOCKED,
+                excludedFromHistory: marker,
               },
             },
             select: { id: true },

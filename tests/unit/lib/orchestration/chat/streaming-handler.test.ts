@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { Prisma as PrismaValues } from '@prisma/client';
 import { assertNoAttachmentPersistence } from '@/tests/helpers/no-attachment-persistence';
 
 // ---------------------------------------------------------------------------
@@ -10087,7 +10088,7 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       message: getUserFacingError('privacy_confidential').message,
     });
     expect(getUserFacingError('privacy_confidential').title).toBe('Confidential Content Not Sent');
-    expect(marked(rows.find((r) => r.content.includes(DISCLOSURE)))).toBe('privacy_blocked');
+    expect(marked(rows.find((r) => r.content.includes(DISCLOSURE)))).toBe('privacy_confidential');
 
     // The conversation carries on without it.
     expect(errorOf(await turn('What are the parking rules?'))).toBeUndefined();
@@ -10107,8 +10108,8 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       code: 'privacy_confidential_earlier',
       message: getUserFacingError('privacy_confidential_earlier').message,
     });
-    expect(marked(earlier)).toBe('privacy_blocked');
-    expect(marked(reply)).toBe('privacy_blocked');
+    expect(marked(earlier)).toBe('privacy_confidential');
+    expect(marked(reply)).toBe('privacy_confidential');
 
     expect(errorOf(await turn('What are the parking rules?'))).toBeUndefined();
     expect(lastSent(provider)).not.toContain(DISCLOSURE);
@@ -10121,7 +10122,7 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
 
     expect(errorOf(await turn('And at weekends?'))?.code).toBe('privacy_confidential');
     expect(marked(earlier)).toBeUndefined();
-    expect(marked(rows.find((r) => r.content === 'And at weekends?'))).toBe('privacy_blocked');
+    expect(marked(rows.find((r) => r.content === 'And at weekends?'))).toBe('privacy_confidential');
   });
 
   describe('the note a warn policy shows (§130 t-1037)', () => {
@@ -10251,6 +10252,16 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(notes(events).map((e) => e.code)).toEqual(['confidential_personal']);
       const kinds = events.map((e) => e.type);
       expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('done'));
+    });
+
+    it('records over metadata that is null as well, so the note is not shown every turn', async () => {
+      conversationStore();
+      warningProvider(() => ['personal']);
+      await turn(`I was ${DISCLOSURE}.`);
+      expect(vi.mocked(prisma.aiConversation.updateMany)).toHaveBeenCalledWith({
+        where: { id: 'conv-1', userId: 'u1', metadata: { equals: PrismaValues.AnyNull } },
+        data: { metadata: { confidentialNoted: ['personal'] } },
+      });
     });
 
     it('records the note only over the metadata it read, so a write made since is kept', async () => {

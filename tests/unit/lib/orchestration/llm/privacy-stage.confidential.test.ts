@@ -625,3 +625,28 @@ describe('review round 2 (t-1037)', () => {
     expect(flagged.isTrusted).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('review round 3 (t-1037)', () => {
+  it('records "warned" only for a call that is sent: not one the detectors then refuse', async () => {
+    policies('warn', 'allow', 'block');
+    const scope = newScope();
+    const err = await refusal(
+      run(chatCall(chat(`${HEALTH} Write to me at priya.sharma@example.com.`)), scope)
+    );
+    expect(err.reason).toBe('content_blocked');
+    expect(privacySummary(scope)?.sensitivity).toEqual({ personal: ['health'] });
+    // Never sent, so neither warned nor allowed.
+    expect(privacySummary(scope)?.confidential).toBeUndefined();
+  });
+
+  it('takes the reason, and the place, from the refusing groups whose content was found', async () => {
+    seam.init.mockImplementation(() => {
+      registerSensitivityClassifier(failingClassifier().classifier);
+    });
+    // Commercial is flagged only because the classifier failed; personal was found.
+    policies('local_only', 'block');
+    const err = await refusal(run(chatCall(chat(HEALTH, PLAIN))));
+    expect(err.reason).toBe('confidential_not_permitted');
+    expect(err.found).toEqual({ messageCount: 3, messageIndices: [1] });
+  });
+});
