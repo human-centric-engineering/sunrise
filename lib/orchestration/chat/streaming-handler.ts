@@ -650,13 +650,9 @@ export class StreamingChatHandler {
     // orphaned user message with no response — the user's turn was written
     // up front, so returning without this leaves a question that reloads
     // with no answer at all. Clients detect the marker via
-    // `metadata.error === true`. Every ending that comes after the user's
-    // message calls it: the catch below for a thrown failure, and each
-    // in-try `yield errorEvent(...); return;` ending (the tool-loop cap, a
-    // mid-loop budget refusal, an output or citation guard block) BEFORE its
-    // yield, so a client that stops reading at the error still leaves the
-    // row saved (t-1040). The marker holds fixed text only, never a blocked
-    // reply.
+    // `metadata.error === true`. The catch below calls it for a thrown
+    // failure; an in-try ending goes through `endWithError`, below.
+    // The marker holds fixed text only, never a blocked reply.
     const persistErrorMarker = async (errorCode: string): Promise<void> => {
       if (!conversationId) return;
       try {
@@ -665,10 +661,10 @@ export class StreamingChatHandler {
           role: 'assistant',
           content: '[An error occurred and the response could not be completed.]',
           agentVersionId,
-          // Pin provider only — `resolvedModel` lives inside the try
-          // and isn't reliably in scope here. modelId stays null on
-          // error markers; the audit trail reads that as "model in
-          // effect at error time was ambiguous (possibly mid-fallback)".
+          // Pin provider only. modelId stays null on every error marker,
+          // the in-try endings' included, so all markers read alike; the
+          // audit trail reads that as "model in effect at error time was
+          // ambiguous (possibly mid-fallback)".
           ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
           metadata: { error: true, errorCode, ...privacyField(privacyScope) },
         });
@@ -678,6 +674,15 @@ export class StreamingChatHandler {
           error: persistErr instanceof Error ? persistErr.message : String(persistErr),
         });
       }
+    };
+    // Every in-try ending after the user's message is saved —
+    // `yield await endWithError(code, message); return;` — so the marker is
+    // saved BEFORE the error is yielded: a client that stops reading at the
+    // error (the embed widget does) must still leave the row saved (t-1040).
+    // Never yield `errorEvent` directly once the user's message exists.
+    const endWithError = async (code: string, message: string): Promise<ChatEvent> => {
+      await persistErrorMarker(code);
+      return errorEvent(code, message);
     };
 
     try {
@@ -1171,7 +1176,7 @@ export class StreamingChatHandler {
         emitGuardEvent(guardEventContext, 'input', guardMode);
 
         if (guardMode === 'block') {
-          yield errorEvent('input_blocked', 'Message blocked by security policy.');
+          yield await endWithError('input_blocked', 'Message blocked by security policy.');
           return;
         }
         if (guardMode === 'warn_and_continue') {
@@ -2243,8 +2248,7 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'output', outputMode);
 
               if (outputMode === 'block') {
-                await persistErrorMarker('output_blocked');
-                yield errorEvent(
+                yield await endWithError(
                   'output_blocked',
                   'Response blocked by content policy. Please rephrase your question.'
                 );
@@ -2294,8 +2298,7 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'citation', citationMode);
 
               if (citationMode === 'block') {
-                await persistErrorMarker('citation_required');
-                yield errorEvent(
+                yield await endWithError(
                   'citation_required',
                   citationScan.underCited
                     ? 'Response was blocked because it did not cite any of the retrieved sources.'
@@ -2704,8 +2707,14 @@ export class StreamingChatHandler {
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
           } else {
-            await persistErrorMarker(refusal.code);
-            yield errorEvent(refusal.code, refusal.message);
+            notifyBudgetExceeded({
+              agent,
+              budget: midBudget,
+              cap: refusal.cap,
+              request,
+              conversationId,
+            });
+            yield await endWithError(refusal.code, refusal.message);
             return;
           }
         }
@@ -3300,8 +3309,7 @@ export class StreamingChatHandler {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
-      await persistErrorMarker('tool_loop_cap');
-      yield errorEvent(
+      yield await endWithError(
         'tool_loop_cap',
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
       );

@@ -10829,6 +10829,19 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
 
     const ENDINGS: Array<{ code: string; arrange: () => void }> = [
       {
+        code: 'input_blocked',
+        arrange: () => {
+          vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+            makeAgent({ inputGuardMode: 'block' }) as never
+          );
+          vi.mocked(scanForInjection).mockReturnValueOnce({
+            flagged: true,
+            patterns: ['system_override'],
+          });
+          answering(REPLY);
+        },
+      },
+      {
         code: 'tool_loop_cap',
         arrange: () => answering(TOOL_CALL),
       },
@@ -10934,5 +10947,24 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         ).toEqual([expect.objectContaining({ error: true, errorCode: code })]);
       }
     );
+
+    it('sends the budget_exceeded webhook when the budget runs out between tool calls', async () => {
+      conversationStore();
+      ENDINGS.find((e) => e.code === 'budget_exceeded')!.arrange();
+
+      expect(errorOf(await turn(QUESTION))?.code).toBe('budget_exceeded');
+      await vi.waitFor(() =>
+        expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+          'budget_exceeded',
+          expect.objectContaining({
+            agentId: 'agent-1',
+            conversationId: 'conv-1',
+            usedUsd: 11,
+            limitUsd: 10,
+            cap: 'agent',
+          })
+        )
+      );
+    });
   });
 });
