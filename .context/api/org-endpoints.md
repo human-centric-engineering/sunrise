@@ -23,23 +23,23 @@ the per-admin export sub-cap noted below.
 
 ## Who may call what
 
-| Route                                          | Guard           | Admitted                                                                                                                                               |
-| ---------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/v1/orgs`                             | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
-| `POST /api/v1/orgs/switch`                     | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
-| `GET /api/v1/orgs/[id]`                        | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
-| `GET/POST /api/v1/orgs/[id]/members`           | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
-| `PATCH/DELETE …/members/[userId]`              | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
-| `GET /api/v1/orgs/[id]/audit-log`              | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
-| `POST /api/v1/orgs/[id]/invitations`           | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
-| `POST /api/v1/invitations/accept`              | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
-| `POST /api/v1/invitations/decline`             | none            | Whoever holds the invitation token. Per-IP accept-invite sub-cap.                                                                                      |
-| `GET/POST /api/v1/admin/orgs`                  | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`     | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET /api/v1/admin/orgs/[id]/export`           | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
-| `GET/PUT /api/v1/admin/orgs/[id]/providers`    | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PUT /api/v1/admin/orgs/[id]/privacy`      | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PUT /api/v1/admin/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| Route                                       | Guard           | Admitted                                                                                                                                               |
+| ------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/orgs`                          | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
+| `POST /api/v1/orgs/switch`                  | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
+| `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
+| `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
+| `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `GET /api/v1/orgs/[id]/audit-log`           | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
+| `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
+| `POST /api/v1/invitations/accept`           | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
+| `POST /api/v1/invitations/decline`          | none            | Whoever holds the invitation token. Per-IP accept-invite sub-cap.                                                                                      |
+| `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
+| `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PUT …/admin/orgs/[id]/entitlements`    | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
