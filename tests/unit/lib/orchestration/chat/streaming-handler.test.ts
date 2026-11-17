@@ -10799,4 +10799,140 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       vi.mocked(assertModelSupportsAttachments).mockReset();
     });
   });
+
+  // ── An ending that does not throw still saves an error reply (t-1040) ──
+
+  describe('a turn that ends in an error without throwing (t-1040)', () => {
+    const BLOCKED_REPLY = 'The reply the guard would not let through.';
+    const TOOL_CALL = [
+      { type: 'tool_call', toolCall: { id: 'tc-x', name: 'do_thing', arguments: {} } },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+    ];
+    const REPLY = [
+      { type: 'text', content: BLOCKED_REPLY },
+      { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+    ];
+
+    function answering(script: Array<Record<string, unknown>>) {
+      const provider = {
+        ...mockProvider([]),
+        chatStream: vi.fn(async function* (): AsyncGenerator<Record<string, unknown>> {
+          yield* script;
+        }),
+      };
+      vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      } as never);
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+    }
+
+    const ENDINGS: Array<{ code: string; arrange: () => void }> = [
+      {
+        code: 'tool_loop_cap',
+        arrange: () => answering(TOOL_CALL),
+      },
+      {
+        code: 'budget_exceeded',
+        arrange: () => {
+          // Within budget before the turn, over it at the re-check between tool calls.
+          let checks = 0;
+          vi.mocked(checkBudget).mockImplementation(() =>
+            Promise.resolve(
+              ++checks === 1
+                ? { withinBudget: true, spent: 5, limit: 10, remaining: 5 }
+                : { withinBudget: false, spent: 11, limit: 10, remaining: -1 }
+            )
+          );
+          answering(TOOL_CALL);
+        },
+      },
+      {
+        code: 'output_blocked',
+        arrange: () => {
+          vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+            makeAgent({ outputGuardMode: 'block' }) as never
+          );
+          vi.mocked(scanOutput).mockResolvedValue({
+            flagged: true,
+            topicMatches: ['forbidden-topic'],
+            builtInMatches: [],
+          });
+          answering(REPLY);
+        },
+      },
+      {
+        code: 'citation_required',
+        arrange: () => {
+          vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+            makeAgent({ citationGuardMode: 'block' }) as never
+          );
+          vi.mocked(scanCitations).mockReturnValue({
+            flagged: true,
+            underCited: true,
+            hallucinatedMarkers: [],
+          });
+          answering(REPLY);
+        },
+      },
+    ];
+
+    const QUESTION = 'Can you look that up for me?';
+    const isMarker = (r: StoredRow) =>
+      r.role === 'assistant' && (r.metadata as { error?: unknown } | null)?.error === true;
+    /** The conversation as a reload reads it: its rows, oldest first. */
+    const reload = (rows: StoredRow[]) =>
+      rows
+        .filter((r) => r.conversationId === 'conv-1')
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    it.each(ENDINGS)(
+      'saves one error reply after the question when the turn ends on $code',
+      async ({ code, arrange }) => {
+        const { rows } = conversationStore();
+        arrange();
+
+        const events = await turn(QUESTION);
+        expect(errorOf(events)?.code).toBe(code);
+
+        const saved = reload(rows);
+        const question = saved.findIndex((r) => r.role === 'user' && r.content === QUESTION);
+        expect(question).toBeGreaterThanOrEqual(0);
+        const markers = saved.filter(isMarker);
+        expect(markers).toHaveLength(1);
+        expect(saved.at(-1)).toBe(markers[0]);
+        expect(saved.indexOf(markers[0])).toBeGreaterThan(question);
+        expect(markers[0].metadata).toMatchObject({ error: true, errorCode: code });
+        expect(markers[0].content).toBe(
+          '[An error occurred and the response could not be completed.]'
+        );
+        // A blocked reply is never saved, in the marker or anywhere else.
+        expect(JSON.stringify(saved)).not.toContain(BLOCKED_REPLY);
+      }
+    );
+
+    it.each(ENDINGS)(
+      'has saved it before the error reaches a reader that stops there ($code)',
+      async ({ code, arrange }) => {
+        const { rows } = conversationStore();
+        arrange();
+
+        const stream = streamChat({ ...baseRequest, conversationId: 'conv-1', message: QUESTION });
+        let seen: string | undefined;
+        for await (const event of stream as AsyncGenerator<Event>) {
+          if (event.type === 'error') {
+            seen = event.code;
+            break;
+          }
+        }
+
+        expect(seen).toBe(code);
+        expect(
+          reload(rows)
+            .filter(isMarker)
+            .map((r) => r.metadata)
+        ).toEqual([expect.objectContaining({ error: true, errorCode: code })]);
+      }
+    );
+  });
 });

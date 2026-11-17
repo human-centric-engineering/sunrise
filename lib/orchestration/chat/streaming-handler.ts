@@ -646,6 +646,40 @@ export class StreamingChatHandler {
     // stage refused it. Set only there: another call's location is not a
     // position in these messages.
     let refusedCallMessageCount: number | null = null;
+    // Persist an error-marker assistant message so the conversation has no
+    // orphaned user message with no response — the user's turn was written
+    // up front, so returning without this leaves a question that reloads
+    // with no answer at all. Clients detect the marker via
+    // `metadata.error === true`. Every ending that comes after the user's
+    // message calls it: the catch below for a thrown failure, and each
+    // in-try `yield errorEvent(...); return;` ending (the tool-loop cap, a
+    // mid-loop budget refusal, an output or citation guard block) BEFORE its
+    // yield, so a client that stops reading at the error still leaves the
+    // row saved (t-1040). The marker holds fixed text only, never a blocked
+    // reply.
+    const persistErrorMarker = async (errorCode: string): Promise<void> => {
+      if (!conversationId) return;
+      try {
+        await this.persistMessage({
+          conversationId,
+          role: 'assistant',
+          content: '[An error occurred and the response could not be completed.]',
+          agentVersionId,
+          // Pin provider only — `resolvedModel` lives inside the try
+          // and isn't reliably in scope here. modelId stays null on
+          // error markers; the audit trail reads that as "model in
+          // effect at error time was ambiguous (possibly mid-fallback)".
+          ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
+          metadata: { error: true, errorCode, ...privacyField(privacyScope) },
+        });
+      } catch (persistErr) {
+        log.warn('Failed to persist error-marker assistant message', {
+          conversationId,
+          error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+        });
+      }
+    };
+
     try {
       registerBuiltInCapabilities();
 
@@ -2209,6 +2243,7 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'output', outputMode);
 
               if (outputMode === 'block') {
+                await persistErrorMarker('output_blocked');
                 yield errorEvent(
                   'output_blocked',
                   'Response blocked by content policy. Please rephrase your question.'
@@ -2259,6 +2294,7 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'citation', citationMode);
 
               if (citationMode === 'block') {
+                await persistErrorMarker('citation_required');
                 yield errorEvent(
                   'citation_required',
                   citationScan.underCited
@@ -2668,6 +2704,7 @@ export class StreamingChatHandler {
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
           } else {
+            await persistErrorMarker(refusal.code);
             yield errorEvent(refusal.code, refusal.message);
             return;
           }
@@ -3263,6 +3300,7 @@ export class StreamingChatHandler {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
+      await persistErrorMarker('tool_loop_cap');
       yield errorEvent(
         'tool_loop_cap',
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
@@ -3273,34 +3311,6 @@ export class StreamingChatHandler {
       // the finally. In-try `yield errorEvent(...); return;` paths are
       // application-level outcomes (HTTP 4xx-equivalent) and keep span ok.
       chatSpanError = err;
-
-      // Persist an error-marker assistant message so the conversation has no
-      // orphaned user message with no response — the user's turn was written
-      // up front, so returning without this leaves a question that reloads
-      // with no answer at all. Clients detect the marker via
-      // `metadata.error === true`.
-      const persistErrorMarker = async (errorCode: string): Promise<void> => {
-        if (!conversationId) return;
-        try {
-          await this.persistMessage({
-            conversationId,
-            role: 'assistant',
-            content: '[An error occurred and the response could not be completed.]',
-            agentVersionId,
-            // Pin provider only — `resolvedModel` lives inside the try
-            // and isn't reliably in scope here. modelId stays null on
-            // error markers; the audit trail reads that as "model in
-            // effect at error time was ambiguous (possibly mid-fallback)".
-            ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
-            metadata: { error: true, errorCode, ...privacyField(privacyScope) },
-          });
-        } catch (persistErr) {
-          log.warn('Failed to persist error-marker assistant message', {
-            conversationId,
-            error: persistErr instanceof Error ? persistErr.message : String(persistErr),
-          });
-        }
-      };
 
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {

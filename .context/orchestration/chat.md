@@ -456,7 +456,7 @@ The tool loop is a bounded while-loop (`MAX_TOOL_ITERATIONS = 5`). Each iteratio
 6. If no tool call: yields `done` and returns.
 7. If tool calls: increments the per-turn cost accumulator via `calculateCost(model, inputTokens, outputTokens)` BEFORE the fire-and-forget `logCost` write (so enforcement never depends on the DB write completing), then **per-turn cap check** (see below), then **re-checks monthly budget** via `checkBudget(agentId)` — prevents multi-tool conversations from exceeding budget mid-stream. Then dispatches via `capabilityDispatcher.dispatch` (wrapped in a 30-second timeout — see below), yields `capability_result`, persists `role: 'tool'` rows, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
 
-Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
+Hitting the cap saves an error marker (see [Orphaned Message Prevention](#orphaned-message-prevention)), emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
 
 ### Per-turn cost cap (improvement #39 — runaway-loop guard)
 
@@ -895,12 +895,25 @@ This differs from the initial provider fallback (`getProviderWithFallbacks`) whi
 
 ### Orphaned Message Prevention
 
-When all providers fail (error propagates to the outer catch), an **error-marker assistant message** is persisted to prevent an orphaned user message in the conversation:
+The user's message is saved before the tool loop, so every turn that ends in an error after that point saves an **error-marker assistant message**. Without one, the question reloads with no answer at all, in admin chat, the embed widget, the consumer API, the trace and the conversations list.
 
-- `role: 'assistant'`, `content: '[An error occurred and the response could not be completed.]'`
-- `metadata: { error: true, errorCode: 'internal_error' }`
-- Only persisted when `conversationId` is set (i.e. the conversation was created before the failure)
-- Persist failure is caught and logged — it never masks the original error
+The endings that save one, each with its own `errorCode`:
+
+| Ending                                                                                          | Where                                          |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| A thrown failure: a provider error (fallbacks exhausted, truncation, a spend cap), a crash      | the outer catch (`internal_error` for a crash) |
+| A privacy refusal under `block` (`privacy_blocked*`, `privacy_confidential*`)                   | the outer catch, after leaving the turn out    |
+| `tool_loop_cap`                                                                                 | after the tool loop                            |
+| A budget refusal at the re-check between tool calls (`budget_exceeded` and the other cap codes) | in the loop, for a non-local provider          |
+| `output_blocked` (output guard in `block`)                                                      | in the loop, terminal turn                     |
+| `citation_required` (citation guard in `block`)                                                 | in the loop, terminal turn                     |
+
+- `role: 'assistant'`, `content: '[An error occurred and the response could not be completed.]'`, `metadata: { error: true, errorCode, privacy? }`. The text is fixed: a blocked reply is never saved, in the marker or anywhere else.
+- One helper (`persistErrorMarker`) saves it on every ending, and it is awaited **before** the ending's `error` event is yielded, so a client that stops reading at the error (the embed widget does) still leaves it saved (t-1040).
+- Only persisted when `conversationId` is set. The `ChatError` endings (`agent_not_found`, `conversation_not_found`, the conversation caps) come before the user's message is saved, so they need none.
+- Persist failure is caught and logged — it never masks the original error.
+- Every history reader and the summariser leave markers out (`isLeftOutOfHistory`), so the model never sees one.
+- The per-turn cost cap is not an error ending: it saves the partial reply with `endedReason: 'budget_exceeded'` instead (see [Per-turn cost cap](#per-turn-cost-cap-improvement-39--runaway-loop-guard)).
 
 ## Conversation and Message Caps
 
